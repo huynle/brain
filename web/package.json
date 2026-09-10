@@ -14,7 +14,8 @@
     "test:sync-mcp": "node scripts/verify-sync-mcp.mjs",
     "test:reader": "node scripts/verify-reader.mjs",
     "test:attachment-preview": "node scripts/verify-attachment-preview.mjs",
-    "test:cached-startup": "node scripts/verify-cached-startup.mjs"
+    "test:cached-startup": "node scripts/verify-cached-startup.mjs",
+    "test:mobile": "node scripts/verify-mobile.mjs"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",

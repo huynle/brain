@@ -109,7 +109,10 @@ function LoadedReader({
     () => extractHeadings(entry.content || ""),
     [entry.content],
   );
-  const storedAttachments = entry.attachments ?? [];
+  const storedAttachments = useMemo(
+    () => entry.attachments ?? [],
+    [entry.attachments],
+  );
   // Indexed offline entries contain references, but download URLs are enriched
   // by the authenticated entry API. Enrich only this entry’s references without
   // replacing its potentially unsynced local content.
@@ -129,19 +132,23 @@ function LoadedReader({
         { query: { include: "attachments" } },
       ),
   });
-  const attachments = storedAttachments.map((a) => {
-    const live = liveAttachments.data?.attachments?.find(
-      (item) => item.id === a.id,
-    );
-    return live
-      ? {
-          ...live,
-          ...a,
-          download_url: live.download_url,
-          derived_text: live.derived_text ?? a.derived_text,
-        }
-      : a;
-  });
+  const attachments = useMemo(
+    () =>
+      storedAttachments.map((a) => {
+        const live = liveAttachments.data?.attachments?.find(
+          (item) => item.id === a.id,
+        );
+        return live
+          ? {
+              ...live,
+              ...a,
+              download_url: live.download_url,
+              derived_text: live.derived_text ?? a.derived_text,
+            }
+          : a;
+      }),
+    [storedAttachments, liveAttachments.data],
+  );
   // Anything the body already shows inline is not repeated in the strip.
   const inlinedIds = useMemo(
     () => collectInlinedAttachmentIds(entry.content || "", attachments),

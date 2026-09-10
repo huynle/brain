@@ -218,7 +218,7 @@ export function AssistantPanel(): JSX.Element | null {
           <div className="assistant-kicker">Brain assistant</div>
           <h3>Workflow copilot</h3>
         </div>
-        <button className="drawer-close" onClick={close}>
+        <button className="drawer-close" aria-label="Close assistant" onClick={close}>
           ×
         </button>
       </div>

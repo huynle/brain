@@ -1,3 +1,5 @@
+let unavailable = false;
+export const offlineStorageUnavailable = () => unavailable;
 let worker: Worker | undefined;
 let next = 0;
 const waiting = new Map<
@@ -28,7 +30,15 @@ export function databaseFor<T>(
       const p = waiting.get(data.id);
       if (!p) return;
       waiting.delete(data.id);
-      if (data.error) p.reject(new Error(data.error));
+      if (data.storageUnavailable) unavailable = true;
+      if (data.error)
+        p.reject(
+          new Error(
+            data.storageUnavailable
+              ? "Persistent storage could not be opened. Using the server directly; offline editing is unavailable."
+              : data.error,
+          ),
+        );
       else p.resolve(data.result);
     };
     worker.onerror = () => {

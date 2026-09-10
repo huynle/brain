@@ -21,6 +21,7 @@
  * rows already use.
  */
 import { useEffect, useRef, useState } from "react";
+import { useIsMobile } from "../../hooks/useIsMobile";
 import { useWorkspace } from "../../store/workspace";
 import { useProjects } from "../../hooks/useProjects";
 import { DOUBLE_CLICK_WINDOW_MS } from "../../hooks/useDeferredPreview";
@@ -52,6 +53,10 @@ function focusProjectCard(projectId: string) {
 }
 
 export function ProjectsSection(): JSX.Element {
+  const mobile = useIsMobile();
+  const [filter, setFilter] = useState("");
+  const matchesFilter = (id: string) =>
+    !mobile || id.toLowerCase().includes(filter.toLowerCase());
   const expanded = useWorkspace((s) => s.sidebarSection.projects);
   const toggle = useWorkspace((s) => s.toggleSidebarSection);
   const setView = useWorkspace((s) => s.setView);
@@ -110,7 +115,7 @@ export function ProjectsSection(): JSX.Element {
     }
     return (
       <>
-        {visibleProjectIds.map((pid) => {
+        {visibleProjectIds.filter(matchesFilter).map((pid) => {
           const live = liveProjects[pid];
           const tasks = live?.tasks ?? [];
           const badges = projectPauseBadges(pause, pid);
@@ -259,8 +264,8 @@ export function ProjectsSection(): JSX.Element {
 
                 The dial reads live task state like any other row, so a
                 hidden project that is running still shows amber. */}
-            {hiddenExpanded &&
-              hiddenProjectIds.map((pid) => {
+            {(hiddenExpanded || (mobile && filter.trim())) &&
+              hiddenProjectIds.filter(matchesFilter).map((pid) => {
                 const tasks = liveProjects[pid]?.tasks ?? EMPTY_TASKS;
                 const badges = projectPauseBadges(pause, pid);
                 const indicator = projectRunIndicator(tasks, {
@@ -344,6 +349,15 @@ export function ProjectsSection(): JSX.Element {
           {visibleCount}/{totalCount}
         </span>
       </div>
+      {expanded && mobile && (
+        <input
+          type="search"
+          aria-label="Find a project"
+          placeholder="Find a project…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+      )}
       {expanded && <div className="sb-list">{rows}</div>}
       {overlays}
     </div>

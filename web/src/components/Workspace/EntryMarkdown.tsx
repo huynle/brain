@@ -21,7 +21,7 @@
  *
  * Styling lives under `.entry-md` in `styles/global.css`.
  */
-import React, { useId, useMemo } from "react";
+import React, { useId, useMemo, useRef } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AttachmentLink } from "./AttachmentPreview";
@@ -81,6 +81,8 @@ export function EntryMarkdown({
   /** The entry's attachments, so `![x](file.png)` can find its bytes. */
   attachments?: readonly AttachmentReference[];
 }): JSX.Element {
+  const openEntryRef = useRef(onOpenEntry);
+  openEntryRef.current = onOpenEntry;
   const instanceId = useId();
   const prefix = standalone ? "" : `${instanceId}-`;
 
@@ -137,7 +139,7 @@ export function EntryMarkdown({
         if (readerTarget !== undefined)
           return <a href={readerTarget}>{children}</a>;
         const target = classifyEntryHref(href || "");
-        if (target.kind === "entry" && onOpenEntry) {
+        if (target.kind === "entry" && openEntryRef.current) {
           return (
             <a
               href={entryHref(target.ref)}
@@ -145,7 +147,7 @@ export function EntryMarkdown({
               title={target.ref}
               onClick={(e) => {
                 e.preventDefault();
-                onOpenEntry(target.ref);
+                openEntryRef.current?.(target.ref);
               }}
             >
               {children}
@@ -239,7 +241,7 @@ export function EntryMarkdown({
         return <code className={className}>{children}</code>;
       },
     };
-  }, [content, prefix, onOpenEntry, attachments, linkHref]);
+  }, [content, prefix, attachments, linkHref]);
 
   return (
     <div className="entry-md" data-md-instance={instanceId}>

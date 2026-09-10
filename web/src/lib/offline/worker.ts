@@ -10,6 +10,7 @@ const pools = new Map<string, Pool>();
 // Lock serializes pool reopen/use/pause, so a second tab cannot corrupt the DB.
 self.onmessage = async (event: MessageEvent) => {
   const { id, scope, method, args } = event.data;
+  let opened = false;
   try {
     const result = await navigator.locks.request(
       "brain-entry-db-" + scope,
@@ -28,6 +29,7 @@ self.onmessage = async (event: MessageEvent) => {
         try {
           db = new pool.OpfsSAHPoolDb("/entries.sqlite3");
           const storage = new EntryDatabase(db);
+          opened = true;
           const fn = storage[method as keyof EntryDatabase] as (
             ...a: unknown[]
           ) => unknown;
@@ -44,6 +46,7 @@ self.onmessage = async (event: MessageEvent) => {
   } catch (error) {
     self.postMessage({
       id,
+      storageUnavailable: !opened,
       error: error instanceof Error ? error.message : String(error),
     });
   }

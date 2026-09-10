@@ -2,7 +2,12 @@ import { create } from "zustand";
 import { stringify } from "yaml";
 import { api, ApiError } from "../api";
 import { useAuth } from "../auth";
-import { cacheScope, database, databaseFor } from "./client";
+import {
+  cacheScope,
+  database,
+  databaseFor,
+  offlineStorageUnavailable,
+} from "./client";
 import { makeDraft } from "./model";
 import type { CachedEntry, ChangePage, Mutation, SyncState } from "./model";
 
@@ -35,6 +40,7 @@ channel?.addEventListener("message", () => {
   void refreshState().catch((e) => useOffline.setState({ error: String(e) }));
 });
 export const offlineAvailable = () =>
+  !offlineStorageUnavailable() &&
   typeof window !== "undefined" &&
   typeof Worker !== "undefined" &&
   typeof navigator !== "undefined" &&
@@ -260,26 +266,65 @@ async function ensureCacheReady() {
     throw new Error("Connect once to download entries for offline use.");
 }
 export async function cachedList(q: Record<string, unknown> = {}) {
-  await ensureCacheReady();
-  return database<CachedEntry[]>("list", q);
+  if (offlineAvailable()) {
+    try {
+      await ensureCacheReady();
+      return await database<CachedEntry[]>("list", q);
+    } catch (e) {
+      if (!offlineStorageUnavailable()) throw e;
+    }
+  }
+  const result = await api<{ entries: CachedEntry[] }>("/api/v1/entries", {
+    query: { ...q, limit: Number(q.editorLimit ?? 1000) },
+  });
+  return result.entries ?? [];
 }
 export async function cachedSummary(
   q: { project?: string; global?: boolean; projects?: string } = {},
 ) {
-  await ensureCacheReady();
-  return database<{
-    projects: string[];
-    totalEntries: number;
-    byType: Record<string, number>;
-  }>("summary", q);
+  if (offlineAvailable()) {
+    try {
+      await ensureCacheReady();
+      return await database<{
+        projects: string[];
+        totalEntries: number;
+        byType: Record<string, number>;
+      }>("summary", q);
+    } catch (e) {
+      if (!offlineStorageUnavailable()) throw e;
+    }
+  }
+  const [projects, stats] = await Promise.all([
+    api<{ projects: string[] }>("/api/v1/tasks"),
+    api<{ totalEntries: number; byType: Record<string, number> }>(
+      "/api/v1/stats",
+      { query: q },
+    ),
+  ]);
+  return { ...stats, projects: projects.projects ?? [] };
 }
 export async function cachedEntry(path: string): Promise<CachedEntry> {
-  const entry = await database<CachedEntry | null>("get", path);
-  if (entry) return entry;
-  await syncNow();
-  const found = await database<CachedEntry | null>("get", path);
-  if (!found) throw new Error("Entry is not available in the local cache.");
-  return found;
+  if (offlineAvailable()) {
+    try {
+      const entry = await database<CachedEntry | null>("get", path);
+      if (entry) return entry;
+      await syncNow();
+      const found = await database<CachedEntry | null>("get", path);
+      if (!found) throw new Error("Entry is not available in the local cache.");
+      return found;
+    } catch (e) {
+      if (!offlineStorageUnavailable()) throw e;
+    }
+  }
+  const endpoint = `/api/v1/entries/${path.split("/").map(encodeURIComponent).join("/")}`;
+  const entry = await api<CachedEntry>(endpoint, {
+    query: { include: "attachments" },
+  });
+  const raw = await api<Response>(endpoint, {
+    headers: { Accept: "text/x-brain-full" },
+    raw: true,
+  });
+  return { ...entry, raw: await raw.text() };
 }
 export async function queueEdit(
   path: string,
@@ -288,6 +333,23 @@ export async function queueEdit(
   expectedRevision?: string,
   expectedLocalID?: string,
 ) {
+  if (!offlineAvailable()) {
+    await api(
+      `/api/v1/entries/${path.split("/").map(encodeURIComponent).join("/")}`,
+      {
+        method: "PATCH",
+        headers: {
+          ...(raw === undefined ? {} : { "Content-Type": "text/x-brain-full" }),
+          ...(expectedRevision
+            ? { "X-Brain-Expected-Revision": expectedRevision }
+            : {}),
+        },
+        ...(raw === undefined ? { body } : { rawBody: raw }),
+      },
+    );
+    useOffline.setState((s) => ({ generation: s.generation + 1 }));
+    return cachedEntry(path);
+  }
   const base = await cachedEntry(path);
   if (!base.revision)
     throw new Error("Download this entry before editing offline.");
@@ -316,6 +378,14 @@ export async function queueEdit(
   return entry;
 }
 export async function queueCreate(body: Record<string, unknown>) {
+  if (!offlineAvailable()) {
+    const result = await api<{ path: string }>("/api/v1/entries", {
+      method: "POST",
+      body,
+    });
+    useOffline.setState((s) => ({ generation: s.generation + 1 }));
+    return cachedEntry(result.path);
+  }
   const id = crypto.randomUUID();
   const path = "local/" + id;
   const fields = { ...body };

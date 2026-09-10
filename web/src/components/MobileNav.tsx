@@ -16,29 +16,39 @@ export function MobileNav(): JSX.Element {
   const { sessions } = useSessions();
 
   return (
-    <div className="mobile-nav">
-      <span
+    <nav className="mobile-nav" aria-label="Main navigation">
+      <button
+        type="button"
+        aria-pressed={view === "overview"}
         className={`pill ${view === "overview" ? "active" : ""}`}
         onClick={() => setView("overview")}
       >
         Overview
-      </span>
-      <span
+      </button>
+      <button
+        type="button"
+        aria-pressed={view === "focus"}
         className={`pill ${view === "focus" ? "active" : ""}`}
         onClick={() => setView("focus")}
       >
         Focus
-      </span>
-      <span
+      </button>
+      <button
+        type="button"
+        aria-pressed={view === "entries"}
         className={`pill ${view === "entries" ? "active" : ""}`}
         onClick={() => setView("entries")}
       >
         Entries
-      </span>
+      </button>
       {sessions
         .filter((s) => s.status === "busy" || s.status === "starting")
         .map((s) => (
-          <span
+          <button
+            type="button"
+            aria-pressed={
+              view === "session" && focusSessionId === s.instance_id
+            }
             key={s.instance_id}
             className={`pill ${
               view === "session" && focusSessionId === s.instance_id
@@ -49,11 +59,15 @@ export function MobileNav(): JSX.Element {
           >
             <span
               className="live-dot"
-              style={{ display: "inline-block", verticalAlign: "middle", marginRight: 4 }}
+              style={{
+                display: "inline-block",
+                verticalAlign: "middle",
+                marginRight: 4,
+              }}
             />
             {s.title || s.task_id || s.instance_id.slice(0, 8)}
-          </span>
+          </button>
         ))}
-    </div>
+    </nav>
   );
 }

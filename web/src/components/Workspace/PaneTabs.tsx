@@ -21,6 +21,7 @@
  * entity actions, so the menu is built directly with useContextMenu
  * rather than the lib/actions registry.
  */
+import { useIsMobile } from "../../hooks/useIsMobile";
 import React, { useCallback, useEffect, useState } from "react";
 import type { DockNode } from "../../lib/dock";
 import { useWorkspace } from "../../store/workspace";
@@ -48,6 +49,7 @@ export function PaneTabs({
     dockId === "focus" ? setFocusActiveTab : setSidebarActiveTab;
   const closeLeaf = dockId === "focus" ? closeFocusLeaf : closeSidebarLeaf;
   const moveLeaf = dockId === "focus" ? moveFocusLeaf : moveSidebarLeaf;
+  const mobile = useIsMobile();
   const ctx = useContextMenu();
   const { dragActive, drop } = useDockDrop(dockId);
   const [stripOver, setStripOver] = useState(false);
@@ -147,6 +149,15 @@ export function PaneTabs({
           />
         ))}
       </div>
+      {mobile && active && (
+        <button
+          type="button"
+          className="mobile-pane-actions"
+          onClick={(e) => openTabMenu(e, active.id, active.leaf.title)}
+        >
+          Pane actions ⋯
+        </button>
+      )}
       <div className="p2-pane-tabs__body">
         {active && (
           <PaneLeaf

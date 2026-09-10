@@ -1,3 +1,4 @@
+import { useIsMobile } from "../../hooks/useIsMobile";
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../lib/auth";
@@ -18,6 +19,7 @@ import { database } from "../../lib/offline/client";
 import type { CachedEntry } from "../../lib/offline/model";
 
 export function OfflineSync() {
+  const mobile = useIsMobile();
   const auth = useAuth((s) => s.status);
   const token = useAuth((s) => s.token);
   const previousScope = useRef(localStorage.getItem("brain.offline.scope"));
@@ -75,9 +77,10 @@ export function OfflineSync() {
     };
   }, [auth, token, query]);
   useEffect(() => {
-    if (!state.ready) return;
+    if (!state.ready && offlineAvailable()) return;
     for (const key of ["entries", "projects", "automations"])
       void query.invalidateQueries({ queryKey: [key] });
+    if (!offlineAvailable()) return;
     const scope = localStorage.getItem("brain.offline.scope");
     void cachedList({ type: "task" })
       .then((all) => {
@@ -120,7 +123,7 @@ export function OfflineSync() {
       .catch((e) => setMessage(String(e)));
   }, [state.generation, state.ready, state.online, query]);
   useEffect(() => {
-    if (!editorOpen || !state.ready) return;
+    if (!editorOpen || (!state.ready && offlineAvailable())) return;
     let cancelled = false;
     void cachedList({
       editorFilter: filter,
@@ -178,7 +181,7 @@ export function OfflineSync() {
           dialog.current?.showModal();
         }}
       >
-        Offline sync ·{" "}
+        {mobile ? "Sync · " : "Offline sync · "}
         {!offlineAvailable()
           ? "Online only"
           : state.syncing
@@ -203,10 +206,12 @@ export function OfflineSync() {
           </button>
         </div>
         <p role="status">
-          {state.ready
-            ? "All entries from this server are stored on this device. Changes sync when connected."
-            : "Connect to download entries before offline use."}{" "}
-          {state.pending.length} pending edits.
+          {!offlineAvailable()
+            ? "Online mode: changes save directly to the server. Offline editing requires persistent browser storage."
+            : state.ready
+              ? "All entries from this server are stored on this device. Changes sync when connected."
+              : "Connect to download entries before offline use."}{" "}
+          {offlineAvailable() ? `${state.pending.length} pending edits.` : "Local pending edits cannot be checked in this mode."}
         </p>
         <p>
           Runner controls, execution, moves, and deletion require a connection.
@@ -220,7 +225,7 @@ export function OfflineSync() {
         )}
         <button
           className="btn"
-          disabled={state.syncing}
+          disabled={state.syncing || !offlineAvailable()}
           onClick={() => void syncNow()}
         >
           Sync now
@@ -366,13 +371,15 @@ export function OfflineSync() {
                     setEditingRevision(saved.revision);
                     setEditingLocalID(saved.local_revision ?? "");
                     setMessage(
-                      "Saved on this device; awaiting server validation and sync.",
+                      offlineAvailable()
+                        ? "Saved on this device; awaiting server validation and sync."
+                        : "Saved to the server.",
                     );
                   })
                   .catch((e) => setMessage(String(e)))
               }
             >
-              Save locally
+              {offlineAvailable() ? "Save locally" : "Save to server"}
             </button>{" "}
             <button className="btn" onClick={exportDraft}>
               Export draft

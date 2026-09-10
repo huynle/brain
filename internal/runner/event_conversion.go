@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -9,23 +10,25 @@ import (
 
 // runnerEventTypeMap maps RunnerEventType values to unified namespaced event type strings.
 var runnerEventTypeMap = map[RunnerEventType]string{
-	EventTaskStarted:       types.EventTaskStarted,
-	EventTaskCompleted:     types.EventTaskCompleted,
-	EventTaskFailed:        types.EventTaskFailed,
-	EventTaskCancelled:     types.EventTaskCancelled,
-	EventTaskClaimed:       types.EventTaskClaimed,
-	EventTaskClaimRejected: types.EventTaskClaimRejected,
-	EventTaskStatusChanged: types.EventTaskStatusChanged,
-	EventTaskReleased:      types.EventTaskReleased,
-	EventRunnerStarted:     types.EventRunnerStarted,
-	EventShutdown:          types.EventRunnerStopped,
-	EventProjectPaused:     types.EventProjectPaused,
-	EventProjectResumed:    types.EventProjectResumed,
-	EventPollComplete:      types.EventRunnerPollComplete,
-	EventStateSaved:        types.EventRunnerStateSaved,
-	EventAllPaused:         types.EventRunnerAllPaused,
-	EventAllResumed:        types.EventRunnerAllResumed,
-	EventSessionDiscovered: types.EventRunnerSessionDiscovered,
+	EventTaskResourceSample:   types.EventTaskResourceSample,
+	EventTaskResourcePressure: types.EventTaskResourcePressure,
+	EventTaskStarted:          types.EventTaskStarted,
+	EventTaskCompleted:        types.EventTaskCompleted,
+	EventTaskFailed:           types.EventTaskFailed,
+	EventTaskCancelled:        types.EventTaskCancelled,
+	EventTaskClaimed:          types.EventTaskClaimed,
+	EventTaskClaimRejected:    types.EventTaskClaimRejected,
+	EventTaskStatusChanged:    types.EventTaskStatusChanged,
+	EventTaskReleased:         types.EventTaskReleased,
+	EventRunnerStarted:        types.EventRunnerStarted,
+	EventShutdown:             types.EventRunnerStopped,
+	EventProjectPaused:        types.EventProjectPaused,
+	EventProjectResumed:       types.EventProjectResumed,
+	EventPollComplete:         types.EventRunnerPollComplete,
+	EventStateSaved:           types.EventRunnerStateSaved,
+	EventAllPaused:            types.EventRunnerAllPaused,
+	EventAllResumed:           types.EventRunnerAllResumed,
+	EventSessionDiscovered:    types.EventRunnerSessionDiscovered,
 
 	// Feature lifecycle events.
 	EventFeatureStarted:   types.EventFeatureStarted,
@@ -70,6 +73,10 @@ func (re RunnerEvent) ToEvent() types.Event {
 
 	// Populate Metadata for fields that don't have direct Event counterparts.
 	meta := make(map[string]string)
+	if re.Resource != nil {
+		b, _ := json.Marshal(re.Resource)
+		meta["resource"] = string(b)
+	}
 
 	if re.Reason != "" {
 		// Reason has both a top-level Event field AND a metadata mirror.

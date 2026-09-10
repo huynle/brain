@@ -114,6 +114,7 @@ func retirementUpdate(req types.UpdateEntryRequest) bool {
 		return false
 	}
 	req.Status, req.Note = nil, nil
+	req.ExpectedRevision = ""
 	// Fail closed when any other field is supplied, including future fields.
 	return reflect.ValueOf(req).IsZero()
 }

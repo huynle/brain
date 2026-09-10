@@ -30,6 +30,7 @@ var _ AttachmentDerivedChangeHook = (*BrainServiceImpl)(nil)
 
 // BrainServiceImpl implements api.BrainService using filesystem + SQLite storage.
 type BrainServiceImpl struct {
+	mutationMu      sync.Mutex // serializes conditional API writes and append operations
 	config          *config.Config
 	storage         *storage.TenantStore
 	indexer         *indexer.Indexer
@@ -375,6 +376,7 @@ func (s *BrainServiceImpl) Recall(ctx context.Context, pathOrID string, include 
 	}
 
 	entry := NoteRowToBrainEntry(row)
+	entry.Revision = s.entryRevision(ctx, row)
 	if wantsAttachmentMetadata(include) {
 		if err := s.enrichEntryAttachmentMetadata(ctx, &entry); err != nil {
 			return nil, err
@@ -780,6 +782,9 @@ func updateRequestTouchedFields(req types.UpdateEntryRequest) map[string]bool {
 
 // Update modifies an existing brain entry.
 func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+	s.mutationMu.Lock()
+	unlock := sync.OnceFunc(s.mutationMu.Unlock)
+	defer unlock()
 	// Resolve the entry
 	row, err := s.resolveEntry(ctx, pathOrID)
 	if err != nil {
@@ -787,6 +792,15 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 	if row == nil {
 		return nil, api.ErrNotFound
+	}
+
+	if err := s.checkEntryRevision(ctx, row, req.ExpectedRevision); err != nil {
+		return nil, err
+	}
+	if req.ExpectedRevision != "" {
+		if err := s.validateDependencyUpdate(ctx, row, req); err != nil {
+			return nil, err
+		}
 	}
 
 	// Read file from disk
@@ -1127,6 +1141,7 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	// schedule, max_runs, etc. silently revert in the DB metadata even though
 	// the markdown file has the new value.
 	runtimeKeys := []string{
+		"delivery_verification",
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
 		"starts_at", "expires_at", "run_once_at", "timezone",
@@ -1177,6 +1192,7 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		_, _ = s.storage.MergeMetadata(ctx, row.Path, preservedFields)
 	}
 
+	unlock()
 	// Post-update: auto-create/update feature_schedule gate task if feature schedule fields are set
 	if fm.Type == "task" && fm.FeatureID != "" {
 		schedFields, hasFeatureSched := extractFeatureScheduleFromUpdate(req)
@@ -1743,6 +1759,8 @@ var durableMetadataFields = map[string]bool{
 // note, append), the changes are also written back to the markdown file on disk
 // and the file is re-indexed.
 func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	row, err := s.resolveEntry(ctx, pathOrID)
 	if err != nil {
 		return nil, err
@@ -1750,6 +1768,17 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 	if row == nil {
 		return nil, api.ErrNotFound
 	}
+	if expected, ok := fields["expected_revision"]; ok {
+		value, ok := expected.(string)
+		if !ok || value == "" {
+			return nil, fmt.Errorf("%w: expected_revision must be a nonempty string", api.ErrInvalidInput)
+		}
+		if err := s.checkEntryRevision(ctx, row, value); err != nil {
+			return nil, err
+		}
+		delete(fields, "expected_revision")
+	}
+
 	if !retirementMetadata(fields) {
 		if err := validateMetadataGitRemote(ctx, s.storage, row, fields); err != nil {
 			return nil, err
@@ -2022,6 +2051,7 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	// schedule, starts_at, max_runs, etc. silently revert in the DB metadata
 	// even though the file has the new value.
 	runtimeKeys := []string{
+		"delivery_verification",
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
 		"starts_at", "expires_at", "run_once_at", "timezone",
@@ -2078,6 +2108,8 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 
 // Delete removes a brain entry by path or ID.
 func (s *BrainServiceImpl) Delete(ctx context.Context, pathOrID string) error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	row, err := s.resolveEntry(ctx, pathOrID)
 	if err != nil {
 		return err
@@ -2900,6 +2932,8 @@ func truncateAtBoundary(s string, limit int) string {
 // correctly before deleting the source, and treats index update failures as
 // non-fatal (they self-heal on re-index).
 func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProject string) (*types.MoveResult, error) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	if targetProject == "" {
 		return nil, fmt.Errorf("target project is required")
 	}

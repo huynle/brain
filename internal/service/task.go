@@ -810,6 +810,30 @@ func (s *TaskServiceImpl) validateClaimAndGetFeatureID(ctx context.Context, proj
 	}
 	entry := NoteRowToBrainEntry(note)
 	task := brainEntryToResolvedTask(&entry)
+	if len(entry.DependsOn) > 0 || len(entry.FeatureDependsOn) > 0 {
+		list, err := s.GetTasks(ctx, projectID)
+		if err != nil {
+			return "", err
+		}
+		entries := make([]types.BrainEntry, 0, len(list.Tasks))
+		for _, item := range list.Tasks {
+			entries = append(entries, types.BrainEntry{ID: item.ID, Title: item.Title, FeatureID: item.FeatureID, DeliveryVerification: item.DeliveryVerification})
+		}
+		lookup := BuildLookupMaps(entries)
+		for _, ref := range entry.DependsOn {
+			if dep := lookup.ByID[ResolveDep(ref, lookup)]; dep != nil && len(dep.DeliveryVerification.Unmet()) > 0 {
+				return "", fmt.Errorf("%w: dependency %s delivery evidence missing", api.ErrConflict, dep.ID)
+			}
+		}
+		for _, feature := range entry.FeatureDependsOn {
+			for _, dep := range entries {
+				if dep.FeatureID == feature && len(dep.DeliveryVerification.Unmet()) > 0 {
+					return "", fmt.Errorf("%w: feature %s delivery evidence missing", api.ErrConflict, feature)
+				}
+			}
+		}
+	}
+
 	if reason, ok := machineAffinitySatisfied(task, runnerMachineID(runner)); !ok {
 		return "", s.recordClaimPlacementDenial(ctx, projectID, taskID, runnerID, runner, reason, nil)
 	}
@@ -2289,6 +2313,17 @@ func NoteRowToBrainEntry(row *storage.NoteRow) types.BrainEntry {
 // parseMetadataIntoEntry extracts known fields from the metadata JSON map
 // into the BrainEntry struct fields.
 func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}) {
+	if raw, ok := meta["delivery_verification"]; ok {
+		b, err := json.Marshal(raw)
+		state := types.DeliveryVerification{Required: "invalid"}
+		if err == nil {
+			if json.Unmarshal(b, &state) != nil {
+				state.Required = "invalid"
+			}
+		}
+		entry.DeliveryVerification = &state
+	}
+
 	// parent_id: hierarchical parent reference
 	if v, ok := metaString(meta, "parent_id"); ok {
 		entry.ParentID = v

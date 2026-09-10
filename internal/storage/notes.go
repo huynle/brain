@@ -339,6 +339,13 @@ func buildNoteUpdate(updates map[string]interface{}) ([]string, []interface{}, e
 	setClauses := make([]string, 0, len(updates)+1)
 	args := make([]interface{}, 0, len(updates)+1)
 	for field, value := range updates {
+		if field == "metadata" {
+			// Delivery policy/evidence is service-owned. File indexing and
+			// ordinary metadata merges must neither erase nor overwrite it.
+			setClauses = append(setClauses, "metadata = CASE WHEN json_type(metadata, '$.delivery_verification') IS NOT NULL THEN json_set(?, '$.delivery_verification', json_extract(metadata, '$.delivery_verification')) ELSE ? END")
+			args = append(args, value, value)
+			continue
+		}
 		setClauses = append(setClauses, field+" = ?")
 		args = append(args, value)
 	}

@@ -504,8 +504,14 @@ const (
 )
 
 // RunnerEvent is a discriminated event emitted by the runner.
+const (
+	EventTaskResourceSample   RunnerEventType = "task_resource_sample"
+	EventTaskResourcePressure RunnerEventType = "task_resource_pressure"
+)
+
 type RunnerEvent struct {
-	Type RunnerEventType `json:"type"`
+	Resource *types.ResourceSample `json:"resource,omitempty"`
+	Type     RunnerEventType       `json:"type"`
 
 	// Populated on ALL events by emitEvent().
 	RunnerID string `json:"runnerId,omitempty"`

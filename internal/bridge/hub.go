@@ -28,7 +28,8 @@ var (
 // requests and event streams over it. Events are fanned out to browser SSE
 // subscribers via the realtime hub on topic instance:{runnerID}:{instanceID}.
 type Hub struct {
-	rt *realtime.Hub
+	rt              *realtime.Hub
+	controlObserver func(string, string, json.RawMessage)
 
 	mu    sync.Mutex
 	conns map[string]*runnerConn
@@ -699,6 +700,9 @@ func (c *runnerConn) handleFrame(f Frame) {
 
 	case FrameInstanceEvent:
 		c.trackControlEvent(f.InstanceID, f.Event)
+		if c.hub.controlObserver != nil {
+			c.hub.controlObserver(c.runnerID, f.InstanceID, f.Event)
+		}
 		c.publishEvent(f.InstanceID, "instance_event", f.Event)
 
 	case FrameStreamEvent:
@@ -806,4 +810,10 @@ func (c *runnerConn) trackControlEvent(instanceID string, raw json.RawMessage) {
 	case evt.Type == "session.updated" || evt.Type == "message.updated":
 		live.status = types.InstanceStatusBusy
 	}
+}
+
+// SetControlObserver installs a nonblocking observer before serving connections.
+// It receives the existing always-on stream, never activates transcript streams.
+func (h *Hub) SetControlObserver(observer func(string, string, json.RawMessage)) {
+	h.controlObserver = observer
 }

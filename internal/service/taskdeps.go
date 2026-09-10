@@ -183,30 +183,31 @@ func ClassifyTask(
 // copying all relevant fields.
 func brainEntryToResolvedTask(task *types.BrainEntry) types.ResolvedTask {
 	return types.ResolvedTask{
-		ID:                 task.ID,
-		Path:               task.Path,
-		Title:              task.Title,
-		Content:            task.Content,
-		Priority:           task.Priority,
-		Status:             task.Status,
-		ParentID:           task.ParentID,
-		DependsOn:          task.DependsOn,
-		Created:            task.Created,
-		Modified:           task.Modified,
-		CompletedAt:        task.CompletedAt,
-		Workdir:            task.Workdir,
-		GitRemote:          task.GitRemote,
-		GitBranch:          task.GitBranch,
-		MergeTargetBranch:  task.MergeTargetBranch,
-		MergePolicy:        task.MergePolicy,
-		MergeStrategy:      task.MergeStrategy,
-		RemoteBranchPolicy: task.RemoteBranchPolicy,
-		OpenPRBeforeMerge:  task.OpenPRBeforeMerge,
+		DeliveryVerification: task.DeliveryVerification,
+		ID:                   task.ID,
+		Path:                 task.Path,
+		Title:                task.Title,
+		Content:              task.Content,
+		Priority:             task.Priority,
+		Status:               task.Status,
+		ParentID:             task.ParentID,
+		DependsOn:            task.DependsOn,
+		Created:              task.Created,
+		Modified:             task.Modified,
+		CompletedAt:          task.CompletedAt,
+		Workdir:              task.Workdir,
+		GitRemote:            task.GitRemote,
+		GitBranch:            task.GitBranch,
+		MergeTargetBranch:    task.MergeTargetBranch,
+		MergePolicy:          task.MergePolicy,
+		MergeStrategy:        task.MergeStrategy,
+		RemoteBranchPolicy:   task.RemoteBranchPolicy,
+		OpenPRBeforeMerge:    task.OpenPRBeforeMerge,
 		// Carried so foldDeliveryMode can see an explicit delivery_mode.
 		// Dropping it here made every feature fold to "none" (or fall back
 		// to the merge_policy bridge), so an explicit delivery_mode:mr was
 		// ignored end-to-end — the feature-git-delivery mr-mode bug.
-		DeliveryMode:       task.DeliveryMode,
+		DeliveryMode: task.DeliveryMode,
 		// Carried so foldCheckoutMode can see it. Dropping it here made
 		// every feature fold to "ai" regardless of configuration, which is
 		// the other half of the bug fixed in parseMetadataIntoEntry.
@@ -286,6 +287,8 @@ func ResolveDependencies(tasks []types.BrainEntry) *types.TaskListResponse {
 	for _, task := range tasks {
 		if inCycle[task.ID] {
 			effectiveStatus[task.ID] = "circular"
+		} else if len(task.DeliveryVerification.Unmet()) > 0 {
+			effectiveStatus[task.ID] = "blocked"
 		} else {
 			effectiveStatus[task.ID] = task.Status
 		}

@@ -548,6 +548,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// Created before the goal service so the goal steerer can reuse the same
 	// in-process control plumbing (instance registry + bridge proxy).
 	bridgeHub := bridge.NewHub(hub)
+	wireSupervisorControlEvents(ctx, bridgeHub, runnerRegistrySvc, eventSvc)
 
 	// ─── Live context injector (resume-with-context) ───────────────
 	// Wire the task service's LiveInjector to the same instance-registry +
@@ -631,6 +632,9 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithAttachmentService(attachmentSvc),
 		api.WithTaskService(taskSvc),
 		api.WithBulkJobService(bulkSvc),
+		api.WithSupervisorOperations(store),
+		api.WithExecutionBudgets(store),
+		api.WithSupervisorCheckpoints(store),
 		api.WithRunnerService(runnerSvc),
 		api.WithRunnerRegistryService(runnerRegistrySvc),
 		api.WithClientContextService(clientContextSvc),

@@ -233,9 +233,10 @@ type TaskRunner struct {
 
 	// admission caches the host-memory and opencode.db probes behind
 	// spawnAdmission (memory_guard.go).
-	admission  admissionState
-	processMgr TaskProcessManager
-	stateMgr   TaskStateManager
+	admission      admissionState
+	resourceHealth resourceHealthState
+	processMgr     TaskProcessManager
+	stateMgr       TaskStateManager
 
 	// Mutable state (protected by mu)
 	mu               sync.RWMutex

@@ -1,3 +1,5 @@
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../../lib/api";
 import { useOffline } from "../../lib/offline/sync";
 /**
  * EntryReader — the reading surface for one Brain entry.
@@ -29,7 +31,7 @@ import { useUI } from "../../store/ui";
 import { relativeTime, statusLabel } from "../../lib/format";
 import { entryProject, extractHeadings } from "../../lib/entries";
 import { collectInlinedAttachmentIds } from "../../lib/attachments";
-import type { BrainEntry } from "../../lib/types";
+import type { AttachmentReference, BrainEntry } from "../../lib/types";
 
 function entryDotVariant(status: string): DotVariant {
   switch (status) {
@@ -107,7 +109,39 @@ function LoadedReader({
     () => extractHeadings(entry.content || ""),
     [entry.content],
   );
-  const attachments = entry.attachments ?? [];
+  const storedAttachments = entry.attachments ?? [];
+  // Indexed offline entries contain references, but download URLs are enriched
+  // by the authenticated entry API. Enrich only this entry’s references without
+  // replacing its potentially unsynced local content.
+  const liveAttachments = useQuery({
+    queryKey: [
+      "entry-attachment-details",
+      entry.path,
+      storedAttachments.map((a) => a.id).join(","),
+    ],
+    enabled:
+      storedAttachments.some((a) => !a.download_url) &&
+      !entry.path.startsWith("local/"),
+    staleTime: 60_000,
+    queryFn: () =>
+      api<{ attachments: AttachmentReference[] }>(
+        `/api/v1/entries/${entry.path.split("/").map(encodeURIComponent).join("/")}`,
+        { query: { include: "attachments" } },
+      ),
+  });
+  const attachments = storedAttachments.map((a) => {
+    const live = liveAttachments.data?.attachments?.find(
+      (item) => item.id === a.id,
+    );
+    return live
+      ? {
+          ...live,
+          ...a,
+          download_url: live.download_url,
+          derived_text: live.derived_text ?? a.derived_text,
+        }
+      : a;
+  });
   // Anything the body already shows inline is not repeated in the strip.
   const inlinedIds = useMemo(
     () => collectInlinedAttachmentIds(entry.content || "", attachments),

@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import { viteStaticCopy } from "vite-plugin-static-copy";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { fileURLToPath, URL } from "node:url";
@@ -48,6 +49,12 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    viteStaticCopy({
+      targets: ["cmaps", "standard_fonts", "wasm"].map((dir) => ({
+        src: `node_modules/pdfjs-dist/${dir}`,
+        dest: "assets/pdf",
+      })),
+    }),
     VitePWA({
       // "prompt" holds a new build in the SW "waiting" state and fires
       // onNeedRefresh, so we can show an "Update available — Reload" banner
@@ -88,7 +95,11 @@ export default defineConfig({
         // routes pure-diagram chunks to assets/diagram/. Matching on names
         // like "**/chunk-*" once excluded the app's own entry bundle and
         // silently broke offline start-up.
-        globIgnores: ["**/assets/diagram/**"],
+        globIgnores: [
+          "**/assets/diagram/**",
+          "**/assets/pdf/**",
+          "**/assets/pdf.worker*.mjs",
+        ],
         // API responses are real-time; never serve them from the SW cache.
         runtimeCaching: [
           {
@@ -172,6 +183,14 @@ export default defineConfig({
         // so this can shrink the install payload but never break offline.
         chunkFileNames(chunk) {
           const ids = chunk.moduleIds ?? [];
+          if (
+            ids.length &&
+            ids.every(
+              (id) =>
+                id.includes("pdfjs-dist") || id.endsWith("/PdfPreview.tsx"),
+            )
+          )
+            return "assets/pdf/[name]-[hash].js";
           if (process.env.DIAG_DEBUG) {
             const miss = ids.filter((id) => !DIAGRAM_DEPS.test(id));
             if (miss.length && ids.length > 1) {

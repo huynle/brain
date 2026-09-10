@@ -8,6 +8,8 @@ import {
 import { api, getBacklinks, getOutlinks } from "./lib/api";
 import { useAuth } from "./lib/auth";
 import { Login } from "./pages/Login";
+import { EntryAttachments } from "./components/Workspace/EntryAttachments";
+import { collectInlinedAttachmentIds } from "./lib/attachments";
 import { EntryMarkdown } from "./components/Workspace/EntryMarkdown";
 import type { BrainEntry } from "./lib/types";
 import { readerHref, readerLink } from "./lib/readerLinks";
@@ -98,6 +100,13 @@ function Document({ entryRef }: { entryRef: string }) {
           attachments={e.attachments}
           standalone
           linkHref={(href) => readerLink(href, e.path, location.origin)}
+        />
+        <EntryAttachments
+          attachments={e.attachments ?? []}
+          inlinedIds={collectInlinedAttachmentIds(
+            e.content || "",
+            e.attachments ?? [],
+          )}
         />
       </article>
       <footer aria-label="Entry connections">

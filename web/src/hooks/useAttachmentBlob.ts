@@ -11,14 +11,17 @@ import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchAttachmentObjectURL } from "../lib/api";
 
-export function useAttachmentBlob(downloadUrl: string | undefined) {
+export function useAttachmentBlob(
+  downloadUrl: string | undefined,
+  enabled = true,
+) {
   const qc = useQueryClient();
   const key = ["attachment", "blob", downloadUrl ?? ""];
 
   const q = useQuery({
     queryKey: key,
     queryFn: () => fetchAttachmentObjectURL(downloadUrl!),
-    enabled: !!downloadUrl,
+    enabled: enabled && !!downloadUrl,
     // Bytes are content-addressed by sha256 upstream; an attachment's
     // content never changes under a stable id, so never refetch.
     staleTime: Infinity,
@@ -49,5 +52,6 @@ export function useAttachmentBlob(downloadUrl: string | undefined) {
     url: q.data ?? null,
     loading: q.isPending && q.fetchStatus !== "idle",
     error: q.error,
+    load: async () => (await q.refetch({ throwOnError: true })).data,
   };
 }

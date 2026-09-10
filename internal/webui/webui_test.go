@@ -175,3 +175,9 @@ func TestWasmContentType(t *testing.T) {
 		t.Fatalf("WASM streaming compilation requires application/wasm, got %q", got)
 	}
 }
+
+func TestModuleJavaScriptContentType(t *testing.T) {
+	if got := contentTypeFor("/assets/pdf.worker.min-test.mjs"); got != "text/javascript; charset=utf-8" {
+		t.Fatalf("module worker MIME = %q", got)
+	}
+}

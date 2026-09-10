@@ -3,7 +3,7 @@
  *
  * Bytes arrive as an object URL (auth-gated fetch, see useAttachmentBlob),
  * so this handles the three states a plain <img> cannot: still fetching,
- * failed, and loaded. Clicking opens the full-size image in a new tab.
+ * failed, and loaded. Clicking opens the full-size image in an in-page dialog.
  *
  * SVG goes through <img> like everything else rather than being inlined
  * into the DOM. An entry body is agent-written content, and an inlined
@@ -14,6 +14,8 @@
  * in a <p>, and a block element there is invalid nesting that makes the
  * browser close the paragraph early and wreck the layout around it.
  */
+import { useState } from "react";
+import { AttachmentPreview } from "./AttachmentPreview";
 import { useAttachmentBlob } from "../../hooks/useAttachmentBlob";
 import { attachmentLabel } from "../../lib/attachments";
 import type { AttachmentReference } from "../../lib/types";
@@ -29,6 +31,8 @@ export function AttachmentImage({
 }): JSX.Element {
   const { url, loading, error } = useAttachmentBlob(attachment.download_url);
   const label = attachmentLabel(attachment);
+  const [open, setOpen] = useState(false);
+  const show = () => (onOpen ? onOpen(url!) : setOpen(true));
 
   if (error) {
     return (
@@ -47,13 +51,30 @@ export function AttachmentImage({
     );
   }
   return (
-    <img
-      className={`att-image ${className}`}
-      src={url}
-      alt={label}
-      title={`${label} — click to open full size`}
-      loading="lazy"
-      onClick={() => (onOpen ? onOpen(url) : window.open(url, "_blank"))}
-    />
+    <>
+      {" "}
+      <img
+        className={`att-image ${className}`}
+        src={url}
+        alt={label}
+        title={`${label} — click to preview full size`}
+        loading="lazy"
+        role="button"
+        tabIndex={0}
+        onClick={show}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            show();
+          }
+        }}
+      />
+      {open && (
+        <AttachmentPreview
+          attachment={attachment}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
   );
 }

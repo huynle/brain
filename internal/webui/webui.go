@@ -162,7 +162,7 @@ func contentTypeFor(upath string) string {
 		return "application/wasm"
 	case strings.HasSuffix(upath, ".webmanifest"):
 		return "application/manifest+json"
-	case strings.HasSuffix(upath, ".js"):
+	case strings.HasSuffix(upath, ".js"), strings.HasSuffix(upath, ".mjs"):
 		return "text/javascript; charset=utf-8"
 	case strings.HasSuffix(upath, ".css"):
 		return "text/css; charset=utf-8"

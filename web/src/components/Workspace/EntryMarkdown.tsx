@@ -24,6 +24,7 @@
 import React, { useId, useMemo } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { AttachmentLink } from "./AttachmentPreview";
 import { AttachmentImage } from "./AttachmentImage";
 import { MermaidDiagram } from "./MermaidDiagram";
 import {
@@ -114,6 +115,24 @@ export function EntryMarkdown({
         href?: string;
         children?: React.ReactNode;
       }) => {
+        const origin =
+          typeof window === "undefined" ? "" : window.location.origin;
+        const direct = attachments?.find(
+          (a) =>
+            a.download_url &&
+            (a.download_url === href ||
+              (href?.startsWith(origin + "/") &&
+                origin + a.download_url === href)),
+        );
+        const matched = direct
+          ? { attachment: direct }
+          : resolveAttachmentSrc(href, attachments);
+        if (matched && "attachment" in matched)
+          return (
+            <AttachmentLink attachment={matched.attachment}>
+              {children}
+            </AttachmentLink>
+          );
         const readerTarget = linkHref?.(href || "");
         if (readerTarget !== undefined)
           return <a href={readerTarget}>{children}</a>;

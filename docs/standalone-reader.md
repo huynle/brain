@@ -56,3 +56,29 @@ request's host and protocol, honoring `X-Forwarded-Proto: https` for TLS proxies
 These request values are link-display hints only and never change authenticated
 API request destinations. A proxy that rewrites the public Host header should
 use an explicit `base_url`. The link grants no access or authentication token.
+
+## In-page attachment previews
+
+Both the dashboard and standalone reader open attachment images, Markdown
+attachment links, and file-row Preview buttons in an accessible dialog. Escape,
+Close, or clicking the backdrop returns to the document and restores focus.
+Images, PDFs (with previous/next page controls), browser-supported audio/video,
+and text are supported. HTML is displayed as literal text; SVG is an inert image.
+Other formats, damaged PDFs, and password-protected PDFs offer a download.
+Text previews are limited to 1 MiB. PDFs render one page at a time using PDF.js;
+its worker, fonts, character maps, and codecs are hosted locally and loaded on
+demand, excluded from the initial PWA precache. Attachment bytes use the existing
+authenticated fetch and memory cache; this does not add durable offline binary
+storage. Download remains available separately.
+
+Build with `just web-build` then `just build`. Run
+`BRAIN_READER_TEST_URL=http://localhost:3334 npm run test:attachment-preview`
+from `web/` against a ready, isolated local server. It seeds a scratch entry and
+attachments and checks images, actual rendered PDF pixels and page navigation,
+text/HTML, downloads, keyboard focus, mobile fit, and dashboard integration.
+Fixtures and screenshots are retained for inspection. Web unit tests (1,174),
+embedded handler tests, and the standalone reader browser regression also pass.
+Audio/video playback depends on browser codecs and was not exercised by this
+fixture suite. The current preview demo uses a fresh data root at
+`~/.local/state/brain-attachment-demo` on port 3334; the older port 3333 demo
+reported a malformed SQLite database and was left intact for separate repair.

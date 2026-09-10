@@ -1817,8 +1817,8 @@ func TestTaskToolsDoNotOverlapBrainTools(t *testing.T) {
 	RegisterBrainTools(s, client)
 
 	brainToolCount := len(s.tools)
-	if brainToolCount != 35 {
-		t.Errorf("expected 35 brain tools, got %d", brainToolCount)
+	if brainToolCount != 36 {
+		t.Errorf("expected 36 brain tools, got %d", brainToolCount)
 	}
 
 	RegisterTaskTools(s, client)

@@ -38,3 +38,21 @@ Verified locally: seven browser scenarios, 1,173 web tests, the 13-scenario
 offline sync regression suite, the embedded web handler tests, and the combined
 web/Go build passed. The auth gate test simulates an unauthorized response; a
 full hosted OAuth login and production deployment have not been exercised.
+
+## MCP link generation
+
+Call `reader_url` with `{"path":"abcdefgh"}` or a full entry path. The tool
+verifies the entry through the connected API and returns JSON containing `id`,
+`path`, `title`, and `reader_url`, using the canonical path in the link.
+
+An optional `base_url`, such as `https://brain.huynle.com` or
+`http://localhost:3333`, chooses the link's origin. Only HTTP(S) origins without
+credentials, additional paths, queries, or fragments are accepted. The override
+is used solely for link generation: it is never contacted, and availability of
+the entry or reader build on that other deployment is not verified.
+
+By default, stdio MCP uses its configured API origin; HTTP MCP uses the incoming
+request's host and protocol, honoring `X-Forwarded-Proto: https` for TLS proxies.
+These request values are link-display hints only and never change authenticated
+API request destinations. A proxy that rewrites the public Host header should
+use an explicit `base_url`. The link grants no access or authentication token.

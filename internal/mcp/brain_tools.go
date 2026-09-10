@@ -16,6 +16,7 @@ import (
 // and attachment tools on the server.
 func RegisterBrainTools(s *Server, client *APIClient) {
 	RegisterSyncTools(s, client)
+	registerReaderURL(s, client)
 	registerBrainSave(s, client)
 	registerBrainRecall(s, client)
 	registerBrainSearch(s, client)

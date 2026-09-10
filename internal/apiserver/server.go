@@ -581,6 +581,13 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		Runner:    runnerSvc,
 		Runners:   runnerRegistrySvc,
 		Events:    eventSvc,
+		// Give the UI assistant the FULL Brain MCP tool set by pointing it at
+		// this same server's loopback address. Its tool calls are made over
+		// HTTP with the caller's own bearer token forwarded, mirroring the MCP
+		// HTTP transport. Scheme must match the listener (TLS ⇒ https) so the
+		// callback doesn't hit the TLS listener as plain HTTP; the self-signed
+		// cert is trusted for loopback earlier in RunServer.
+		MCPBaseURL: assistantMCPBaseURL(opts),
 	})
 	go goalSvc.Start(ctx, eventHub)
 
@@ -742,4 +749,17 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// the SPA + static assets for browser navigations and delegates all API,
 	// OAuth, MCP, and well-known routes back to the router untouched.
 	return webui.Handler(router), dbPath, cleanup, nil
+}
+
+// assistantMCPBaseURL builds the loopback base URL (no /api/v1 suffix) the UI
+// assistant uses to reach this same server's REST API when executing the
+// full Brain MCP tool set. Scheme tracks the listener: TLS ⇒ https so the
+// callback validates against the self-signed cert trusted for loopback rather
+// than hitting the TLS listener as plain HTTP.
+func assistantMCPBaseURL(opts ServerOptions) string {
+	scheme := "http"
+	if opts.TLSCert != "" && opts.TLSKey != "" {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://localhost:%d", scheme, opts.Port)
 }

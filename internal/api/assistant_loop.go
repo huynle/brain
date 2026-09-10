@@ -92,7 +92,7 @@ func (s *AssistantService) runAgentLoop(
 		// Non-OpenRouter planners fall back to the legacy single-shot behavior.
 		return s.runLegacyLoop(ctx, req, emit)
 	}
-	tools := ListToolDefinitions()
+	tools := s.toolDefinitions(assistantTokenFromContext(ctx))
 	index := toolIndex(tools)
 	schemas := buildToolSchemas(tools)
 	model := firstNonEmptyString(req.Model, s.model)

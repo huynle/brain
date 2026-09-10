@@ -131,6 +131,28 @@ func (s *Server) RegisterTool(tool Tool, handler ToolHandler) {
 	s.tools[tool.Name] = registeredTool{tool: tool, handler: handler}
 }
 
+// RegisteredTool is the exported view of a registered tool: its definition
+// plus the handler that executes it. It lets callers outside this package
+// (e.g. the in-process assistant) enumerate and adapt the full MCP tool set
+// without reimplementing every tool.
+type RegisteredTool struct {
+	Tool    Tool
+	Handler ToolHandler
+}
+
+// RegisteredTools returns a snapshot of every tool registered on this server.
+// Order is unspecified (the backing map has no order); callers that need a
+// stable ordering should sort by Tool.Name.
+func (s *Server) RegisteredTools() []RegisteredTool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]RegisteredTool, 0, len(s.tools))
+	for _, rt := range s.tools {
+		out = append(out, RegisteredTool{Tool: rt.tool, Handler: rt.handler})
+	}
+	return out
+}
+
 // JSONRPCRequest represents an incoming JSON-RPC 2.0 request or notification.
 type JSONRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`

@@ -94,7 +94,12 @@ export function OfflineSync() {
           ...all.map((e) => e.project_id).filter((p): p is string => !!p),
         ]);
         for (const project of projects) {
-          if (live.projects[project]?.connected && state.online) continue;
+          if (
+            live.projects[project]?.connected &&
+            live.projects[project]?.snapshotReceived &&
+            state.online
+          )
+            continue;
           const tasks = all
             .filter((e) => e.type === "task" && e.project_id === project)
             .map((e) => ({
@@ -105,7 +110,8 @@ export function OfflineSync() {
             })) as unknown as Task[];
           live.setProject(project, {
             tasks,
-            connected: false,
+            snapshotReceived: false,
+            connected: live.projects[project]?.connected ?? false,
             stats: undefined,
             cycles: undefined,
           });

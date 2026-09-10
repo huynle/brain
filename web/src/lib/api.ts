@@ -1,6 +1,7 @@
 import {
   cachedEntry,
   cachedList,
+  cachedSummary,
   offlineAvailable,
   queueCreate,
   queueEdit,
@@ -154,13 +155,7 @@ export const getHealth = () => api<Health>("/api/v1/health");
 
 export const getProjects = () =>
   offlineAvailable()
-    ? cachedList().then((entries) =>
-        [
-          ...new Set(
-            entries.map((e) => e.project_id).filter((p): p is string => !!p),
-          ),
-        ].sort(),
-      )
+    ? cachedSummary().then((summary) => summary.projects)
     : api<ProjectListResponse>("/api/v1/tasks").then((r) => r.projects || []);
 
 export const getTasks = (projectId: string, signal?: AbortSignal) =>
@@ -2060,13 +2055,11 @@ export async function search(req: SearchRequest): Promise<SearchResponse> {
   const local = async () => {
     const entries = await cachedList(req as unknown as Record<string, unknown>);
     return {
-      results: entries
-        .slice(0, req.limit ?? 50)
-        .map((e) => ({
-          ...e,
-          snippet: e.content.slice(0, 240),
-          match_source: "local_fts",
-        })),
+      results: entries.slice(0, req.limit ?? 50).map((e) => ({
+        ...e,
+        snippet: e.content.slice(0, 240),
+        match_source: "local_fts",
+      })),
       total: entries.length,
     };
   };
@@ -2125,9 +2118,9 @@ export const getBrainStats = (
   project?: string,
   global?: boolean,
   projects?: string,
-) =>
+): Promise<Pick<BrainStats, "totalEntries" | "byType">> =>
   offlineAvailable()
-    ? cachedList(
+    ? cachedSummary(
         projects
           ? { projects }
           : global
@@ -2135,13 +2128,7 @@ export const getBrainStats = (
             : project
               ? { project }
               : {},
-      ).then((entries) => ({
-        totalEntries: entries.length,
-        byType: entries.reduce<Record<string, number>>((counts, e) => {
-          counts[e.type] = (counts[e.type] ?? 0) + 1;
-          return counts;
-        }, {}),
-      }))
+      )
     : api<BrainStats>("/api/v1/stats", {
         query: projects
           ? { projects }

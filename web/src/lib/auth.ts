@@ -181,7 +181,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     return h;
   },
 
-  async init(lightweight = false) {
+  async init(_lightweight = false) {
     const mode = localStorage.getItem(LS.mode) as AuthMode | null;
     const { token, expiresAt } = storedToken();
 
@@ -234,10 +234,7 @@ export const useAuth = create<AuthState>((set, get) => ({
 
     // No usable token. Probe whether the server even requires auth.
     try {
-      const res = await fetch(
-        lightweight ? "/api/v1/sync/identity" : "/api/v1/tasks",
-        { headers: {} },
-      );
+      const res = await fetch("/api/v1/sync/identity", { headers: {} });
       if (res.status === 401) {
         set({ status: "needs-login", token: null, mode: null });
       } else {

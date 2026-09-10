@@ -137,6 +137,31 @@ export class EntryDatabase {
     )[0];
     return row ? JSON.parse(String(row.data)) : null;
   }
+  // Sidebar and count chips need metadata, never full Markdown/raw bodies.
+  // Keep pending drafts authoritative, including locally created entries.
+  summary(q: { project?: string; global?: boolean; projects?: string } = {}) {
+    const rows = this.rows(`SELECT path, json_extract(data,'$.type') AS type,
+      json_extract(data,'$.project_id') AS project_id FROM entries`);
+    const entries = new Map(rows.map((row) => [String(row.path), row]));
+    for (const op of this.state().pending)
+      entries.set(op.path, {
+        path: op.draft.path,
+        type: op.draft.type,
+        project_id: op.draft.project_id,
+      });
+    const projects = new Set<string>();
+    const byType: Record<string, number> = {};
+    let totalEntries = 0;
+    for (const row of entries.values()) {
+      if (!matches(row as unknown as CachedEntry, q)) continue;
+      if (typeof row.project_id === "string" && row.project_id)
+        projects.add(row.project_id);
+      const type = String(row.type);
+      byType[type] = (byType[type] ?? 0) + 1;
+      totalEntries++;
+    }
+    return { projects: [...projects].sort(), totalEntries, byType };
+  }
   list(q: Record<string, unknown> = {}): CachedEntry[] {
     let rows: Record<string, unknown>[];
     const term = String(q.query ?? "").trim();

@@ -261,3 +261,58 @@ test("Invalid MCP merged YAML leaves the pending draft intact", (t) => {
   assert.equal(s.state().pending[0].id, draft.id);
   assert.equal(s.get(seed.path)?.raw, seed.raw);
 });
+
+test("metadata summary matches scoped lists and includes pending drafts without returning bodies", (t) => {
+  const s = setup(t);
+  s.apply({
+    epoch: "e",
+    cursor: 2,
+    more: false,
+    changes: [
+      {
+        path: "global/note/g.md",
+        entry: {
+          ...seed,
+          id: "g",
+          path: "global/note/g.md",
+          project_id: undefined,
+          type: "scratch",
+        },
+        raw: seed.raw,
+      },
+    ],
+  });
+  const local = op(seed.raw);
+  local.draft = { ...local.draft, type: "task", project_id: "changed" };
+  s.queue(local);
+  s.queue({
+    ...op(seed.raw),
+    id: "new",
+    method: "POST",
+    path: "local/new",
+    draft: { ...seed, path: "local/new", id: "new", project_id: "new" },
+  });
+  for (const q of [
+    {},
+    { project: "demo" },
+    { project: "changed" },
+    { global: true },
+    { projects: "changed,global" },
+  ]) {
+    const entries = s.list(q);
+    const summary = s.summary(q);
+    assert.equal(summary.totalEntries, entries.length);
+    assert.deepEqual(
+      summary.projects,
+      [...new Set(entries.map((e) => e.project_id).filter(Boolean))].sort(),
+    );
+    assert.deepEqual(
+      summary.byType,
+      entries.reduce<Record<string, number>>((counts, e) => {
+        counts[e.type] = (counts[e.type] ?? 0) + 1;
+        return counts;
+      }, {}),
+    );
+    assert.ok(!JSON.stringify(summary).includes("ocean bird"));
+  }
+});

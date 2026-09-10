@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Brain PWA — a mobile-installable web interface mirroring the Brain TUI.",
+  "description": "Brain PWA \u2014 a mobile-installable web interface mirroring the Brain TUI.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -13,7 +13,8 @@
     "test:offline": "node scripts/verify-offline.mjs",
     "test:sync-mcp": "node scripts/verify-sync-mcp.mjs",
     "test:reader": "node scripts/verify-reader.mjs",
-    "test:attachment-preview": "node scripts/verify-attachment-preview.mjs"
+    "test:attachment-preview": "node scripts/verify-attachment-preview.mjs",
+    "test:cached-startup": "node scripts/verify-cached-startup.mjs"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",

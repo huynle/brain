@@ -26,6 +26,7 @@ export const useOffline = create<{
   generation: 0,
 }));
 let active: Promise<void> | undefined;
+let lastStateFingerprint = "";
 const channel =
   typeof window !== "undefined" && typeof BroadcastChannel !== "undefined"
     ? new BroadcastChannel("brain-entry-sync")
@@ -45,10 +46,13 @@ export async function refreshState() {
   const scope = cacheScope();
   const state = await databaseFor<SyncState>(scope, "state");
   if (!offlineAvailable() || cacheScope() !== scope) return;
+  const fingerprint = JSON.stringify([scope, state]);
+  const changed = fingerprint !== lastStateFingerprint;
+  lastStateFingerprint = fingerprint;
   useOffline.setState((s) => ({
     ready: state.ready,
     pending: state.pending,
-    generation: s.generation + 1,
+    generation: s.generation + (changed ? 1 : 0),
   }));
 }
 async function pull(db: typeof database = database, scope = cacheScope()) {
@@ -246,7 +250,7 @@ export async function syncNow(): Promise<void> {
     });
   return active;
 }
-export async function cachedList(q: Record<string, unknown> = {}) {
+async function ensureCacheReady() {
   let state = await database<SyncState>("state");
   if (!state.ready) {
     await syncNow();
@@ -254,7 +258,20 @@ export async function cachedList(q: Record<string, unknown> = {}) {
   }
   if (!state.ready)
     throw new Error("Connect once to download entries for offline use.");
+}
+export async function cachedList(q: Record<string, unknown> = {}) {
+  await ensureCacheReady();
   return database<CachedEntry[]>("list", q);
+}
+export async function cachedSummary(
+  q: { project?: string; global?: boolean; projects?: string } = {},
+) {
+  await ensureCacheReady();
+  return database<{
+    projects: string[];
+    totalEntries: number;
+    byType: Record<string, number>;
+  }>("summary", q);
 }
 export async function cachedEntry(path: string): Promise<CachedEntry> {
   const entry = await database<CachedEntry | null>("get", path);

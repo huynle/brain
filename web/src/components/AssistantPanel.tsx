@@ -304,7 +304,8 @@ export function AssistantPanel(): JSX.Element | null {
               : "Ask about project status, generate tasks, summarize entries, or plan the next feature…"
           }
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            // Enter sends; Shift+Enter (or ⌘/Ctrl+Enter) inserts a newline.
+            if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
               e.preventDefault();
               void send();
             }
@@ -316,7 +317,7 @@ export function AssistantPanel(): JSX.Element | null {
             onClick={() => void send()}
             disabled={busy || !prompt.trim()}
           >
-            {busy ? "Sending…" : "Send  ⌘↵"}
+            {busy ? "Sending…" : "Send  ↵"}
           </button>
           {busy && (
             <button onClick={() => activeAbort?.abort()}>Stop</button>

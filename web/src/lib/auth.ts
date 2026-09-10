@@ -41,7 +41,7 @@ interface AuthState {
   token: string | null;
   mode: AuthMode | null;
   error: string | null;
-  init: () => Promise<void>;
+  init: (lightweight?: boolean) => Promise<void>;
   beginLogin: () => Promise<void>;
   loginPassword: (username: string, password: string) => Promise<void>;
   handleCallback: (code: string, state: string) => Promise<string>;
@@ -181,7 +181,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     return h;
   },
 
-  async init() {
+  async init(lightweight = false) {
     const mode = localStorage.getItem(LS.mode) as AuthMode | null;
     const { token, expiresAt } = storedToken();
 
@@ -234,7 +234,10 @@ export const useAuth = create<AuthState>((set, get) => ({
 
     // No usable token. Probe whether the server even requires auth.
     try {
-      const res = await fetch("/api/v1/tasks", { headers: {} });
+      const res = await fetch(
+        lightweight ? "/api/v1/sync/identity" : "/api/v1/tasks",
+        { headers: {} },
+      );
       if (res.status === 401) {
         set({ status: "needs-login", token: null, mode: null });
       } else {
@@ -266,7 +269,9 @@ export const useAuth = create<AuthState>((set, get) => ({
       sessionStorage.setItem(SS.state, state);
       sessionStorage.setItem(
         SS.returnTo,
-        window.location.pathname + window.location.search,
+        window.location.pathname +
+          window.location.search +
+          window.location.hash,
       );
 
       const params = new URLSearchParams({

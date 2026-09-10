@@ -150,6 +150,14 @@ function LoadedReader({
           >
             Edit definition
           </button>
+          <a
+            className="btn"
+            href={`/read.html?entry=${encodeURIComponent(entry.path)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Read only ↗
+          </a>
           {headings.length >= 2 && (
             <button
               className={`entry-act ${tocOpen ? "active" : ""}`}

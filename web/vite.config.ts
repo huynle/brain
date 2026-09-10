@@ -62,6 +62,7 @@ export default defineConfig({
       workbox: {
         navigateFallback: "/index.html",
         navigateFallbackDenylist: [
+          /^\/read(?:\.html)?(?:\?|$)/,
           /^\/api/,
           /^\/mcp/,
           /^\/token/,
@@ -98,7 +99,8 @@ export default defineConfig({
             // The diagram chunks excluded from precache above. Their
             // filenames are content-hashed, so they are safe to keep
             // forever once a user opens their first diagram.
-            urlPattern: ({ url }) => url.pathname.startsWith("/assets/diagram/"),
+            urlPattern: ({ url }) =>
+              url.pathname.startsWith("/assets/diagram/"),
             handler: "CacheFirst",
             options: {
               cacheName: "diagram-chunks",
@@ -151,15 +153,17 @@ export default defineConfig({
     proxy,
   },
   build: {
-    outDir: fileURLToPath(
-      new URL("../internal/webui/dist", import.meta.url),
-    ),
+    outDir: fileURLToPath(new URL("../internal/webui/dist", import.meta.url)),
     // Kept false so the committed .gitkeep/.gitignore that go:embed relies on
     // survive a build. The `just web-build` recipe clears stale assets first.
     emptyOutDir: false,
     sourcemap: false,
     chunkSizeWarningLimit: 1500,
     rollupOptions: {
+      input: {
+        app: fileURLToPath(new URL("./index.html", import.meta.url)),
+        reader: fileURLToPath(new URL("./read.html", import.meta.url)),
+      },
       output: {
         // Route chunks that are ENTIRELY diagram-engine code into their own
         // directory so the service worker can skip precaching them (see
@@ -175,8 +179,7 @@ export default defineConfig({
             }
           }
           const diagramOnly =
-            ids.length > 0 &&
-            ids.every((id) => DIAGRAM_DEPS.test(id));
+            ids.length > 0 && ids.every((id) => DIAGRAM_DEPS.test(id));
           return diagramOnly
             ? "assets/diagram/[name]-[hash].js"
             : "assets/[name]-[hash].js";

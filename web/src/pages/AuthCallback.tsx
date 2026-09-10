@@ -26,7 +26,15 @@ export function AuthCallback() {
       return;
     }
     handleCallback(code, state)
-      .then((returnTo) => navigate(returnTo, { replace: true }))
+      .then((returnTo) => {
+        const target = new URL(returnTo, window.location.origin);
+        if (
+          target.origin === window.location.origin &&
+          target.pathname === "/read.html"
+        )
+          window.location.replace(target.href);
+        else navigate(returnTo, { replace: true });
+      })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [params, handleCallback, navigate]);
 
@@ -41,7 +49,10 @@ export function AuthCallback() {
           <div className="muted" style={{ maxWidth: 340 }}>
             {error}
           </div>
-          <button className="btn primary" onClick={() => navigate("/", { replace: true })}>
+          <button
+            className="btn primary"
+            onClick={() => navigate("/", { replace: true })}
+          >
             Back to sign in
           </button>
         </div>

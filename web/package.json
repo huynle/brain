@@ -11,7 +11,8 @@
     "typecheck": "tsc -b --noEmit",
     "test": "node --import tsx --test \"src/**/*.test.ts\" \"src/**/*.test.tsx\"",
     "test:offline": "node scripts/verify-offline.mjs",
-    "test:sync-mcp": "node scripts/verify-sync-mcp.mjs"
+    "test:sync-mcp": "node scripts/verify-sync-mcp.mjs",
+    "test:reader": "node scripts/verify-reader.mjs"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",

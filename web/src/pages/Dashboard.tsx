@@ -43,6 +43,7 @@ export function Dashboard(): JSX.Element {
   const sidebarDockOpen = useWorkspace((s) => s.sidebarDockOpen);
   const drawerWidth = useWorkspace((s) => s.drawerWidth);
   const sidebarWidth = useWorkspace((s) => s.sidebarWidth);
+  const assistantWidth = useWorkspace((s) => s.assistantWidth);
   const isMobile = useIsMobile();
 
   const { data: projects, isLoading, error, refetch } = useProjects();
@@ -147,6 +148,7 @@ export function Dashboard(): JSX.Element {
   const appStyle = {
     ["--sidebar-w" as never]: `${sidebarWidth}px`,
     ["--drawer-w" as never]: `${drawerWidth}px`,
+    ["--assistant-w" as never]: `${assistantWidth}px`,
   } as React.CSSProperties;
 
   return (
@@ -161,10 +163,14 @@ export function Dashboard(): JSX.Element {
          * desktop. On mobile SidebarDock portals itself to
          * document.body instead — see SidebarDock.tsx. */}
         <SidebarDock />
+        {/* Same mount strategy as SidebarDock: a direct #app child so
+         * `grid-area: assistant` slots it in as a real grid column on
+         * desktop; on mobile it portals to document.body as a fixed
+         * overlay — see AssistantPanel.tsx. */}
+        <AssistantPanel />
       </div>
       <ModalHost />
       <CommandPalette />
-      <AssistantPanel />
     </>
   );
 }

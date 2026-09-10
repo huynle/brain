@@ -4,6 +4,7 @@ import { Route, Routes } from "react-router-dom";
 import { useAuth } from "./lib/auth";
 import { Loading } from "./components/common/Loading";
 import { BackgroundOperations } from "./components/common/BackgroundOperations";
+import { ReminderStatusPopups } from "./components/common/ReminderStatusPopups";
 import { Toasts } from "./components/common/Toasts";
 import { UpdateBanner } from "./components/common/UpdateBanner";
 import { Login } from "./pages/Login";
@@ -25,7 +26,7 @@ export function App() {
         <Route path="*" element={<Gate status={status} />} />
       </Routes>
       <Toasts />
-      <div className="background-operation-tray"><BackgroundOperations /><BulkJobs /></div>
+      <div className="background-operation-tray"><ReminderStatusPopups /><BackgroundOperations /><BulkJobs /></div>
       <UpdateBanner />
     </>
   );

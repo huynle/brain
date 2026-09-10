@@ -109,6 +109,17 @@ export function clampSidebarWidth(px: number, min = 180, max = 480): number {
   return Math.min(max, Math.max(min, px));
 }
 
+/**
+ * Clamp a requested assistant-panel width (px). Mirrors
+ * `clampDrawerWidth` so the assistant docks as a real, resizable grid
+ * column (see `body.assistant-open #app` in global.css) rather than a
+ * fixed overlay. Defaults to [300, 900].
+ */
+export function clampAssistantWidth(px: number, min = 300, max = 900): number {
+  if (!Number.isFinite(px)) return min;
+  return Math.min(max, Math.max(min, px));
+}
+
 /** A copy of `map` without `key`. Returns `map` untouched when absent, so a
  *  no-op never invalidates a zustand selector. */
 function omitKey<T>(map: Record<string, T>, key: string): Record<string, T> {
@@ -168,6 +179,10 @@ export interface WorkspaceState {
   drawerWidth: number;
   /** Persisted sidebar width in px, clamped via `clampSidebarWidth`. */
   sidebarWidth: number;
+  /** Persisted assistant-panel width in px, clamped via
+   *  `clampAssistantWidth`. The assistant docks as its own resizable
+   *  grid column beside the sidebar dock. */
+  assistantWidth: number;
   /** User theme preference. `system` follows `prefers-color-scheme`. */
   theme: "dark" | "light" | "system";
   mobile: boolean;
@@ -253,6 +268,7 @@ export interface WorkspaceState {
   toggleSidebarDockOpen(): void;
   setDrawerWidth(px: number): void;
   setSidebarWidth(px: number): void;
+  setAssistantWidth(px: number): void;
   setTheme(t: "dark" | "light" | "system"): void;
   cycleTheme(): void;
   setMobile(m: boolean): void;
@@ -448,6 +464,7 @@ export function persistedSlice(s: WorkspaceState) {
         sidebarDockOpen: s.sidebarDockOpen,
         drawerWidth: s.drawerWidth,
         sidebarWidth: s.sidebarWidth,
+        assistantWidth: s.assistantWidth,
       };
 }
 
@@ -744,6 +761,7 @@ export const useWorkspace = create<WorkspaceState>()(
         sidebarDockOpen: false,
         drawerWidth: 430,
         sidebarWidth: 250,
+        assistantWidth: 390,
         theme: "dark",
         mobile: false,
         streaming: false,
@@ -797,6 +815,8 @@ export const useWorkspace = create<WorkspaceState>()(
 
         setDrawerWidth: (px) => set({ drawerWidth: clampDrawerWidth(px) }),
         setSidebarWidth: (px) => set({ sidebarWidth: clampSidebarWidth(px) }),
+        setAssistantWidth: (px) =>
+          set({ assistantWidth: clampAssistantWidth(px) }),
 
         setTheme: (theme) => set({ theme }),
         cycleTheme: () =>

@@ -39,6 +39,7 @@ const updateSW = registerSW({
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
+      networkMode: "always",
       staleTime: 10_000,
       refetchOnWindowFocus: true,
       retry: 1,

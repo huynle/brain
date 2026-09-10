@@ -4442,3 +4442,17 @@ body[data-theme="light"] .reminder-status__acts button {
 body[data-theme="light"] .reminder-status__acts button.primary {
   background: #f4b23a; border-color: #e7b95b; color: #12161a;
 }
+
+/* Local persistence and conflict review. Native dialog supplies focus trapping. */
+.offline-sync-toggle { position: fixed; bottom: 28px; right: 12px; z-index: 90; }
+.offline-sync-dialog { width: min(780px, 94vw); max-height: 88vh; overflow: auto; padding: 22px; background: #111518; color: #d9dbde; border: 1px solid #2a2f35; }
+.offline-sync-dialog::backdrop { background: #0007; }
+.offline-sync-dialog label { display: block; margin: 12px 0; }
+.offline-sync-dialog input, .offline-sync-dialog select, .offline-sync-dialog textarea { display: block; width: 100%; padding: 8px; background: inherit; color: inherit; border: 1px solid #4b545c; }
+.offline-sync-dialog textarea { font-family: monospace; }
+.offline-sync-heading { display: flex; justify-content: space-between; align-items: center; }
+.offline-pending { border-top: 1px solid #4b545c; padding: 12px 0; }
+
+body[data-theme="light"] .offline-sync-dialog { background: #fff; color: #1b232b; border-color: #c8d0d8; }
+.offline-sync-dialog button:disabled { opacity: .55; cursor: default; }
+@media (pointer: coarse) { .offline-sync-dialog button, .offline-sync-dialog input, .offline-sync-dialog select { min-height: 44px; } }

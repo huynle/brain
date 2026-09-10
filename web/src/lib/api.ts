@@ -1,3 +1,11 @@
+import {
+  cachedEntry,
+  cachedList,
+  offlineAvailable,
+  queueCreate,
+  queueEdit,
+  useOffline,
+} from "./offline/sync";
 // Typed HTTP client for brain-api. Attaches the bearer token, transparently
 // refreshes on 401 (once), and exposes thin wrappers for the endpoints the PWA
 // uses. Task mutations go through the entries endpoint (PATCH/DELETE
@@ -145,7 +153,15 @@ export function encodeEntryPath(p: string): string {
 export const getHealth = () => api<Health>("/api/v1/health");
 
 export const getProjects = () =>
-  api<ProjectListResponse>("/api/v1/tasks").then((r) => r.projects || []);
+  offlineAvailable()
+    ? cachedList().then((entries) =>
+        [
+          ...new Set(
+            entries.map((e) => e.project_id).filter((p): p is string => !!p),
+          ),
+        ].sort(),
+      )
+    : api<ProjectListResponse>("/api/v1/tasks").then((r) => r.projects || []);
 
 export const getTasks = (projectId: string, signal?: AbortSignal) =>
   api<TaskListResponse>(`/api/v1/tasks/${encodeURIComponent(projectId)}`, {
@@ -189,13 +205,17 @@ export interface CreateEntryResponse {
 }
 
 export const createEntry = (body: CreateEntryRequest) =>
-  api<CreateEntryResponse>("/api/v1/entries", { method: "POST", body });
+  offlineAvailable()
+    ? queueCreate(body)
+    : api<CreateEntryResponse>("/api/v1/entries", { method: "POST", body });
 
 export const updateEntry = (path: string, patch: Record<string, unknown>) =>
-  api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}`, {
-    method: "PATCH",
-    body: patch,
-  });
+  offlineAvailable()
+    ? queueEdit(path, patch)
+    : api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+        method: "PATCH",
+        body: patch,
+      });
 
 export const moveEntry = (path: string, project: string) =>
   api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}/move`, {
@@ -206,17 +226,21 @@ export const moveEntry = (path: string, project: string) =>
 // Full-file (frontmatter + body) get/update — an in-app $EDITOR equivalent so
 // the PWA can edit the entire entry, not just metadata or the body.
 export const getEntryRaw = (path: string) =>
-  api<Response>(`/api/v1/entries/${encodeEntryPath(path)}`, {
-    headers: { Accept: "text/x-brain-full" },
-    raw: true,
-  }).then((r) => r.text());
+  offlineAvailable()
+    ? cachedEntry(path).then((e) => e.raw)
+    : api<Response>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+        headers: { Accept: "text/x-brain-full" },
+        raw: true,
+      }).then((r) => r.text());
 
 export const updateEntryRaw = (path: string, content: string) =>
-  api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "text/x-brain-full" },
-    rawBody: content,
-  });
+  offlineAvailable()
+    ? queueEdit(path, undefined, content)
+    : api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "text/x-brain-full" },
+        rawBody: content,
+      });
 
 // Delete a single entry. `force` bypasses the server's live-claim guard,
 // which refuses (409) to delete a task an online runner is executing.
@@ -1680,7 +1704,12 @@ export const controlSessionChildren = (
 ) =>
   api<SessionChildDescriptor[]>(
     `/api/v1/control/runners/${encodeURIComponent(runnerId)}/sessions/${encodeURIComponent(sessionId)}/children`,
-    { query: { recursive: opts?.recursive ? "true" : undefined, depth: opts?.depth } },
+    {
+      query: {
+        recursive: opts?.recursive ? "true" : undefined,
+        depth: opts?.depth,
+      },
+    },
   );
 
 export const controlSpawnInstance = (
@@ -1926,7 +1955,15 @@ export const listEntries = (query?: {
   projects?: string;
   sortBy?: "created" | "modified" | "priority" | "completed" | "title";
   sortOrder?: "asc" | "desc";
-}) => api<ListEntriesResponse>("/api/v1/entries", { query });
+}) =>
+  offlineAvailable()
+    ? cachedList(query).then((entries) => ({
+        entries: entries.slice(0, query?.limit ?? 100),
+        total: entries.length,
+        limit: query?.limit ?? 100,
+        offset: 0,
+      }))
+    : api<ListEntriesResponse>("/api/v1/entries", { query });
 
 // ─── Automations (mirrors the TUI Automations tab) ───────────────
 // Fetches all automation entries (project-scoped + global/built-in), the
@@ -2013,12 +2050,42 @@ export async function executeAutomation(
 }
 
 export const getEntry = (path: string) =>
-  api<BrainEntry>(`/api/v1/entries/${encodeEntryPath(path)}`, {
-    query: { include: "attachments" },
-  });
+  offlineAvailable()
+    ? cachedEntry(path)
+    : api<BrainEntry>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+        query: { include: "attachments" },
+      });
 
-export const search = (req: SearchRequest) =>
-  api<SearchResponse>("/api/v1/search", { method: "POST", body: req });
+export async function search(req: SearchRequest): Promise<SearchResponse> {
+  const local = async () => {
+    const entries = await cachedList(req as unknown as Record<string, unknown>);
+    return {
+      results: entries
+        .slice(0, req.limit ?? 50)
+        .map((e) => ({
+          ...e,
+          snippet: e.content.slice(0, 240),
+          match_source: "local_fts",
+        })),
+      total: entries.length,
+    };
+  };
+  if (
+    offlineAvailable() &&
+    ((req.strategy !== "semantic" && req.strategy !== "hybrid") ||
+      !useOffline.getState().online)
+  )
+    return local();
+  try {
+    return await api<SearchResponse>("/api/v1/search", {
+      method: "POST",
+      body: req,
+    });
+  } catch (e) {
+    if (offlineAvailable() && !(e instanceof ApiError)) return local();
+    throw e;
+  }
+}
 
 // ─── Entry graph (backlinks / outlinks / related) ────────────────
 // The graph routes address entries by 8-char short id (single path
@@ -2059,15 +2126,31 @@ export const getBrainStats = (
   global?: boolean,
   projects?: string,
 ) =>
-  api<BrainStats>("/api/v1/stats", {
-    query: projects
-      ? { projects }
-      : global
-        ? { global: "true" }
-        : project
-          ? { project }
-          : undefined,
-  });
+  offlineAvailable()
+    ? cachedList(
+        projects
+          ? { projects }
+          : global
+            ? { global: true }
+            : project
+              ? { project }
+              : {},
+      ).then((entries) => ({
+        totalEntries: entries.length,
+        byType: entries.reduce<Record<string, number>>((counts, e) => {
+          counts[e.type] = (counts[e.type] ?? 0) + 1;
+          return counts;
+        }, {}),
+      }))
+    : api<BrainStats>("/api/v1/stats", {
+        query: projects
+          ? { projects }
+          : global
+            ? { global: "true" }
+            : project
+              ? { project }
+              : undefined,
+      });
 
 export const embedBackfill = (body: {
   project?: string;

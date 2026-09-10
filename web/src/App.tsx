@@ -1,3 +1,4 @@
+import { OfflineSync } from "./components/common/OfflineSync";
 import { BulkJobs } from "./components/common/BulkJobs";
 import { useEffect } from "react";
 import { Route, Routes } from "react-router-dom";
@@ -28,6 +29,7 @@ export function App() {
       <Toasts />
       <div className="background-operation-tray"><ReminderStatusPopups /><BackgroundOperations /><BulkJobs /></div>
       <UpdateBanner />
+      <OfflineSync />
     </>
   );
 }

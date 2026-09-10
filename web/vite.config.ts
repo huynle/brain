@@ -75,7 +75,8 @@ export default defineConfig({
         // Workbox's controlling event fires after the user clicks Reload.
         clientsClaim: true,
         // Don't precache source maps; cache the app shell + assets.
-        globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        globPatterns: ["**/*.{js,mjs,wasm,css,html,svg,png,ico,woff2}"],
         // …but not the diagram engine. mermaid and its dependencies are
         // ~3MB across per-diagram-type chunks, dynamically imported only
         // when an entry actually contains a ```mermaid fence. Precaching
@@ -143,6 +144,8 @@ export default defineConfig({
       },
     }),
   ],
+  worker: { format: "es" },
+  optimizeDeps: { exclude: ["@sqlite.org/sqlite-wasm"] },
   server: {
     port: 5179,
     proxy,

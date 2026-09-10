@@ -1,3 +1,4 @@
+import { useOffline } from "../../lib/offline/sync";
 /**
  * EntryReader — the reading surface for one Brain entry.
  *
@@ -143,6 +144,12 @@ function LoadedReader({
             {statusLabel(entry.status)}
           </span>
           <span className="spacer" />
+          <button
+            className="entry-act"
+            onClick={() => useOffline.setState({ editPath: entry.path })}
+          >
+            Edit definition
+          </button>
           {headings.length >= 2 && (
             <button
               className={`entry-act ${tocOpen ? "active" : ""}`}
@@ -238,10 +245,7 @@ function LoadedReader({
         )}
 
         {!rawMode && attachments.length > 0 && (
-          <EntryAttachments
-            attachments={attachments}
-            inlinedIds={inlinedIds}
-          />
+          <EntryAttachments attachments={attachments} inlinedIds={inlinedIds} />
         )}
 
         {!compact && <GraphFooter entry={entry} onOpenEntry={onOpenEntry} />}

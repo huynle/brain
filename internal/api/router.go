@@ -181,6 +181,20 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				}
 			})
 
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+				if o.handler != nil {
+					r.Get("/sync/entries", o.handler.HandleEntryChanges)
+					r.Get("/sync/identity", o.handler.HandleEntrySyncIdentity)
+				}
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*"))
+				if o.handler != nil {
+					r.Post("/sync/entries", o.handler.HandleEntrySyncMutation)
+				}
+			})
+
 			// ─── Entries CRUD ─────────────────────────────────────
 			r.Route("/entries", func(r chi.Router) {
 				// Read operations — read:* scope

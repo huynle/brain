@@ -743,6 +743,7 @@ export interface SchedulerStatus {
 // ─── Brain entries ───────────────────────────────────────────────
 
 export interface BrainEntry {
+  revision?: string;
   id: string;
   path: string;
   title: string;

@@ -158,6 +158,8 @@ func setCacheHeaders(w http.ResponseWriter, upath string) {
 // miss (notably .webmanifest), falling back to extension detection elsewhere.
 func contentTypeFor(upath string) string {
 	switch {
+	case strings.HasSuffix(upath, ".wasm"):
+		return "application/wasm"
 	case strings.HasSuffix(upath, ".webmanifest"):
 		return "application/manifest+json"
 	case strings.HasSuffix(upath, ".js"):

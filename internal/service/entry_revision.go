@@ -23,6 +23,10 @@ func (s *BrainServiceImpl) entryRevision(ctx context.Context, row *storage.NoteR
 			raw = string(b)
 		}
 	}
+	return indexedEntryRevision(row, raw)
+}
+
+func indexedEntryRevision(row *storage.NoteRow, raw string) string {
 	var metadata any
 	_ = json.Unmarshal([]byte(row.Metadata), &metadata)
 	b, _ := json.Marshal(struct {

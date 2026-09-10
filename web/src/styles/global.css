@@ -273,6 +273,46 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
     "statusbar  drawer";
 }
 
+/* Assistant open (desktop only) — same treatment as the drawer: the
+ * assistant docks as a real grid column that pushes the workspace
+ * aside, NOT a fixed overlay. This is what removes the empty dark
+ * gutter that used to appear between the workspace and the panels:
+ * both right-side panels are now coordinated grid columns instead of
+ * one grid column + one fixed overlay whose widths never agreed.
+ *
+ * Four cases: assistant alone, assistant + drawer, and each of those
+ * with the left sidebar collapsed. When both right panels are open the
+ * column order is: [sidebar] workspace  drawer  assistant. */
+body.assistant-open:not(.drawer-open):not(.mobile) #app {
+  grid-template-columns: var(--sidebar-w, 250px) 1fr var(--assistant-w, 390px);
+  grid-template-areas:
+    "topbar   topbar     topbar"
+    "sidebar  workspace  assistant"
+    "sidebar  statusbar  assistant";
+}
+body.assistant-open.sidebar-collapsed:not(.drawer-open):not(.mobile) #app {
+  grid-template-columns: 1fr var(--assistant-w, 390px);
+  grid-template-areas:
+    "topbar     topbar"
+    "workspace  assistant"
+    "statusbar  assistant";
+}
+body.assistant-open.drawer-open:not(.mobile) #app {
+  grid-template-columns:
+    var(--sidebar-w, 250px) 1fr var(--drawer-w, 430px) var(--assistant-w, 390px);
+  grid-template-areas:
+    "topbar   topbar     topbar  topbar"
+    "sidebar  workspace  drawer  assistant"
+    "sidebar  statusbar  drawer  assistant";
+}
+body.assistant-open.drawer-open.sidebar-collapsed:not(.mobile) #app {
+  grid-template-columns: 1fr var(--drawer-w, 430px) var(--assistant-w, 390px);
+  grid-template-areas:
+    "topbar     topbar  topbar"
+    "workspace  drawer  assistant"
+    "statusbar  drawer  assistant";
+}
+
 /* ---------- top bar ---------- */
 .topbar {
   grid-area: topbar;
@@ -2647,25 +2687,45 @@ body[data-theme="light"] .palette-scrim { background: rgba(238, 241, 244, 0.72);
 
 /* ---------- assistant panel ---------- */
 :root { --assistant-panel-w: min(390px, 92vw); }
+/* Desktop default: a real grid column (see `body.assistant-open #app`
+ * above), mirroring `.feature-drawer`. `body.mobile .assistant-panel`
+ * below restores the fixed-position slide-over for narrow viewports. */
 .assistant-panel {
-  position: fixed;
-  top: 40px;
-  right: 0;
-  bottom: 24px;
-  width: var(--assistant-panel-w);
+  grid-area: assistant;
+  position: relative;
+  width: var(--assistant-w, 390px);
+  max-width: 92vw;
+  min-width: 300px;
   z-index: 75;
   background: #12161a;
   border-left: 1px solid #2a2f35;
-  box-shadow: -18px 0 48px #0008;
   display: flex;
   flex-direction: column;
   gap: 10px;
   overflow: auto;
   padding: 12px;
 }
-/* Desktop: dock the panel — the workspace gives up the panel's width so
- * content is pushed aside, not covered. Mobile keeps the slide-over. */
-body.assistant-open:not(.mobile) .workspace { margin-right: var(--assistant-panel-w); }
+body.mobile .assistant-panel {
+  position: fixed;
+  top: 40px;
+  right: 0;
+  bottom: 24px;
+  width: var(--assistant-panel-w);
+  box-shadow: -18px 0 48px #0008;
+}
+/* Left-edge drag-resize handle, mirroring `.drawer-resizer`. The panel
+ * is anchored to the right, so the resizer lives on its left edge. */
+.assistant-resizer {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 1;
+}
+.assistant-resizer:hover, .assistant-resizer.dragging { background: #f4b23a55; }
+body.assistant-resizing { user-select: none; cursor: col-resize; }
 .assistant-head { display: flex; gap: 8px; align-items: flex-start; }
 .assistant-kicker { color: #6b757e; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
 .assistant-head h3 { margin: 2px 0 0; font-size: 15px; color: #eaedef; }
@@ -4353,3 +4413,32 @@ body.mobile .reminder-panel {
 .background-operation.error { border-color: #d96060; }
 
 .background-operations { display: flex; flex-direction: column; gap: 8px; }
+
+/* Fired reminders shown as persistent status cards in the same
+ * lower-left tray as background operations. Reuse the `.background-
+ * operation` card chrome; add a reminder accent + an action row that
+ * mirrors the reminder bell (Snooze / Open / Done). */
+.reminder-status-list { display: flex; flex-direction: column; gap: 8px; }
+.background-operation.reminder-status { border-color: #d2992255; }
+.reminder-status .background-operation-heading strong { color: #eaedef; }
+.reminder-status__meta { color: #9098a1; margin-top: 2px; }
+.reminder-status__acts {
+  display: flex; gap: 6px; margin-top: 10px; justify-content: flex-end;
+}
+.reminder-status__acts button {
+  padding: 3px 9px; border-radius: 4px; font-size: 11px;
+  background: #1a1e22; border: 1px solid #2a2f35; color: #eaedef; cursor: pointer;
+}
+.reminder-status__acts button:hover { border-color: #3a4147; }
+.reminder-status__acts button.primary {
+  background: #f4b23a; border-color: #f4b23a; color: #12161a; font-weight: 600;
+}
+body[data-theme="light"] .background-operation.reminder-status {
+  background: #f8fafc; color: #17202a; border-color: #e7b95b;
+}
+body[data-theme="light"] .reminder-status__acts button {
+  background: #ffffff; border-color: #d5dde5; color: #17202a;
+}
+body[data-theme="light"] .reminder-status__acts button.primary {
+  background: #f4b23a; border-color: #e7b95b; color: #12161a;
+}

@@ -18,6 +18,8 @@ import { useProjects } from "../hooks/useProjects";
 import { useLive } from "../lib/sse";
 import { useRunners } from "../hooks/useRunners";
 import { useUI } from "../store/ui";
+import { useIsMobile } from "../hooks/useIsMobile";
+import { useEdgeResize } from "../hooks/useEdgeResize";
 import { deriveFeatures } from "../lib/features";
 import { LIFECYCLE_TONE } from "./common/LifecycleBadge";
 import { useMergeRequests } from "../hooks/useMergeRequests";
@@ -45,16 +47,29 @@ export function AssistantPanel(): JSX.Element | null {
   const close = () => useWorkspace.getState().setAssistantOpen(false);
   const setCommandOpen = useWorkspace((s) => s.setCommandOpen);
   const openInSidebar = useWorkspace((s) => s.openInSidebar);
+  const assistantWidth = useWorkspace((s) => s.assistantWidth);
+  const setAssistantWidth = useWorkspace((s) => s.setAssistantWidth);
   const { data: projects } = useProjects();
   const liveProjects = useLive((s) => s.projects);
   const { runners } = useRunners();
   const { openByProject } = useMergeRequests();
   const toast = useUI((s) => s.toast);
+  const isMobile = useIsMobile();
 
   const [prompt, setPrompt] = useState("");
   const turns = useAssistantChat((s) => s.turns);
   const busy = useAssistantChat((s) => s.busy);
   const threadRef = useRef<HTMLDivElement | null>(null);
+
+  // ─── left-edge drag-resize ────────────────────────────────────────
+  // The panel is always the rightmost column, so its width is the
+  // distance from the pointer to the viewport's right edge. Mirrors the
+  // sidebar dock's resizer (see SidebarDock.tsx).
+  const startResize = useEdgeResize({
+    computeWidth: (clientX) => window.innerWidth - clientX,
+    onResize: setAssistantWidth,
+    bodyClass: "assistant-resizing",
+  });
 
   // Reserve layout space for the panel on desktop (see `body.assistant-open`
   // rules in global.css) so it docks beside the workspace instead of
@@ -191,8 +206,13 @@ export function AssistantPanel(): JSX.Element | null {
     }
   };
 
-  return createPortal(
-    <aside className="assistant-panel">
+  const asideStyle = {
+    ["--assistant-w" as never]: `${assistantWidth}px`,
+  } as React.CSSProperties;
+
+  const panel = (
+    <aside className="assistant-panel" style={asideStyle}>
+      <div className="assistant-resizer" onPointerDown={startResize} />
       <div className="assistant-head">
         <div>
           <div className="assistant-kicker">Brain assistant</div>
@@ -319,7 +339,13 @@ export function AssistantPanel(): JSX.Element | null {
           {runners.filter((r) => r.status === "online").length} runners online.
         </p>
       </div>
-    </aside>,
-    document.body,
+    </aside>
   );
+
+  // Mobile: portal to document.body (fixed overlay). Desktop: render in
+  // place — Dashboard mounts <AssistantPanel/> as a direct child of #app
+  // so `grid-area: assistant` slots it in as a real grid column that
+  // pushes the workspace aside instead of overlaying it. Mirrors
+  // SidebarDock.tsx's mount strategy.
+  return isMobile ? createPortal(panel, document.body) : panel;
 }

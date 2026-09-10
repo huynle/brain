@@ -41,7 +41,8 @@ task, a disabled automation, and an image attachment. It verifies 320px/390px
 phones, tablet and landscape layouts, navigation/settings/search/assistant,
 in-page previews across background updates, definition editing in a reduced
 viewport, persisted task status changes, automation/goal controls, touch pane
-splitting, entry comparison/diff, and returning to desktop. Screenshots and a
+splitting, entry comparison/diff, returning to desktop, and full-width session
+transcripts/metadata using a controlled history response. Screenshots and a
 results file are written to a unique temporary directory. Fixtures are retained
 for manual review; no automation or agent execution is started.
 

@@ -373,6 +373,41 @@ try {
   pass(
     "History transcript and session metadata use full phone width (controlled history fixture)",
   );
+  const loginContext = await b.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    serviceWorkers: "block",
+  });
+  const loginPage = await loginContext.newPage();
+  loginPage.on("pageerror", (e) => errors.push(e.message));
+  await loginPage.route("**/api/v1/sync/identity", (route) =>
+    route.fulfill({ status: 401, json: { error: "Authentication required" } }),
+  );
+  await loginPage.goto(origin);
+  await loginPage
+    .getByRole("button", { name: "Sign in with password", exact: true })
+    .tap();
+  const password = loginPage.getByPlaceholder("Password", { exact: true });
+  await expect(password).toBeVisible();
+  assert.equal(
+    await password.evaluate((e) => getComputedStyle(e).fontSize),
+    "16px",
+  );
+  await password.fill("local-layout-fixture");
+  await loginPage.setViewportSize({ width: 390, height: 420 });
+  const signIn = loginPage.getByRole("button", {
+    name: "Sign in",
+    exact: true,
+  });
+  await signIn.scrollIntoViewIfNeeded();
+  await expect(signIn).toBeInViewport();
+  await expect(loginPage.locator(".mobile-activity")).not.toBeVisible();
+  await loginPage.screenshot({ path: join(evidence, "sign-in.png") });
+  await loginContext.close();
+  pass(
+    "Sign-in fields have mobile sizing and remain reachable in a reduced viewport",
+  );
   assert.deepEqual(errors, []);
   await writeFile(
     join(evidence, "results.json"),

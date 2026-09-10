@@ -36,7 +36,8 @@ BRAIN_READER_TEST_URL=http://localhost:3336 npm run test:attachment-preview
 BRAIN_READER_TEST_URL=http://localhost:3336 npm run test:cached-startup
 ```
 
-The mobile script requires loopback and seeds a unique project with notes, a
+The mobile script also checks sign-in field sizing and reduced-viewport scrolling.
+It requires loopback and seeds a unique project with notes, a
 task, a disabled automation, and an image attachment. It verifies 320px/390px
 phones, tablet and landscape layouts, navigation/settings/search/assistant,
 in-page previews across background updates, definition editing in a reduced

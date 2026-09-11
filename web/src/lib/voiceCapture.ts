@@ -11,14 +11,13 @@ export class VoiceSegmenter {
   private ended: (pcm: Float32Array) => void;
   constructor(rate: number, started: () => void, ended: (pcm: Float32Array) => void) {this.rate=rate;this.started=started;this.ended=ended;}
   reset() {this.pre=[];this.frames=[];this.voiced=0;this.quiet=0;this.size=0;this.active=false;}
-  push(pcm: Float32Array) {
-    let energy=0;for(const v of pcm) energy+=v*v;
-    const voice=Math.sqrt(energy/pcm.length)>=.015;
+  push(pcm: Float32Array, speechProbability: number, interrupting = false) {
+    const voice = speechProbability >= (this.active ? .4 : interrupting ? .9 : .65);
     if(!this.active) {
       this.pre.push(pcm);
-      while(this.pre.length>Math.ceil(this.rate*.3/pcm.length))this.pre.shift();
+      while(this.pre.length>Math.ceil(this.rate*.7/pcm.length))this.pre.shift();
       this.voiced=voice?this.voiced+pcm.length:0;
-      if(this.voiced<this.rate*.15)return;
+      if(this.voiced<this.rate*(interrupting ? .45 : .22))return;
       this.active=true;this.frames=this.pre;this.pre=[];
       this.size=this.frames.reduce((n,f)=>n+f.length,0);this.quiet=0;this.started();return;
     }

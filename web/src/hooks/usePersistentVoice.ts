@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, assistantVoiceDiagnostic } from '../lib/api';
+import type { createSpeechDetector } from '../lib/speechDetector';
 import { pcmWav, VoiceSegmenter } from '../lib/voiceCapture';
 
 const processorCode=`class Capture extends AudioWorkletProcessor {
@@ -18,9 +19,11 @@ export function usePersistentVoice(options: {sessionId:string; active:boolean; s
     let stream:MediaStream|undefined, context:AudioContext|undefined, node:AudioWorkletNode|undefined, timer:ReturnType<typeof setInterval>|undefined;
     const abort=new AbortController(), attempt=crypto.randomUUID(), began=performance.now();
     let results=0,disposed=false;
+    let startupError='Microphone could not start. Allow microphone access and try again.';
+    let detector: Awaited<ReturnType<typeof createSpeechDetector>> | undefined;
     const current=()=>generation.current===run&&!disposed;
     const report=(event:string)=>void assistantVoiceDiagnostic({attempt,event,error:'',elapsed_ms:Math.min(86400000,Math.round(performance.now()-began)),results,android:/Android/i.test(navigator.userAgent),hands_free:true}).catch(()=>{});
-    cleanup.current=()=>{disposed=true;abort.abort();clearInterval(timer);if(node){node.port.onmessage=null;node.disconnect();}stream?.getTracks().forEach(t=>t.stop());if(context&&context.state!=='closed')void context.close().catch(()=>{});report('stopped');};
+    cleanup.current=()=>{disposed=true;void detector?.close().catch(()=>{});abort.abort();clearInterval(timer);if(node){node.port.onmessage=null;node.disconnect();}stream?.getTracks().forEach(t=>t.stop());if(context&&context.state!=='closed')void context.close().catch(()=>{});report('stopped');};
     const fail=(message:string)=>{if(!current())return;stop();setError(message);};
     try {
       // Own one audio context and one stream for the whole session.
@@ -35,7 +38,13 @@ export function usePersistentVoice(options: {sessionId:string; active:boolean; s
       try{await context.audioWorklet.addModule(moduleURL);}finally{URL.revokeObjectURL(moduleURL);}
       if(!current())return;
       await context.resume();if(!current())return;
-      const rate=context.sampleRate, queue:Float32Array[]=[];let processing=false;
+      setStatus('Loading speech detector…');
+      startupError='Speech detector could not load. Check your connection and restart hands-free.';
+      const {createSpeechDetector}=await import('../lib/speechDetector');
+      if(!current())return;
+      detector=await createSpeechDetector(context.sampleRate);
+      if(!current()){await detector.close();return;}
+      const rate=16000, queue:Float32Array[]=[];let processing=false;
       const processQueue=async()=>{
         if(processing)return;processing=true;
         try{while(queue.length&&current()){
@@ -56,12 +65,21 @@ export function usePersistentVoice(options: {sessionId:string; active:boolean; s
         queue.push(pcm);void processQueue();
       });
       node=new AudioWorkletNode(context,'brain-capture');
-      node.port.onmessage=event=>{if(!current())return;if(latest.current.speaking&&!canInterrupt){segmenter.reset();return;}segmenter.push(event.data);};
+      const pcmQueue:Float32Array[]=[];let detecting=false;
+      const detect=async()=>{
+        if(detecting)return;detecting=true;
+        try{while(pcmQueue.length&&current())await detector!.process(pcmQueue.shift()!, (frame, probability)=>{
+          if(!current())return;
+          if(latest.current.speaking&&!canInterrupt){segmenter.reset();return;}
+          segmenter.push(frame,probability,latest.current.speaking);
+        });}catch{fail('Speech detection failed. Please restart hands-free.');}finally{detecting=false;}
+      };
+      node.port.onmessage=event=>{if(!current())return;if(pcmQueue.length>=48){fail('Speech detection cannot keep up on this device. Please restart hands-free.');return;}pcmQueue.push(event.data);void detect();};
       const source=context.createMediaStreamSource(stream),silent=context.createGain();silent.gain.value=0;
       source.connect(node);node.connect(silent);silent.connect(context.destination);
       report('audio_start');setStatus('Listening…');
       timer=setInterval(()=>{if(!current())return;report('waiting');if(track.muted||context?.state!=='running')setStatus('Microphone paused by browser. Tap End hands-free, then restart.');},30000);
-    }catch{fail('Microphone could not start. Allow microphone access and try again.');}
+    }catch{fail(startupError);}
   };
   useEffect(()=>{const hidden=()=>{if(document.hidden)stop();};document.addEventListener('visibilitychange',hidden);return()=>document.removeEventListener('visibilitychange',hidden);},[]);
   return {start,stop,enabled,status,error};

@@ -83,14 +83,21 @@ Audio failures leave the text conversation intact. Breeze is a future adapter
 behind `SpeechSynthesizer`; only OpenRouter is implemented at present.
 
 Hands-free now owns one getUserMedia stream and AudioWorklet for the entire
-open session. Local level detection keeps 300 ms of pre-roll and submits a WAV
+open session. A browser-local Silero V5 classifier keeps 700 ms of pre-roll and submits a WAV
 segment after 1.2 seconds of silence (30-second maximum per segment). Silence
 alone never creates a transcription request. The stream remains open during
 transcription, reasoning and playback. Sustained speech stops playback and
 cancels the current reasoning request; the recorded new turn is retained.
 Echo cancellation must be reported enabled for recording during playback;
-otherwise use the manual Interrupt and speak button. This is level detection,
-not semantic VAD; car noise and Bluetooth routing still need device testing.
+otherwise use the manual Interrupt and speak button. Normal listening requires
+220 ms above 0.65 speech probability; interruption requires 450 ms above 0.9.
+Active speech continues above 0.4, allowing natural quiet syllables. These are
+acoustic speech probabilities, not semantic topic or end-of-thought detection.
+Car noise and Bluetooth routing still need device testing.
+
+The pinned Silero model and ONNX Runtime WASM assets load only when hands-free
+starts, from the same server. Versioned assets are cached on demand, not included
+in the dashboard precache. No audio leaves the browser for speech detection.
 
 Admin-scoped `POST /api/v1/assistant/transcribe` accepts base64 WAV in `audio`
 and returns `text`. It uses the configured OpenRouter speech key/base URL and
@@ -103,7 +110,7 @@ hands-free visibly instead of silently dropping turns. Speak remains browser
 one-shot dictation. Saved conversations remain local to the browser.
 
 Verification: `go test ./internal/api`, frontend `src/lib/voiceCapture.test.ts`,
-`node web/scripts/verify-persistent-voice.mjs` (lifecycle/cancellation), and
+`node web/scripts/verify-persistent-voice.mjs` (real classifier with speech/rumble fixtures and lifecycle/cancellation), and
 `node web/scripts/verify-persistent-audio.mjs` (real Chromium capture/worklet with
 a WAV microphone fixture). A live OpenRouter transcription was also verified.
 Physical Android/car-Bluetooth stability is a separate user retest.

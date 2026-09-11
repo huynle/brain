@@ -387,6 +387,15 @@ func (h *Handler) HandleListEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// List previews avoid transferring full Markdown until the entry is opened.
+	if q.Get("preview") == "true" {
+		for i := range resp.Entries {
+			content := []rune(resp.Entries[i].Content)
+			if len(content) > 500 {
+				resp.Entries[i].Content = string(content[:500])
+			}
+		}
+	}
 	WriteJSON(w, http.StatusOK, resp)
 }
 

@@ -8,7 +8,7 @@ import {
   databaseFor,
   offlineStorageUnavailable,
 } from "./client";
-import { makeDraft } from "./model";
+import { makeDraft, matches } from "./model";
 import type { CachedEntry, ChangePage, Mutation, SyncState } from "./model";
 
 export const useOffline = create<{
@@ -20,6 +20,7 @@ export const useOffline = create<{
   reportingError: string | null;
   pending: Mutation[];
   generation: number;
+  cachedCount: number;
 }>(() => ({
   editPath: null,
   ready: false,
@@ -29,6 +30,7 @@ export const useOffline = create<{
   reportingError: null,
   pending: [],
   generation: 0,
+  cachedCount: 0,
 }));
 let active: Promise<void> | undefined;
 let lastStateFingerprint = "";
@@ -76,31 +78,46 @@ export async function refreshState() {
   lastStateFingerprint = fingerprint;
   useOffline.setState((s) => ({
     ready: state.ready,
+    cachedCount: state.cachedCount ?? 0,
     pending: state.pending,
     generation: s.generation + (changed ? 1 : 0),
   }));
 }
-async function pull(db: typeof database = database, scope = cacheScope()) {
-  let more = true;
-  while (more) {
+async function selected(
+  entries: Record<string, string>,
+  db: typeof database,
+  scope: string,
+  remember = false,
+) {
+  const fetchPage = () =>
+    api<ChangePage>("/api/v1/sync/entries/selected", {
+      method: "POST",
+      body: { entries },
+      signal: AbortSignal.timeout(15000),
+    });
+  let page = await fetchPage();
+  if (scope !== cacheScope() || !offlineAvailable())
+    throw new Error("Account changed during sync");
+  const state = await db<SyncState>("state");
+  if (state.epoch && state.epoch !== page.epoch) {
+    await db("reset"); // Preserve drafts; uncertain receipts must never replay automatically.
+    entries = Object.fromEntries(
+      Object.keys(entries).map((path) => [path, ""]),
+    );
+    page = await fetchPage();
     if (scope !== cacheScope() || !offlineAvailable())
       throw new Error("Account changed during sync");
-    const s = await db<SyncState>("state");
-    let page: ChangePage;
-    try {
-      page = await api<ChangePage>("/api/v1/sync/entries", {
-        query: { epoch: s.epoch, cursor: s.cursor },
-        signal: AbortSignal.timeout(15_000),
-      });
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 410) {
-        await db("reset");
-        continue;
-      }
-      throw e;
-    }
-    await db("apply", page);
-    more = page.more;
+  }
+  await db("applySelected", page, remember);
+  return page;
+}
+async function pull(db: typeof database = database, scope = cacheScope()) {
+  const entries = Object.entries(await db<Record<string, string>>("selection"));
+  // Pending edits are pinned and can exceed the ordinary 200-entry working set.
+  for (let i = 0; i < Math.max(entries.length, 1); i += 200) {
+    if (scope !== cacheScope() || !offlineAvailable())
+      throw new Error("Account changed during sync");
+    await selected(Object.fromEntries(entries.slice(i, i + 200)), db, scope);
   }
 }
 // Drafts are shared with this server's administrators for MCP conflict review.
@@ -137,6 +154,8 @@ async function reportDevice(
         reported_online: ui.online,
         syncing: ui.syncing,
         ready: state.ready,
+        cache_mode: "recent",
+        cached_entries: state.cachedCount ?? 0,
         cursor: state.cursor,
         epoch: state.epoch,
         error: ui.error ?? "",
@@ -212,10 +231,13 @@ export async function syncNow(): Promise<void> {
               },
             );
             // Pull before removing the overlay, so reads never flash the old content.
-            await pull(db, scope);
-            const entry = result.path
-              ? await db<CachedEntry | null>("get", result.path, true)
-              : undefined;
+            const savedPath = result.path || op.path;
+            await selected({ [savedPath]: "" }, db, scope, true);
+            const entry = await db<CachedEntry | null>("get", savedPath, true);
+            if (!entry)
+              throw new Error(
+                "Saved entry could not be confirmed; retry sync to recover the receipt.",
+              );
             await db("acknowledge", op.id, entry);
           } catch (e) {
             if (e instanceof ApiError && e.status >= 500) {
@@ -275,62 +297,146 @@ export async function syncNow(): Promise<void> {
     });
   return active;
 }
-async function ensureCacheReady() {
-  let state = await database<SyncState>("state");
-  if (!state.ready) {
-    await syncNow();
-    state = await database<SyncState>("state");
+// Persist only query pages the user requested. Warm reads return immediately;
+// background refreshes notify React only when the result actually changes.
+const queryRefreshes = new Map<string, Promise<unknown>>();
+async function cachedQuery<T>(
+  key: string,
+  fetcher: () => Promise<T>,
+): Promise<T> {
+  if (!offlineAvailable()) return fetcher();
+  const scope = cacheScope();
+  const db: typeof database = (method, ...args) =>
+    databaseFor(scope, method, ...args);
+  try {
+    await db("prepareSelective");
+  } catch (e) {
+    if (offlineStorageUnavailable()) return fetcher();
+    throw e;
   }
-  if (!state.ready)
-    throw new Error("Connect once to download entries for offline use.");
+  const cached = await db<T | null>("queryGet", key);
+  const load = () => {
+    const id = scope + key;
+    let job = queryRefreshes.get(id) as Promise<T> | undefined;
+    if (!job) {
+      job = fetcher()
+        .then(async (value) => {
+          if (cacheScope() !== scope || !offlineAvailable())
+            throw new Error("Account changed during loading");
+          const changed = await db<boolean>("queryPut", key, value);
+          if (changed)
+            useOffline.setState((s) => ({ generation: s.generation + 1 }));
+          return value;
+        })
+        .finally(() => queryRefreshes.delete(id));
+      queryRefreshes.set(id, job);
+    }
+    return job;
+  };
+  if (scope !== cacheScope()) throw new Error("Account changed during loading");
+  if (cached !== null) {
+    if (navigator.onLine) void load().catch(() => {});
+    return cached;
+  }
+  return load();
 }
 export async function cachedList(q: Record<string, unknown> = {}) {
-  if (offlineAvailable()) {
-    try {
-      await ensureCacheReady();
-      return await database<CachedEntry[]>("list", q);
-    } catch (e) {
-      if (!offlineStorageUnavailable()) throw e;
-    }
+  if (
+    q.editorFilter !== undefined ||
+    (!navigator.onLine && offlineAvailable())
+  ) {
+    await database("prepareSelective");
+    const entries = await database<CachedEntry[]>("list", q);
+    return q.editorFilter !== undefined
+      ? entries
+      : entries.slice(
+          Number(q.offset ?? 0),
+          Number(q.offset ?? 0) + Number(q.limit ?? 50),
+        );
   }
-  const result = await api<{ entries: CachedEntry[] }>("/api/v1/entries", {
-    query: { ...q, limit: Number(q.editorLimit ?? 1000) },
-  });
-  return result.entries ?? [];
+  let result: { entries: CachedEntry[] };
+  try {
+    result = await cachedQuery("list:" + JSON.stringify(q), async () => {
+      const page = await api<{ entries: CachedEntry[] }>("/api/v1/entries", {
+        query: { ...q, preview: true, limit: Number(q.limit ?? 50) },
+      });
+      // List previews are not full offline documents and do not enter the sync set.
+      return {
+        ...page,
+        entries: (page.entries ?? []).map((e) => ({
+          ...e,
+          content: e.content?.slice(0, 500) ?? "",
+          raw: "",
+        })),
+      };
+    });
+  } catch (e) {
+    if (!offlineAvailable() || (e instanceof ApiError && e.status < 500))
+      throw e;
+    const entries = await database<CachedEntry[]>("list", q);
+    return q.editorFilter !== undefined
+      ? entries
+      : entries.slice(
+          Number(q.offset ?? 0),
+          Number(q.offset ?? 0) + Number(q.limit ?? 50),
+        );
+  }
+  const entries = new Map((result.entries ?? []).map((e) => [e.path, e]));
+  if (offlineAvailable())
+    for (const op of (await database<SyncState>("state")).pending) {
+      entries.delete(op.path);
+      if (matches(op.draft, q))
+        entries.set(op.path, { ...op.draft, local_revision: op.id });
+    }
+  return [...entries.values()];
 }
 export async function cachedSummary(
   q: { project?: string; global?: boolean; projects?: string } = {},
 ) {
-  if (offlineAvailable()) {
-    try {
-      await ensureCacheReady();
-      return await database<{
-        projects: string[];
-        totalEntries: number;
-        byType: Record<string, number>;
-      }>("summary", q);
-    } catch (e) {
-      if (!offlineStorageUnavailable()) throw e;
-    }
-  }
-  const [projects, stats] = await Promise.all([
-    api<{ projects: string[] }>("/api/v1/tasks"),
-    api<{ totalEntries: number; byType: Record<string, number> }>(
-      "/api/v1/stats",
-      { query: q },
-    ),
-  ]);
-  return { ...stats, projects: projects.projects ?? [] };
+  return cachedQuery("summary:" + JSON.stringify(q), async () => {
+    const [projects, stats] = await Promise.all([
+      api<{ projects: string[] }>("/api/v1/tasks"),
+      api<{ totalEntries: number; byType: Record<string, number> }>(
+        "/api/v1/stats",
+        { query: q },
+      ),
+    ]);
+    return { ...stats, projects: projects.projects ?? [] };
+  });
 }
 export async function cachedEntry(path: string): Promise<CachedEntry> {
   if (offlineAvailable()) {
+    const scope = cacheScope();
+    const db: typeof database = (method, ...args) =>
+      databaseFor(scope, method, ...args);
     try {
-      const entry = await database<CachedEntry | null>("get", path);
+      // Touch before pruning so an opened entry from an older full cache survives migration.
+      const entry = await db<CachedEntry | null>("get", path);
+      await db("prepareSelective");
+      if (scope !== cacheScope())
+        throw new Error("Account changed during loading");
       if (entry) return entry;
-      await syncNow();
-      const found = await database<CachedEntry | null>("get", path);
-      if (!found) throw new Error("Entry is not available in the local cache.");
-      return found;
+      if (!navigator.onLine)
+        throw new Error(
+          "This entry is not stored on this device. Connect to open it.",
+        );
+      // Resolve short IDs through the existing entry API before selecting the canonical path.
+      let canonical = path;
+      if (!path.includes("/"))
+        canonical = (
+          await api<CachedEntry>(`/api/v1/entries/${encodeURIComponent(path)}`)
+        ).path;
+      const page = await selected({ [canonical]: "" }, db, scope, true);
+      const found = page.changes.find((c) => c.entry)?.entry;
+      if (!found)
+        throw new Error(
+          "This entry is not cached on this device or no longer exists.",
+        );
+      const saved = await db<CachedEntry | null>("get", found.path, true);
+      if (!saved) throw new Error("Entry is not available");
+      await db("remember", saved);
+      await refreshState();
+      return saved;
     } catch (e) {
       if (!offlineStorageUnavailable()) throw e;
     }

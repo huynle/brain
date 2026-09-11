@@ -1,3 +1,4 @@
+import { useMobileViewport } from "./hooks/useMobileViewport";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { OfflineSync } from "./components/common/OfflineSync";
 import { BulkJobs } from "./components/common/BulkJobs";
@@ -15,6 +16,11 @@ import { Dashboard } from "./pages/Dashboard";
 
 export function App() {
   const mobile = useIsMobile();
+  useMobileViewport(mobile);
+  useEffect(() => {
+    document.body.classList.toggle("mobile", mobile);
+    return () => document.body.classList.remove("mobile");
+  }, [mobile]);
   const status = useAuth((s) => s.status);
   const init = useAuth((s) => s.init);
 

@@ -303,6 +303,111 @@ try {
   await expect(p.locator(".topbar .viewmode")).toBeVisible();
   await shot("desktop");
   pass("Desktop navigation survives switching from mobile");
+  const sessionContext = await b.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    serviceWorkers: "block",
+  });
+  await sessionContext.addInitScript(() =>
+    localStorage.setItem(
+      "panes-v2:workspace:v1",
+      JSON.stringify({
+        version: 1,
+        state: {
+          view: "session",
+          focusSessionRef: {
+            mode: "history",
+            runner_id: "mobile-fixture-runner",
+            session_id: "mobile-fixture-session",
+            project_id: "mobile-fixture-project",
+          },
+          docks: { focus: null, sidebar: null },
+        },
+      }),
+    ),
+  );
+  const sessionPage = await sessionContext.newPage();
+  sessionPage.on("pageerror", (e) => errors.push(e.message));
+  await sessionPage.route(
+    "**/sessions/mobile-fixture-session/history",
+    (route) =>
+      route.fulfill({
+        json: [
+          {
+            info: { id: "mobile-message", role: "assistant" },
+            parts: [
+              {
+                id: "mobile-part",
+                type: "text",
+                text: "Mobile transcript fixture is readable.",
+              },
+            ],
+          },
+        ],
+      }),
+  );
+  await sessionPage.goto(origin);
+  await expect(
+    sessionPage.getByText("Mobile transcript fixture is readable.", {
+      exact: true,
+    }),
+  ).toBeVisible({ timeout: 30000 });
+  const details = sessionPage.getByRole("button", {
+    name: "Session details",
+    exact: true,
+  });
+  await details.tap();
+  await expect(details).toHaveAttribute("aria-expanded", "true");
+  const mainBox = await sessionPage.locator(".session-full-main").boundingBox();
+  const metadataBox = await sessionPage.locator(".sidebar-r").boundingBox();
+  assert.ok(
+    mainBox.width >= 380 && metadataBox.width >= 380,
+    JSON.stringify({ mainBox, metadataBox }),
+  );
+  assert.ok(metadataBox.y >= mainBox.y + mainBox.height - 1);
+  await sessionPage.screenshot({ path: join(evidence, "session-details.png") });
+  await details.tap();
+  await expect(sessionPage.locator(".sidebar-r")).not.toBeVisible();
+  await sessionContext.close();
+  pass(
+    "History transcript and session metadata use full phone width (controlled history fixture)",
+  );
+  const loginContext = await b.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    serviceWorkers: "block",
+  });
+  const loginPage = await loginContext.newPage();
+  loginPage.on("pageerror", (e) => errors.push(e.message));
+  await loginPage.route("**/api/v1/sync/identity", (route) =>
+    route.fulfill({ status: 401, json: { error: "Authentication required" } }),
+  );
+  await loginPage.goto(origin);
+  await loginPage
+    .getByRole("button", { name: "Sign in with password", exact: true })
+    .tap();
+  const password = loginPage.getByPlaceholder("Password", { exact: true });
+  await expect(password).toBeVisible();
+  assert.equal(
+    await password.evaluate((e) => getComputedStyle(e).fontSize),
+    "16px",
+  );
+  await password.fill("local-layout-fixture");
+  await loginPage.setViewportSize({ width: 390, height: 420 });
+  const signIn = loginPage.getByRole("button", {
+    name: "Sign in",
+    exact: true,
+  });
+  await signIn.scrollIntoViewIfNeeded();
+  await expect(signIn).toBeInViewport();
+  await expect(loginPage.locator(".mobile-activity")).not.toBeVisible();
+  await loginPage.screenshot({ path: join(evidence, "sign-in.png") });
+  await loginContext.close();
+  pass(
+    "Sign-in fields have mobile sizing and remain reachable in a reduced viewport",
+  );
   assert.deepEqual(errors, []);
   await writeFile(
     join(evidence, "results.json"),

@@ -171,3 +171,34 @@ func applySyncRevision(r *http.Request, req *types.UpdateEntryRequest) {
 		req.ExpectedRevision = revision
 	}
 }
+
+// A read-only POST avoids putting a bounded set of long entry paths in the URL.
+func (h *Handler) HandleSelectedEntryChanges(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Entries map[string]string `json:"entries"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10)).Decode(&req); err != nil || len(req.Entries) > 250 {
+		WriteError(w, 400, "Invalid selection", "Provide at most 250 entry paths and revisions")
+		return
+	}
+	for path := range req.Entries {
+		if path == "" || len(path) > 4096 || strings.HasPrefix(path, "/") || strings.Contains("/"+path+"/", "/../") || strings.Contains(path, "\\") {
+			WriteError(w, 400, "Invalid path", "Expected an entry-relative path")
+			return
+		}
+	}
+	s, ok := h.brain.(interface {
+		SelectedEntryChanges(context.Context, map[string]string) (*types.EntryChanges, error)
+	})
+	if !ok {
+		WriteError(w, 501, "Unavailable", "selected sync unavailable")
+		return
+	}
+	result, err := s.SelectedEntryChanges(r.Context(), req.Entries)
+	if err != nil {
+		WriteError(w, 500, "Sync failed", err.Error())
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	WriteJSON(w, 200, result)
+}

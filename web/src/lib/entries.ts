@@ -145,9 +145,9 @@ export interface EntryListCall {
 }
 
 /** Per-type request size for fan-out modes. */
-export const FANOUT_LIMIT_PER_TYPE = 150;
+export const FANOUT_LIMIT_PER_TYPE = 25;
 /** Request size when a single concrete type is selected. */
-export const SINGLE_TYPE_LIMIT = 400;
+export const SINGLE_TYPE_LIMIT = 50;
 /** Cap on the merged, rendered list. */
 export const MERGED_LIST_CAP = 400;
 

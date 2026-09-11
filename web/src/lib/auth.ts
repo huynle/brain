@@ -48,7 +48,7 @@ interface AuthState {
   setManualToken: (token: string) => void;
   logout: () => void;
   /** Mark that the server rejected our token; try refresh, else needs-login. */
-  onUnauthorized: () => Promise<boolean>;
+  onUnauthorized: (rejectedToken?: string | null) => Promise<boolean>;
   authHeader: () => Record<string, string>;
 }
 
@@ -78,7 +78,9 @@ function saveTokens(
 }
 
 // Refresh a password-mode session via the dedicated /api/v1/auth/refresh endpoint.
-async function exchangePasswordRefresh(): Promise<boolean> {
+async function exchangePasswordRefresh(
+  isCurrent: () => boolean,
+): Promise<boolean> {
   const refresh = localStorage.getItem(LS.refreshToken);
   if (!refresh) return false;
   const res = await fetch("/api/v1/auth/refresh", {
@@ -88,11 +90,12 @@ async function exchangePasswordRefresh(): Promise<boolean> {
   });
   if (!res.ok) return false;
   const data = await res.json();
+  if (!isCurrent()) return false;
   saveTokens(data, "password");
   return true;
 }
 
-async function bindOfflineScope(token: string) {
+async function bindOfflineScope(token: string, isCurrent = () => true) {
   const res = await fetch("/api/v1/sync/identity", {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -103,6 +106,7 @@ async function bindOfflineScope(token: string) {
   const { scope } = await res.json();
   if (typeof scope !== "string" || !/^[a-f0-9]{64}$/.test(scope))
     throw new Error("Invalid offline account identity");
+  if (!isCurrent()) return;
   localStorage.setItem("brain.offline.scope", scope);
   localStorage.removeItem("brain.offline.anonymous");
 }
@@ -148,7 +152,7 @@ function clearClient() {
   localStorage.removeItem(LS.clientSecret);
 }
 
-async function exchangeRefresh(): Promise<boolean> {
+async function exchangeRefresh(isCurrent: () => boolean): Promise<boolean> {
   const refresh = localStorage.getItem(LS.refreshToken);
   const clientId = localStorage.getItem(LS.clientId);
   if (!refresh || !clientId) return false;
@@ -164,8 +168,41 @@ async function exchangeRefresh(): Promise<boolean> {
   });
   if (!res.ok) return false;
   const data = await res.json();
+  if (!isCurrent()) return false;
   saveTokens(data);
   return true;
+}
+
+// Refresh tokens rotate on consumption. Share the exchange across requests and
+// serialize it across browser tabs, re-reading storage after acquiring the lock.
+let authGeneration = 0;
+const refreshes = new Map<string, Promise<boolean>>();
+function refreshCredentials(
+  mode: AuthMode | null,
+  token: string,
+): Promise<boolean> {
+  const existing = refreshes.get(token);
+  if (existing) return existing;
+  const exchange = async () => {
+    const isCurrent = () => localStorage.getItem(LS.accessToken) === token;
+    if (!isCurrent()) return !!localStorage.getItem(LS.accessToken);
+    const ok =
+      mode === "password"
+        ? await exchangePasswordRefresh(isCurrent)
+        : mode === "oauth"
+          ? await exchangeRefresh(isCurrent)
+          : false;
+    return ok || (!isCurrent() && !!localStorage.getItem(LS.accessToken));
+  };
+  const promise = (async () => {
+    if (typeof navigator !== "undefined" && navigator.locks)
+      return await navigator.locks.request("brain-auth-refresh", exchange);
+    return await exchange();
+  })().finally(() => {
+    refreshes.delete(token);
+  });
+  refreshes.set(token, promise);
+  return promise;
 }
 
 export const useAuth = create<AuthState>((set, get) => ({
@@ -182,6 +219,11 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 
   async init(_lightweight = false) {
+    const generation = authGeneration;
+    const current = () => generation === authGeneration;
+    const finish = (patch: Partial<AuthState>) => {
+      if (current()) set(patch);
+    };
     const mode = localStorage.getItem(LS.mode) as AuthMode | null;
     const { token, expiresAt } = storedToken();
 
@@ -190,9 +232,9 @@ export const useAuth = create<AuthState>((set, get) => ({
       if (mode === "manual" || expiresAt > now() + 30) {
         if (!localStorage.getItem("brain.offline.scope")) {
           try {
-            await bindOfflineScope(token);
+            await bindOfflineScope(token, current);
           } catch (e) {
-            set({
+            finish({
               status: "needs-login",
               token: null,
               mode: null,
@@ -201,24 +243,22 @@ export const useAuth = create<AuthState>((set, get) => ({
             return;
           }
         }
-        set({ status: "authenticated", token, mode });
+        finish({ status: "authenticated", token, mode });
         return;
       }
       // Access token expired/expiring — try a silent refresh for the mode.
       let refreshed = false;
       try {
-        refreshed =
-          mode === "password"
-            ? await exchangePasswordRefresh()
-            : await exchangeRefresh();
+        refreshed = await refreshCredentials(mode, token);
       } catch {
         if (localStorage.getItem("brain.offline.scope")) {
-          set({ status: "authenticated", token, mode });
+          finish({ status: "authenticated", token, mode });
           return;
         }
       }
+      if (!current()) return;
       if (refreshed) {
-        set({
+        finish({
           status: "authenticated",
           token: localStorage.getItem(LS.accessToken),
           mode: mode ?? "oauth",
@@ -226,7 +266,7 @@ export const useAuth = create<AuthState>((set, get) => ({
         return;
       }
       if (!navigator.onLine && localStorage.getItem("brain.offline.scope")) {
-        set({ status: "authenticated", token, mode });
+        finish({ status: "authenticated", token, mode });
         return;
       }
       clearTokens();
@@ -235,16 +275,17 @@ export const useAuth = create<AuthState>((set, get) => ({
     // No usable token. Probe whether the server even requires auth.
     try {
       const res = await fetch("/api/v1/sync/identity", { headers: {} });
+      if (!current()) return;
       if (res.status === 401) {
-        set({ status: "needs-login", token: null, mode: null });
+        finish({ status: "needs-login", token: null, mode: null });
       } else {
         localStorage.setItem("brain.offline.scope", "anonymous");
         localStorage.setItem("brain.offline.anonymous", "true");
-        set({ status: "anonymous", token: null, mode: null });
+        finish({ status: "anonymous", token: null, mode: null });
       }
     } catch {
       // Only reopen an anonymous cache after this origin previously verified it.
-      set({
+      finish({
         status:
           localStorage.getItem("brain.offline.anonymous") === "true"
             ? "anonymous"
@@ -256,6 +297,7 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 
   async beginLogin() {
+    ++authGeneration;
     set({ error: null });
     try {
       const { id } = await registerClient();
@@ -289,6 +331,8 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 
   async loginPassword(username, password) {
+    const generation = ++authGeneration;
+    const current = () => generation === authGeneration;
     set({ error: null });
     const res = await fetch("/api/v1/auth/login", {
       method: "POST",
@@ -309,9 +353,11 @@ export const useAuth = create<AuthState>((set, get) => ({
       throw new Error(msg);
     }
     const data = await res.json();
+    if (!current()) return;
     localStorage.removeItem("brain.offline.scope");
     localStorage.removeItem("brain.offline.anonymous");
-    await bindOfflineScope(data.access_token);
+    await bindOfflineScope(data.access_token, current);
+    if (!current()) return;
     saveTokens(data, "password");
     set({
       status: "authenticated",
@@ -322,6 +368,7 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 
   async handleCallback(code, state) {
+    ++authGeneration;
     const expectedState = sessionStorage.getItem(SS.state);
     const verifier = sessionStorage.getItem(SS.verifier);
     if (!expectedState || state !== expectedState) {
@@ -366,25 +413,31 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 
   setManualToken(token) {
+    const generation = ++authGeneration;
+    const current = () => generation === authGeneration;
     set({ status: "loading", error: null });
-    void bindOfflineScope(token)
+    void bindOfflineScope(token, current)
       .then(() => {
+        if (!current()) return;
         localStorage.setItem(LS.accessToken, token);
         localStorage.setItem(LS.mode, "manual");
         localStorage.removeItem(LS.expiresAt);
         set({ status: "authenticated", token, mode: "manual", error: null });
       })
-      .catch((e) =>
-        set({
-          status: "needs-login",
-          token: null,
-          mode: null,
-          error: String(e),
-        }),
+      .catch(
+        (e) =>
+          current() &&
+          set({
+            status: "needs-login",
+            token: null,
+            mode: null,
+            error: String(e),
+          }),
       );
   },
 
   logout() {
+    ++authGeneration;
     // Best-effort revoke for password sessions; fire-and-forget.
     if (get().mode === "password") {
       const refresh = localStorage.getItem(LS.refreshToken);
@@ -401,18 +454,29 @@ export const useAuth = create<AuthState>((set, get) => ({
     set({ status: "needs-login", token: null, mode: null });
   },
 
-  async onUnauthorized() {
+  async onUnauthorized(rejectedToken = get().token) {
+    // Late 401s must never refresh or clear a newer login.
+    if (rejectedToken !== get().token) return !!get().token;
+    if (!rejectedToken) {
+      if (get().status === "anonymous") {
+        ++authGeneration;
+        clearTokens();
+        set({ status: "needs-login", token: null, mode: null });
+      }
+      return false;
+    }
     const mode = get().mode;
-    if (mode === "oauth" && (await exchangeRefresh())) {
-      set({ token: localStorage.getItem(LS.accessToken) });
+    const refreshed = await refreshCredentials(mode, rejectedToken);
+    if (get().token !== rejectedToken) return !!get().token;
+    if (refreshed) {
+      const token = localStorage.getItem(LS.accessToken);
+      if (!token) return false;
+      set({ token, mode: localStorage.getItem(LS.mode) as AuthMode | null });
       return true;
     }
-    if (mode === "password" && (await exchangePasswordRefresh())) {
-      set({ token: localStorage.getItem(LS.accessToken) });
-      return true;
-    }
+    if (localStorage.getItem(LS.accessToken) !== rejectedToken) return false;
+    ++authGeneration;
     clearTokens();
-    // Keep the client registration; it may still be valid for a fresh login.
     set({ status: "needs-login", token: null, mode: null });
     return false;
   },
@@ -425,6 +489,9 @@ if (
   typeof window.addEventListener === "function"
 ) {
   window.addEventListener("storage", (event) => {
-    if (event.key === LS.accessToken) void useAuth.getState().init();
+    if (event.key === LS.accessToken) {
+      ++authGeneration;
+      void useAuth.getState().init();
+    }
   });
 }

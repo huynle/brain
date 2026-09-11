@@ -8,7 +8,7 @@
  * modes) and merges client-side.
  */
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import {
   getBacklinks,
   getBrainStats,
@@ -33,7 +33,7 @@ const EMPTY_ENTRIES: BrainEntry[] = [];
 const EMPTY_HITS: SearchResult[] = [];
 
 export function useEntryList(filters: EntryListFilters) {
-  const q = useQuery({
+  const q = useInfiniteQuery({
     queryKey: [
       "entries",
       "list",
@@ -43,41 +43,41 @@ export function useEntryList(filters: EntryListFilters) {
       filters.sortBy,
       filters.sortOrder,
     ],
-    queryFn: async () => {
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
       const plan = buildListPlan(filters);
-      let failures = 0;
-      let lastError: unknown = null;
-      const lists = await Promise.all(
+      const pages = await Promise.all(
         plan.map((call) =>
-          listEntries(call)
-            .then((r) => r.entries || [])
-            // One type failing (e.g. nothing indexed yet) shouldn't
-            // blank the whole browser…
-            .catch((err) => {
-              failures++;
-              lastError = err;
-              return [] as BrainEntry[];
-            }),
+          listEntries({ ...call, offset: pageParam * call.limit }),
         ),
       );
-      // …but if EVERY call failed (server down, auth expired), surface
-      // the error instead of rendering an empty brain.
-      if (plan.length > 0 && failures === plan.length) {
-        throw lastError instanceof Error
-          ? lastError
-          : new Error("All entry list requests failed");
-      }
-      return mergeEntryLists(lists, filters.sortBy, filters.sortOrder);
+      return {
+        entries: pages.flatMap((p) => p.entries ?? []),
+        more: pages.some((p, i) => (p.entries?.length ?? 0) >= plan[i].limit),
+      };
     },
-    staleTime: 30_000,
+    getNextPageParam: (last, pages) => (last.more ? pages.length : undefined),
+    staleTime: 30000,
     refetchOnWindowFocus: true,
-    placeholderData: (prev) => prev,
   });
+  const entries = useMemo(
+    () =>
+      mergeEntryLists(
+        q.data?.pages.map((p) => p.entries) ?? [],
+        filters.sortBy,
+        filters.sortOrder,
+        Number.MAX_SAFE_INTEGER,
+      ),
+    [q.data, filters.sortBy, filters.sortOrder],
+  );
   return {
-    entries: q.data ?? EMPTY_ENTRIES,
+    entries: entries ?? EMPTY_ENTRIES,
     loading: q.isPending && q.fetchStatus !== "idle",
     error: q.error,
     refetch: q.refetch,
+    hasMore: q.hasNextPage,
+    loadingMore: q.isFetchingNextPage,
+    loadMore: () => void q.fetchNextPage(),
   };
 }
 
@@ -202,7 +202,8 @@ export function usePaletteEntrySearch(query: string, active: boolean) {
   });
 
   const results = useMemo(
-    () => (enabled ? rankEntryHits(debounced, q.data ?? EMPTY_HITS) : EMPTY_HITS),
+    () =>
+      enabled ? rankEntryHits(debounced, q.data ?? EMPTY_HITS) : EMPTY_HITS,
     [enabled, debounced, q.data],
   );
 

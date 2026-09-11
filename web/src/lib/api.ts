@@ -5,7 +5,6 @@ import {
   offlineAvailable,
   queueCreate,
   queueEdit,
-  useOffline,
 } from "./offline/sync";
 // Typed HTTP client for brain-api. Attaches the bearer token, transparently
 // refreshes on 401 (once), and exposes thin wrappers for the endpoints the PWA
@@ -90,10 +89,13 @@ function buildUrl(path: string, query?: FetchOpts["query"]): string {
   return url;
 }
 
-async function doFetch(path: string, opts: FetchOpts): Promise<Response> {
-  const auth = useAuth.getState();
+async function doFetch(
+  path: string,
+  opts: FetchOpts,
+  token = useAuth.getState().token,
+): Promise<Response> {
   const headers: Record<string, string> = {
-    ...auth.authHeader(),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...opts.headers,
   };
   let body: BodyInit | undefined;
@@ -113,10 +115,11 @@ async function doFetch(path: string, opts: FetchOpts): Promise<Response> {
 }
 
 export async function api<T>(path: string, opts: FetchOpts = {}): Promise<T> {
-  let res = await doFetch(path, opts);
+  const token = useAuth.getState().token;
+  let res = await doFetch(path, opts, token);
 
   if (res.status === 401) {
-    const refreshed = await useAuth.getState().onUnauthorized();
+    const refreshed = await useAuth.getState().onUnauthorized(token);
     if (refreshed) {
       res = await doFetch(path, opts);
     }
@@ -1865,11 +1868,12 @@ export async function controlExec(
 ): Promise<void> {
   const url = `/api/v1/control/runners/${encodeURIComponent(runnerId)}/exec`;
 
+  let requestToken = useAuth.getState().token;
   const open = (): Promise<Response> =>
     fetch(url, {
       method: "POST",
       headers: {
-        ...useAuth.getState().authHeader(),
+        ...(requestToken ? { Authorization: `Bearer ${requestToken}` } : {}),
         "Content-Type": "application/json",
         Accept: "text/event-stream",
         "Cache-Control": "no-cache",
@@ -1880,8 +1884,11 @@ export async function controlExec(
 
   let res = await open();
   if (res.status === 401) {
-    const refreshed = await useAuth.getState().onUnauthorized();
-    if (refreshed) res = await open();
+    const refreshed = await useAuth.getState().onUnauthorized(requestToken);
+    if (refreshed) {
+      requestToken = useAuth.getState().token;
+      res = await open();
+    }
   }
 
   if (!res.ok) {
@@ -1945,6 +1952,7 @@ export const listEntries = (query?: {
   type?: string;
   status?: string;
   limit?: number;
+  offset?: number;
   global?: string;
   /** Comma-separated multi-project scope, e.g. "hindsight,pwa,global".
    *  The reserved member "global" admits project-less entries. Supersedes
@@ -2066,9 +2074,7 @@ export async function search(req: SearchRequest): Promise<SearchResponse> {
     };
   };
   if (
-    offlineAvailable() &&
-    ((req.strategy !== "semantic" && req.strategy !== "hybrid") ||
-      !useOffline.getState().online)
+    offlineAvailable() && !navigator.onLine
   )
     return local();
   try {

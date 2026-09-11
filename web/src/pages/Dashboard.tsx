@@ -31,7 +31,6 @@ import { useWorkspace } from "../store/workspace";
 import { useProjects } from "../hooks/useProjects";
 import { streams, useLive } from "../lib/sse";
 import { useAuth } from "../lib/auth";
-import { useMobileViewport } from "../hooks/useMobileViewport";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useGlobalKeyboard } from "../hooks/useGlobalKeyboard";
 import { useEntryNavHistory } from "../hooks/useEntryNavHistory";
@@ -49,7 +48,6 @@ export function Dashboard(): JSX.Element {
   const sidebarWidth = useWorkspace((s) => s.sidebarWidth);
   const assistantWidth = useWorkspace((s) => s.assistantWidth);
   const isMobile = useIsMobile();
-  useMobileViewport(isMobile);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const modalKind = useModal((s) => s.kind);
   useEffect(() => {
@@ -82,14 +80,6 @@ export function Dashboard(): JSX.Element {
     mql.addEventListener("change", resolve);
     return () => mql.removeEventListener("change", resolve);
   }, [theme]);
-
-  // Reflect mobile + sidebar-collapsed states on body for CSS to hook.
-  useEffect(() => {
-    document.body.classList.toggle("mobile", isMobile);
-    return () => {
-      document.body.classList.remove("mobile");
-    };
-  }, [isMobile]);
 
   useEffect(() => {
     document.body.classList.toggle("sidebar-collapsed", sidebarCollapsed);

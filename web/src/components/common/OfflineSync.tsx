@@ -87,8 +87,8 @@ export function OfflineSync() {
       void query.invalidateQueries({ queryKey: [key] });
     if (!offlineAvailable()) return;
     const scope = localStorage.getItem("brain.offline.scope");
-    void cachedList({ type: "task" })
-      .then((all) => {
+    void database<CachedEntry[]>("list", { type: "task" })
+      .then(async (all) => {
         if (
           !offlineAvailable() ||
           localStorage.getItem("brain.offline.scope") !== scope
@@ -108,8 +108,20 @@ export function OfflineSync() {
             state.online
           )
             continue;
-          const tasks = all
-            .filter((e) => e.type === "task" && e.project_id === project)
+          const saved = await database<Task[] | null>(
+            "queryGet",
+            "tasks:" + project,
+          );
+          if (localStorage.getItem("brain.offline.scope") !== scope) return;
+          const definitions = new Map((saved ?? []).map((e) => [e.path, e]));
+          for (const e of all.filter((e) => e.project_id === project))
+            definitions.set(e.path, e as unknown as Task);
+          const tasks = [...definitions.values()]
+            .filter(
+              (e) =>
+                (e as unknown as CachedEntry).project_id === project ||
+                (e as Task & { projectId?: string }).projectId === project,
+            )
             .map((e) => ({
               ...e,
               projectId: project,
@@ -190,11 +202,13 @@ export function OfflineSync() {
         {!offlineAvailable()
           ? "Online only"
           : state.syncing
-            ? "Syncing"
+            ? state.ready
+              ? "Syncing recent entries"
+              : "Preparing cache"
             : !state.online
               ? "Offline"
               : state.ready
-                ? "Ready"
+                ? `Ready · ${state.cachedCount} cached`
                 : "Downloading"}
         {state.pending.length ? ` · ${state.pending.length} pending` : ""}
       </button>
@@ -214,9 +228,11 @@ export function OfflineSync() {
           {!offlineAvailable()
             ? "Online mode: changes save directly to the server. Offline editing requires persistent browser storage."
             : state.ready
-              ? "All entries from this server are stored on this device. Changes sync when connected."
-              : "Connect to download entries before offline use."}{" "}
-          {offlineAvailable() ? `${state.pending.length} pending edits.` : "Local pending edits cannot be checked in this mode."}
+              ? "Only recently opened entries are stored on this device: up to 200 used within 30 days, plus pending edits. Lists load in pages; online search covers the whole library."
+              : "Entries are cached when you open them. Unopened entries require a connection."}{" "}
+          {offlineAvailable()
+            ? `${state.pending.length} pending edits.`
+            : "Local pending edits cannot be checked in this mode."}
         </p>
         <p>
           Runner controls, execution, moves, and deletion require a connection.

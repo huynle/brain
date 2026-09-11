@@ -316,3 +316,63 @@ test("metadata summary matches scoped lists and includes pending drafts without 
     assert.ok(!JSON.stringify(summary).includes("ocean bird"));
   }
 });
+
+test("selective migration drops unused library entries but pins draft bases", (t) => {
+  const s = setup(t);
+  const pending = op(seed.raw.replace("ocean", "offline"));
+  s.queue(pending);
+  s.apply({
+    epoch: "e",
+    cursor: 2,
+    more: false,
+    changes: [
+      {
+        path: "unused.md",
+        entry: { ...seed, path: "unused.md" },
+        raw: seed.raw,
+      },
+    ],
+  });
+  s.prepareSelective();
+  assert.equal(s.get("unused.md", true), null);
+  assert.equal(s.get(seed.path, true)?.revision, "r1");
+  assert.equal(s.get(seed.path)?.content, "offline bird");
+  assert.equal(s.state().cacheMode, "recent");
+  assert.deepEqual(Object.keys(s.selection()), [seed.path]);
+});
+test("recent working set expires and caps at 200 without evicting drafts", (t) => {
+  const s = setup(t);
+  s.queue(op(seed.raw));
+  for (let i = 0; i < 205; i++) s.remember({ ...seed, path: `recent/${i}.md` });
+  assert.equal(s.state().cachedCount, 201);
+  s.prepareSelective(Date.now() + 31 * 86400000);
+  assert.equal(s.state().cachedCount, 1);
+  assert.equal(s.state().pending.length, 1);
+});
+test("background selected refresh does not extend entry recency and unchanged batches keep generation stable", (t) => {
+  const s = setup(t);
+  s.remember(seed);
+  const before = s.state().cursor;
+  s.applySelected({ epoch: "e", cursor: 0, more: false, changes: [] });
+  assert.equal(s.state().cursor, before);
+  s.applySelected({
+    epoch: "e",
+    cursor: 0,
+    more: false,
+    changes: [
+      { path: seed.path, entry: { ...seed, revision: "r2" }, raw: seed.raw },
+    ],
+  });
+  assert.equal(s.state().cursor, before + 1);
+  s.prepareSelective(Date.now() + 31 * 86400000);
+  assert.equal(s.state().cachedCount, 0);
+});
+test("query pages are bounded and cannot make unopened entries sync targets", (t) => {
+  const s = setup(t);
+  s.prepareSelective();
+  for (let i = 0; i < 50; i++) s.queryPut(`page:${i}`, { entries: [seed] });
+  assert.equal(s.queryGet("page:0"), null);
+  assert.deepEqual(s.selection(), {});
+  assert.equal(s.queryPut("page:49", { entries: [seed] }), false);
+  assert.equal(s.queryPut("page:49", { entries: [] }), true);
+});

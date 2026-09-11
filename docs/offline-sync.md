@@ -14,12 +14,17 @@ Markdown, including automation actions. Normal single-entry update/create calls
 also use the outbox. New tasks and automations in the offline creation form start
 as drafts; activating their definitions can allow server execution after sync.
 
-The initial download caches all indexed entries available on this single-tenant
-server, including global entries. Subsequent requests download only changed
-paths. The editor's selector displays at most 250 matches; filter by title, type,
-or project to find another entry. Existing entry lists and FTS searches read the
-local database. Semantic/hybrid search still uses the server while connected;
-when disconnected, searches fall back to local full text, not local embeddings.
+The browser caches full content only when an entry is opened. It retains up to
+200 entries used within 30 days, plus all pending edits and their server bases.
+Old full-library caches are trimmed without removing pending edits. List pages
+are separate bounded previews (40 recently used query snapshots), not offline
+editable documents. Single-type lists load 50 rows per page; mixed-type views
+load 25 per type and offer **Load more entries**. Search covers the whole server
+while online; offline search covers only cached documents and drafts.
+
+The editor selector shows cached entries. Open another entry online to make its
+full Markdown and YAML available offline. Recently viewed task snapshots are
+retained for the task view, with execution readiness explicitly unknown offline.
 
 “Saved locally” means durable on this device, **not yet accepted by the server**.
 The panel distinguishes queued edits, unconfirmed uploads, and edits needing
@@ -67,12 +72,17 @@ no time-based retention/pruning; storage grows with distinct paths, including
 previously deleted paths, rather than every version of a frequently edited row.
 Receipts are likewise retained; retention requires an explicit protocol change.
 
-The first sync drains this same paginated feed from cursor zero. It is a
-convergent bootstrap, not a server-side long-lived snapshot. The client records
-each page and cursor in one local transaction, and marks the cache ready after
-catching up. A different database epoch or impossible cursor returns 410 and
-causes re-bootstrap. Drafts survive reset. Unconfirmed sent operations become
-uncertain on epoch reset because the new database may have lost their receipts.
+The PWA uses `POST /api/v1/sync/entries/selected` with
+`{entries: {"path": "known revision"}}` (at most 250 paths per request). Empty
+selection returns only the database epoch. Unchanged revisions transfer no
+bodies. Missing paths return tombstones. The working set is checked every ten
+seconds; the PWA never drains the global change feed. That feed remains available
+for older clients and other consumers. An epoch change preserves drafts and
+marks unconfirmed writes uncertain before refreshing selected server bases.
+
+`sync_status` reports `cache_mode: recent` and `cached_entries`; `ready` means
+the selective cache is usable, not that the whole library is present. Its cursor
+is a local cache generation in this mode, not a global replication position.
 
 Unsent edits coalesce; once sent, payloads cannot change until the outcome is
 known. A local draft version guards against two editors overwriting each other.

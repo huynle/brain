@@ -275,7 +275,16 @@
     min-height: 96px;
   }
   body.mobile .session-view.session-full {
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(160px, 1fr) auto;
+  }
+  body.mobile .session-full .sidebar-r {
+    grid-column: 1;
+    grid-row: 3;
+  }
+  body.mobile .session-full > .hdr > span {
+    overflow-wrap: anywhere;
+    min-width: 0;
   }
   body.mobile .session-full .sidebar-r.mobile-details-open {
     display: block;

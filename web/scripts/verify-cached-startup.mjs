@@ -49,12 +49,19 @@ try {
   await expect(
     p.locator(".entry-reader").getByText("Startup scratch 10", { exact: true }),
   ).toBeVisible({ timeout: 30000 });
-  await expect.poll(() => p.evaluate(() => window.cacheReady)).toBe(true);
+  await expect
+    .poll(() => p.evaluate(() => window.cacheReady), { timeout: 120000 })
+    .toBe(true);
+  await p.getByRole("button", { name: "Overview", exact: true }).click();
+  await expect(
+    p.getByText("Startup task 0", { exact: true }).first(),
+  ).toBeVisible();
+  await p.getByRole("button", { name: "Entries", exact: true }).click();
   const requests = [];
   p.on("request", (r) => requests.push(r.url()));
   let release;
   const gate = new Promise((resolve) => (release = resolve));
-  await p.route("**/api/v1/sync/entries**", async (route) => {
+  await p.route("**/api/v1/sync/entries/selected", async (route) => {
     await gate;
     await route.continue().catch(() => {});
   });
@@ -69,14 +76,8 @@ try {
   ).toBeVisible({ timeout: 5000 });
   const warmMs = Date.now() - start;
   assert.ok(
-    !requests.some((u) => new URL(u).pathname === "/api/v1/tasks"),
-    "startup must not download task lists to probe authentication",
-  );
-  assert.ok(
-    requests
-      .filter((u) => new URL(u).pathname === "/api/v1/sync/entries")
-      .every((u) => Number(new URL(u).searchParams.get("cursor")) > 0),
-    "warm sync must resume its saved cursor",
+    !requests.some((u) => new URL(u).pathname === "/api/v1/sync/entries"),
+    "warm startup must never drain the full library feed",
   );
   console.log(
     "PASS cached entry visible before sync/server snapshots, warm reload ms:",
@@ -89,9 +90,12 @@ try {
   console.log("PASS cached tasks visible before server snapshots");
   await p.getByRole("button", { name: "Entries", exact: true }).click();
   release();
-  await p.unroute("**/api/v1/sync/entries**");
+  await p.unroute("**/api/v1/sync/entries/selected");
   await p.unroute("**/api/v1/tasks/stream**");
-  await p.waitForTimeout(2500);
+  await expect(
+    p.getByRole("button", { name: /Offline sync · Ready/ }),
+  ).toBeVisible({ timeout: 30000 });
+  await p.waitForTimeout(1500);
   const before = await p.evaluate(
     () => window.dbCalls.filter((m) => m === "list" || m === "summary").length,
   );

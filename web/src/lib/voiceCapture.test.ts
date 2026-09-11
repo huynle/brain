@@ -31,3 +31,25 @@ test('interruptions require longer, higher-confidence speech than normal listeni
  for(let i=0;i<8;i++)s.push(frame,.75,false);
  assert.equal(starts,1,'normal listening accepts lower-confidence speech sooner');
 });
+
+test('a hesitant interruption retains opening words in the transcription WAV',()=>{
+ let starts=0;const segments:Float32Array[]=[];
+ const s=new VoiceSegmenter(16000,()=>starts++,pcm=>segments.push(pcm));
+ const frame=(value:number)=>new Float32Array(512).fill(value);
+ for(let i=0;i<100;i++)s.push(frame(0),.01,true);
+ // Quiet words and a hesitation precede speech confident enough to interrupt.
+ for(let i=0;i<12;i++)s.push(frame(.11),.6,true);
+ for(let i=0;i<8;i++)s.push(frame(0),.05,true);
+ for(let i=0;i<10;i++)s.push(frame(.22),.8,true);
+ assert.equal(starts,0);
+ for(let i=0;i<16;i++)s.push(frame(.33),.99,true);
+ assert.equal(starts,1);
+ for(let i=0;i<40;i++)s.push(frame(0),.01,false);
+ assert.equal(segments.length,1);
+ assert.equal(segments[0].filter(sample=>sample===Math.fround(.11)).length,12*512,'opening words survive detection delay');
+ assert.equal(segments[0].filter(sample=>sample===Math.fround(.22)).length,10*512);
+ const wav=pcmWav(segments[0],16000),view=new DataView(wav.buffer);
+ let openingSamples=0;
+ for(let i=44;i<wav.length;i+=2)if(view.getInt16(i,true)===Math.round(Math.fround(.11)*32767))openingSamples++;
+ assert.equal(openingSamples,12*512);
+});

@@ -1,4 +1,4 @@
-/** Segment PCM without releasing its capture stream. Keep a short pre-roll. */
+/** Segment PCM without releasing capture; retain quiet words before VAD confirms speech. */
 export class VoiceSegmenter {
   private pre: Float32Array[] = [];
   private frames: Float32Array[] = [];
@@ -14,8 +14,10 @@ export class VoiceSegmenter {
   push(pcm: Float32Array, speechProbability: number, interrupting = false) {
     const voice = speechProbability >= (this.active ? .4 : interrupting ? .9 : .65);
     if(!this.active) {
+      // Keep the acoustic lead-in independently of the stricter interruption
+      // threshold: a quiet first word or hesitation can precede confirmation.
       this.pre.push(pcm);
-      while(this.pre.length>Math.ceil(this.rate*.7/pcm.length))this.pre.shift();
+      while(this.pre.length>Math.ceil(this.rate*2/pcm.length))this.pre.shift();
       this.voiced=voice?this.voiced+pcm.length:0;
       if(this.voiced<this.rate*(interrupting ? .45 : .22))return;
       this.active=true;this.frames=this.pre;this.pre=[];

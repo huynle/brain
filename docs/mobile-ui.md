@@ -90,7 +90,7 @@ by the system, a non-blocking message explains that the screen may sleep. This
 prevents automatic screen sleep only; it does not support a manually locked
 phone.
 
-A browser-local Silero V5 classifier keeps 700 ms of pre-roll and submits a WAV
+A browser-local Silero V5 classifier keeps two seconds of pre-roll and submits a WAV
 segment after 1.2 seconds of silence (30-second maximum per segment). Silence
 alone never creates a transcription request. The stream remains open during
 transcription, reasoning and playback. Sustained speech stops playback and

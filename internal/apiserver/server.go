@@ -591,6 +591,15 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		MCPBaseURL: assistantMCPBaseURL(opts),
 	})
 	go goalSvc.Start(ctx, eventHub)
+	if cfg.Assistant.Enabled && os.Getenv("BRAIN_ASSISTANT_JOBS") == "true" {
+		stopJobs, err := assistantSvc.StartConversationJobs(tenant.Into(ctx, tenant.Local), filepath.Join(dataDir, "assistant-jobs", "jobs.db"))
+		if err != nil {
+			cleanup()
+			return nil, "", nil, fmt.Errorf("start conversation worker: %w", err)
+		}
+		previousCleanup := cleanup
+		cleanup = func() { stopJobs(); previousCleanup() }
+	}
 
 	// ─── Reminders ─────────────────────────────────────────────────
 	// The sweeper runs HERE, in the API process, not in the runner. A

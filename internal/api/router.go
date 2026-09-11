@@ -352,6 +352,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Post("/speech", o.handler.HandleAssistantSpeech)
 						r.Post("/chat", o.handler.HandleAssistantChat)
 						r.Post("/chat/stream", o.handler.HandleAssistantChatStream)
+						r.Get("/jobs", o.handler.HandleConversationJobs)
 						r.Post("/goal-draft", o.handler.HandleAssistantGoalDraft)
 					} else {
 						r.Post("/speech", notImplemented)

@@ -51,6 +51,7 @@ type AssistantServiceOptions struct {
 }
 
 type AssistantService struct {
+	jobs         *conversationJobs
 	speech       SpeechSynthesizer
 	transcriber  SpeechTranscriber
 	enabled      bool
@@ -79,12 +80,18 @@ type AssistantStatusResponse struct {
 }
 
 type AssistantChatRequest struct {
-	Voice       bool              `json:"voice,omitempty"`
-	Project     string            `json:"project,omitempty"`
-	Message     string            `json:"message"`
-	Model       string            `json:"model,omitempty"`
-	Attachments []string          `json:"attachments,omitempty"`
-	Context     map[string]string `json:"context,omitempty"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Inbox          bool   `json:"inbox,omitempty"`
+	// Worker hooks cannot be selected or supplied by HTTP clients.
+	worker        bool
+	checkpoint    func([]chatMessage) ([]string, error)
+	savedMessages []chatMessage
+	Voice         bool              `json:"voice,omitempty"`
+	Project       string            `json:"project,omitempty"`
+	Message       string            `json:"message"`
+	Model         string            `json:"model,omitempty"`
+	Attachments   []string          `json:"attachments,omitempty"`
+	Context       map[string]string `json:"context,omitempty"`
 	// Images carries pasted/dropped images for THIS turn as base64 data URLs
 	// (e.g. "data:image/png;base64,..."). They are sent to the vision model as
 	// image_url content parts on the current user message only; they are not
@@ -240,6 +247,10 @@ func (s *AssistantService) Status() AssistantStatusResponse {
 	if s != nil {
 		resp.Provider = s.provider
 		resp.Model = s.model
+		if s.jobs != nil {
+			resp.Mode = "coordinator"
+			resp.Capabilities = []string{"chat", "attachments", "background_jobs", "list_jobs", "inspect_job", "start_job", "update_job", "resume_job", "cancel_job"}
+		}
 	}
 	if !resp.Available {
 		resp.Mode = "manual"
@@ -252,7 +263,7 @@ func (s *AssistantService) Chat(ctx context.Context, req AssistantChatRequest) (
 	if s == nil || !s.enabled || s.planner == nil {
 		return AssistantChatResponse{}, fmt.Errorf("assistant is not configured")
 	}
-	res, err := s.runAgentLoop(ctx, req, nil)
+	res, err := s.conversationTurn(ctx, req, nil)
 	if err != nil {
 		return AssistantChatResponse{}, err
 	}
@@ -267,7 +278,7 @@ func (s *AssistantService) ChatStream(ctx context.Context, req AssistantChatRequ
 	if s == nil || !s.enabled || s.planner == nil {
 		return fmt.Errorf("assistant is not configured")
 	}
-	res, err := s.runAgentLoop(ctx, req, emit)
+	res, err := s.conversationTurn(ctx, req, emit)
 	if err != nil {
 		return err
 	}

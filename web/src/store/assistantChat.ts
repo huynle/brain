@@ -48,6 +48,9 @@ interface SavedConversation {
 }
 
 interface AssistantChatState {
+	ensureSession(): void;
+	beginNotification(): void;
+	mergeRemote(conversations: Array<{id:string;title:string;history:AssistantHistoryMessage[]}>): void;
   sessionId: string;
   sessions: SavedConversation[];
   newSession(): void;
@@ -136,6 +139,16 @@ function snapshot(s: AssistantChatState): SavedConversation {
 export const useAssistantChat = create<AssistantChatState>()(
   persist(
     (set) => ({
+	  ensureSession: () => set(s => s.sessionId === "initial" ? {sessionId: crypto.randomUUID()} : s),
+	  beginNotification: () => set(s => ({busy:true,turns:[...s.turns,{role:"assistant" as const,content:"",tools:[],streaming:true}].slice(-MAX_TURNS)})),
+	  mergeRemote: remote => set(s => {
+	    const convert = (c: typeof remote[number]):SavedConversation => ({id:c.id,title:c.title,history:coerceHistory(c.history),turns:coerceHistory(c.history).filter(h=>(h.role==="user"||h.role==="assistant")&&typeof h.content==="string").map(h=>({role:h.role as "user"|"assistant",content:h.content!,tools:[]}))});
+	    const sessions=[...s.sessions];
+	    for(const c of remote)if(c.id!==s.sessionId&&!sessions.some(v=>v.id===c.id))sessions.push(convert(c));
+	    const current=remote.find(c=>c.id===s.sessionId);
+	    if(current&&!s.busy&&current.history.length>0&&(s.history.length===0||current.history.at(-1)?.content!==s.history.at(-1)?.content)){const restored=convert(current);return {sessions,turns:restored.turns,history:restored.history};}
+	    return {sessions};
+	  }),
       sessionId: "initial",
       sessions: [],
       newSession: () => set(s => ({

@@ -48,6 +48,50 @@ type imageURLPart struct {
 	URL string `json:"url"`
 }
 
+func (m *chatMessage) UnmarshalJSON(b []byte) error {
+	var wire struct {
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content"`
+		ToolCalls  []toolCall      `json:"tool_calls"`
+		ToolCallID string          `json:"tool_call_id"`
+		Name       string          `json:"name"`
+	}
+	if err := json.Unmarshal(b, &wire); err != nil {
+		return err
+	}
+	*m = chatMessage{Role: wire.Role, ToolCalls: wire.ToolCalls, ToolCallID: wire.ToolCallID, Name: wire.Name}
+	if len(wire.Content) == 0 || string(wire.Content) == "null" {
+		return nil
+	}
+	if wire.Content[0] == '[' {
+		return json.Unmarshal(wire.Content, &m.ContentParts)
+	}
+	return json.Unmarshal(wire.Content, &m.Content)
+}
+
+// Remove unresolved calls on recovery or replanning; they must not be replayed
+// just to satisfy the provider's message pairing requirements.
+func settledWorkerMessages(msgs []chatMessage) []chatMessage {
+	answered := map[string]bool{}
+	for _, m := range msgs {
+		if m.Role == "tool" {
+			answered[m.ToolCallID] = true
+		}
+	}
+	out := append([]chatMessage(nil), msgs...)
+	for i, m := range out {
+		if len(m.ToolCalls) > 0 {
+			out[i].ToolCalls = nil
+			for _, call := range m.ToolCalls {
+				if answered[call.ID] {
+					out[i].ToolCalls = append(out[i].ToolCalls, call)
+				}
+			}
+		}
+	}
+	return out
+}
+
 // MarshalJSON emits the message in OpenAI chat format. When ContentParts is
 // set, `content` is the parts array; otherwise it falls back to the plain
 // string form so existing text-only messages are unchanged.
@@ -136,10 +180,21 @@ func (s *AssistantService) runAgentLoop(
 ) (agentLoopResult, error) {
 	planner, ok := s.planner.(*OpenRouterAssistantPlanner)
 	if !ok {
+		if s.jobs != nil && !req.worker {
+			return agentLoopResult{}, errors.New("conversation coordinator requires a tool-capable planner")
+		}
 		// Non-OpenRouter planners fall back to the legacy single-shot behavior.
 		return s.runLegacyLoop(ctx, req, emit)
 	}
 	tools := s.toolDefinitions(assistantTokenFromContext(ctx))
+	coordinator := s.jobs != nil && !req.worker
+	if coordinator {
+		var err error
+		tools, err = s.jobs.tools(ctx, req)
+		if err != nil {
+			return agentLoopResult{}, err
+		}
+	}
 	index := toolIndex(tools)
 	schemas := buildToolSchemas(tools)
 	model := firstNonEmptyString(req.Model, s.model)
@@ -147,14 +202,41 @@ func (s *AssistantService) runAgentLoop(
 	msgs := []chatMessage{
 		{Role: "system", Content: assistantSystemPrompt()},
 	}
+	if coordinator {
+		msgs[0].Content = coordinatorPrompt
+	}
 	if req.Voice {
 		msgs = append(msgs, chatMessage{Role: "system", Content: "This is a spoken conversation. Default to one or two short sentences, usually under 50 words. Answer the main point first. Do not narrate tool use, repeat the question, list every finding, or add routine follow-up offers. Use plain spoken language without Markdown formatting. Give more detail when explicitly requested or needed for an accurate answer. Respect a change of topic immediately. Tool permissions and safety rules remain unchanged."})
 	}
 	msgs = append(msgs, replayHistory(req.History)...)
 	msgs = append(msgs, buildUserMessage(req))
+	if req.worker && len(req.savedMessages) > 0 {
+		msgs = settledWorkerMessages(req.savedMessages)
+	}
+	checkpoint := func() (bool, error) {
+		if req.checkpoint == nil {
+			return false, nil
+		}
+		pending, err := req.checkpoint(msgs)
+		if err != nil {
+			return false, err
+		}
+		for _, text := range pending {
+			msgs = append(msgs, chatMessage{Role: "user", Content: "Additional context from the conversation coordinator: " + text})
+		}
+		return len(pending) > 0, nil
+	}
 
 	result := agentLoopResult{}
-	for turn := 0; turn < s.maxToolTurns; turn++ {
+	turnLimit := s.maxToolTurns
+	if req.worker && turnLimit < 30 {
+		turnLimit = 30
+	}
+workLoop:
+	for turn := 0; turn < turnLimit; turn++ {
+		if _, err := checkpoint(); err != nil {
+			return result, err
+		}
 		// Bail early if the client disconnected between turns. Otherwise
 		// we'd waste a tool round-trip or LLM call on a dead request.
 		if err := ctx.Err(); err != nil {
@@ -163,6 +245,11 @@ func (s *AssistantService) runAgentLoop(
 		choice, err := planner.callChat(ctx, model, msgs, schemas, emit)
 		if err != nil {
 			return result, err
+		}
+		if more, err := checkpoint(); err != nil {
+			return result, err
+		} else if more {
+			continue
 		}
 		// If the model returned tool_calls, execute each in order.
 		if len(choice.ToolCalls) > 0 {
@@ -239,16 +326,32 @@ func (s *AssistantService) runAgentLoop(
 					Name:       tc.Function.Name,
 					Content:    body,
 				})
+				// Persist the complete tool pairing before another model step.
+				if more, err := checkpoint(); err != nil {
+					return result, err
+				} else if more {
+					msgs = settledWorkerMessages(msgs)
+					continue workLoop
+				}
 			}
 			continue
 		}
 		// Terminal turn: no tool calls, just an assistant reply.
 		result.Reply = choice.Content
+		if req.worker {
+			msgs = append(msgs, chatMessage{Role: "assistant", Content: choice.Content})
+			more, err := checkpoint()
+			if err != nil {
+				return result, err
+			}
+			if more {
+				continue
+			}
+		}
 		return result, nil
 	}
 	// Hit the turn cap. Surface whatever text we have.
-	result.Reply = firstNonEmptyString(result.Reply,
-		"Reached tool-call limit before producing a final answer.")
+	result.Reply = "Reached tool-call limit before producing a final answer."
 	return result, nil
 }
 

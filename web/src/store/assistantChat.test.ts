@@ -121,3 +121,14 @@ test("legacy single conversation migrates without losing history", () => {
   assert.equal(restored.turns[0].content, "Existing conversation");
   assert.equal(restored.history[0].content, "Existing conversation");
 });
+
+test("server inbox recovery restores a reply lost after disconnect without mixing sessions",()=>{
+  resetStore();
+  useAssistantChat.setState({sessionId:"a",history:[{role:"user",content:"Count entries"}],turns:[{role:"user",content:"Count entries",tools:[]}]});
+  useAssistantChat.getState().mergeRemote([{id:"a",title:"Count",history:[{role:"user",content:"Count entries"},{role:"assistant",content:"There are 77 entries."}]},{id:"b",title:"Other conversation",history:[]}]);
+  assert.equal(useAssistantChat.getState().turns.at(-1)?.content,"There are 77 entries.");
+  useAssistantChat.getState().newSession();
+  assert.equal(useAssistantChat.getState().turns.length,0);
+  useAssistantChat.getState().switchSession("a");
+  assert.equal(useAssistantChat.getState().turns.at(-1)?.content,"There are 77 entries.");
+});

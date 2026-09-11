@@ -32,6 +32,7 @@ import {
   type AssistantChatTurn,
 } from "../store/assistantChat";
 import {
+  api,
   assistantChatStream,
   ApiError,
   type AssistantHistoryMessage,
@@ -119,13 +120,37 @@ export function AssistantPanel(): JSX.Element | null {
   const sessions = useAssistantChat((s) => s.sessions);
   const turns = useAssistantChat((s) => s.turns);
   const busy = useAssistantChat((s) => s.busy);
+	const [jobs,setJobs]=useState<Array<{id:string;title:string;state:string;revision:number;acknowledged:number}>>([]);
+	const sendRef=useRef<(text?:string,inbox?:boolean)=>Promise<void>>(async()=>{});
+	const coordinatorReady=useRef(false),userSpeaking=useRef(false);
+	useEffect(()=>{useAssistantChat.getState().ensureSession();},[]);
   const voice = usePersistentVoice({active: open, sessionId, speaking: speech.state === "playing", isBusy: () => useAssistantChat.getState().busy,
-    onStartSpeech: () => {speech.stop(); activeAbort?.abort();},
-    onTurn: text => void send(text),
-    onEnabled: enabled => {setHandsFree(enabled);setSpokenReplies(enabled);spokenRepliesRef.current=enabled;if(!enabled)speech.stop();},
+    onStartSpeech: () => {userSpeaking.current=true;speech.stop();if(!coordinatorReady.current)activeAbort?.abort();},
+    onTurn: text => {userSpeaking.current=false;void send(text);},
+    onEnabled: enabled => {setHandsFree(enabled);setSpokenReplies(enabled);spokenRepliesRef.current=enabled;if(!enabled){userSpeaking.current=false;speech.stop();}},
   });
   const threadRef = useRef<HTMLDivElement | null>(null);
   const followLatest = useRef(true);
+	const inboxReady=useRef(false);
+	inboxReady.current=open&&!busy&&!listening&&!prompt.trim()&&speech.state==="idle"&&(!voice.enabled||voice.status==="Listening…");
+	useEffect(()=>{
+	  if(!open)return;
+	  let disposed=false,fetching=false,loadedHistory=false;
+	  const poll=async()=>{
+	    if(fetching)return;fetching=true;
+	    try{
+	      const response=await api<{jobs:typeof jobs;conversations:Array<{id:string;title:string;history:AssistantHistoryMessage[]}>}>(`/api/v1/assistant/jobs?conversation_id=${encodeURIComponent(sessionId)}&include_history=${!loadedHistory}`);
+	      if(disposed||useAssistantChat.getState().sessionId!==sessionId)return;
+	      setJobs(response.jobs);loadedHistory=true;
+	      coordinatorReady.current=true;
+	      useAssistantChat.getState().mergeRemote(response.conversations);
+	      if(inboxReady.current&&!useAssistantChat.getState().busy&&response.jobs.some(j=>j.revision>j.acknowledged&&!["queued","running","creating"].includes(j.state)))await sendRef.current(undefined,true);
+	    }catch{/* Existing deployments without conversation workers keep their chat UI. */}
+	    finally{fetching=false;}
+	  };
+	  void poll();const timer=setInterval(()=>void poll(),2000);
+	  return()=>{disposed=true;clearInterval(timer);};
+	},[open,sessionId]);
 
   // ─── left-edge drag-resize ────────────────────────────────────────
   // The panel is always the rightmost column, so its width is the
@@ -238,11 +263,11 @@ export function AssistantPanel(): JSX.Element | null {
   const removePendingImage = (id: string) =>
     setPendingImages((prev) => prev.filter((p) => p.id !== id));
 
-  const send = async (spokenTurn?: string) => {
-    const message = (spokenTurn ?? prompt).trim();
-    const images = pendingImages;
+  const send = async (spokenTurn?: string, inbox=false) => {
+    const message = inbox ? "" : (spokenTurn ?? prompt).trim();
+    const images = inbox ? [] : pendingImages;
     if (
-      (!message && images.length === 0) ||
+      (!inbox && !message && images.length === 0) ||
       useAssistantChat.getState().busy ||
       (listening && spokenTurn === undefined)
     )
@@ -252,7 +277,7 @@ export function AssistantPanel(): JSX.Element | null {
     setPrompt("");
     setPendingImages([]);
     const chat = useAssistantChat.getState();
-    chat.beginTurn(
+    if(inbox)chat.beginNotification();else chat.beginTurn(
       message ||
         (images.length === 1 ? "(image)" : `(${images.length} images)`),
     );
@@ -267,6 +292,8 @@ export function AssistantPanel(): JSX.Element | null {
     try {
       await assistantChatStream(
         {
+          conversation_id: chat.sessionId,
+          inbox,
           message,
           voice: spokenRepliesRef.current,
           history: chat.history.slice(-HISTORY_REPLAY_LIMIT),
@@ -339,7 +366,7 @@ export function AssistantPanel(): JSX.Element | null {
             ? "(image)"
             : `(${images.length} images)`
           : "");
-      const entries: AssistantHistoryMessage[] = [
+      const entries: AssistantHistoryMessage[] = inbox ? [] : [
         { role: "user", content: historyUserContent },
       ];
       const answered = tools.filter((c) => c.status !== "running");
@@ -369,10 +396,12 @@ export function AssistantPanel(): JSX.Element | null {
         spokenRepliesRef.current &&
         openRef.current &&
         !ac.signal.aborted
+        && !userSpeaking.current
       )
         void speech.play(acc);
     }
   };
+	 sendRef.current=send;
 
   const asideStyle = {
     ["--assistant-w" as never]: `${assistantWidth}px`,
@@ -404,6 +433,10 @@ export function AssistantPanel(): JSX.Element | null {
           <button className="assistant-chat-clear" onClick={() => changeSession()}>New chat</button>
         </div>
 
+        {jobs.length>0&&<details className="assistant-background-jobs">
+          <summary>Background jobs · {jobs.filter(j=>j.state==="queued"||j.state==="running").length} active</summary>
+          <ul>{jobs.map(job=><li key={job.id}>{job.title} — {job.state}</li>)}</ul>
+        </details>}
         <div className="assistant-speech-controls">
           <label>
             <input

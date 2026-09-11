@@ -1381,6 +1381,8 @@ export interface AssistantStreamEvent {
 
 export async function assistantChatStream(
   body: {
+	conversation_id?: string;
+	inbox?: boolean;
     project?: string;
     message: string;
     voice?: boolean;

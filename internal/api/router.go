@@ -185,6 +185,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
 				if o.handler != nil {
 					r.Get("/sync/entries", o.handler.HandleEntryChanges)
+					r.Post("/sync/entries/selected", o.handler.HandleSelectedEntryChanges)
 					r.Get("/sync/identity", o.handler.HandleEntrySyncIdentity)
 				}
 			})

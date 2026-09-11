@@ -20,17 +20,19 @@ type SyncCommand struct {
 	Outcome        string `json:"outcome,omitempty"`
 }
 type SyncDevice struct {
-	ID         string        `json:"device_id"`
-	Owner      string        `json:"owner,omitempty"`
-	LastSeen   string        `json:"last_seen"`
-	Connection string        `json:"connection"`
-	Online     bool          `json:"reported_online"`
-	Syncing    bool          `json:"syncing"`
-	Ready      bool          `json:"ready"`
-	Cursor     int64         `json:"cursor"`
-	Epoch      string        `json:"epoch"`
-	LastSync   string        `json:"last_successful_sync,omitempty"`
-	Error      string        `json:"error,omitempty"`
-	Pending    []SyncPending `json:"pending"`
-	Command    *SyncCommand  `json:"command,omitempty"`
+	CacheMode     string        `json:"cache_mode,omitempty"`
+	CachedEntries int           `json:"cached_entries,omitempty"`
+	ID            string        `json:"device_id"`
+	Owner         string        `json:"owner,omitempty"`
+	LastSeen      string        `json:"last_seen"`
+	Connection    string        `json:"connection"`
+	Online        bool          `json:"reported_online"`
+	Syncing       bool          `json:"syncing"`
+	Ready         bool          `json:"ready"`
+	Cursor        int64         `json:"cursor"`
+	Epoch         string        `json:"epoch"`
+	LastSync      string        `json:"last_successful_sync,omitempty"`
+	Error         string        `json:"error,omitempty"`
+	Pending       []SyncPending `json:"pending"`
+	Command       *SyncCommand  `json:"command,omitempty"`
 }

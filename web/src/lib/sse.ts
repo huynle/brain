@@ -1,3 +1,5 @@
+import { offlineAvailable } from "./offline/sync";
+import { database, databaseFor, cacheScope } from "./offline/client";
 // Real-time layer. One long-lived multiplexed fetch stream consumes
 // server-sent-events frames for every subscribed project and pushes task
 // snapshots, runner updates, and runner logs into a zustand store the UI
@@ -207,6 +209,31 @@ class MultiStream {
 
   start(): void {
     this.closed = false;
+    if (offlineAvailable()) {
+      const scope = cacheScope();
+      for (const project of this.projectIds)
+        void databaseFor<Task[] | null>(scope, "queryGet", "tasks:" + project)
+          .then((tasks) => {
+            if (
+              this.closed ||
+              !tasks ||
+              cacheScope() !== scope ||
+              !offlineAvailable()
+            )
+              return;
+            const live = useLive.getState();
+            if (live.projects[project]?.snapshotReceived) return;
+            live.setProject(project, {
+              tasks: tasks.map((t) => ({
+                ...t,
+                classification: "unknown",
+                blocked_by_reason: "Cached: execution state unavailable",
+              })),
+              snapshotReceived: false,
+            });
+          })
+          .catch(() => {});
+    }
     void this.open();
   }
 
@@ -254,6 +281,10 @@ class MultiStream {
         if (!d) break;
         const pid = projectIdOf(d);
         if (!pid) break;
+        if (offlineAvailable())
+          void database("queryPut", "tasks:" + pid, d.tasks || []).catch(
+            () => {},
+          );
         live.setProject(pid, {
           tasks: d.tasks || [],
           snapshotReceived: true,
@@ -321,9 +352,7 @@ class MultiStream {
         throw new Error(`stream: HTTP ${res.status}`);
       }
 
-      const reader = res.body
-        .pipeThrough(new TextDecoderStream())
-        .getReader();
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
       let buffer = "";
 
       while (true) {
@@ -346,7 +375,8 @@ class MultiStream {
           const block = buffer.slice(0, sep);
           buffer = buffer.slice(sep + skip);
           const frame = parseSSEFrame(block);
-          if (frame) this.handleFrame(frame);
+          if (frame && !this.closed && token === useAuth.getState().token)
+            this.handleFrame(frame);
         }
       }
     } catch (err) {

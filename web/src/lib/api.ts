@@ -1,12 +1,10 @@
 import {
-  cacheReady,
   cachedEntry,
   cachedList,
   cachedSummary,
   offlineAvailable,
   queueCreate,
   queueEdit,
-  useOffline,
 } from "./offline/sync";
 // Typed HTTP client for brain-api. Attaches the bearer token, transparently
 // refreshes on 401 (once), and exposes thin wrappers for the endpoints the PWA
@@ -1952,6 +1950,7 @@ export const listEntries = (query?: {
   type?: string;
   status?: string;
   limit?: number;
+  offset?: number;
   global?: string;
   /** Comma-separated multi-project scope, e.g. "hindsight,pwa,global".
    *  The reserved member "global" admits project-less entries. Supersedes
@@ -2073,9 +2072,7 @@ export async function search(req: SearchRequest): Promise<SearchResponse> {
     };
   };
   if (
-    (await cacheReady()) &&
-    ((req.strategy !== "semantic" && req.strategy !== "hybrid") ||
-      !useOffline.getState().online)
+    offlineAvailable() && !navigator.onLine
   )
     return local();
   try {

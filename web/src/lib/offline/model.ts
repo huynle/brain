@@ -31,6 +31,8 @@ export interface ChangePage {
   }[];
 }
 export interface SyncState {
+  cacheMode?: "recent" | "full";
+  cachedCount?: number;
   epoch: string;
   cursor: number;
   ready: boolean;

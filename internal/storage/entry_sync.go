@@ -148,3 +148,30 @@ func (s *TenantStore) CompleteSyncOperation(ctx context.Context, id string, stat
 	_, err := s.db.ExecContext(ctx, `UPDATE entry_sync_operations SET status=?,body=? WHERE id=?`, status, body, id)
 	return err
 }
+
+// ReadSelectedEntries reads only the requested working set in one snapshot.
+// An empty selection returns the epoch, never a scan of the library.
+func (s *TenantStore) ReadSelectedEntries(ctx context.Context, paths []string) (*EntrySyncPage, error) {
+	if s == nil || s.tenantID.String() != tenant.LocalID {
+		return nil, errors.New("entry sync requires local tenant scope")
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	p := &EntrySyncPage{Rows: []EntrySyncRow{}}
+	if err = tx.QueryRowContext(ctx, "SELECT epoch FROM entry_sync_identity WHERE id=1").Scan(&p.Epoch); err != nil {
+		return nil, err
+	}
+	for _, path := range paths {
+		n, err := scanNoteRow(tx.QueryRowContext(ctx, "SELECT "+noteColumns+" FROM notes WHERE path=?", path))
+		if errors.Is(err, sql.ErrNoRows) {
+			n = nil
+		} else if err != nil {
+			return nil, err
+		}
+		p.Rows = append(p.Rows, EntrySyncRow{Path: path, Note: n})
+	}
+	return p, tx.Commit()
+}

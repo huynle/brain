@@ -12,7 +12,7 @@ func RegisterSyncTools(s *Server, client *APIClient) {
 	for _, name := range []string{"sync_status", "sync_diff", "sync_reconcile"} {
 		props := map[string]Property{}
 		required := []string{}
-		desc := "Show browser connection and sync status, pending edits, errors, command outcomes, and last report timestamps. Admin access required. Unknown/stale does not mean clean: disconnected browsers cannot report new edits."
+		desc := "Show browser connection and sync status, pending edits, errors, command outcomes, and last report timestamps. cache_mode=recent means only the reported cached_entries working set is stored; ready does not imply full-library coverage and cursor is a local cache generation. Admin access required. Unknown/stale does not mean clean: disconnected browsers cannot report new edits."
 		if name != "sync_status" {
 			props["device_id"] = Property{Type: "string", Description: "Device id from sync_status"}
 			props["operation_id"] = Property{Type: "string", Description: "Pending operation id from sync_status"}

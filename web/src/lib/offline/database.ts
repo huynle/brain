@@ -9,6 +9,8 @@ export class EntryDatabase {
     this.db = db;
     db.exec(`CREATE TABLE IF NOT EXISTS entries(path TEXT PRIMARY KEY, data TEXT NOT NULL);
    CREATE INDEX IF NOT EXISTS entries_type ON entries(json_extract(data,'$.type'));
+   CREATE TABLE IF NOT EXISTS recent_entries(path TEXT PRIMARY KEY, accessed INTEGER NOT NULL);
+   CREATE TABLE IF NOT EXISTS query_cache(key TEXT PRIMARY KEY, data TEXT NOT NULL, accessed INTEGER NOT NULL);
    CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY, value TEXT NOT NULL);
    CREATE TABLE IF NOT EXISTS outbox(path TEXT PRIMARY KEY, data TEXT NOT NULL);
    CREATE VIRTUAL TABLE IF NOT EXISTS entry_search USING fts5(path UNINDEXED,title,content);`);
@@ -52,10 +54,96 @@ export class EntryDatabase {
       epoch: meta.epoch ?? "",
       cursor: meta.cursor ?? 0,
       ready: meta.ready ?? false,
+      cacheMode: meta.selective ? "recent" : "full",
+      cachedCount: Number(this.rows("SELECT count(*) AS n FROM entries")[0].n),
       pending: this.rows("SELECT data FROM outbox ORDER BY rowid").map((r) =>
         JSON.parse(String(r.data)),
       ),
     };
+  }
+  // Migrate full-library caches without touching the outbox or its server bases.
+  prepareSelective(now = Date.now()) {
+    this.transaction(() => {
+      this.set("selective", true);
+      this.set("ready", true);
+      this.db.exec({
+        sql: "DELETE FROM recent_entries WHERE accessed < ?",
+        bind: [now - 30 * 86400000],
+      });
+      this.db.exec(
+        "DELETE FROM recent_entries WHERE path NOT IN (SELECT path FROM recent_entries ORDER BY accessed DESC, path LIMIT 200)",
+      );
+      this.db.exec(
+        "DELETE FROM entries WHERE path NOT IN (SELECT path FROM recent_entries UNION SELECT path FROM outbox)",
+      );
+      this.db.exec(
+        "DELETE FROM entry_search WHERE path NOT IN (SELECT path FROM entries)",
+      );
+      this.db.exec(
+        "DELETE FROM query_cache WHERE key NOT IN (SELECT key FROM query_cache ORDER BY accessed DESC LIMIT 40)",
+      );
+    });
+  }
+  selection(): Record<string, string> {
+    this.prepareSelective();
+    const entries = this.rows(
+      "SELECT path, json_extract(data,'$.revision') AS revision FROM entries",
+    );
+    const result = Object.fromEntries(
+      entries.map((r) => [String(r.path), String(r.revision ?? "")]),
+    );
+    for (const op of this.state().pending)
+      if (op.method === "PATCH") result[op.path] ??= "";
+    return result;
+  }
+  remember(entry: CachedEntry) {
+    this.transaction(() => {
+      this.store(entry);
+      this.db.exec({
+        sql: "INSERT OR REPLACE INTO recent_entries VALUES (?,?)",
+        bind: [entry.path, Date.now()],
+      });
+    });
+    this.prepareSelective();
+  }
+  applySelected(page: ChangePage, remember = false) {
+    const old = this.state();
+    // This cursor is a local cache generation, not a library change-feed cursor.
+    this.apply({
+      ...page,
+      cursor: old.cursor + (page.changes.length ? 1 : 0),
+      more: false,
+    });
+    if (remember)
+      for (const c of page.changes)
+        if (c.entry)
+          this.db.exec({
+            sql: "INSERT OR REPLACE INTO recent_entries VALUES (?,?)",
+            bind: [c.path, Date.now()],
+          });
+  }
+  queryGet(key: string) {
+    const row = this.rows("SELECT data FROM query_cache WHERE key=?", [key])[0];
+    if (!row) return null;
+    this.db.exec({
+      sql: "UPDATE query_cache SET accessed=? WHERE key=?",
+      bind: [Date.now(), key],
+    });
+    return JSON.parse(String(row.data));
+  }
+  queryPut(key: string, data: unknown) {
+    const value = JSON.stringify(data);
+    const prior = this.rows("SELECT data FROM query_cache WHERE key=?", [
+      key,
+    ])[0];
+    this.db.exec({
+      sql: "INSERT OR REPLACE INTO query_cache VALUES (?,?,?)",
+      bind: [key, value, Date.now()],
+    });
+    this.db.exec(
+      "DELETE FROM query_cache WHERE key NOT IN (SELECT key FROM query_cache ORDER BY accessed DESC LIMIT 40)",
+    );
+    return !!prior && prior.data !== value;
   }
   private store(entry: CachedEntry) {
     this.db.exec({
@@ -116,7 +204,7 @@ export class EntryDatabase {
           );
       }
       this.db.exec(
-        "DELETE FROM entries; DELETE FROM entry_search; DELETE FROM state WHERE key != 'device';",
+        "DELETE FROM entries; DELETE FROM entry_search; DELETE FROM query_cache; DELETE FROM state WHERE key != 'device';",
       );
     });
   }
@@ -135,6 +223,13 @@ export class EntryDatabase {
       "SELECT data FROM entries WHERE path=? OR json_extract(data,'$.id')=? LIMIT 1",
       [path, path],
     )[0];
+    if (row && !server) {
+      const entry = JSON.parse(String(row.data));
+      this.db.exec({
+        sql: "INSERT OR REPLACE INTO recent_entries VALUES (?,?)",
+        bind: [entry.path, Date.now()],
+      });
+    }
     return row ? JSON.parse(String(row.data)) : null;
   }
   // Sidebar and count chips need metadata, never full Markdown/raw bodies.
@@ -292,6 +387,10 @@ export class EntryDatabase {
     this.transaction(() => {
       if (entry) {
         this.store(entry);
+        this.db.exec({
+          sql: "INSERT OR REPLACE INTO recent_entries VALUES (?,?)",
+          bind: [entry.path, Date.now()],
+        });
         const op = this.state().pending.find((p) => p.id === id);
         if (op && op.path !== entry.path)
           this.set("alias:" + op.path, entry.path);

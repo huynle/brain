@@ -86,9 +86,13 @@ async function conflict(local, server) {
   return (await status()).pending[0];
 }
 try {
-  await page.goto(origin);
+  await page.goto(origin + "/?entry=" + encodeURIComponent(seed.path));
+  await expect(page.locator(".entry-reader")).toContainText(project);
   await expect(
-    page.getByRole("button", { name: "Offline sync · Ready", exact: true }),
+    page.getByRole("button", {
+      name: /^Offline sync · Ready · \d+ cached$/,
+      exact: true,
+    }),
   ).toBeVisible({ timeout: 30000 });
   await page.evaluate(() => navigator.serviceWorker.ready);
   await open();
@@ -105,6 +109,13 @@ try {
       { timeout: 30000 },
     )
     .toBeGreaterThan(0);
+  const reported = (await mcp("sync_status")).devices.find(
+    (d) => d.connection === "online" && d.cache_mode === "recent",
+  );
+  assert.ok(
+    reported && reported.cached_entries >= 1,
+    "MCP must describe the selective working set",
+  );
   await context.setOffline(true);
   const raw = await page.getByLabel("Entry draft").inputValue();
   await page

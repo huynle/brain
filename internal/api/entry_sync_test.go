@@ -34,6 +34,8 @@ func TestEntrySyncIdentityAndScope(t *testing.T) {
 		want                int
 	}{
 		{"GET", "/api/v1/sync/entries", "", 401},
+		{"POST", "/api/v1/sync/entries/selected", "", 401},
+		{"POST", "/api/v1/sync/entries/selected", "reader", 501},
 		{"POST", "/api/v1/sync/entries", "reader", 403},
 		{"GET", "/api/v1/sync/identity", "reader", 200},
 		{"GET", "/api/v1/sync/devices", "reader", 403},

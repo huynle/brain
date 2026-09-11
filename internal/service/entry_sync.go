@@ -53,3 +53,32 @@ func (s *BrainServiceImpl) SyncEntryVersion(ctx context.Context, path string) (s
 	}
 	return raw, indexedEntryRevision(n, raw), nil
 }
+
+// SelectedEntryChanges compares revisions without transferring unchanged bodies.
+func (s *BrainServiceImpl) SelectedEntryChanges(ctx context.Context, revisions map[string]string) (*types.EntryChanges, error) {
+	paths := make([]string, 0, len(revisions))
+	for path := range revisions {
+		paths = append(paths, path)
+	}
+	p, err := s.storage.ReadSelectedEntries(ctx, paths)
+	if err != nil {
+		return nil, err
+	}
+	out := &types.EntryChanges{Epoch: p.Epoch, Changes: []types.EntryChange{}}
+	for _, r := range p.Rows {
+		c := types.EntryChange{Path: r.Path, Deleted: r.Note == nil}
+		if r.Note != nil {
+			e := NoteRowToBrainEntry(r.Note)
+			if r.Note.RawContent != nil {
+				c.Raw = *r.Note.RawContent
+			}
+			e.Revision = indexedEntryRevision(r.Note, c.Raw)
+			if e.Revision == revisions[r.Path] {
+				continue
+			}
+			c.Entry = &e
+		}
+		out.Changes = append(out.Changes, c)
+	}
+	return out, nil
+}

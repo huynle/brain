@@ -172,3 +172,93 @@ func TestEntrySyncRejectsInvalidDefinitionsAndMissingPreconditions(t *testing.T)
 		t.Fatal("invalid edit mutated entry")
 	}
 }
+
+func TestSelectedSyncOnlyTransfersRequestedChanges(t *testing.T) {
+	s, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	a, err := s.Save(ctx, types.CreateEntryRequest{Type: "note", Project: "selective", Title: "Opened", Content: "original"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.Save(ctx, types.CreateEntryRequest{Type: "note", Project: "selective", Title: "Unused", Content: "must not download"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := api.NewRouter(config.Config{}, api.WithHandler(api.NewHandler(s)))
+	request := func(entries map[string]string) types.EntryChanges {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"entries": entries})
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/sync/entries/selected", bytes.NewReader(body)))
+		if w.Code != 200 {
+			t.Fatalf("%d %s", w.Code, w.Body.String())
+		}
+		var result types.EntryChanges
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	if p := request(map[string]string{}); p.Epoch == "" || len(p.Changes) != 0 {
+		t.Fatal(p)
+	}
+	p := request(map[string]string{a.Path: ""})
+	if len(p.Changes) != 1 || p.Changes[0].Raw == "" {
+		t.Fatal(p)
+	}
+	rev := p.Changes[0].Entry.Revision
+	if p = request(map[string]string{a.Path: rev}); len(p.Changes) != 0 {
+		t.Fatal("unchanged payload transferred", p)
+	}
+	body := "changed"
+	if _, err = s.Update(ctx, a.Path, types.UpdateEntryRequest{Content: &body}); err != nil {
+		t.Fatal(err)
+	}
+	if p = request(map[string]string{a.Path: rev}); len(p.Changes) != 1 || p.Changes[0].Entry.Content != body {
+		t.Fatal(p)
+	}
+	if err = s.Delete(ctx, a.Path); err != nil {
+		t.Fatal(err)
+	}
+	if p = request(map[string]string{a.Path: rev}); len(p.Changes) != 1 || !p.Changes[0].Deleted {
+		t.Fatal(p)
+	}
+	tooMany := map[string]string{}
+	for i := 0; i < 251; i++ {
+		tooMany[fmt.Sprintf("entry/%d.md", i)] = ""
+	}
+	data, _ := json.Marshal(map[string]any{"entries": tooMany})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/sync/entries/selected", bytes.NewReader(data)))
+	if w.Code != 400 {
+		t.Fatal(w.Code)
+	}
+}
+
+func TestEntryListPreviewLeavesFullReadIntact(t *testing.T) {
+	s, _, _ := newTestBrainService(t)
+	content := strings.Repeat("你好", 600)
+	e, err := s.Save(context.Background(), types.CreateEntryRequest{Type: "note", Project: "preview", Title: "Long", Content: content})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := api.NewRouter(config.Config{}, api.WithHandler(api.NewHandler(s)))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/entries?project=preview&preview=true", nil))
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var response struct {
+		Entries []types.BrainEntry `json:"entries"`
+	}
+	if err = json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Entries) != 1 || len([]rune(response.Entries[0].Content)) != 500 {
+		t.Fatal("unbounded preview", len(response.Entries))
+	}
+	full, err := s.Recall(context.Background(), e.Path)
+	if err != nil || full.Content != content {
+		t.Fatal("preview altered stored content", err)
+	}
+}

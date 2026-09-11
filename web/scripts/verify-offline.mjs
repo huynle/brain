@@ -121,6 +121,18 @@ try {
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
   });
+  // Only explicitly opened entries become full offline documents.
+  for (const entry of [...Object.values(seeds), ...extras.slice(0, 2)]) {
+    await page.goto(origin + "/?entry=" + encodeURIComponent(entry.path));
+    await expect(page.locator(".entry-reader")).toContainText(
+      entry.title ??
+        (entry === extras[0]
+          ? "Seed padding 0"
+          : entry === extras[1]
+            ? "Seed padding 1"
+            : "Offline seeded"),
+    );
+  }
   const open = async (p = page) => {
     await p.getByRole("button", { name: /Offline sync ·/ }).click();
     await expect(
@@ -151,7 +163,7 @@ try {
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("button", { name: "Entries", exact: true }).click();
   await page.getByPlaceholder("Search entries…  ( / )").fill("albatross");
-  await expect(page.locator(".entry-row")).toHaveCount(50);
+  await expect(page.locator(".entry-row")).toHaveCount(2);
   pass("existing Entries view performs local full-text search while offline");
   await page.getByPlaceholder("Search entries…  ( / )").fill("");
   await open();
@@ -211,7 +223,9 @@ try {
   await context.setOffline(false);
   await page.getByRole("button", { name: "Sync now", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: /Offline sync · Ready · 1 pending/ }),
+    page.getByRole("button", {
+      name: /Offline sync · Ready · \d+ cached · 1 pending/,
+    }),
   ).toBeVisible({ timeout: 30000 });
   for (const type of ["task", "automation"]) {
     const e = await request("/api/v1/entries/" + seeds[type].path);
@@ -248,7 +262,10 @@ try {
     })
     .click();
   await expect(
-    page.getByRole("button", { name: "Offline sync · Ready", exact: true }),
+    page.getByRole("button", {
+      name: /^Offline sync · Ready · \d+ cached$/,
+      exact: true,
+    }),
   ).toBeVisible({ timeout: 30000 });
   assert.equal(
     (await request("/api/v1/entries/" + seeds.scratch.path)).content.trim(),
@@ -260,7 +277,10 @@ try {
   second.on("pageerror", (e) => errors.push(e.message));
   await second.goto(origin);
   await expect(
-    second.getByRole("button", { name: "Offline sync · Ready", exact: true }),
+    second.getByRole("button", {
+      name: /^Offline sync · Ready · \d+ cached$/,
+      exact: true,
+    }),
   ).toBeVisible({ timeout: 30000 });
   await open(second);
   await select(seeds.task.path, second);
@@ -308,7 +328,10 @@ try {
   await context.setOffline(false);
   await page.getByRole("button", { name: "Sync now", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Offline sync · Ready", exact: true }),
+    page.getByRole("button", {
+      name: /^Offline sync · Ready · \d+ cached$/,
+      exact: true,
+    }),
   ).toBeVisible({ timeout: 30000 });
 
   await second.close();
@@ -320,7 +343,8 @@ try {
       const response = await original(...args);
       if (
         drop &&
-        String(args[0]).includes("/api/v1/sync/entries") &&
+        new URL(String(args[0]), location.origin).pathname ===
+          "/api/v1/sync/entries" &&
         args[1]?.method === "POST"
       ) {
         drop = false;
@@ -345,7 +369,10 @@ try {
     .toBe(true);
   await page.reload();
   await expect(
-    page.getByRole("button", { name: "Offline sync · Ready", exact: true }),
+    page.getByRole("button", {
+      name: /^Offline sync · Ready · \d+ cached$/,
+      exact: true,
+    }),
   ).toBeVisible({ timeout: 30000 });
   const afterRetry = await request(
     "/api/v1/entries?project=offline-demo&type=scratch&limit=500",
@@ -367,7 +394,10 @@ try {
   );
   await page.getByRole("button", { name: "Sync now", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Offline sync · Ready", exact: true }),
+    page.getByRole("button", {
+      name: /^Offline sync · Ready · \d+ cached$/,
+      exact: true,
+    }),
   ).toBeVisible();
   await page
     .getByLabel("Entry draft")
@@ -393,7 +423,10 @@ try {
     .getByRole("button", { name: "Discard local edit", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "Offline sync · Ready", exact: true }),
+    page.getByRole("button", {
+      name: /^Offline sync · Ready · \d+ cached$/,
+      exact: true,
+    }),
   ).toBeVisible();
   assert.equal(errors.length, 0, errors.join("\n"));
   await select(seeds.task.path);

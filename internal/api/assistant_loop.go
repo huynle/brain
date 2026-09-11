@@ -147,6 +147,9 @@ func (s *AssistantService) runAgentLoop(
 	msgs := []chatMessage{
 		{Role: "system", Content: assistantSystemPrompt()},
 	}
+	if req.Voice {
+		msgs = append(msgs, chatMessage{Role: "system", Content: "This is a spoken conversation. Default to one or two short sentences, usually under 50 words. Answer the main point first. Do not narrate tool use, repeat the question, list every finding, or add routine follow-up offers. Use plain spoken language without Markdown formatting. Give more detail when explicitly requested or needed for an accurate answer. Respect a change of topic immediately. Tool permissions and safety rules remain unchanged."})
+	}
 	msgs = append(msgs, replayHistory(req.History)...)
 	msgs = append(msgs, buildUserMessage(req))
 

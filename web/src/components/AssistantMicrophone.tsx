@@ -188,7 +188,7 @@ export function AssistantMicrophone({
   };
   useEffect(() => {
     if (!handsFree || !active || disabled || recognition.current) return;
-    const timer = setTimeout(() => toggle(true), 350);
+    const timer = setTimeout(() => toggle(true), 50);
     return () => clearTimeout(timer);
   }, [handsFree, active, disabled, listening]);
   useEffect(() => {

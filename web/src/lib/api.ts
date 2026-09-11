@@ -1383,6 +1383,7 @@ export async function assistantChatStream(
   body: {
     project?: string;
     message: string;
+    voice?: boolean;
     model?: string;
     attachments?: string[];
     images?: string[];

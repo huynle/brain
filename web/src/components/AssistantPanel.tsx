@@ -1,3 +1,4 @@
+import { useVoiceInterrupt } from "../hooks/useVoiceInterrupt";
 import { useAssistantSpeech } from "../hooks/useAssistantSpeech";
 import { AssistantMicrophone } from "./AssistantMicrophone";
 /**
@@ -104,6 +105,11 @@ export function AssistantPanel(): JSX.Element | null {
   const [handsFree, setHandsFree] = useState(false);
   const [spokenReplies, setSpokenReplies] = useState(false);
   const speech = useAssistantSpeech(open);
+  const interruptUnavailable = useVoiceInterrupt(
+    open && handsFree,
+    speech.state === "playing",
+    speech.stop,
+  );
   const spokenRepliesRef = useRef(false);
   spokenRepliesRef.current = spokenReplies;
   const openRef = useRef(open);
@@ -254,6 +260,7 @@ export function AssistantPanel(): JSX.Element | null {
       await assistantChatStream(
         {
           message,
+          voice: spokenRepliesRef.current,
           history: chat.history.slice(-HISTORY_REPLAY_LIMIT),
           ...(images.length > 0
             ? { images: images.map((i) => i.dataUrl) }
@@ -541,6 +548,16 @@ export function AssistantPanel(): JSX.Element | null {
               }
             }}
           />
+          {handsFree && speech.state !== "idle" && (
+            <button type="button" onClick={speech.stop}>
+              Interrupt and speak
+            </button>
+          )}
+          {handsFree && interruptUnavailable && (
+            <span role="status">
+              Tap Interrupt and speak to take your turn on this browser.
+            </span>
+          )}
           <AssistantMicrophone
             value={prompt}
             onChange={setPrompt}

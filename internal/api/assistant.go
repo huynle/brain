@@ -78,6 +78,7 @@ type AssistantStatusResponse struct {
 }
 
 type AssistantChatRequest struct {
+	Voice       bool              `json:"voice,omitempty"`
 	Project     string            `json:"project,omitempty"`
 	Message     string            `json:"message"`
 	Model       string            `json:"model,omitempty"`

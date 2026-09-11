@@ -85,7 +85,11 @@ behind `SpeechSynthesizer`; only OpenRouter is implemented at present.
 Hands-free mode automatically sends a recognized turn after a 1.1-second
 pause, waits for the reply and audio to finish, then listens again. It requires
 HTTPS and browser speech recognition. End hands-free, permission errors, hiding
-the page, or closing Assistant stop the loop. The microphone is paused during
-playback to avoid feedback; voice interruption during playback is not supported.
+the page, or closing Assistant stop the loop. During playback, a local echo-cancelled microphone level detector watches for
+180 ms of sustained sound and stops audio, then rearms speech recognition.
+It does not buffer the interrupting audio, so the opening syllable may be missed.
+Actual echo rejection depends on the phone/browser; an Interrupt and speak button
+provides a fallback. Voice requests prefer one or two short sentences unless
+more detail is requested.
 This remains one local conversation; server conversation storage is not implemented. Speech provider and UI checks can be run with
 `go test ./internal/api` and `node web/scripts/verify-assistant-speech.mjs`.

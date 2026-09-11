@@ -123,6 +123,8 @@ export function AssistantPanel(): JSX.Element | null {
 	const [jobs,setJobs]=useState<Array<{id:string;title:string;state:string;revision:number;acknowledged:number}>>([]);
 	const sendRef=useRef<(text?:string,inbox?:boolean)=>Promise<void>>(async()=>{});
 	const coordinatorReady=useRef(false),userSpeaking=useRef(false);
+	const pendingSpeech=useRef<Array<{sessionId:string;text:string}>>([]);
+	const playReply=useRef(speech.play);playReply.current=speech.play;
 	useEffect(()=>{useAssistantChat.getState().ensureSession();},[]);
   const voice = usePersistentVoice({active: open, sessionId, speaking: speech.state === "playing", isBusy: () => useAssistantChat.getState().busy,
     onStartSpeech: () => {userSpeaking.current=true;speech.stop();if(!coordinatorReady.current)activeAbort?.abort();},
@@ -144,6 +146,10 @@ export function AssistantPanel(): JSX.Element | null {
 	      setJobs(response.jobs);loadedHistory=true;
 	      coordinatorReady.current=true;
 	      useAssistantChat.getState().mergeRemote(response.conversations);
+	      const queued=pendingSpeech.current.findIndex(item=>item.sessionId===sessionId);
+	      if(queued>=0&&inboxReady.current&&!userSpeaking.current&&spokenRepliesRef.current){
+	        const [item]=pendingSpeech.current.splice(queued,1);await playReply.current(item.text);return;
+	      }
 	      if(inboxReady.current&&!useAssistantChat.getState().busy&&response.jobs.some(j=>j.revision>j.acknowledged&&!["queued","running","creating"].includes(j.state)))await sendRef.current(undefined,true);
 	    }catch{/* Existing deployments without conversation workers keep their chat UI. */}
 	    finally{fetching=false;}
@@ -391,6 +397,9 @@ export function AssistantPanel(): JSX.Element | null {
       if (acc) entries.push({ role: "assistant", content: acc });
       useAssistantChat.getState().finishTurn(entries);
       activeAbort = null;
+	  if(inbox&&acc&&spokenRepliesRef.current&&openRef.current&&!ac.signal.aborted&&userSpeaking.current){
+	    pendingSpeech.current.push({sessionId:chat.sessionId,text:acc});pendingSpeech.current=pendingSpeech.current.slice(-10);
+	  }
       if (
         acc &&
         spokenRepliesRef.current &&

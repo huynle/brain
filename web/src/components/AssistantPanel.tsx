@@ -1,3 +1,4 @@
+import { AssistantMicrophone } from "./AssistantMicrophone";
 /**
  * AssistantPanel — wireframe-parity port of `renderAssistantPanel`.
  *
@@ -98,9 +99,7 @@ export function AssistantPanel(): JSX.Element | null {
   const toast = useUI((s) => s.toast);
   const isMobile = useIsMobile();
 
-  const [assistantHome, setAssistantHome] = useState(
-    () => localStorage.getItem("brain.mobile.assistantHome") !== "false",
-  );
+  const [listening, setListening] = useState(false);
   const [prompt, setPrompt] = useState("");
   // Pasted/dropped images for the NEXT message, as base64 data URLs. Sent to
   // the vision model on send() and cleared afterward (current-turn only; not
@@ -109,6 +108,7 @@ export function AssistantPanel(): JSX.Element | null {
   const turns = useAssistantChat((s) => s.turns);
   const busy = useAssistantChat((s) => s.busy);
   const threadRef = useRef<HTMLDivElement | null>(null);
+  const followLatest = useRef(true);
 
   // ─── left-edge drag-resize ────────────────────────────────────────
   // The panel is always the rightmost column, so its width is the
@@ -131,7 +131,12 @@ export function AssistantPanel(): JSX.Element | null {
   }, [open]);
 
   const attention = useMemo(() => {
-    const out: Array<{ projectId: string; featureId: string; name: string; lifecycle: string }> = [];
+    const out: Array<{
+      projectId: string;
+      featureId: string;
+      name: string;
+      lifecycle: string;
+    }> = [];
     for (const pid of projects ?? []) {
       const tasks = liveProjects[pid]?.tasks ?? [];
       const feats = deriveFeatures(tasks, pid, openByProject.get(pid));
@@ -152,8 +157,8 @@ export function AssistantPanel(): JSX.Element | null {
   // Keep the newest message in view while streaming.
   useEffect(() => {
     const el = threadRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [turns]);
+    if (el && followLatest.current) el.scrollTop = el.scrollHeight;
+  }, [turns, open]);
 
   if (!open) return null;
   if (typeof document === "undefined") return null;
@@ -210,7 +215,8 @@ export function AssistantPanel(): JSX.Element | null {
   const send = async () => {
     const message = prompt.trim();
     const images = pendingImages;
-    if ((!message && images.length === 0) || busy) return;
+    if ((!message && images.length === 0) || busy || listening) return;
+    followLatest.current = true;
     setPrompt("");
     setPendingImages([]);
     const chat = useAssistantChat.getState();
@@ -245,7 +251,10 @@ export function AssistantPanel(): JSX.Element | null {
             tools.push({
               id: tc.id,
               name: tc.name,
-              args: typeof tc.args === "string" ? tc.args : JSON.stringify(tc.args ?? {}),
+              args:
+                typeof tc.args === "string"
+                  ? tc.args
+                  : JSON.stringify(tc.args ?? {}),
               tier: tc.tier,
               status: "running",
             });
@@ -303,7 +312,11 @@ export function AssistantPanel(): JSX.Element | null {
       if (answered.length > 0) {
         entries.push({
           role: "assistant",
-          tool_calls: answered.map((c) => ({ id: c.id, name: c.name, arguments: c.args })),
+          tool_calls: answered.map((c) => ({
+            id: c.id,
+            name: c.name,
+            arguments: c.args,
+          })),
         });
         for (const c of answered) {
           entries.push({
@@ -329,62 +342,20 @@ export function AssistantPanel(): JSX.Element | null {
       <div className="assistant-head">
         <div>
           <div className="assistant-kicker">Brain assistant</div>
-          <h3>Workflow copilot</h3>
+          <h3>Assistant</h3>
         </div>
-        <button className="drawer-close" aria-label="Close assistant" onClick={close}>
+        <button
+          className="drawer-close"
+          aria-label="Close assistant"
+          onClick={close}
+        >
           ×
         </button>
       </div>
 
-      {isMobile && (
-        <label className="assistant-home-setting">
-          <input
-            type="checkbox"
-            checked={assistantHome}
-            onChange={(e) => {
-              setAssistantHome(e.target.checked);
-              localStorage.setItem("brain.mobile.assistantHome", String(e.target.checked));
-            }}
-          />
-          Open Assistant when Brain starts on mobile
-        </label>
-      )}
-      <div className="assistant-card primary">
-        <div className="assistant-title">Suggested next move</div>
-        {attention.length > 0 ? (
-          <>
-            <p>
-              Review <b>{attention[0].name}</b> — it's{" "}
-              {attention[0].lifecycle} and blocking clean execution.
-            </p>
-            <div className="assistant-actions">
-              <button
-                onClick={() =>
-                  openInSidebar(
-                    "feature-detail",
-                    {
-                      projectId: attention[0].projectId,
-                      featureId: attention[0].featureId,
-                    },
-                    attention[0].name,
-                  )
-                }
-              >
-                Open suggestion
-              </button>
-            </div>
-          </>
-        ) : (
-          <p>
-            No blockers right now. Queue the next ready feature and keep
-            Brain entries updated as work lands.
-          </p>
-        )}
-      </div>
-
       <div className="assistant-card assistant-chat">
         <div className="assistant-chat-head">
-          <div className="assistant-title">Ask</div>
+          <div className="assistant-title">Current conversation</div>
           {turns.length > 0 && (
             <button className="assistant-chat-clear" onClick={clearChat}>
               New chat
@@ -392,122 +363,208 @@ export function AssistantPanel(): JSX.Element | null {
           )}
         </div>
 
-        {turns.length > 0 && (
-          <div className="assistant-thread" ref={threadRef}>
-            {turns.map((turn, i) => (
-              <div key={i} className={`assistant-msg ${turn.role}`}>
-                <div className="assistant-msg-role">
-                  {turn.role === "user" ? "You" : "Assistant"}
-                </div>
-                {turn.tools.length > 0 && (
-                  <div className="assistant-msg-tools">
-                    {turn.tools.map((c) => (
-                      <details key={c.id} className={`assistant-tool-chip ${c.status}`}>
-                        <summary>
-                          {c.name}
-                          <span className="assistant-tool-status">{c.status}</span>
-                        </summary>
-                        <pre>{c.args}</pre>
-                      </details>
-                    ))}
-                  </div>
-                )}
-                <div className="assistant-msg-body">
-                  {turn.content ||
-                    (turn.streaming ? "Thinking…" : turn.role === "assistant" ? "(no reply)" : "")}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {pendingImages.length > 0 && (
-          <div className="assistant-image-chips">
-            {pendingImages.map((img) => (
-              <div key={img.id} className="assistant-image-chip" title={img.name}>
-                <img src={img.dataUrl} alt={img.name} />
-                <button
-                  type="button"
-                  className="assistant-image-remove"
-                  aria-label={`Remove ${img.name}`}
-                  onClick={() => removePendingImage(img.id)}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder={
-            turns.length > 0
-              ? "Reply… (paste or drop images)"
-              : "Ask about project status, generate tasks, summarize entries, or plan the next feature… (paste or drop images)"
-          }
-          onPaste={(e) => {
-            const files = Array.from(e.clipboardData?.items ?? [])
-              .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
-              .map((it) => it.getAsFile())
-              .filter((f): f is File => f != null);
-            if (files.length > 0) {
-              e.preventDefault();
-              void addImageFiles(files);
-            }
+        <div
+          className="assistant-thread"
+          ref={threadRef}
+          role="log"
+          aria-label="Chat history"
+          aria-live="off"
+          onScroll={(event) => {
+            const el = event.currentTarget;
+            followLatest.current =
+              el.scrollHeight - el.scrollTop - el.clientHeight < 60;
           }}
-          onDragOver={(e) => {
-            if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) {
-              e.preventDefault();
-            }
-          }}
-          onDrop={(e) => {
-            const files = Array.from(e.dataTransfer?.files ?? []).filter((f) =>
-              f.type.startsWith("image/"),
-            );
-            if (files.length > 0) {
-              e.preventDefault();
-              void addImageFiles(files);
-            }
-          }}
-          onKeyDown={(e) => {
-            // Enter sends; Shift+Enter (or ⌘/Ctrl+Enter) inserts a newline.
-            if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-        />
-        <div className="assistant-actions">
-          <button
-            className="primary"
-            onClick={() => void send()}
-            disabled={busy || (!prompt.trim() && pendingImages.length === 0)}
-          >
-            {busy ? "Sending…" : "Send  ↵"}
-          </button>
-          {busy && (
-            <button onClick={() => activeAbort?.abort()}>Stop</button>
+        >
+          {turns.length === 0 && (
+            <p className="assistant-chat-empty">
+              Start a conversation. Type a message or tap Speak.
+            </p>
           )}
+          {turns.map((turn, i) => (
+            <div key={i} className={`assistant-msg ${turn.role}`}>
+              <div className="assistant-msg-role">
+                {turn.role === "user" ? "You" : "Assistant"}
+              </div>
+              {turn.tools.length > 0 && (
+                <div className="assistant-msg-tools">
+                  {turn.tools.map((c) => (
+                    <details
+                      key={c.id}
+                      className={`assistant-tool-chip ${c.status}`}
+                    >
+                      <summary>
+                        {c.name}
+                        <span className="assistant-tool-status">
+                          {c.status}
+                        </span>
+                      </summary>
+                      <pre>{c.args}</pre>
+                    </details>
+                  ))}
+                </div>
+              )}
+              <div className="assistant-msg-body">
+                {turn.content ||
+                  (turn.streaming
+                    ? "Thinking…"
+                    : turn.role === "assistant"
+                      ? "(no reply)"
+                      : "")}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="assistant-composer">
+          {pendingImages.length > 0 && (
+            <div className="assistant-image-chips">
+              {pendingImages.map((img) => (
+                <div
+                  key={img.id}
+                  className="assistant-image-chip"
+                  title={img.name}
+                >
+                  <img src={img.dataUrl} alt={img.name} />
+                  <button
+                    type="button"
+                    className="assistant-image-remove"
+                    aria-label={`Remove ${img.name}`}
+                    onClick={() => removePendingImage(img.id)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <textarea
+            readOnly={listening}
+            aria-label="Message to Assistant"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder={
+              turns.length > 0
+                ? "Reply… (paste or drop images)"
+                : "Ask about project status, generate tasks, summarize entries, or plan the next feature… (paste or drop images)"
+            }
+            onPaste={(e) => {
+              const files = Array.from(e.clipboardData?.items ?? [])
+                .filter(
+                  (it) => it.kind === "file" && it.type.startsWith("image/"),
+                )
+                .map((it) => it.getAsFile())
+                .filter((f): f is File => f != null);
+              if (files.length > 0) {
+                e.preventDefault();
+                void addImageFiles(files);
+              }
+            }}
+            onDragOver={(e) => {
+              if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) {
+                e.preventDefault();
+              }
+            }}
+            onDrop={(e) => {
+              const files = Array.from(e.dataTransfer?.files ?? []).filter(
+                (f) => f.type.startsWith("image/"),
+              );
+              if (files.length > 0) {
+                e.preventDefault();
+                void addImageFiles(files);
+              }
+            }}
+            onKeyDown={(e) => {
+              // Enter sends; Shift+Enter (or ⌘/Ctrl+Enter) inserts a newline.
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey &&
+                !e.metaKey &&
+                !e.ctrlKey
+              ) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+          />
+          <AssistantMicrophone
+            value={prompt}
+            onChange={setPrompt}
+            active={open}
+            disabled={busy}
+            onListening={setListening}
+          />
+          <div className="assistant-actions">
+            <button
+              className="primary"
+              onClick={() => void send()}
+              disabled={
+                busy ||
+                listening ||
+                (!prompt.trim() && pendingImages.length === 0)
+              }
+            >
+              {busy ? "Sending…" : "Send  ↵"}
+            </button>
+            {busy && <button onClick={() => activeAbort?.abort()}>Stop</button>}
+          </div>
         </div>
       </div>
 
-      <div className="assistant-card">
-        <div className="assistant-title">Quick actions</div>
-        <button onClick={() => setCommandOpen(true)}>
-          Open command palette (⌘K)
-        </button>
-      </div>
-
-      <div className="assistant-card">
-        <div className="assistant-title">Context</div>
+      <details className="assistant-extras">
+        <summary>Session details and actions</summary>
         <p>
-          {attention.length} attention items ·{" "}
-          {(projects ?? []).length} projects ·{" "}
-          {runners.filter((r) => r.status === "online").length} runners online.
+          Current conversation · saved on this device · {turns.length} messages
         </p>
-      </div>
+        <div className="assistant-card primary">
+          <div className="assistant-title">Suggested next move</div>
+          {attention.length > 0 ? (
+            <>
+              <p>
+                Review <b>{attention[0].name}</b> — it's{" "}
+                {attention[0].lifecycle} and blocking clean execution.
+              </p>
+              <div className="assistant-actions">
+                <button
+                  onClick={() =>
+                    openInSidebar(
+                      "feature-detail",
+                      {
+                        projectId: attention[0].projectId,
+                        featureId: attention[0].featureId,
+                      },
+                      attention[0].name,
+                    )
+                  }
+                >
+                  Open suggestion
+                </button>
+              </div>
+            </>
+          ) : (
+            <p>
+              No blockers right now. Queue the next ready feature and keep Brain
+              entries updated as work lands.
+            </p>
+          )}
+        </div>
+
+        <div className="assistant-card">
+          <div className="assistant-title">Quick actions</div>
+          <button onClick={() => setCommandOpen(true)}>
+            Open command palette (⌘K)
+          </button>
+        </div>
+
+        <div className="assistant-card">
+          <div className="assistant-title">Context</div>
+          <p>
+            {attention.length} attention items · {(projects ?? []).length}{" "}
+            projects · {runners.filter((r) => r.status === "online").length}{" "}
+            runners online.
+          </p>
+        </div>
+      </details>
     </aside>
   );
 

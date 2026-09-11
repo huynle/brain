@@ -21,11 +21,24 @@ export function MobileNav(): JSX.Element {
     <nav className="mobile-nav" aria-label="Main navigation">
       <button
         type="button"
-        className="pill assistant-shortcut"
+        className="assistant-shortcut"
+        aria-label="Assistant"
+        title="Open Assistant"
         aria-pressed={assistantOpen}
         onClick={openAssistant}
       >
-        Assistant
+        <svg
+          width="28"
+          height="28"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          aria-hidden="true"
+        >
+          <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5a9.5 9.5 0 0 1 19 0Z" />
+          <path d="M7 10h10M7 14h6" />
+        </svg>
       </button>
       <button
         type="button"

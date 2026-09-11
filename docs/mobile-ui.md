@@ -5,7 +5,7 @@ landscape touch screens. The same workspace stores, task actions, editors,
 and API routes serve both layouts.
 
 - Open the menu beside **brain** for project search, hidden projects, runners,
-  saved views, and settings. **More** contains theme, side panel, and assistant.
+  saved views, and settings. **More** contains theme and side panel controls.
 - Overview, Focus, Entries, and live sessions remain in the scrolling navigation.
 - Task details and the assistant fill the screen and have explicit close buttons.
 - Focus tabs expose **Pane actions** for closing or splitting without a mouse.
@@ -52,13 +52,16 @@ iOS/Android devices. A reduced viewport tests layout under constrained height;
 it does not reproduce every native keyboard behavior. Live executor streaming
 and all provider-specific runner operations are not exercised by this script.
 
-## Assistant as the mobile start screen
+## Thumb access and chat
 
-Assistant is the first, sticky mobile navigation action. A fresh mobile root
-visit opens it by default; the panel's checkbox can disable that behavior on
-this browser. Explicit entry URLs open their document instead. Closing Assistant
-preserves the workspace, and resizing a desktop view does not trigger a new
-mobile start action. The chat composer precedes suggestions on mobile.
+Mobile starts at Overview, with explicit entry links preserved. The prior Assistant-home
+preference is retired. A circular Assistant button is centered above the bottom sync
+status bar. Assistant uses a scrollable bubble transcript and a fixed draft composer;
+reading earlier messages does not automatically jump to the latest reply. Session details,
+suggestions, and quick actions remain available in the expandable details area.
 
-The seeded preview can be checked with `npm run test:mobile-assistant` in web/;
-it uses localhost:3340 and the mobile-playground seed project by default.
+Speak uses browser speech recognition to fill the draft; the user reviews and sends it.
+Browser support and microphone permission are required. HTTPS is required away from
+localhost. Unsupported browsers and HTTP previews can use phone-keyboard dictation.
+Recognition may use the browser vendor's online speech service. Closing chat stops it.
+The current conversation is stored on this device; this is not a server-backed session list.

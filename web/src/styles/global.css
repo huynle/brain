@@ -4495,3 +4495,26 @@ body[data-theme="light"] .reminder-status__acts button.primary {
 body[data-theme="light"] .offline-sync-dialog { background: #fff; color: #1b232b; border-color: #c8d0d8; }
 .offline-sync-dialog button:disabled { opacity: .55; cursor: default; }
 @media (pointer: coarse) { .offline-sync-dialog button, .offline-sync-dialog input, .offline-sync-dialog select { min-height: 44px; } }
+
+.assistant-voice { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.assistant-voice button { display: inline-flex; align-items: center; gap: 6px; }
+.assistant-voice span { font-size: 12px; }
+.assistant-voice button[aria-pressed="true"] { color: #ff9d9d; }
+
+/* Messaging layout: the transcript owns scrolling, the draft stays reachable. */
+.assistant-panel { overflow: hidden; }
+.assistant-panel > .assistant-head { flex: 0 0 auto; }
+.assistant-panel .assistant-chat { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.assistant-chat .assistant-thread { flex: 1 1 auto; min-height: 0; max-height: none; padding: 8px 2px; overscroll-behavior: contain; }
+.assistant-chat .assistant-msg { flex: 0 0 auto; max-width: 88%; border: 1px solid #34404b; border-radius: 16px 16px 16px 4px; padding: 10px 12px; align-self: flex-start; background: #1c252e; }
+.assistant-chat .assistant-msg.user { align-self: flex-end; border-radius: 16px 16px 4px 16px; background: #193e67; border-color: #315b88; }
+.assistant-chat .assistant-msg-body { font-size: 14px; }
+.assistant-chat .assistant-msg.user .assistant-msg-body { color: #e5effb; }
+.assistant-composer { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; }
+.assistant-composer textarea { width: 100%; box-sizing: border-box; resize: none; min-height: 64px; max-height: 120px; }
+.assistant-chat-empty { margin: auto; padding: 20px; text-align: center; color: #8b949c; }
+.assistant-extras { flex: 0 0 auto; max-height: 30%; overflow: auto; font-size: 12px; }
+.assistant-extras summary { cursor: pointer; padding: 8px; }
+.assistant-image-chips { max-height: 90px; overflow-y: auto; }
+body[data-theme="light"] .assistant-msg.assistant { background: #eef2f7; border-color: #c8d4df; }
+body[data-theme="light"] .assistant-msg.assistant .assistant-msg-body { color: #172635; }

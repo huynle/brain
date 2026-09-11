@@ -100,8 +100,6 @@ async function shot(name) {
 }
 try {
   await p.goto(origin);
-  await expect(p.locator(".assistant-panel")).toBeVisible({timeout:30000});
-  await p.getByRole("button",{name:"Close assistant",exact:true}).click();
   await expect(
     p.getByRole("button", { name: "Open workspace navigation" }),
   ).toBeVisible({ timeout: 30000 });
@@ -305,7 +303,7 @@ try {
   await shot("desktop");
   pass("Desktop navigation survives switching from mobile");
   const sessionContext = await b.newContext({
-    viewport: { width: 390, height: 844 },
+    viewport: { width: 1280, height: 844 },
     isMobile: true,
     hasTouch: true,
     serviceWorkers: "block",
@@ -349,8 +347,8 @@ try {
       }),
   );
   await sessionPage.goto(origin);
-  await expect(sessionPage.locator(".assistant-panel")).toBeVisible({timeout:30000});
-  await sessionPage.getByRole("button",{name:"Close assistant",exact:true}).click();
+  await expect(sessionPage.locator(".statusbar")).toBeVisible({timeout:30000});
+  await sessionPage.setViewportSize({width:390,height:844});
   await expect(
     sessionPage.getByText("Mobile transcript fixture is readable.", {
       exact: true,

@@ -128,11 +128,11 @@ export function Dashboard(): JSX.Element {
       withoutNav(() => workspace.setView("entries"));
       workspace.setSidebarDockOpen(false);
       workspace.setAssistantOpen(false);
-    } else if (localStorage.getItem("brain.mobile.assistantHome") !== "false") {
-      useWorkspace.getState().setSidebarDockOpen(false);
-      useWorkspace.getState().setAssistantOpen(true);
     } else {
-      useWorkspace.getState().setAssistantOpen(false);
+      const workspace = useWorkspace.getState();
+      withoutNav(() => workspace.setView("overview"));
+      workspace.setSidebarDockOpen(false);
+      workspace.setAssistantOpen(false);
     }
   }, [isMobile]);
 

@@ -15,7 +15,7 @@
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
     padding-bottom: env(safe-area-inset-bottom);
-    grid-template-rows: 52px 52px minmax(0, 1fr) 80px;
+    grid-template-rows: 52px 52px minmax(0, 1fr) 96px;
   }
   body.mobile .topbar {
     gap: 4px;
@@ -274,11 +274,11 @@
   body.mobile .assistant-panel {
     height: calc(
       var(--mobile-viewport-height, 100dvh) - env(safe-area-inset-top) -
-        env(safe-area-inset-bottom) - 30px
+        env(safe-area-inset-bottom) - 96px
     );
   }
   body.mobile .assistant-panel textarea {
-    min-height: 96px;
+    min-height: 64px;
   }
   body.mobile .session-view.session-full {
     grid-template-columns: minmax(0, 1fr);
@@ -433,10 +433,16 @@
 }
 
 @media (max-width: 900px), (max-height: 500px) and (pointer: coarse) {
-  body.mobile .mobile-nav .assistant-shortcut { position: sticky; left: 0; z-index: 1; background: #19304a; border-color: #527dac; color: #e4f0ff; }
+  body.mobile .mobile-nav .assistant-shortcut {
+    position: fixed; left: 50%; bottom: calc(34px + env(safe-area-inset-bottom));
+    transform: translateX(-50%); z-index: 95; width: 56px; height: 56px;
+    min-height: 56px; padding: 0; border-radius: 50%; display: grid; place-items: center;
+    background: #235fa4; border: 1px solid #76b0f1; color: white;
+    box-shadow: 0 3px 12px #0006;
+  }
+  body.mobile .assistant-shortcut:focus-visible { outline: 3px solid #e4f0ff; outline-offset: 3px; }
+  body.mobile .assistant-shortcut[aria-pressed="true"] { background: #3478c6; }
   body.mobile .assistant-panel > * { order: 3; }
   body.mobile .assistant-panel > .assistant-head { order: 0; }
   body.mobile .assistant-panel > .assistant-chat { order: 1; }
-  body.mobile .assistant-panel > .assistant-home-setting { order: 2; display: flex; align-items: center; gap: 8px; min-height: 44px; }
-  body.mobile .assistant-home-setting input { flex: 0 0 auto; }
 }

@@ -96,9 +96,10 @@ Saved conversations remain local to this browser; server conversation storage is
 
 
 Interruption capture is reopened for each reply, after browser recognition ends,
-and starts while speech audio is loading. Start hands-free primes the audio
-context in the user gesture. The UI reports connecting, listening, or unavailable
+and starts while speech audio is loading. The interruption audio context exists only during a reply, so it does not compete with speech recognition for audio focus. The UI reports connecting, listening, or unavailable
 capture (muted/ended track, suspended context, permission failure, or sustained
 zero samples). Detection uses echo-cancelled microphone volume, not semantic VAD;
 car Bluetooth routing and false triggers still require physical-device testing.
 The Interrupt and speak button remains available as a manual fallback.
+
+Speech recognition shows Starting until an audio-start or result event arrives. If no transcript arrives within 15 seconds, it stops and offers a retry or keyboard dictation instead of remaining indefinitely in Listening.

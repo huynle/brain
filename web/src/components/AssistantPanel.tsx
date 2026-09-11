@@ -582,7 +582,6 @@ export function AssistantPanel(): JSX.Element | null {
             onHandsFreeChange={(enabled) => {
               setHandsFree(enabled);
               if (enabled) {
-                voiceInterrupt.prepare();
                 setSpokenReplies(true);
                 spokenRepliesRef.current = true;
               } else {

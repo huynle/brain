@@ -18,31 +18,15 @@ type InterruptStatus = "idle" | "starting" | "listening" | "unavailable";
 export function useVoiceInterrupt(enabled: boolean, monitoring: boolean, speaking: boolean, interrupt: () => void) {
   const speakingRef = useRef(speaking);
   const callback = useRef(interrupt);
-  const contextRef = useRef<AudioContext>();
   const [status, setStatus] = useState<InterruptStatus>("idle");
   speakingRef.current = speaking;
   callback.current = interrupt;
-
-  // Called directly by the Start hands-free gesture, before permission awaits.
-  const prepare = () => {
-    try {
-      contextRef.current ??= new AudioContext();
-      void contextRef.current.resume().catch(() => setStatus("unavailable"));
-    } catch { setStatus("unavailable"); }
-  };
-  useEffect(() => {
-    if (!enabled) return;
-    return () => {
-      const context = contextRef.current;
-      contextRef.current = undefined;
-      if (context && context.state !== "closed") void context.close().catch(() => {});
-    };
-  }, [enabled]);
 
   useEffect(() => {
     if (!enabled || !monitoring) { setStatus("idle"); return; }
     let cancelled = false;
     let stream: MediaStream | undefined;
+    let context: AudioContext | undefined;
     let source: MediaStreamAudioSourceNode | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -51,6 +35,7 @@ export function useVoiceInterrupt(enabled: boolean, monitoring: boolean, speakin
       clearInterval(timer);
       clearTimeout(watchdog);
       source?.disconnect();
+      if (context && context.state !== "closed") void context.close().catch(() => {});
       stream?.getTracks().forEach(track => track.stop());
     };
     setStatus("starting");
@@ -66,11 +51,12 @@ export function useVoiceInterrupt(enabled: boolean, monitoring: boolean, speakin
         if (!track || track.getSettings().echoCancellation === false) {
           cleanup(); setStatus("unavailable"); return;
         }
-        const context = contextRef.current ??= new AudioContext();
-        await context.resume();
+        context = new AudioContext();
+        const audioContext = context;
+        await audioContext.resume();
         if (cancelled) { cleanup(); return; }
-        source = context.createMediaStreamSource(stream);
-        const analyser = context.createAnalyser();
+        source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
         analyser.fftSize = 1024;
         source.connect(analyser);
         const samples = new Float32Array(analyser.fftSize);
@@ -79,11 +65,11 @@ export function useVoiceInterrupt(enabled: boolean, monitoring: boolean, speakin
         clearTimeout(watchdog);
         timer = setInterval(() => {
           if (document.hidden) { detector.reset(); return; }
-          if (context.state !== "running" || track.muted || track.readyState === "ended") {
+          if (audioContext.state !== "running" || track.muted || track.readyState === "ended") {
             setStatus("unavailable"); detector.reset();
-            if (context.state !== "running" && context.state !== "closed" && !resuming) {
+            if (audioContext.state !== "running" && audioContext.state !== "closed" && !resuming) {
               resuming = true;
-              void context.resume().catch(() => {}).finally(() => { resuming = false; });
+              void audioContext.resume().catch(() => {}).finally(() => { resuming = false; });
             }
             return;
           }
@@ -107,5 +93,5 @@ export function useVoiceInterrupt(enabled: boolean, monitoring: boolean, speakin
     })();
     return () => { cancelled = true; cleanup(); };
   }, [enabled, monitoring]);
-  return { status, prepare };
+  return { status };
 }

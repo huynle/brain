@@ -4,15 +4,15 @@ const browser=await chromium.launch();
 try {
  const context=await browser.newContext({viewport:{width:390,height:844},serviceWorkers:'block'});
  await context.addInitScript(()=>{
-  window.started=0;window.aborted=0;window.micLevel=0;
+  window.liveAudioContexts=0;window.started=0;window.aborted=0;window.micLevel=0;
   navigator.mediaDevices.getUserMedia=async()=>{window.track={muted:false,readyState:'live',stop(){this.readyState='ended';},getSettings:()=>({echoCancellation:true})};return {getTracks:()=>[window.track],getAudioTracks:()=>[window.track]};};
   window.AudioContext=class {
-    state='running'; async resume(){} async close(){this.state='closed';}
+    constructor(){window.liveAudioContexts++;} state='running'; async resume(){} async close(){if(this.state!=='closed')window.liveAudioContexts--;this.state='closed';}
     createMediaStreamSource(){return {connect(){},disconnect(){}};}
     createAnalyser(){return {fftSize:1024,getFloatTimeDomainData(buffer){buffer.fill(window.micLevel);}};}
   };
   window.SpeechRecognition=class {
-   start(){window.rec=this;window.started++;}
+   start(){window.rec=this;window.started++;this.onaudiostart?.();}
    stop(){this.onend?.();}
    abort(){window.aborted++;this.onend?.();}
   };
@@ -28,6 +28,7 @@ try {
  await page.getByRole('button',{name:'Assistant',exact:true}).click({timeout:30000});
  await page.getByRole('button',{name:'Start hands-free',exact:true}).click();
  await expect(page.getByText('Listening… Your message sends after a pause.',{exact:true})).toBeVisible();
+ assert.equal(await page.evaluate(()=>window.liveAudioContexts),0,'recognition must start without an interruption audio context');
  await page.evaluate(()=>window.rec.onresult({results:[[{transcript:'First voice turn'}]]}));
  await expect(page.getByRole('button',{name:'Stop audio',exact:true})).toBeVisible({timeout:10000});
  assert.equal(turns.length,1);assert.equal(turns[0].message,'First voice turn');assert.equal(turns[0].voice,true);

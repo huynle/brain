@@ -12,7 +12,7 @@ try {
     createAnalyser(){return {fftSize:1024,getFloatTimeDomainData(buffer){buffer.fill(window.micLevel);}};}
   };
   window.SpeechRecognition=class {
-   start(){window.rec=this;window.started++;}
+   start(){window.rec=this;window.started++;this.onaudiostart?.();}
    stop(){this.onend?.();}
    abort(){window.aborted++;this.onend?.();}
   };

@@ -19,7 +19,7 @@ try {
  await context.addInitScript(()=>{
   window.started=0;window.aborted=0;window.micLevel=0;
   window.SpeechRecognition=class {
-   start(){window.rec=this;window.started++;}
+   start(){window.rec=this;window.started++;this.onaudiostart?.();}
    stop(){this.onend?.();}
    abort(){window.aborted++;this.onend?.();}
   };

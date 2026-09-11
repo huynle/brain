@@ -234,3 +234,64 @@ func TestWorkerClaimUsesCallerCredential(t *testing.T) {
 		t.Fatal("missing credential bypassed authentication")
 	}
 }
+
+func TestWorkerExitPreservesNewerControlState(t *testing.T) {
+	for _, state := range []string{"queued", "cancelled", "paused"} {
+		t.Run(state, func(t *testing.T) {
+			r := assistantjobs.Record{Job: assistantjobs.Job{State: state, Revision: 9}, Pending: []string{"new context"}}
+			if err := settleConversationJob(&r, agentLoopResult{}, context.Canceled); err != nil {
+				t.Fatal(err)
+			}
+			if r.State != state || r.Revision != 9 || len(r.Pending) != 1 {
+				t.Fatalf("old execution overwrote a newer control action: %+v", r.Job)
+			}
+		})
+	}
+}
+
+func TestCancelDuringTaskCreationRemainsCancelled(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	var mirrored atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			close(started)
+			<-release
+			fmt.Fprint(w, `{"id":"created-task","path":"projects/assistant-jobs/task/created-task.md"}`)
+			return
+		}
+		var update types.UpdateEntryRequest
+		_ = json.NewDecoder(r.Body).Decode(&update)
+		mirrored.Store(update.Status != nil && *update.Status == "cancelled")
+		fmt.Fprint(w, `{}`)
+	}))
+	defer server.Close()
+	s := jobTestService(t, server.URL)
+	s.mcpBaseURL = server.URL
+	ctx := jobTestContext("alice")
+	owner, _ := jobOwner(ctx)
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.jobs.create(ctx, owner, AssistantChatRequest{ConversationID: "chat"}, "Count", "Count entries", "")
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("creation did not start")
+	}
+	jobs, err := s.jobs.store.List(owner, "chat")
+	if err != nil || len(jobs) != 1 {
+		t.Fatal("missing creating record", err)
+	}
+	if _, err = s.jobs.control(ctx, owner, jobs[0], "cancel_job", ""); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.jobs.store.Get(owner, jobs[0].ID)
+	if err != nil || r.State != "cancelled" || r.TaskID != "created-task" || !mirrored.Load() {
+		t.Fatalf("creation overwrote cancellation: %+v %v", r.Job, err)
+	}
+}

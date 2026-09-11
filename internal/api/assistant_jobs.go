@@ -287,6 +287,9 @@ func (j *conversationJobs) create(ctx context.Context, owner string, req Assista
 
 	if err != nil {
 		_, _ = j.store.Update(owner, r.ID, func(r *assistantjobs.Record) error {
+			if r.State != "creating" {
+				return nil
+			}
 			r.State = "failed"
 			r.Error = "Could not create Brain task: " + err.Error()
 			r.Revision++
@@ -303,7 +306,11 @@ func (j *conversationJobs) create(ctx context.Context, owner string, req Assista
 		return nil
 	})
 	if err == nil {
-		j.signal()
+		if r.State == "queued" {
+			j.signal()
+		} else {
+			j.mirror(r)
+		}
 	}
 	return r.Job, err
 }
@@ -587,35 +594,7 @@ func (j *conversationJobs) execute(ctx context.Context, r assistantjobs.Record) 
 	if err == nil {
 		result, err = j.s.runAgentLoop(withAssistantToken(ctx, r.Credential), req, nil)
 	}
-	finished, saveErr := j.store.Update(r.Owner, r.ID, func(r *assistantjobs.Record) error {
-		if r.State == "cancelled" {
-			return nil
-		}
-		r.Result = result.Reply
-		r.Error = ""
-		r.State = "completed"
-		if err != nil {
-			r.State = "failed"
-			r.Error = err.Error()
-			if errors.Is(err, context.Canceled) {
-				r.State = "paused"
-				r.Error = "Worker stopped; review saved context before resuming."
-			}
-		}
-		if len(result.Proposed) > 0 {
-			r.State = "paused"
-			r.Error = "Worker requires confirmation for a proposed action."
-		}
-		if strings.HasPrefix(result.Reply, "Reached tool-call limit") {
-			r.State = "paused"
-			r.Error = result.Reply
-		}
-		if err == nil && len(r.Pending) > 0 {
-			r.State = "queued"
-		}
-		r.Revision++
-		return nil
-	})
+	finished, saveErr := j.store.Update(r.Owner, r.ID, func(r *assistantjobs.Record) error { return settleConversationJob(r, result, err) })
 	if saveErr != nil {
 		slog.Error("conversation result persistence failed", "job_id", r.ID, "error", saveErr)
 		return
@@ -668,4 +647,35 @@ func (j *conversationJobs) lease(ctx context.Context, r assistantjobs.Record, ac
 		return j.leaseRequest(ctx, r, action, result)
 	}
 	return mcpclient.NewAPIClient(j.s.mcpBaseURL).WithAuthToken(r.Credential).Request(ctx, http.MethodPost, "/tasks/"+conversationProject+"/"+r.TaskID+"/"+action, map[string]string{"runnerId": conversationRunnerID}, nil, result)
+}
+
+// A stopped execution must not overwrite a newer cancellation or resume.
+func settleConversationJob(r *assistantjobs.Record, result agentLoopResult, err error) error {
+	if r.State != "running" {
+		return nil
+	}
+	r.Result = result.Reply
+	r.Error = ""
+	r.State = "completed"
+	if err != nil {
+		r.State = "failed"
+		r.Error = err.Error()
+		if errors.Is(err, context.Canceled) {
+			r.State = "paused"
+			r.Error = "Worker stopped; review saved context before resuming."
+		}
+	}
+	if len(result.Proposed) > 0 {
+		r.State = "paused"
+		r.Error = "Worker requires confirmation for a proposed action."
+	}
+	if strings.HasPrefix(result.Reply, "Reached tool-call limit") {
+		r.State = "paused"
+		r.Error = result.Reply
+	}
+	if err == nil && len(r.Pending) > 0 {
+		r.State = "queued"
+	}
+	r.Revision++
+	return nil
 }

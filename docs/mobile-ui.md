@@ -82,7 +82,10 @@ uses an in-memory cache. Browser autoplay restrictions show a manual-play hint.
 Audio failures leave the text conversation intact. Breeze is a future adapter
 behind `SpeechSynthesizer`; only OpenRouter is implemented at present.
 
-This remains one local conversation with optional dictation and playback;
-continuous listening, interruption detection and server conversation storage
-are not implemented. Speech provider and UI checks can be run with
+Hands-free mode automatically sends a recognized turn after a 1.1-second
+pause, waits for the reply and audio to finish, then listens again. It requires
+HTTPS and browser speech recognition. End hands-free, permission errors, hiding
+the page, or closing Assistant stop the loop. The microphone is paused during
+playback to avoid feedback; voice interruption during playback is not supported.
+This remains one local conversation; server conversation storage is not implemented. Speech provider and UI checks can be run with
 `go test ./internal/api` and `node web/scripts/verify-assistant-speech.mjs`.

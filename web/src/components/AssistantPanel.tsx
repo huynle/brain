@@ -101,6 +101,7 @@ export function AssistantPanel(): JSX.Element | null {
   const isMobile = useIsMobile();
 
   const [listening, setListening] = useState(false);
+  const [handsFree, setHandsFree] = useState(false);
   const [spokenReplies, setSpokenReplies] = useState(false);
   const speech = useAssistantSpeech(open);
   const spokenRepliesRef = useRef(false);
@@ -114,6 +115,9 @@ export function AssistantPanel(): JSX.Element | null {
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const turns = useAssistantChat((s) => s.turns);
   const busy = useAssistantChat((s) => s.busy);
+  useEffect(() => {
+    if (speech.error || !open) setHandsFree(false);
+  }, [speech.error, open]);
   const threadRef = useRef<HTMLDivElement | null>(null);
   const followLatest = useRef(true);
 
@@ -171,6 +175,7 @@ export function AssistantPanel(): JSX.Element | null {
   if (typeof document === "undefined") return null;
 
   const clearChat = () => {
+    setHandsFree(false);
     speech.stop();
     activeAbort?.abort();
     useAssistantChat.getState().clear();
@@ -220,10 +225,15 @@ export function AssistantPanel(): JSX.Element | null {
   const removePendingImage = (id: string) =>
     setPendingImages((prev) => prev.filter((p) => p.id !== id));
 
-  const send = async () => {
-    const message = prompt.trim();
+  const send = async (spokenTurn?: string) => {
+    const message = (spokenTurn ?? prompt).trim();
     const images = pendingImages;
-    if ((!message && images.length === 0) || busy || listening) return;
+    if (
+      (!message && images.length === 0) ||
+      useAssistantChat.getState().busy ||
+      (listening && spokenTurn === undefined)
+    )
+      return;
     speech.stop();
     followLatest.current = true;
     setPrompt("");
@@ -535,7 +545,20 @@ export function AssistantPanel(): JSX.Element | null {
             value={prompt}
             onChange={setPrompt}
             active={open}
-            disabled={busy}
+            disabled={busy || speech.state !== "idle"}
+            handsFree={handsFree}
+            onHandsFreeChange={(enabled) => {
+              setHandsFree(enabled);
+              if (enabled) {
+                setSpokenReplies(true);
+                spokenRepliesRef.current = true;
+              } else {
+                setSpokenReplies(false);
+                spokenRepliesRef.current = false;
+                speech.stop();
+              }
+            }}
+            onTurn={(text) => void send(text)}
             onListening={(value) => {
               if (value) speech.stop();
               setListening(value);

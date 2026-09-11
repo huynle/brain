@@ -27,14 +27,37 @@ export function AssistantMicrophone({
   active,
   disabled,
   onListening,
+  handsFree = false,
+  onHandsFreeChange,
+  onTurn,
 }: {
   value: string;
   onChange: (value: string) => void;
   active: boolean;
   disabled: boolean;
   onListening: (listening: boolean) => void;
+  handsFree?: boolean;
+  onHandsFreeChange?: (enabled: boolean) => void;
+  onTurn?: (text: string) => void;
 }) {
   const recognition = useRef<Recognition | null>(null);
+  const silence = useRef<ReturnType<typeof setTimeout>>();
+  const emptyTurns = useRef(0);
+  const handsFreeRef = useRef(handsFree);
+  const turnRef = useRef(onTurn);
+  const modeRef = useRef(onHandsFreeChange);
+  handsFreeRef.current = handsFree;
+  turnRef.current = onTurn;
+  modeRef.current = onHandsFreeChange;
+  const pause = () => {
+    handsFreeRef.current = false;
+    modeRef.current?.(false);
+    clearTimeout(silence.current);
+    const current = recognition.current;
+    recognition.current = null;
+    current?.abort();
+    finish();
+  };
   const [listening, setListening] = useState(false);
   const [message, setMessage] = useState("");
   const changeRef = useRef(onChange);
@@ -52,6 +75,9 @@ export function AssistantMicrophone({
       finish();
     }
     return () => {
+      clearTimeout(silence.current);
+      handsFreeRef.current = false;
+      modeRef.current?.(false);
       const current = recognition.current;
       recognition.current = null;
       if (current) {
@@ -62,8 +88,8 @@ export function AssistantMicrophone({
     };
   }, [active]);
 
-  const toggle = () => {
-    if (listening) {
+  const toggle = (auto = false) => {
+    if (recognition.current) {
       recognition.current?.stop();
       return;
     }
@@ -74,6 +100,7 @@ export function AssistantMicrophone({
       setMessage(
         "Microphone needs an HTTPS connection. You can also use your phone keyboard’s dictation button.",
       );
+      pause();
       return;
     }
     if (!Constructor) {
@@ -82,10 +109,17 @@ export function AssistantMicrophone({
       );
       return;
     }
+    if (!Constructor) return;
+    if (auto) {
+      handsFreeRef.current = true;
+      modeRef.current?.(true);
+    }
+    let transcript = "";
+    let failed = false;
     const current = new Constructor();
     const prefix = value.trimEnd();
     current.lang = navigator.language || "en-US";
-    current.continuous = false;
+    current.continuous = auto;
     current.interimResults = true;
     current.onresult = (event) => {
       if (recognition.current !== current) return;
@@ -93,10 +127,18 @@ export function AssistantMicrophone({
         event.results,
         (result) => result[0].transcript,
       ).join(" ");
-      changeRef.current((prefix ? prefix + " " : "") + text);
+      transcript = (prefix ? prefix + " " : "") + text;
+      changeRef.current(transcript);
+      clearTimeout(silence.current);
+      if (auto && text.trim())
+        silence.current = setTimeout(() => {
+          if (recognition.current === current) current.stop();
+        }, 1100);
     };
     current.onerror = (event) => {
       if (recognition.current !== current) return;
+      failed = true;
+      clearTimeout(silence.current);
       setMessage(
         event.error === "not-allowed" || event.error === "service-not-allowed"
           ? "Microphone permission was denied. Allow microphone access in your browser settings, or use keyboard dictation."
@@ -106,12 +148,28 @@ export function AssistantMicrophone({
               ? ""
               : "Voice input could not connect. Try again or use keyboard dictation.",
       );
+      if (auto) {
+        handsFreeRef.current = false;
+        modeRef.current?.(false);
+      }
       finish();
     };
     current.onend = () => {
       if (recognition.current !== current) return;
       recognition.current = null;
+      clearTimeout(silence.current);
       finish();
+      if (auto && handsFreeRef.current && !failed) {
+        if (transcript.trim()) {
+          emptyTurns.current = 0;
+          turnRef.current?.(transcript.trim());
+        } else if (++emptyTurns.current >= 3) {
+          pause();
+          setMessage(
+            "Hands-free paused because no speech was detected. Tap Start hands-free to resume.",
+          );
+        }
+      }
     };
     recognition.current = current;
     setMessage("");
@@ -122,19 +180,32 @@ export function AssistantMicrophone({
     } catch {
       recognition.current = null;
       finish();
+      if (auto) pause();
       setMessage(
         "Microphone could not start. Try again or use keyboard dictation.",
       );
     }
   };
+  useEffect(() => {
+    if (!handsFree || !active || disabled || recognition.current) return;
+    const timer = setTimeout(() => toggle(true), 350);
+    return () => clearTimeout(timer);
+  }, [handsFree, active, disabled, listening]);
+  useEffect(() => {
+    const hidden = () => {
+      if (document.hidden) pause();
+    };
+    document.addEventListener("visibilitychange", hidden);
+    return () => document.removeEventListener("visibilitychange", hidden);
+  }, []);
   return (
     <div className="assistant-voice">
       <button
         type="button"
         aria-label={listening ? "Stop microphone" : "Use microphone"}
         aria-pressed={listening}
-        disabled={disabled}
-        onClick={toggle}
+        disabled={disabled || handsFree}
+        onClick={() => toggle()}
       >
         <svg
           width="20"
@@ -150,10 +221,30 @@ export function AssistantMicrophone({
         </svg>{" "}
         {listening ? "Stop listening" : "Speak"}
       </button>
+      {onHandsFreeChange && (
+        <button
+          type="button"
+          aria-pressed={handsFree}
+          disabled={!handsFree && (disabled || listening)}
+          onClick={() => {
+            if (handsFree) pause();
+            else {
+              emptyTurns.current = 0;
+              toggle(true);
+            }
+          }}
+        >
+          {handsFree ? "End hands-free" : "Start hands-free"}
+        </button>
+      )}
       <span role="status">
         {listening
-          ? "Listening… Tap Stop, review your message, then Send."
-          : message}
+          ? handsFree
+            ? "Listening… Your message sends after a pause."
+            : "Listening… Tap Stop, review your message, then Send."
+          : handsFree && disabled
+            ? "Waiting for Assistant…"
+            : message}
       </span>
     </div>
   );

@@ -564,6 +564,7 @@ export function AssistantPanel(): JSX.Element | null {
           <div className="assistant-voice">
             <button type="button" aria-pressed={voice.enabled} disabled={!voice.enabled && (busy || listening)} onClick={()=>voice.enabled?voice.stop():void voice.start()}>{voice.enabled ? "End hands-free" : "Start hands-free"}</button>
             <span role="status">{voice.error || voice.status}</span>
+            {voice.enabled && <span role="status">{voice.wakeLockStatus}</span>}
           </div>
           <AssistantMicrophone
             key={sessionId}

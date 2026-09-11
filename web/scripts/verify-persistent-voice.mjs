@@ -12,6 +12,13 @@ try{
    await context.addInitScript(token=>{localStorage.setItem('brain.access_token',token);localStorage.setItem('brain.auth_mode','manual');},token);
  }
  await context.addInitScript(()=>{
+  window.wakeRequests=0;window.wakeReleases=0;
+  Object.defineProperty(navigator,'wakeLock',{configurable:true,value:{request:async()=>{
+    window.wakeRequests++;
+    const lock=new EventTarget();lock.released=false;
+    lock.release=async()=>{if(!lock.released){lock.released=true;window.wakeReleases++;lock.dispatchEvent(new Event('release'));}};
+    return lock;
+  }}});
   window.legacyStarts=0;window.SpeechRecognition=class{start(){window.legacyStarts++;throw new Error("legacy recognizer must not start");}};window.captures=0;window.stops=0;window.audioPauses=0;
   navigator.mediaDevices.getUserMedia=async()=>{window.captures++;const track={stop(){window.stops++;},getSettings(){return {echoCancellation:true};}};return {getAudioTracks:()=>[track],getTracks:()=>[track]};};
   window.AudioContext=class{sampleRate=16000;state='running';destination={};audioWorklet={addModule:async()=>{}};resume=async()=>{};close=async()=>{this.state='closed';};createGain(){return {gain:{value:0},connect(){}};}createMediaStreamSource(){return {connect(){}};}};
@@ -33,6 +40,8 @@ try{
  assert.equal(modelRequests,0,'dashboard must not eagerly download the speech model');
  await page.getByRole('button',{name:'Start hands-free',exact:true}).click();
  await expect(page.getByText('Listening…',{exact:true})).toBeVisible({timeout:30000});
+ await expect(page.getByText('Screen kept awake',{exact:true})).toBeVisible();
+ assert.equal(await page.evaluate(()=>window.wakeRequests),1);
  await page.evaluate(()=>window.emit(false));assert.equal(transcriptions,0,'road noise and brief bumps must remain local');
  await page.evaluate(()=>window.emit());
  await expect(page.getByRole('button',{name:'Stop audio',exact:true})).toBeVisible();
@@ -52,6 +61,7 @@ try{
  await page.getByRole('button',{name:'New chat',exact:true}).click();
  await held.fulfill({json:{text:'stale transcription'}}).catch(()=>{});
  assert.equal(await page.evaluate(()=>window.stops),1);
+ await expect.poll(()=>page.evaluate(()=>window.wakeReleases)).toBe(1);
  await expect(page.getByRole('button',{name:'Start hands-free',exact:true})).toBeVisible();
  await expect(page.locator('.assistant-msg')).toHaveCount(0);
  assert.equal(turns.length,2,'stale transcription cannot send into new session');
@@ -66,6 +76,7 @@ try{
  await page.getByRole('button',{name:'Start hands-free',exact:true}).click();
  await expect(page.getByText('Speech detector could not load. Check your connection and restart hands-free.',{exact:true})).toBeVisible();
  assert.equal(await page.evaluate(()=>window.stops),3,'model load failure releases the microphone');
+ await expect.poll(()=>page.evaluate(()=>window.wakeReleases)).toBe(3);
  await page.screenshot({path:'/tmp/brain-persistent-voice.png'});
  console.log('PASS persistent capture: local silence, two turns, barge-in, one stream, session switch releases mic and cancels transcription');
 }finally{await browser.close();}

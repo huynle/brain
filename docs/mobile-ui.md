@@ -83,7 +83,14 @@ Audio failures leave the text conversation intact. Breeze is a future adapter
 behind `SpeechSynthesizer`; only OpenRouter is implemented at present.
 
 Hands-free now owns one getUserMedia stream and AudioWorklet for the entire
-open session. A browser-local Silero V5 classifier keeps 700 ms of pre-roll and submits a WAV
+open session. Hands-free requests a screen wake lock automatically and shows
+“Screen kept awake” when granted. Ending hands-free, switching chats, hiding the
+page, or a startup/voice failure releases it. If unsupported, denied, or released
+by the system, a non-blocking message explains that the screen may sleep. This
+prevents automatic screen sleep only; it does not support a manually locked
+phone.
+
+A browser-local Silero V5 classifier keeps 700 ms of pre-roll and submits a WAV
 segment after 1.2 seconds of silence (30-second maximum per segment). Silence
 alone never creates a transcription request. The stream remains open during
 transcription, reasoning and playback. Sustained speech stops playback and
@@ -109,7 +116,9 @@ capture and cancels pending transcription. Queues are bounded; failures stop
 hands-free visibly instead of silently dropping turns. Speak remains browser
 one-shot dictation. Saved conversations remain local to the browser.
 
-Verification: `go test ./internal/api`, frontend `src/lib/voiceCapture.test.ts`,
+Verification: `node web/scripts/verify-screen-wake-lock.mjs` checks wake-lock
+acquisition, release, denial, unsupported browsers and cancellation races.
+`go test ./internal/api`, frontend `src/lib/voiceCapture.test.ts`,
 `node web/scripts/verify-persistent-voice.mjs` (real classifier with speech/rumble fixtures and lifecycle/cancellation), and
 `node web/scripts/verify-persistent-audio.mjs` (real Chromium capture/worklet with
 a WAV microphone fixture). A live OpenRouter transcription was also verified.

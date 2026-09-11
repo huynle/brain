@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useScreenWakeLock } from './useScreenWakeLock';
 import { api, assistantVoiceDiagnostic } from '../lib/api';
 import type { createSpeechDetector } from '../lib/speechDetector';
 import { pcmWav, VoiceSegmenter } from '../lib/voiceCapture';
@@ -12,6 +13,7 @@ export function usePersistentVoice(options: {sessionId:string; active:boolean; s
   const latest=useRef(options);latest.current=options;
   const generation=useRef(0), cleanup=useRef<(()=>void)|null>(null);
   const [enabled,setEnabled]=useState(false),[status,setStatus]=useState(''),[error,setError]=useState('');
+  const wakeLockStatus=useScreenWakeLock(enabled);
   const stop=()=>{generation.current++;cleanup.current?.();cleanup.current=null;setEnabled(false);setStatus('');latest.current.onEnabled(false);};
   useEffect(()=>{if(!options.active)stop();return stop;},[options.active,options.sessionId]);
   const start=async()=>{
@@ -82,5 +84,5 @@ export function usePersistentVoice(options: {sessionId:string; active:boolean; s
     }catch{fail(startupError);}
   };
   useEffect(()=>{const hidden=()=>{if(document.hidden)stop();};document.addEventListener('visibilitychange',hidden);return()=>document.removeEventListener('visibilitychange',hidden);},[]);
-  return {start,stop,enabled,status,error};
+  return {start,stop,enabled,status,error,wakeLockStatus};
 }

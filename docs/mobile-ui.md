@@ -102,4 +102,4 @@ zero samples). Detection uses echo-cancelled microphone volume, not semantic VAD
 car Bluetooth routing and false triggers still require physical-device testing.
 The Interrupt and speak button remains available as a manual fallback.
 
-Speech recognition shows Starting until an audio-start or result event arrives. If no transcript arrives within 15 seconds, it stops and offers a retry or keyboard dictation instead of remaining indefinitely in Listening.
+Speech recognition shows Starting until an audio-start or result event arrives. Hands-free stays enabled through long silence: no-speech and empty recognition endings restart the browser recognizer with a one-second delay. There is no forced no-transcript timeout. Explicit stop, permission errors, and leaving the page still stop hands-free.

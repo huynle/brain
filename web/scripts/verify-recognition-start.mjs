@@ -32,10 +32,18 @@ try {
  await page.getByRole('button',{name:'Start hands-free',exact:true}).click();
  await expect(page.getByText('Starting speech recognition…',{exact:true})).toBeVisible();
  assert.equal(await page.evaluate(()=>window.liveAudioContexts),0);
- await page.clock.fastForward(16000);
- await expect(page.getByText('No transcription received from the browser. Try Speak again, or use keyboard dictation.',{exact:true})).toBeVisible();
- await expect(page.getByRole('button',{name:'Start hands-free',exact:true})).toBeVisible();
+ await page.clock.fastForward(60000);
+ await expect(page.getByRole('button',{name:'End hands-free',exact:true})).toBeVisible();
  assert.equal(turns.length,0);
- assert.equal(await page.evaluate(()=>window.aborted),1);
- console.log('PASS stalled recognizer reports startup accurately, aborts after timeout, and sends no message');
+ assert.equal(await page.evaluate(()=>window.aborted),0);
+ for(let i=0;i<4;i++) {
+   await page.evaluate(()=>{window.rec.onerror({error:'no-speech'});window.rec.onend();});
+   await page.clock.fastForward(1100);
+   await expect.poll(()=>page.evaluate(()=>window.started)).toBe(i+2);
+ }
+ await page.evaluate(()=>{window.rec.onaudiostart();window.rec.onresult({results:[[{transcript:'Hello after a long pause'}]]});});
+ await page.clock.fastForward(1200);
+ await expect.poll(()=>turns.length).toBe(1);
+ assert.equal(turns[0].message,'Hello after a long pause');
+ console.log('PASS long silence keeps hands-free enabled; repeated no-speech restarts; next spoken turn still sends');
 }finally{await browser.close();}

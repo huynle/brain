@@ -44,7 +44,7 @@ export function AssistantMicrophone({
   const recognition = useRef<Recognition | null>(null);
   const silence = useRef<ReturnType<typeof setTimeout>>();
   const emptyTurns = useRef(0);
-  const startup = useRef<ReturnType<typeof setTimeout>>();
+  const [cycle, setCycle] = useState(0);
   const [receivingAudio, setReceivingAudio] = useState(false);
   const handsFreeRef = useRef(handsFree);
   const turnRef = useRef(onTurn);
@@ -68,7 +68,6 @@ export function AssistantMicrophone({
   changeRef.current = onChange;
   listeningRef.current = onListening;
   const finish = () => {
-    clearTimeout(startup.current);
     setReceivingAudio(false);
     setListening(false);
     listeningRef.current(false);
@@ -81,7 +80,6 @@ export function AssistantMicrophone({
     }
     return () => {
       clearTimeout(silence.current);
-      clearTimeout(startup.current);
       handsFreeRef.current = false;
       modeRef.current?.(false);
       const current = recognition.current;
@@ -132,7 +130,6 @@ export function AssistantMicrophone({
     };
     current.onresult = (event) => {
       if (recognition.current !== current) return;
-      clearTimeout(startup.current);
       setReceivingAudio(true);
       const text = Array.from(
         event.results,
@@ -148,6 +145,11 @@ export function AssistantMicrophone({
     };
     current.onerror = (event) => {
       if (recognition.current !== current) return;
+      if (auto && event.error === "no-speech") {
+        // Silence is a normal hands-free state. onend starts a fresh recognizer.
+        clearTimeout(silence.current);
+        return;
+      }
       failed = true;
       clearTimeout(silence.current);
       setMessage(
@@ -170,15 +172,13 @@ export function AssistantMicrophone({
       recognition.current = null;
       clearTimeout(silence.current);
       finish();
+      setCycle(n => n + 1);
       if (auto && handsFreeRef.current && !failed) {
         if (transcript.trim()) {
           emptyTurns.current = 0;
           turnRef.current?.(transcript.trim());
-        } else if (++emptyTurns.current >= 3) {
-          pause();
-          setMessage(
-            "Hands-free paused because no speech was detected. Tap Start hands-free to resume.",
-          );
+        } else {
+          emptyTurns.current++;
         }
       }
     };
@@ -188,11 +188,6 @@ export function AssistantMicrophone({
     listeningRef.current(true);
     try {
       current.start();
-      startup.current = setTimeout(() => {
-        if (recognition.current !== current) return;
-        pause();
-        setMessage("No transcription received from the browser. Try Speak again, or use keyboard dictation.");
-      }, 15000);
     } catch {
       recognition.current = null;
       finish();
@@ -204,9 +199,9 @@ export function AssistantMicrophone({
   };
   useEffect(() => {
     if (!handsFree || !active || disabled || recognition.current) return;
-    const timer = setTimeout(() => toggle(true), 50);
+    const timer = setTimeout(() => toggle(true), emptyTurns.current > 0 ? 1000 : 50);
     return () => clearTimeout(timer);
-  }, [handsFree, active, disabled, listening]);
+  }, [handsFree, active, disabled, listening, cycle]);
   useEffect(() => {
     const hidden = () => {
       if (document.hidden) pause();

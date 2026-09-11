@@ -347,6 +347,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				r.Group(func(r chi.Router) {
 					r.Use(RequireScope("admin:*"))
 					if o.handler != nil && o.handler.assistant != nil {
+						r.Post("/voice-diagnostics", o.handler.HandleAssistantVoiceDiagnostics)
 						r.Post("/speech", o.handler.HandleAssistantSpeech)
 						r.Post("/chat", o.handler.HandleAssistantChat)
 						r.Post("/chat/stream", o.handler.HandleAssistantChatStream)

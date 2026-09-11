@@ -103,3 +103,13 @@ car Bluetooth routing and false triggers still require physical-device testing.
 The Interrupt and speak button remains available as a manual fallback.
 
 Speech recognition shows Starting until an audio-start or result event arrives. Hands-free stays enabled through long silence: no-speech and empty recognition endings restart the browser recognizer with a one-second delay. There is no forced no-transcript timeout. Explicit stop, permission errors, and leaving the page still stop hands-free.
+
+Voice diagnostics are posted through the authenticated admin-only
+`POST /api/v1/assistant/voice-diagnostics` endpoint. Search container logs for
+`assistant voice diagnostic`. Events share a random recognition-attempt ID and
+include elapsed time, event type, standard error code, result-event count, Android
+flag, and hands-free flag. No transcript, audio, full user-agent, or device name
+is sent. Waiting is reported every 30 seconds without ending the session. The
+server rejects unknown fields, unknown event/error codes and oversized requests.
+Browser events are evidence about recognition progress, not proof that physical
+microphone samples contain speech; the actual device still needs a test attempt.

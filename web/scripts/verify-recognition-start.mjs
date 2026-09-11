@@ -18,7 +18,8 @@ try {
   };
   window.Audio=class {constructor(){window.audio=this;} async play(){} pause(){} };
  });
- const page=await context.newPage();let turns=[];
+ const page=await context.newPage();let turns=[];const diagnostics=[];
+ page.on('request',request=>{if(request.url().endsWith('/voice-diagnostics')) diagnostics.push(request.postDataJSON());});
  await page.route('**/api/v1/assistant/chat/stream',route=>{
   turns.push(route.request().postDataJSON());
   return route.fulfill({contentType:'application/x-ndjson',body:'{"type":"delta","delta":"Hello back."}\n{"type":"done","reply":"Hello back."}\n'});
@@ -45,5 +46,9 @@ try {
  await page.clock.fastForward(1200);
  await expect.poll(()=>turns.length).toBe(1);
  assert.equal(turns[0].message,'Hello after a long pause');
+ assert(diagnostics.some(e=>e.event==='start_requested'));
+ assert(diagnostics.some(e=>e.event==='waiting'));
+ assert(diagnostics.some(e=>e.event==='result'));
+ assert(diagnostics.every(e=>!('transcript' in e) && !('audio' in e) && !JSON.stringify(e).includes('Hello after')));
  console.log('PASS long silence keeps hands-free enabled; repeated no-speech restarts; next spoken turn still sends');
 }finally{await browser.close();}

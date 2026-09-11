@@ -1,3 +1,4 @@
+import { assistantVoiceDiagnostic } from "../lib/api";
 import { useEffect, useRef, useState } from "react";
 
 type Recognition = {
@@ -9,6 +10,9 @@ type Recognition = {
         results: ArrayLike<ArrayLike<{ transcript: string }>>;
       }) => void)
     | null;
+  onstart?: (() => void) | null;
+  onsoundstart?: (() => void) | null;
+  onspeechstart?: (() => void) | null;
   onaudiostart?: (() => void) | null;
   onerror: ((event: { error: string }) => void) | null;
   onend: (() => void) | null;
@@ -44,6 +48,8 @@ export function AssistantMicrophone({
   const recognition = useRef<Recognition | null>(null);
   const silence = useRef<ReturnType<typeof setTimeout>>();
   const emptyTurns = useRef(0);
+  const diagnosticTimer = useRef<ReturnType<typeof setInterval>>();
+  const stopDiagnostic = useRef<(() => void) | null>(null);
   const [cycle, setCycle] = useState(0);
   const [receivingAudio, setReceivingAudio] = useState(false);
   const handsFreeRef = useRef(handsFree);
@@ -53,6 +59,7 @@ export function AssistantMicrophone({
   turnRef.current = onTurn;
   modeRef.current = onHandsFreeChange;
   const pause = () => {
+    stopDiagnostic.current?.();
     handsFreeRef.current = false;
     modeRef.current?.(false);
     clearTimeout(silence.current);
@@ -68,6 +75,7 @@ export function AssistantMicrophone({
   changeRef.current = onChange;
   listeningRef.current = onListening;
   const finish = () => {
+    clearInterval(diagnosticTimer.current);
     setReceivingAudio(false);
     setListening(false);
     listeningRef.current(false);
@@ -79,6 +87,8 @@ export function AssistantMicrophone({
       finish();
     }
     return () => {
+      stopDiagnostic.current?.();
+      clearInterval(diagnosticTimer.current);
       clearTimeout(silence.current);
       handsFreeRef.current = false;
       modeRef.current?.(false);
@@ -121,15 +131,29 @@ export function AssistantMicrophone({
     let transcript = "";
     let failed = false;
     const current = new Constructor();
+    const attempt = crypto.randomUUID();
+    const startedAt = performance.now();
+    let resultCount = 0;
+    const report = (event: string, error = "") => {
+      const knownErrors = ["", "no-speech", "aborted", "audio-capture", "network", "not-allowed", "service-not-allowed", "bad-grammar", "language-not-supported"];
+      void assistantVoiceDiagnostic({attempt, event, error: knownErrors.includes(error) ? error : "unknown",
+        elapsed_ms: Math.min(86400000, Math.round(performance.now()-startedAt)), results: Math.min(resultCount,100000), android: /Android/i.test(navigator.userAgent), hands_free: auto}).catch(() => {});
+    };
+    stopDiagnostic.current = () => {report("stopped");stopDiagnostic.current=null;};
+    current.onstart = () => {if(recognition.current === current) report("started");};
+    current.onsoundstart = () => {if(recognition.current === current) report("sound_start");};
+    current.onspeechstart = () => {if(recognition.current === current) report("speech_start");};
     const prefix = value.trimEnd();
     current.lang = navigator.language || "en-US";
     current.continuous = auto;
     current.interimResults = true;
     current.onaudiostart = () => {
-      if (recognition.current === current) setReceivingAudio(true);
+      if (recognition.current === current) {setReceivingAudio(true);report("audio_start");}
     };
     current.onresult = (event) => {
       if (recognition.current !== current) return;
+      resultCount++;
+      if(resultCount === 1) report("result");
       setReceivingAudio(true);
       const text = Array.from(
         event.results,
@@ -145,6 +169,7 @@ export function AssistantMicrophone({
     };
     current.onerror = (event) => {
       if (recognition.current !== current) return;
+      report("error", event.error);
       if (auto && event.error === "no-speech") {
         // Silence is a normal hands-free state. onend starts a fresh recognizer.
         clearTimeout(silence.current);
@@ -169,6 +194,8 @@ export function AssistantMicrophone({
     };
     current.onend = () => {
       if (recognition.current !== current) return;
+      report("ended");
+      stopDiagnostic.current=null;
       recognition.current = null;
       clearTimeout(silence.current);
       finish();
@@ -187,8 +214,11 @@ export function AssistantMicrophone({
     setListening(true);
     listeningRef.current(true);
     try {
+      report("start_requested");
+      diagnosticTimer.current=setInterval(()=>report("waiting"),30000);
       current.start();
     } catch {
+      report("start_failed");
       recognition.current = null;
       finish();
       if (auto) pause();

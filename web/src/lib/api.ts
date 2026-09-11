@@ -2325,3 +2325,8 @@ export const updateServerConfig = (cfg: ServerConfig) =>
     method: "PUT",
     body: { config: cfg },
   });
+
+
+/** Metadata only: never transmit the transcript or raw audio to diagnostics. */
+export const assistantVoiceDiagnostic = (body: {attempt: string; event: string; error: string; elapsed_ms: number; results: number; android: boolean; hands_free: boolean}) =>
+  api<void>("/api/v1/assistant/voice-diagnostics", {method: "POST", body});

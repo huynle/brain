@@ -5,10 +5,10 @@ try {
  const context=await browser.newContext({viewport:{width:390,height:844},serviceWorkers:'block'});
  await context.addInitScript(()=>{
   window.started=0;window.aborted=0;window.micLevel=0;
-  navigator.mediaDevices.getUserMedia=async()=>({getTracks:()=>[{stop(){}}],getAudioTracks:()=>[{getSettings:()=>({echoCancellation:true})}]});
+  navigator.mediaDevices.getUserMedia=async()=>{window.track={muted:false,readyState:'live',stop(){this.readyState='ended';},getSettings:()=>({echoCancellation:true})};return {getTracks:()=>[window.track],getAudioTracks:()=>[window.track]};};
   window.AudioContext=class {
     state='running'; async resume(){} async close(){this.state='closed';}
-    createMediaStreamSource(){return {connect(){}};}
+    createMediaStreamSource(){return {connect(){},disconnect(){}};}
     createAnalyser(){return {fftSize:1024,getFloatTimeDomainData(buffer){buffer.fill(window.micLevel);}};}
   };
   window.SpeechRecognition=class {
@@ -39,7 +39,11 @@ try {
  assert.equal(turns[1].message,'Second voice turn');
  assert(turns[1].history.some(x=>x.role==='user'),'second turn retains history');
  await expect(page.getByRole('button',{name:'Stop audio',exact:true})).toBeVisible();
- await page.evaluate(()=>{window.micLevel=.06;});
+ await page.evaluate(()=>{window.track.muted=true;});
+ await expect(page.getByText('Interruption mic is unavailable. Tap Interrupt and speak to take your turn.',{exact:true})).toBeVisible();
+ await page.evaluate(()=>{window.track.muted=false;window.micLevel=.002;});
+ await expect(page.getByText('Listening for interruption…',{exact:true})).toBeVisible();
+ await page.evaluate(()=>{window.micLevel=.02;});
  await expect(page.getByRole('button',{name:'Stop audio',exact:true})).toHaveCount(0);
  await page.evaluate(()=>{window.micLevel=0;});
  await expect.poll(()=>page.evaluate(()=>window.started)).toBe(3);

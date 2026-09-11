@@ -8,7 +8,7 @@ try {
   navigator.mediaDevices.getUserMedia=async()=>({getTracks:()=>[{stop(){}}],getAudioTracks:()=>[{getSettings:()=>({echoCancellation:true})}]});
   window.AudioContext=class {
     state='running'; async resume(){} async close(){this.state='closed';}
-    createMediaStreamSource(){return {connect(){}};}
+    createMediaStreamSource(){return {connect(){},disconnect(){}};}
     createAnalyser(){return {fftSize:1024,getFloatTimeDomainData(buffer){buffer.fill(window.micLevel);}};}
   };
   window.SpeechRecognition=class {

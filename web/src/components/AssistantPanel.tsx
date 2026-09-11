@@ -106,8 +106,9 @@ export function AssistantPanel(): JSX.Element | null {
   const [handsFree, setHandsFree] = useState(false);
   const [spokenReplies, setSpokenReplies] = useState(false);
   const speech = useAssistantSpeech(open);
-  const interruptUnavailable = useVoiceInterrupt(
+  const voiceInterrupt = useVoiceInterrupt(
     open && handsFree,
+    speech.state !== "idle",
     speech.state === "playing",
     speech.stop,
   );
@@ -563,9 +564,12 @@ export function AssistantPanel(): JSX.Element | null {
               Interrupt and speak
             </button>
           )}
-          {handsFree && interruptUnavailable && (
+          {handsFree && speech.state !== "idle" && voiceInterrupt.status !== "unavailable" && (
+            <span role="status">{voiceInterrupt.status === "listening" ? "Listening for interruption…" : "Connecting interruption mic…"}</span>
+          )}
+          {handsFree && voiceInterrupt.status === "unavailable" && (
             <span role="status">
-              Tap Interrupt and speak to take your turn on this browser.
+              Interruption mic is unavailable. Tap Interrupt and speak to take your turn.
             </span>
           )}
           <AssistantMicrophone
@@ -578,6 +582,7 @@ export function AssistantPanel(): JSX.Element | null {
             onHandsFreeChange={(enabled) => {
               setHandsFree(enabled);
               if (enabled) {
+                voiceInterrupt.prepare();
                 setSpokenReplies(true);
                 spokenRepliesRef.current = true;
               } else {

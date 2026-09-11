@@ -93,3 +93,12 @@ provides a fallback. Voice requests prefer one or two short sentences unless
 more detail is requested.
 Saved conversations remain local to this browser; server conversation storage is not implemented. Speech provider and UI checks can be run with
 `go test ./internal/api` and `node web/scripts/verify-assistant-speech.mjs`.
+
+
+Interruption capture is reopened for each reply, after browser recognition ends,
+and starts while speech audio is loading. Start hands-free primes the audio
+context in the user gesture. The UI reports connecting, listening, or unavailable
+capture (muted/ended track, suspended context, permission failure, or sustained
+zero samples). Detection uses echo-cancelled microphone volume, not semantic VAD;
+car Bluetooth routing and false triggers still require physical-device testing.
+The Interrupt and speak button remains available as a manual fallback.

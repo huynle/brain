@@ -12,3 +12,9 @@ test('interrupt detector ignores noise and brief clicks, requires sustained voic
  d.reset();
  assert.equal(d.update(.06,500),false);
 });
+test('quieter sustained voice interrupts but low background noise does not',()=>{
+ const d=new VoiceInterruptDetector();
+ assert.equal(d.update(.003,0),false);
+ assert.equal(d.update(.02,50),false);
+ assert.equal(d.update(.02,240),true);
+});

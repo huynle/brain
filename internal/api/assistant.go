@@ -52,6 +52,7 @@ type AssistantServiceOptions struct {
 
 type AssistantService struct {
 	speech       SpeechSynthesizer
+	transcriber  SpeechTranscriber
 	enabled      bool
 	provider     string
 	baseURL      string
@@ -207,6 +208,7 @@ func NewAssistantService(opts AssistantServiceOptions) *AssistantService {
 	}
 	return &AssistantService{
 		speech:       newSpeechProvider(opts.Speech),
+		transcriber:  newTranscriber(opts.Speech),
 		enabled:      opts.Enabled,
 		provider:     firstNonEmptyString(opts.Provider, "openrouter"),
 		baseURL:      firstNonEmptyString(opts.BaseURL, "https://openrouter.ai/api/v1"),

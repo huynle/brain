@@ -1,4 +1,4 @@
-import { useVoiceInterrupt } from "../hooks/useVoiceInterrupt";
+import { usePersistentVoice } from "../hooks/usePersistentVoice";
 import { useAssistantSpeech } from "../hooks/useAssistantSpeech";
 import { AssistantMicrophone } from "./AssistantMicrophone";
 /**
@@ -106,12 +106,6 @@ export function AssistantPanel(): JSX.Element | null {
   const [handsFree, setHandsFree] = useState(false);
   const [spokenReplies, setSpokenReplies] = useState(false);
   const speech = useAssistantSpeech(open);
-  const voiceInterrupt = useVoiceInterrupt(
-    open && handsFree,
-    speech.state !== "idle",
-    speech.state === "playing",
-    speech.stop,
-  );
   const spokenRepliesRef = useRef(false);
   spokenRepliesRef.current = spokenReplies;
   const openRef = useRef(open);
@@ -125,9 +119,11 @@ export function AssistantPanel(): JSX.Element | null {
   const sessions = useAssistantChat((s) => s.sessions);
   const turns = useAssistantChat((s) => s.turns);
   const busy = useAssistantChat((s) => s.busy);
-  useEffect(() => {
-    if (speech.error || !open) setHandsFree(false);
-  }, [speech.error, open]);
+  const voice = usePersistentVoice({active: open, sessionId, speaking: speech.state === "playing", busy,
+    onStartSpeech: () => {speech.stop(); activeAbort?.abort();},
+    onTurn: text => void send(text),
+    onEnabled: enabled => {setHandsFree(enabled);setSpokenReplies(enabled);spokenRepliesRef.current=enabled;if(!enabled)speech.stop();},
+  });
   const threadRef = useRef<HTMLDivElement | null>(null);
   const followLatest = useRef(true);
 
@@ -185,6 +181,7 @@ export function AssistantPanel(): JSX.Element | null {
   if (typeof document === "undefined") return null;
 
   const changeSession = (id?: string) => {
+    voice.stop();
     setHandsFree(false);
     speech.stop();
     activeAbort?.abort();
@@ -564,14 +561,10 @@ export function AssistantPanel(): JSX.Element | null {
               Interrupt and speak
             </button>
           )}
-          {handsFree && speech.state !== "idle" && voiceInterrupt.status !== "unavailable" && (
-            <span role="status">{voiceInterrupt.status === "listening" ? "Listening for interruption…" : "Connecting interruption mic…"}</span>
-          )}
-          {handsFree && voiceInterrupt.status === "unavailable" && (
-            <span role="status">
-              Interruption mic is unavailable. Tap Interrupt and speak to take your turn.
-            </span>
-          )}
+          <div className="assistant-voice">
+            <button type="button" aria-pressed={voice.enabled} disabled={!voice.enabled && (busy || listening)} onClick={()=>voice.enabled?voice.stop():void voice.start()}>{voice.enabled ? "End hands-free" : "Start hands-free"}</button>
+            <span role="status">{voice.error || voice.status}</span>
+          </div>
           <AssistantMicrophone
             key={sessionId}
             value={prompt}
@@ -579,17 +572,6 @@ export function AssistantPanel(): JSX.Element | null {
             active={open}
             disabled={busy || speech.state !== "idle"}
             handsFree={handsFree}
-            onHandsFreeChange={(enabled) => {
-              setHandsFree(enabled);
-              if (enabled) {
-                setSpokenReplies(true);
-                spokenRepliesRef.current = true;
-              } else {
-                setSpokenReplies(false);
-                spokenRepliesRef.current = false;
-                speech.stop();
-              }
-            }}
             onTurn={(text) => void send(text)}
             onListening={(value) => {
               if (value) speech.stop();

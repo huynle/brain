@@ -82,27 +82,31 @@ uses an in-memory cache. Browser autoplay restrictions show a manual-play hint.
 Audio failures leave the text conversation intact. Breeze is a future adapter
 behind `SpeechSynthesizer`; only OpenRouter is implemented at present.
 
-Hands-free mode automatically sends a recognized turn after a 1.1-second
-pause, waits for the reply and audio to finish, then listens again. It requires
-HTTPS and browser speech recognition. End hands-free, permission errors, hiding
-the page, or closing Assistant stop the loop. During playback, a local echo-cancelled microphone level detector watches for
-180 ms of sustained sound and stops audio, then rearms speech recognition.
-It does not buffer the interrupting audio, so the opening syllable may be missed.
-Actual echo rejection depends on the phone/browser; an Interrupt and speak button
-provides a fallback. Voice requests prefer one or two short sentences unless
-more detail is requested.
-Saved conversations remain local to this browser; server conversation storage is not implemented. Speech provider and UI checks can be run with
-`go test ./internal/api` and `node web/scripts/verify-assistant-speech.mjs`.
+Hands-free now owns one getUserMedia stream and AudioWorklet for the entire
+open session. Local level detection keeps 300 ms of pre-roll and submits a WAV
+segment after 1.2 seconds of silence (30-second maximum per segment). Silence
+alone never creates a transcription request. The stream remains open during
+transcription, reasoning and playback. Sustained speech stops playback and
+cancels the current reasoning request; the recorded new turn is retained.
+Echo cancellation must be reported enabled for recording during playback;
+otherwise use the manual Interrupt and speak button. This is level detection,
+not semantic VAD; car noise and Bluetooth routing still need device testing.
 
+Admin-scoped `POST /api/v1/assistant/transcribe` accepts base64 WAV in `audio`
+and returns `text`. It uses the configured OpenRouter speech key/base URL and
+`BRAIN_ASSISTANT_TRANSCRIPTION_MODEL` (default `openai/whisper-large-v3-turbo`).
+Detected speech audio goes to OpenRouter and incurs transcription usage;
+raw audio is not persisted or logged by Brain. There is no silence timeout.
+Stop, closing the panel, hiding the page, or switching conversations releases
+capture and cancels pending transcription. Queues are bounded; failures stop
+hands-free visibly instead of silently dropping turns. Speak remains browser
+one-shot dictation. Saved conversations remain local to the browser.
 
-Interruption capture is reopened for each reply, after browser recognition ends,
-and starts while speech audio is loading. The interruption audio context exists only during a reply, so it does not compete with speech recognition for audio focus. The UI reports connecting, listening, or unavailable
-capture (muted/ended track, suspended context, permission failure, or sustained
-zero samples). Detection uses echo-cancelled microphone volume, not semantic VAD;
-car Bluetooth routing and false triggers still require physical-device testing.
-The Interrupt and speak button remains available as a manual fallback.
-
-Speech recognition shows Starting until an audio-start or result event arrives. Hands-free stays enabled through long silence: no-speech and empty recognition endings restart the browser recognizer with a one-second delay. There is no forced no-transcript timeout. Explicit stop, permission errors, and leaving the page still stop hands-free.
+Verification: `go test ./internal/api`, frontend `src/lib/voiceCapture.test.ts`,
+`node web/scripts/verify-persistent-voice.mjs` (lifecycle/cancellation), and
+`node web/scripts/verify-persistent-audio.mjs` (real Chromium capture/worklet with
+a WAV microphone fixture). A live OpenRouter transcription was also verified.
+Physical Android/car-Bluetooth stability is a separate user retest.
 
 Voice diagnostics are posted through the authenticated admin-only
 `POST /api/v1/assistant/voice-diagnostics` endpoint. Search container logs for

@@ -1,0 +1,41 @@
+import {chromium,expect} from '@playwright/test';
+import assert from 'node:assert/strict';
+const browser=await chromium.launch();
+try{
+ const context=await browser.newContext({viewport:{width:390,height:844},serviceWorkers:'block'});
+ await context.addInitScript(()=>{
+  window.captures=0;window.stops=0;window.audioPauses=0;
+  navigator.mediaDevices.getUserMedia=async()=>{window.captures++;const track={stop(){window.stops++;},getSettings(){return {echoCancellation:true};}};return {getAudioTracks:()=>[track],getTracks:()=>[track]};};
+  window.AudioContext=class{sampleRate=16000;state='running';destination={};audioWorklet={addModule:async()=>{}};resume=async()=>{};close=async()=>{this.state='closed';};createGain(){return {gain:{value:0},connect(){}};}createMediaStreamSource(){return {connect(){}};}};
+  window.AudioWorkletNode=class{constructor(){this.port={onmessage:null};window.capture=this;}connect(){}disconnect(){}};
+  window.Audio=class{constructor(){window.audio=this;}play=async()=>{};pause(){window.audioPauses++;}};
+  window.emit=(voice=true)=>{for(let i=0;i<(voice?8:500);i++)window.capture.port.onmessage?.({data:new Float32Array(2048).fill(voice?.05:0)});if(voice)for(let i=0;i<12;i++)window.capture.port.onmessage?.({data:new Float32Array(2048)});};
+ });
+ const page=await context.newPage();let transcriptions=0;const turns=[];let held;
+ await page.route('**/api/v1/assistant/transcribe',route=>{transcriptions++;const body=route.request().postDataJSON();assert(Buffer.from(body.audio,'base64').subarray(0,4).toString()==='RIFF');if(transcriptions===3){held=route;return;}return route.fulfill({json:{text:'Voice turn '+transcriptions}});});
+ await page.route('**/api/v1/assistant/chat/stream',route=>{turns.push(route.request().postDataJSON());return route.fulfill({contentType:'application/x-ndjson',body:'{"type":"done","reply":"A short reply."}\n'});});
+ await page.route('**/api/v1/assistant/speech',route=>route.fulfill({contentType:'audio/mpeg',body:'ID3test'}));
+ await page.goto(process.env.BRAIN_PREVIEW_URL||'http://localhost:3340');
+ await page.getByRole('button',{name:'Assistant',exact:true}).click();
+ await page.getByRole('button',{name:'Start hands-free',exact:true}).click();
+ await expect(page.getByText('Listening…',{exact:true})).toBeVisible();
+ await page.evaluate(()=>window.emit(false));assert.equal(transcriptions,0,'silence must remain local');
+ await page.evaluate(()=>window.emit());
+ await expect(page.getByRole('button',{name:'Stop audio',exact:true})).toBeVisible();
+ await page.evaluate(()=>window.emit());
+ await expect.poll(()=>turns.length).toBe(2);
+ assert.equal(turns[1].message,'Voice turn 2');assert(turns[1].history.length>0);
+ assert.equal(await page.evaluate(()=>window.captures),1,'one capture across turns');
+ assert.equal(await page.evaluate(()=>window.stops),0,'microphone stays open');
+ assert((await page.evaluate(()=>window.audioPauses))>0,'barge-in stops audio');
+ await expect(page.getByRole('button',{name:'Stop audio',exact:true})).toBeVisible();
+ await page.evaluate(()=>window.emit());await expect.poll(()=>Boolean(held)).toBe(true);
+ await page.getByRole('button',{name:'New chat',exact:true}).click();
+ await held.fulfill({json:{text:'stale transcription'}}).catch(()=>{});
+ assert.equal(await page.evaluate(()=>window.stops),1);
+ await expect(page.getByRole('button',{name:'Start hands-free',exact:true})).toBeVisible();
+ await expect(page.locator('.assistant-msg')).toHaveCount(0);
+ assert.equal(turns.length,2,'stale transcription cannot send into new session');
+ await page.screenshot({path:'/tmp/brain-persistent-voice.png'});
+ console.log('PASS persistent capture: local silence, two turns, barge-in, one stream, session switch releases mic and cancels transcription');
+}finally{await browser.close();}

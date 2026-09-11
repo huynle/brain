@@ -570,8 +570,7 @@ export function AssistantPanel(): JSX.Element | null {
             value={prompt}
             onChange={setPrompt}
             active={open}
-            disabled={busy || speech.state !== "idle"}
-            handsFree={handsFree}
+            disabled={handsFree || busy || speech.state !== "idle"}
             onTurn={(text) => void send(text)}
             onListening={(value) => {
               if (value) speech.stop();

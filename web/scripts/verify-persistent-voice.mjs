@@ -4,7 +4,7 @@ const browser=await chromium.launch();
 try{
  const context=await browser.newContext({viewport:{width:390,height:844},serviceWorkers:'block'});
  await context.addInitScript(()=>{
-  window.captures=0;window.stops=0;window.audioPauses=0;
+  window.legacyStarts=0;window.SpeechRecognition=class{start(){window.legacyStarts++;throw new Error("legacy recognizer must not start");}};window.captures=0;window.stops=0;window.audioPauses=0;
   navigator.mediaDevices.getUserMedia=async()=>{window.captures++;const track={stop(){window.stops++;},getSettings(){return {echoCancellation:true};}};return {getAudioTracks:()=>[track],getTracks:()=>[track]};};
   window.AudioContext=class{sampleRate=16000;state='running';destination={};audioWorklet={addModule:async()=>{}};resume=async()=>{};close=async()=>{this.state='closed';};createGain(){return {gain:{value:0},connect(){}};}createMediaStreamSource(){return {connect(){}};}};
   window.AudioWorkletNode=class{constructor(){this.port={onmessage:null};window.capture=this;}connect(){}disconnect(){}};
@@ -26,6 +26,7 @@ try{
  await expect.poll(()=>turns.length).toBe(2);
  assert.equal(turns[1].message,'Voice turn 2');assert(turns[1].history.length>0);
  assert.equal(await page.evaluate(()=>window.captures),1,'one capture across turns');
+ assert.equal(await page.evaluate(()=>window.legacyStarts),0,'browser recognition must not compete with persistent capture');
  assert.equal(await page.evaluate(()=>window.stops),0,'microphone stays open');
  assert((await page.evaluate(()=>window.audioPauses))>0,'barge-in stops audio');
  await expect(page.getByRole('button',{name:'Stop audio',exact:true})).toBeVisible();

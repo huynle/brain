@@ -123,7 +123,7 @@ export function openInstanceStream(
       if (res.status === 401 || res.status === 403) {
         // The api() wrapper's once-refresh doesn't cover hand-rolled
         // streams — run it explicitly, then retry immediately.
-        const refreshed = await useAuth.getState().onUnauthorized();
+        const refreshed = await useAuth.getState().onUnauthorized(token);
         if (refreshed && !disposed) {
           backoff = BACKOFF_START_MS;
           void run();

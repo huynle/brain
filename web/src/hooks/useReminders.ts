@@ -8,6 +8,7 @@
  * survives a reload, a restart and a closed tab. A parallel notification
  * table would be a second source of truth to drift.
  */
+import { useAuth } from "../lib/auth";
 import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -29,8 +30,10 @@ export interface UseRemindersResult {
 
 export function useReminders(project?: string): UseRemindersResult {
   const qc = useQueryClient();
+  const auth = useAuth((s) => s.status);
   const q = useQuery({
     queryKey: [...REMINDERS_KEY, project ?? ""],
+    enabled: auth === "authenticated" || auth === "anonymous",
     queryFn: () => listReminders(project ? { project } : undefined),
     // 30s: a reminder is already up to a minute imprecise because the server
     // sweeps on a 1m tick, so polling faster buys nothing real.

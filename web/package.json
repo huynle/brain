@@ -15,6 +15,7 @@
     "test:reader": "node scripts/verify-reader.mjs",
     "test:attachment-preview": "node scripts/verify-attachment-preview.mjs",
     "test:cached-startup": "node scripts/verify-cached-startup.mjs",
+    "test:mobile-assistant": "node scripts/verify-mobile-assistant.mjs",
     "test:mobile": "node scripts/verify-mobile.mjs",
     "test:login": "BRAIN_LOGIN_EXPIRE=1 node scripts/verify-login.mjs"
   },

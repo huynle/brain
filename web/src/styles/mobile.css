@@ -426,3 +426,12 @@
     overflow: auto;
   }
 }
+
+@media (max-width: 900px), (max-height: 500px) and (pointer: coarse) {
+  body.mobile .mobile-nav .assistant-shortcut { position: sticky; left: 0; z-index: 1; background: #19304a; border-color: #527dac; color: #e4f0ff; }
+  body.mobile .assistant-panel > * { order: 3; }
+  body.mobile .assistant-panel > .assistant-head { order: 0; }
+  body.mobile .assistant-panel > .assistant-chat { order: 1; }
+  body.mobile .assistant-panel > .assistant-home-setting { order: 2; display: flex; align-items: center; gap: 8px; min-height: 44px; }
+  body.mobile .assistant-home-setting input { flex: 0 0 auto; }
+}

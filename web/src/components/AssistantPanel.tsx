@@ -56,6 +56,9 @@ export function AssistantPanel(): JSX.Element | null {
   const toast = useUI((s) => s.toast);
   const isMobile = useIsMobile();
 
+  const [assistantHome, setAssistantHome] = useState(
+    () => localStorage.getItem("brain.mobile.assistantHome") !== "false",
+  );
   const [prompt, setPrompt] = useState("");
   const turns = useAssistantChat((s) => s.turns);
   const busy = useAssistantChat((s) => s.busy);
@@ -223,6 +226,19 @@ export function AssistantPanel(): JSX.Element | null {
         </button>
       </div>
 
+      {isMobile && (
+        <label className="assistant-home-setting">
+          <input
+            type="checkbox"
+            checked={assistantHome}
+            onChange={(e) => {
+              setAssistantHome(e.target.checked);
+              localStorage.setItem("brain.mobile.assistantHome", String(e.target.checked));
+            }}
+          />
+          Open Assistant when Brain starts on mobile
+        </label>
+      )}
       <div className="assistant-card primary">
         <div className="assistant-title">Suggested next move</div>
         {attention.length > 0 ? (

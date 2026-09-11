@@ -51,3 +51,14 @@ The browser checks use Chromium and Playwright WebKit emulation, not physical
 iOS/Android devices. A reduced viewport tests layout under constrained height;
 it does not reproduce every native keyboard behavior. Live executor streaming
 and all provider-specific runner operations are not exercised by this script.
+
+## Assistant as the mobile start screen
+
+Assistant is the first, sticky mobile navigation action. A fresh mobile root
+visit opens it by default; the panel's checkbox can disable that behavior on
+this browser. Explicit entry URLs open their document instead. Closing Assistant
+preserves the workspace, and resizing a desktop view does not trigger a new
+mobile start action. The chat composer precedes suggestions on mobile.
+
+The seeded preview can be checked with `npm run test:mobile-assistant` in web/;
+it uses localhost:3340 and the mobile-playground seed project by default.

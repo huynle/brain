@@ -100,6 +100,8 @@ async function shot(name) {
 }
 try {
   await p.goto(origin);
+  await expect(p.locator(".assistant-panel")).toBeVisible({timeout:30000});
+  await p.getByRole("button",{name:"Close assistant",exact:true}).click();
   await expect(
     p.getByRole("button", { name: "Open workspace navigation" }),
   ).toBeVisible({ timeout: 30000 });
@@ -116,6 +118,7 @@ try {
     for (const button of await p
       .locator(".topbar button:visible, .mobile-nav button:visible")
       .all()) {
+      await button.scrollIntoViewIfNeeded();
       await fits(button);
       const box = await button.boundingBox();
       assert.ok(box.height >= 44);
@@ -151,9 +154,7 @@ try {
   pass(
     "Workspace navigation exposes projects and settings without trapping a second dialog",
   );
-  await p.getByRole("button", { name: "More tools" }).click();
-  await expect(p.getByRole("dialog", { name: "Tools" })).toBeVisible();
-  await p.getByRole("button", { name: "Assistant", exact: true }).click();
+  await p.getByRole("navigation",{name:"Main navigation"}).getByRole("button", { name: "Assistant", exact: true }).click();
   await expect(p.locator(".assistant-panel")).toBeVisible();
   await fits(p.locator(".assistant-panel"));
   await shot("assistant");
@@ -348,6 +349,8 @@ try {
       }),
   );
   await sessionPage.goto(origin);
+  await expect(sessionPage.locator(".assistant-panel")).toBeVisible({timeout:30000});
+  await sessionPage.getByRole("button",{name:"Close assistant",exact:true}).click();
   await expect(
     sessionPage.getByText("Mobile transcript fixture is readable.", {
       exact: true,

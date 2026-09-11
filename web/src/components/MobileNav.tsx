@@ -9,6 +9,8 @@ import { useWorkspace } from "../store/workspace";
 import { useSessions } from "../hooks/useSessions";
 
 export function MobileNav(): JSX.Element {
+  const assistantOpen = useWorkspace((s) => s.assistantOpen);
+  const openAssistant = () => useWorkspace.getState().setAssistantOpen(true);
   const view = useWorkspace((s) => s.view);
   const setView = useWorkspace((s) => s.setView);
   const setFocusSession = useWorkspace((s) => s.setFocusSession);
@@ -17,6 +19,14 @@ export function MobileNav(): JSX.Element {
 
   return (
     <nav className="mobile-nav" aria-label="Main navigation">
+      <button
+        type="button"
+        className="pill assistant-shortcut"
+        aria-pressed={assistantOpen}
+        onClick={openAssistant}
+      >
+        Assistant
+      </button>
       <button
         type="button"
         aria-pressed={view === "overview"}

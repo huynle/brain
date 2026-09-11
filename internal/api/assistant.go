@@ -40,6 +40,13 @@ type AssistantServiceOptions struct {
 	// MaxToolTurns caps how many tool-call iterations the agent loop will run
 	// in a single Chat/ChatStream request. Zero uses a sensible default (6).
 	MaxToolTurns int
+	// MCPBaseURL, when set, makes the assistant expose the FULL Brain MCP tool
+	// set (adapted into ToolDefinitions) instead of the legacy 41 in-process
+	// tools. It is the loopback base URL of this same API server (no /api/v1
+	// suffix), e.g. "http://localhost:3333". MCP tool calls are made over this
+	// URL authenticated with the caller's own bearer token. Empty disables the
+	// adaptation and keeps the legacy in-process tools.
+	MCPBaseURL string
 }
 
 type AssistantService struct {
@@ -55,6 +62,7 @@ type AssistantService struct {
 	runners      RunnerRegistryService
 	events       EventService
 	maxToolTurns int
+	mcpBaseURL   string
 }
 
 type AssistantStatusResponse struct {
@@ -72,6 +80,11 @@ type AssistantChatRequest struct {
 	Model       string            `json:"model,omitempty"`
 	Attachments []string          `json:"attachments,omitempty"`
 	Context     map[string]string `json:"context,omitempty"`
+	// Images carries pasted/dropped images for THIS turn as base64 data URLs
+	// (e.g. "data:image/png;base64,..."). They are sent to the vision model as
+	// image_url content parts on the current user message only; they are not
+	// persisted into History. Non-image or malformed entries are dropped.
+	Images []string `json:"images,omitempty"`
 	// History is the prior conversation the PWA replays back to the server so
 	// the agent loop has memory across HTTP turns. Order is oldest-first. See
 	// AssistantHistoryMessage for shape.
@@ -201,16 +214,14 @@ func NewAssistantService(opts AssistantServiceOptions) *AssistantService {
 		runners:      opts.Runners,
 		events:       opts.Events,
 		maxToolTurns: maxTurns,
+		mcpBaseURL:   opts.MCPBaseURL,
 	}
 }
 
 const assistantModeAgentic = "agentic"
 
 func (s *AssistantService) Status() AssistantStatusResponse {
-	toolNames := []string{}
-	for _, t := range ListToolDefinitions() {
-		toolNames = append(toolNames, t.Name)
-	}
+	toolNames := s.assistantAvailableToolNames()
 	// Legacy capability aliases still exposed for older PWA builds.
 	caps := append([]string{"chat", "attachments"}, toolNames...)
 	resp := AssistantStatusResponse{
@@ -713,22 +724,19 @@ func extractAssistantReplyPrefix(input string) string {
 }
 
 func assistantSystemPrompt() string {
-	return `You are Brain's built-in assistant. You can both read and write the user's Brain via function/tool calls.
+	return `You are Brain's built-in assistant. You can both read and write the user's Brain via function/tool calls. You have access to the full Brain tool set (entries, search, graph, tasks, features, runners, goals, automations, planning, webhooks, reminders, control, and observability).
 
 Behavior:
 - If the user asks a factual/state question (e.g. "what automations do we have?", "why is task X stuck?"), CALL the relevant read tool first, then answer based on the result. Do not guess or invent state.
 - If the user asks you to create/update something and it is safe (non-destructive), call the write tool directly. Report what happened in plain language.
 - Prior turns are replayed to you as normal messages. Prior tool result payloads are stripped to save tokens — you can see WHICH tools you called and WHETHER they succeeded, but not the raw data. If a follow-up question relies on that data, re-invoke the tool.
 - Short affirmative user replies like "yes", "yes please", "do it", "go ahead" refer to whatever you most recently proposed or asked confirmation about in the previous assistant turn. Use the prior turn context; do NOT respond that you have no context.
-- For destructive tools (delete_*, bulk_*, move_*, runner pause/resume, feature assign/clear), do NOT auto-execute. Describe what you would do and ask for confirmation. When the user then explicitly confirms, retry the same tool call with argument _explicit=true.
-- The active project comes from the user's request context (see the JSON user message). Prefer that project unless the user names a different one.
+- DESTRUCTIVE tools (anything that deletes, moves, bulk-updates, pauses/resumes runners or automations, assigns/clears features, checks out a feature, or spawns/kills/aborts/prompts a runner session) must NOT be auto-executed. Describe what you would do and ask for confirmation. When the user then explicitly confirms, retry the SAME tool call with the extra argument _explicit=true.
+- The active project comes from the user's request context (see the JSON user message). It is injected as the "project" argument automatically when you omit it; prefer that project unless the user names a different one.
 - Keep replies short and direct. When tool results are lists, summarize with counts and the most relevant items; do not dump raw JSON. When a task is stuck, cite the fields that explain why (classification, blocked_by, waiting_on, in_cycle, resolved_workdir, next_run, schedule_enabled, dispatch_lease).
 - If a tool returns an error, tell the user what went wrong and propose the next step. Do not silently retry the same call.
 
-Tool categories:
-- Reads: list_entries, get_entry, search_brain, list_tasks, get_task, get_task_metadata, list_features, get_feature, list_automations, list_goals, goal_progress, list_runners, runner_status, get_stats, get_backlinks, get_outlinks, get_related, get_sections, get_section, recent_events.
-- Writes (auto-execute): create_task, create_entry, create_automation, create_goal, update_entry, update_task, update_automation, verify_entry, link_entry, run_goal, trigger_task, checkout_feature.
-- Destructive (require _explicit=true after user confirmation): delete_entry, bulk_update, move_entry, pause_project, resume_project, pause_automations, resume_automations, assign_feature, clear_feature_assignment.
+Tool naming: tools follow the Brain MCP names — e.g. search, recall, list, save, update, delete, tasks, task_get, task_next, features, goal_list, automation_list, runners. Prefer read tools (search/recall/list/tasks/…) before answering state questions.
 
 Never fabricate tool results. If you don't have a tool for something, say so.`
 }
@@ -746,17 +754,22 @@ func (h *Handler) HandleAssistantStatus(w http.ResponseWriter, r *http.Request) 
 	WriteJSON(w, http.StatusOK, h.assistant.Status())
 }
 
+// assistantChatMaxBytes bounds an assistant chat request body. It is generous
+// because pasted images arrive inline as base64 data URLs (like the runner
+// control prompt path), which are ~33% larger than the raw image bytes.
+const assistantChatMaxBytes = 24 << 20 // 24 MB
+
 func (h *Handler) HandleAssistantChat(w http.ResponseWriter, r *http.Request) {
 	if h.assistant == nil {
 		WriteError(w, http.StatusServiceUnavailable, "Service Unavailable", "assistant is not configured")
 		return
 	}
 	var req AssistantChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, assistantChatMaxBytes)).Decode(&req); err != nil {
 		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON")
 		return
 	}
-	resp, err := h.assistant.Chat(r.Context(), req)
+	resp, err := h.assistant.Chat(withAssistantToken(r.Context(), extractBearerToken(r.Header.Get("Authorization"))), req)
 	if err != nil {
 		WriteError(w, http.StatusServiceUnavailable, "Service Unavailable", err.Error())
 		return
@@ -775,7 +788,7 @@ func (h *Handler) HandleAssistantChatStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var req AssistantChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, assistantChatMaxBytes)).Decode(&req); err != nil {
 		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON")
 		return
 	}
@@ -783,7 +796,7 @@ func (h *Handler) HandleAssistantChatStream(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	enc := json.NewEncoder(w)
-	err := h.assistant.ChatStream(r.Context(), req, func(event AssistantStreamEvent) error {
+	err := h.assistant.ChatStream(withAssistantToken(r.Context(), extractBearerToken(r.Header.Get("Authorization"))), req, func(event AssistantStreamEvent) error {
 		if err := enc.Encode(event); err != nil {
 			return err
 		}

@@ -18,12 +18,59 @@ import (
 // chatMessage models an OpenAI-compatible chat message. system/user/assistant
 // carry Content; the assistant role additionally may carry ToolCalls; tool
 // responses use role="tool" with ToolCallID pointing at the assistant call.
+//
+// Content is a plain string in the common case. When ContentParts is non-empty
+// (e.g. a user turn carrying pasted images), MarshalJSON emits `content` as an
+// OpenAI-style array of content parts (text + image_url) instead of the string.
+// This is the multimodal/vision shape the OpenRouter chat-completions API
+// accepts for vision-capable models.
 type chatMessage struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	ToolCalls  []toolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	Name       string     `json:"name,omitempty"`
+	Role         string        `json:"role"`
+	Content      string        `json:"content,omitempty"`
+	ContentParts []contentPart `json:"-"`
+	ToolCalls    []toolCall    `json:"tool_calls,omitempty"`
+	ToolCallID   string        `json:"tool_call_id,omitempty"`
+	Name         string        `json:"name,omitempty"`
+}
+
+// contentPart is one element of a multimodal message content array. Type is
+// "text" (Text set) or "image_url" (ImageURL set). Mirrors the shape already
+// used by the attachment extractor's OpenRouter call.
+type contentPart struct {
+	Type     string        `json:"type"`
+	Text     string        `json:"text,omitempty"`
+	ImageURL *imageURLPart `json:"image_url,omitempty"`
+}
+
+// imageURLPart carries an image reference. URL is typically a base64 data URL
+// (e.g. "data:image/png;base64,...").
+type imageURLPart struct {
+	URL string `json:"url"`
+}
+
+// MarshalJSON emits the message in OpenAI chat format. When ContentParts is
+// set, `content` is the parts array; otherwise it falls back to the plain
+// string form so existing text-only messages are unchanged.
+func (m chatMessage) MarshalJSON() ([]byte, error) {
+	type alias struct {
+		Role       string     `json:"role"`
+		Content    any        `json:"content,omitempty"`
+		ToolCalls  []toolCall `json:"tool_calls,omitempty"`
+		ToolCallID string     `json:"tool_call_id,omitempty"`
+		Name       string     `json:"name,omitempty"`
+	}
+	a := alias{
+		Role:       m.Role,
+		ToolCalls:  m.ToolCalls,
+		ToolCallID: m.ToolCallID,
+		Name:       m.Name,
+	}
+	if len(m.ContentParts) > 0 {
+		a.Content = m.ContentParts
+	} else if m.Content != "" {
+		a.Content = m.Content
+	}
+	return json.Marshal(a)
 }
 
 type toolCall struct {
@@ -92,7 +139,7 @@ func (s *AssistantService) runAgentLoop(
 		// Non-OpenRouter planners fall back to the legacy single-shot behavior.
 		return s.runLegacyLoop(ctx, req, emit)
 	}
-	tools := ListToolDefinitions()
+	tools := s.toolDefinitions(assistantTokenFromContext(ctx))
 	index := toolIndex(tools)
 	schemas := buildToolSchemas(tools)
 	model := firstNonEmptyString(req.Model, s.model)
@@ -101,7 +148,7 @@ func (s *AssistantService) runAgentLoop(
 		{Role: "system", Content: assistantSystemPrompt()},
 	}
 	msgs = append(msgs, replayHistory(req.History)...)
-	msgs = append(msgs, chatMessage{Role: "user", Content: buildUserContent(req)})
+	msgs = append(msgs, buildUserMessage(req))
 
 	result := agentLoopResult{}
 	for turn := 0; turn < s.maxToolTurns; turn++ {
@@ -262,10 +309,51 @@ func (s *AssistantService) executeToolCall(
 // legacy planner behavior.
 func buildUserContent(req AssistantChatRequest) string {
 	// The history field is stripped from the JSON view so the model doesn't
-	// see it twice (once as messages, once as data). Everything else stays.
+	// see it twice (once as messages, once as data). Images are stripped too:
+	// they ride as image_url content parts (see buildUserMessage), not as text.
 	trimmed := req
 	trimmed.History = nil
+	trimmed.Images = nil
 	return mustJSON(trimmed)
+}
+
+// buildUserMessage renders the user turn. When the request carries pasted
+// images it emits a multimodal message: a text part with the JSON request view
+// followed by one image_url part per image (base64 data URL). Otherwise it
+// emits the plain-string form so text-only turns are byte-for-byte unchanged.
+func buildUserMessage(req AssistantChatRequest) chatMessage {
+	text := buildUserContent(req)
+	imgs := validImageDataURLs(req.Images)
+	if len(imgs) == 0 {
+		return chatMessage{Role: "user", Content: text}
+	}
+	parts := make([]contentPart, 0, len(imgs)+1)
+	parts = append(parts, contentPart{Type: "text", Text: text})
+	for _, url := range imgs {
+		parts = append(parts, contentPart{Type: "image_url", ImageURL: &imageURLPart{URL: url}})
+	}
+	return chatMessage{Role: "user", ContentParts: parts}
+}
+
+// validImageDataURLs filters the request's images to well-formed image data
+// URLs. Anything that is not a "data:image/...;base64," URL is dropped so a
+// malformed or non-image paste can never reach the provider as an image part.
+func validImageDataURLs(images []string) []string {
+	out := make([]string, 0, len(images))
+	for _, img := range images {
+		s := strings.TrimSpace(img)
+		if s == "" {
+			continue
+		}
+		if !strings.HasPrefix(s, "data:image/") {
+			continue
+		}
+		if !strings.Contains(s, ";base64,") {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // replayHistory converts the client-provided history into the ordered

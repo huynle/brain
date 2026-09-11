@@ -37,6 +37,48 @@ import {
 // strips tool payloads already; this just bounds prompt growth on long chats.
 const HISTORY_REPLAY_LIMIT = 40;
 
+// One pasted/dropped image queued for the next message.
+type PendingImage = {
+  id: string;
+  name: string;
+  dataUrl: string; // "data:image/...;base64,..."
+  bytes: number; // approximate decoded size
+};
+
+// Per-image and total size caps for inline base64 images. The server accepts a
+// 24MB request body; we keep well under it and leave headroom for the message
+// text + replayed history. Base64 inflates raw bytes by ~33%.
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB per image (raw)
+const MAX_TOTAL_IMAGE_BYTES = 16 * 1024 * 1024; // 16MB total (raw) per turn
+const MAX_IMAGES = 6;
+
+// readImageFile resolves a File/Blob to a base64 data URL, or rejects if it is
+// not an image. Size is checked by the caller against the caps above.
+function readImageFile(file: File | Blob): Promise<PendingImage> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith("image/")) {
+      reject(new Error("not an image"));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      if (!dataUrl.startsWith("data:image/")) {
+        reject(new Error("not an image"));
+        return;
+      }
+      resolve({
+        id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: (file as File).name || "pasted-image",
+        dataUrl,
+        bytes: file.size,
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 // Module-level so an in-flight stream stays stoppable across panel
 // close/reopen (the portal unmounts but the request keeps running and
 // writes into the store).
@@ -60,6 +102,10 @@ export function AssistantPanel(): JSX.Element | null {
     () => localStorage.getItem("brain.mobile.assistantHome") !== "false",
   );
   const [prompt, setPrompt] = useState("");
+  // Pasted/dropped images for the NEXT message, as base64 data URLs. Sent to
+  // the vision model on send() and cleared afterward (current-turn only; not
+  // persisted into history).
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const turns = useAssistantChat((s) => s.turns);
   const busy = useAssistantChat((s) => s.busy);
   const threadRef = useRef<HTMLDivElement | null>(null);
@@ -117,12 +163,61 @@ export function AssistantPanel(): JSX.Element | null {
     useAssistantChat.getState().clear();
   };
 
+  // addImageFiles ingests image blobs from a paste or drop, enforcing the
+  // per-image / total / count caps, and appends the survivors to pendingImages.
+  const addImageFiles = async (files: (File | Blob)[]) => {
+    const images = files.filter((f) => f.type.startsWith("image/"));
+    if (images.length === 0) return;
+    const accepted: PendingImage[] = [];
+    let runningTotal = pendingImages.reduce((sum, p) => sum + p.bytes, 0);
+    let count = pendingImages.length;
+    for (const file of images) {
+      if (count >= MAX_IMAGES) {
+        toast(`At most ${MAX_IMAGES} images per message.`, "error");
+        break;
+      }
+      if (file.size > MAX_IMAGE_BYTES) {
+        toast(
+          `Image too large (${Math.round(file.size / 1024 / 1024)}MB). Max ${MAX_IMAGE_BYTES / 1024 / 1024}MB each.`,
+          "error",
+        );
+        continue;
+      }
+      if (runningTotal + file.size > MAX_TOTAL_IMAGE_BYTES) {
+        toast(
+          `Total image size exceeds ${MAX_TOTAL_IMAGE_BYTES / 1024 / 1024}MB for this message.`,
+          "error",
+        );
+        break;
+      }
+      try {
+        const img = await readImageFile(file);
+        accepted.push(img);
+        runningTotal += file.size;
+        count += 1;
+      } catch {
+        // non-image or unreadable; skip silently
+      }
+    }
+    if (accepted.length > 0) {
+      setPendingImages((prev) => [...prev, ...accepted]);
+    }
+  };
+
+  const removePendingImage = (id: string) =>
+    setPendingImages((prev) => prev.filter((p) => p.id !== id));
+
   const send = async () => {
     const message = prompt.trim();
-    if (!message || busy) return;
+    const images = pendingImages;
+    if ((!message && images.length === 0) || busy) return;
     setPrompt("");
+    setPendingImages([]);
     const chat = useAssistantChat.getState();
-    chat.beginTurn(message);
+    chat.beginTurn(
+      message ||
+        (images.length === 1 ? "(image)" : `(${images.length} images)`),
+    );
 
     const ac = new AbortController();
     activeAbort = ac;
@@ -132,7 +227,13 @@ export function AssistantPanel(): JSX.Element | null {
 
     try {
       await assistantChatStream(
-        { message, history: chat.history.slice(-HISTORY_REPLAY_LIMIT) },
+        {
+          message,
+          history: chat.history.slice(-HISTORY_REPLAY_LIMIT),
+          ...(images.length > 0
+            ? { images: images.map((i) => i.dataUrl) }
+            : {}),
+        },
         (event) => {
           if (event.type === "delta" && event.delta) {
             acc += event.delta;
@@ -188,7 +289,16 @@ export function AssistantPanel(): JSX.Element | null {
       // results — the pairing shape replayHistory on the server requires.
       // Only answered calls are kept (unanswered ones would be dropped
       // server-side anyway).
-      const entries: AssistantHistoryMessage[] = [{ role: "user", content: message }];
+      const historyUserContent =
+        message ||
+        (images.length > 0
+          ? images.length === 1
+            ? "(image)"
+            : `(${images.length} images)`
+          : "");
+      const entries: AssistantHistoryMessage[] = [
+        { role: "user", content: historyUserContent },
+      ];
       const answered = tools.filter((c) => c.status !== "running");
       if (answered.length > 0) {
         entries.push({
@@ -311,16 +421,59 @@ export function AssistantPanel(): JSX.Element | null {
           </div>
         )}
 
+        {pendingImages.length > 0 && (
+          <div className="assistant-image-chips">
+            {pendingImages.map((img) => (
+              <div key={img.id} className="assistant-image-chip" title={img.name}>
+                <img src={img.dataUrl} alt={img.name} />
+                <button
+                  type="button"
+                  className="assistant-image-remove"
+                  aria-label={`Remove ${img.name}`}
+                  onClick={() => removePendingImage(img.id)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           placeholder={
             turns.length > 0
-              ? "Reply…"
-              : "Ask about project status, generate tasks, summarize entries, or plan the next feature…"
+              ? "Reply… (paste or drop images)"
+              : "Ask about project status, generate tasks, summarize entries, or plan the next feature… (paste or drop images)"
           }
+          onPaste={(e) => {
+            const files = Array.from(e.clipboardData?.items ?? [])
+              .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+              .map((it) => it.getAsFile())
+              .filter((f): f is File => f != null);
+            if (files.length > 0) {
+              e.preventDefault();
+              void addImageFiles(files);
+            }
+          }}
+          onDragOver={(e) => {
+            if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) {
+              e.preventDefault();
+            }
+          }}
+          onDrop={(e) => {
+            const files = Array.from(e.dataTransfer?.files ?? []).filter((f) =>
+              f.type.startsWith("image/"),
+            );
+            if (files.length > 0) {
+              e.preventDefault();
+              void addImageFiles(files);
+            }
+          }}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            // Enter sends; Shift+Enter (or ⌘/Ctrl+Enter) inserts a newline.
+            if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
               e.preventDefault();
               void send();
             }
@@ -330,9 +483,9 @@ export function AssistantPanel(): JSX.Element | null {
           <button
             className="primary"
             onClick={() => void send()}
-            disabled={busy || !prompt.trim()}
+            disabled={busy || (!prompt.trim() && pendingImages.length === 0)}
           >
-            {busy ? "Sending…" : "Send  ⌘↵"}
+            {busy ? "Sending…" : "Send  ↵"}
           </button>
           {busy && (
             <button onClick={() => activeAbort?.abort()}>Stop</button>

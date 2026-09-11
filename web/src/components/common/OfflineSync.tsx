@@ -6,6 +6,7 @@ import { useLive } from "../../lib/sse";
 import type { Task } from "../../lib/types";
 import {
   offlineAvailable,
+  onLoopbackHost,
   cachedEntry,
   cachedList,
   queueCreate,
@@ -55,9 +56,13 @@ export function OfflineSync() {
     }
     if (auth !== "authenticated" && auth !== "anonymous") return;
     if (!offlineAvailable()) {
+      // On a loopback host the server is always reachable, so offline caching
+      // is disabled by design — not a browser limitation. Don't raise an error;
+      // the widget shows "Online only" and reads go straight to the server.
       useOffline.setState({
-        error:
-          "This browser cannot provide persistent offline storage. The app will use the server directly.",
+        error: onLoopbackHost()
+          ? null
+          : "This browser cannot provide persistent offline storage. The app will use the server directly.",
       });
       return;
     }

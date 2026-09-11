@@ -41,7 +41,26 @@ const channel =
 channel?.addEventListener("message", () => {
   void refreshState().catch((e) => useOffline.setState({ error: String(e) }));
 });
+// A loopback origin (localhost / 127.0.0.1 / [::1]) is, by definition, the
+// server running on this very machine — it is always reachable, so there is no
+// "offline" state to cache against. Routing reads through the OPFS SQLite-WASM
+// cache there only forces a large first-sync download that blocks the dashboard
+// ("Loading projects…") for no benefit. On loopback we always talk to the
+// server directly; offline sync stays enabled for real remote deployments.
+export const onLoopbackHost = () => {
+  if (typeof window === "undefined") return false;
+  const h = window.location.hostname;
+  return (
+    h === "localhost" ||
+    h === "127.0.0.1" ||
+    h === "::1" ||
+    h === "[::1]" ||
+    h.endsWith(".localhost")
+  );
+};
+
 export const offlineAvailable = () =>
+  !onLoopbackHost() &&
   !offlineStorageUnavailable() &&
   typeof window !== "undefined" &&
   typeof Worker !== "undefined" &&

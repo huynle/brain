@@ -80,6 +80,11 @@ type AssistantChatRequest struct {
 	Model       string            `json:"model,omitempty"`
 	Attachments []string          `json:"attachments,omitempty"`
 	Context     map[string]string `json:"context,omitempty"`
+	// Images carries pasted/dropped images for THIS turn as base64 data URLs
+	// (e.g. "data:image/png;base64,..."). They are sent to the vision model as
+	// image_url content parts on the current user message only; they are not
+	// persisted into History. Non-image or malformed entries are dropped.
+	Images []string `json:"images,omitempty"`
 	// History is the prior conversation the PWA replays back to the server so
 	// the agent loop has memory across HTTP turns. Order is oldest-first. See
 	// AssistantHistoryMessage for shape.
@@ -749,13 +754,18 @@ func (h *Handler) HandleAssistantStatus(w http.ResponseWriter, r *http.Request) 
 	WriteJSON(w, http.StatusOK, h.assistant.Status())
 }
 
+// assistantChatMaxBytes bounds an assistant chat request body. It is generous
+// because pasted images arrive inline as base64 data URLs (like the runner
+// control prompt path), which are ~33% larger than the raw image bytes.
+const assistantChatMaxBytes = 24 << 20 // 24 MB
+
 func (h *Handler) HandleAssistantChat(w http.ResponseWriter, r *http.Request) {
 	if h.assistant == nil {
 		WriteError(w, http.StatusServiceUnavailable, "Service Unavailable", "assistant is not configured")
 		return
 	}
 	var req AssistantChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, assistantChatMaxBytes)).Decode(&req); err != nil {
 		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON")
 		return
 	}
@@ -778,7 +788,7 @@ func (h *Handler) HandleAssistantChatStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var req AssistantChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, assistantChatMaxBytes)).Decode(&req); err != nil {
 		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON")
 		return
 	}

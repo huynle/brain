@@ -1355,6 +1355,7 @@ export const assistantChat = (body: {
   message: string;
   model?: string;
   attachments?: string[];
+  images?: string[];
   context?: Record<string, string>;
   history?: AssistantHistoryMessage[];
 }) =>
@@ -1380,6 +1381,7 @@ export async function assistantChatStream(
     message: string;
     model?: string;
     attachments?: string[];
+    images?: string[];
     context?: Record<string, string>;
     history?: AssistantHistoryMessage[];
   },

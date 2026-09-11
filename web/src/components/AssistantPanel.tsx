@@ -119,7 +119,7 @@ export function AssistantPanel(): JSX.Element | null {
   const sessions = useAssistantChat((s) => s.sessions);
   const turns = useAssistantChat((s) => s.turns);
   const busy = useAssistantChat((s) => s.busy);
-  const voice = usePersistentVoice({active: open, sessionId, speaking: speech.state === "playing", busy,
+  const voice = usePersistentVoice({active: open, sessionId, speaking: speech.state === "playing", isBusy: () => useAssistantChat.getState().busy,
     onStartSpeech: () => {speech.stop(); activeAbort?.abort();},
     onTurn: text => void send(text),
     onEnabled: enabled => {setHandsFree(enabled);setSpokenReplies(enabled);spokenRepliesRef.current=enabled;if(!enabled)speech.stop();},

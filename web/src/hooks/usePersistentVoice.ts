@@ -7,7 +7,7 @@ const processorCode=`class Capture extends AudioWorkletProcessor {
  process(inputs){const mono=inputs[0]?.[0];if(mono)for(const sample of mono){this.buffer[this.offset++]=sample;if(this.offset===2048){this.port.postMessage(this.buffer,[this.buffer.buffer]);this.buffer=new Float32Array(2048);this.offset=0;}}return true;}
 }registerProcessor('brain-capture',Capture);`;
 
-export function usePersistentVoice(options: {sessionId:string; active:boolean; speaking:boolean; busy:boolean; onStartSpeech:()=>void; onTurn:(text:string)=>void; onEnabled:(value:boolean)=>void}) {
+export function usePersistentVoice(options: {sessionId:string; active:boolean; speaking:boolean; isBusy:()=>boolean; onStartSpeech:()=>void; onTurn:(text:string)=>void; onEnabled:(value:boolean)=>void}) {
   const latest=useRef(options);latest.current=options;
   const generation=useRef(0), cleanup=useRef<(()=>void)|null>(null);
   const [enabled,setEnabled]=useState(false),[status,setStatus]=useState(''),[error,setError]=useState('');
@@ -45,7 +45,7 @@ export function usePersistentVoice(options: {sessionId:string; active:boolean; s
           if(!current())return;
           if(response.text.trim()){
             results++;report('result');
-            while(current()&&latest.current.busy)await new Promise(r=>setTimeout(r,100));
+            while(current()&&latest.current.isBusy())await new Promise(r=>setTimeout(r,100));
             if(current())latest.current.onTurn(response.text.trim());
           }
           if(current())setStatus('Listening…');

@@ -36,6 +36,13 @@ try{
  await expect(page.getByRole('button',{name:'Start hands-free',exact:true})).toBeVisible();
  await expect(page.locator('.assistant-msg')).toHaveCount(0);
  assert.equal(turns.length,2,'stale transcription cannot send into new session');
+ await page.route('**/api/v1/assistant/transcribe',route=>route.fulfill({status:502,json:{error:'provider failed'}}));
+ await page.getByRole('button',{name:'Start hands-free',exact:true}).click();
+ await expect(page.getByText('Listening…',{exact:true})).toBeVisible();
+ await page.evaluate(()=>window.emit());
+ await expect(page.getByText('Transcription failed. Start hands-free to retry, or use Speak.',{exact:true})).toBeVisible();
+ assert.equal(await page.evaluate(()=>window.stops),2,'provider failure releases the microphone');
+ assert.equal(turns.length,2);
  await page.screenshot({path:'/tmp/brain-persistent-voice.png'});
  console.log('PASS persistent capture: local silence, two turns, barge-in, one stream, session switch releases mic and cancels transcription');
 }finally{await browser.close();}

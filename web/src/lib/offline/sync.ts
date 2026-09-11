@@ -12,6 +12,7 @@ import { makeDraft, matches } from "./model";
 import type { CachedEntry, ChangePage, Mutation, SyncState } from "./model";
 
 export const useOffline = create<{
+  panelOpen: boolean;
   editPath: string | null;
   ready: boolean;
   syncing: boolean;
@@ -22,6 +23,7 @@ export const useOffline = create<{
   generation: number;
   cachedCount: number;
 }>(() => ({
+  panelOpen: false,
   editPath: null,
   ready: false,
   syncing: false,

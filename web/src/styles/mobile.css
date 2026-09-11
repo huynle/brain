@@ -271,6 +271,12 @@
   body.mobile :is(.drawer-resizer, .assistant-resizer) {
     display: none;
   }
+  body.mobile .assistant-panel {
+    height: calc(
+      var(--mobile-viewport-height, 100dvh) - env(safe-area-inset-top) -
+        env(safe-area-inset-bottom) - 30px
+    );
+  }
   body.mobile .assistant-panel textarea {
     min-height: 96px;
   }
@@ -333,6 +339,9 @@
     white-space: nowrap;
     overflow-x: auto;
   }
+  body.mobile .statusbar .offline-sync-toggle {
+    min-height: 0;
+  }
   body.mobile .mobile-activity {
     position: fixed;
     left: 8px;
@@ -359,10 +368,6 @@
     right: auto;
     width: calc(100vw - 16px);
     max-height: 45dvh;
-  }
-  body.mobile .offline-sync-toggle {
-    bottom: calc(34px + env(safe-area-inset-bottom));
-    max-width: calc(100vw - 16px);
   }
   body.mobile .palette-scrim {
     padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);

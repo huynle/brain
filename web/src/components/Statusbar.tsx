@@ -18,6 +18,7 @@
  * It stays absent when nothing is paused — text appearing at all means work
  * is being held, so there is no "healthy" state to learn to ignore.
  */
+import { OfflineSyncStatus } from "./common/OfflineSync";
 import { useWorkspace } from "../store/workspace";
 import { useProjects } from "../hooks/useProjects";
 import { useRunners } from "../hooks/useRunners";
@@ -67,6 +68,8 @@ export function Statusbar(): JSX.Element {
           </span>
         </>
       )}
+      <span>·</span>
+      <OfflineSyncStatus />
       <span>·</span>
       <span>{liveSessions} live</span>
       <span>·</span>

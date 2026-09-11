@@ -4481,7 +4481,9 @@ body[data-theme="light"] .reminder-status__acts button.primary {
 }
 
 /* Local persistence and conflict review. Native dialog supplies focus trapping. */
-.offline-sync-toggle { position: fixed; bottom: 28px; right: 12px; z-index: 90; }
+.offline-sync-toggle { flex: 0 0 auto; align-self: stretch; border: 0; padding: 0 4px; background: transparent; color: inherit; font: inherit; white-space: nowrap; cursor: pointer; }
+.offline-sync-toggle:hover { color: #579bff; }
+.offline-sync-toggle:focus-visible { outline: 1px solid currentColor; outline-offset: -1px; }
 .offline-sync-dialog { width: min(780px, 94vw); max-height: 88vh; overflow: auto; padding: 22px; background: #111518; color: #d9dbde; border: 1px solid #2a2f35; }
 .offline-sync-dialog::backdrop { background: #0007; }
 .offline-sync-dialog label { display: block; margin: 12px 0; }

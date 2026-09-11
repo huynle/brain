@@ -1,4 +1,5 @@
 import {
+  cacheReady,
   cachedEntry,
   cachedList,
   cachedSummary,
@@ -2072,7 +2073,7 @@ export async function search(req: SearchRequest): Promise<SearchResponse> {
     };
   };
   if (
-    offlineAvailable() &&
+    (await cacheReady()) &&
     ((req.strategy !== "semantic" && req.strategy !== "hybrid") ||
       !useOffline.getState().online)
   )

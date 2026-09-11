@@ -185,7 +185,9 @@ export function OfflineSync() {
         {!offlineAvailable()
           ? "Online only"
           : state.syncing
-            ? "Syncing"
+            ? state.ready
+              ? "Syncing"
+              : "Downloading offline copy"
             : !state.online
               ? "Offline"
               : state.ready
@@ -210,8 +212,10 @@ export function OfflineSync() {
             ? "Online mode: changes save directly to the server. Offline editing requires persistent browser storage."
             : state.ready
               ? "All entries from this server are stored on this device. Changes sync when connected."
-              : "Connect to download entries before offline use."}{" "}
-          {offlineAvailable() ? `${state.pending.length} pending edits.` : "Local pending edits cannot be checked in this mode."}
+              : "Your offline copy is downloading in the background. You can use Brain online now; keep this page open to finish downloading."}{" "}
+          {offlineAvailable()
+            ? `${state.pending.length} pending edits.`
+            : "Local pending edits cannot be checked in this mode."}
         </p>
         <p>
           Runner controls, execution, moves, and deletion require a connection.

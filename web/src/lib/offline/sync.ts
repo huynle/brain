@@ -8,7 +8,7 @@ import {
   databaseFor,
   offlineStorageUnavailable,
 } from "./client";
-import { makeDraft } from "./model";
+import { makeDraft, matches } from "./model";
 import type { CachedEntry, ChangePage, Mutation, SyncState } from "./model";
 
 export const useOffline = create<{
@@ -256,40 +256,53 @@ export async function syncNow(): Promise<void> {
     });
   return active;
 }
-async function ensureCacheReady() {
-  let state = await database<SyncState>("state");
-  if (!state.ready) {
-    await syncNow();
-    state = await database<SyncState>("state");
+// A cold cache is populated by the background sync lifecycle. Reads must never
+// wait for that entire download: large libraries can take minutes to bootstrap.
+export async function cacheReady() {
+  if (!offlineAvailable()) return false;
+  try {
+    return (await database<SyncState>("state")).ready;
+  } catch (e) {
+    if (!offlineStorageUnavailable()) throw e;
+    return false;
   }
-  if (!state.ready)
-    throw new Error("Connect once to download entries for offline use.");
 }
 export async function cachedList(q: Record<string, unknown> = {}) {
   if (offlineAvailable()) {
     try {
-      await ensureCacheReady();
-      return await database<CachedEntry[]>("list", q);
+      if (await cacheReady()) return await database<CachedEntry[]>("list", q);
     } catch (e) {
       if (!offlineStorageUnavailable()) throw e;
     }
   }
   const result = await api<{ entries: CachedEntry[] }>("/api/v1/entries", {
-    query: { ...q, limit: Number(q.editorLimit ?? 1000) },
+    query: { ...q, limit: Number(q.editorLimit ?? q.limit ?? 1000) },
   });
-  return result.entries ?? [];
+  const entries = new Map(
+    (result.entries ?? []).map((entry) => [entry.path, entry]),
+  );
+  // Keep queued edits visible while reads temporarily use the server during bootstrap.
+  if (offlineAvailable()) {
+    const state = await database<SyncState>("state");
+    for (const op of state.pending) {
+      entries.delete(op.path);
+      if (matches(op.draft, q))
+        entries.set(op.path, { ...op.draft, local_revision: op.id });
+    }
+  }
+  return [...entries.values()];
 }
 export async function cachedSummary(
   q: { project?: string; global?: boolean; projects?: string } = {},
 ) {
   if (offlineAvailable()) {
     try {
-      await ensureCacheReady();
-      return await database<{
-        projects: string[];
-        totalEntries: number;
-        byType: Record<string, number>;
-      }>("summary", q);
+      if (await cacheReady())
+        return await database<{
+          projects: string[];
+          totalEntries: number;
+          byType: Record<string, number>;
+        }>("summary", q);
     } catch (e) {
       if (!offlineStorageUnavailable()) throw e;
     }
@@ -308,10 +321,7 @@ export async function cachedEntry(path: string): Promise<CachedEntry> {
     try {
       const entry = await database<CachedEntry | null>("get", path);
       if (entry) return entry;
-      await syncNow();
-      const found = await database<CachedEntry | null>("get", path);
-      if (!found) throw new Error("Entry is not available in the local cache.");
-      return found;
+      // Missing entries can be read online even while the initial pull is running.
     } catch (e) {
       if (!offlineStorageUnavailable()) throw e;
     }

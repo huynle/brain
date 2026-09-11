@@ -49,7 +49,9 @@ try {
   await expect(
     p.locator(".entry-reader").getByText("Startup scratch 10", { exact: true }),
   ).toBeVisible({ timeout: 30000 });
-  await expect.poll(() => p.evaluate(() => window.cacheReady)).toBe(true);
+  await expect
+    .poll(() => p.evaluate(() => window.cacheReady), { timeout: 120000 })
+    .toBe(true);
   const requests = [];
   p.on("request", (r) => requests.push(r.url()));
   let release;

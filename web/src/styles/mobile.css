@@ -439,7 +439,9 @@
     min-height: 56px; padding: 0; border-radius: 50%; display: grid; place-items: center;
     background: #235fa4; border: 1px solid #76b0f1; color: white;
     box-shadow: 0 3px 12px #0006;
+    touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab;
   }
+  body.mobile .assistant-shortcut:active { cursor: grabbing; }
   body.mobile .assistant-shortcut:focus-visible { outline: 3px solid #e4f0ff; outline-offset: 3px; }
   body.mobile .assistant-shortcut[aria-pressed="true"] { background: #3478c6; }
   body.mobile .assistant-panel > * { order: 3; }

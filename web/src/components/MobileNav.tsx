@@ -6,11 +6,13 @@
  * per live session.
  */
 import { useWorkspace } from "../store/workspace";
+import { useDraggableShortcut } from "../hooks/useDraggableShortcut";
 import { useSessions } from "../hooks/useSessions";
 
 export function MobileNav(): JSX.Element {
   const assistantOpen = useWorkspace((s) => s.assistantOpen);
   const openAssistant = () => useWorkspace.getState().setAssistantOpen(true);
+  const shortcut = useDraggableShortcut(openAssistant);
   const view = useWorkspace((s) => s.view);
   const setView = useWorkspace((s) => s.setView);
   const setFocusSession = useWorkspace((s) => s.setFocusSession);
@@ -23,9 +25,9 @@ export function MobileNav(): JSX.Element {
         type="button"
         className="assistant-shortcut"
         aria-label="Assistant"
-        title="Open Assistant"
+        title="Open Assistant (drag to move)"
         aria-pressed={assistantOpen}
-        onClick={openAssistant}
+        {...shortcut}
       >
         <svg
           width="28"

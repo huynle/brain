@@ -13,7 +13,7 @@ import { test } from "node:test";
 import { useAssistantChat, ASSISTANT_CHAT_STORAGE_KEY } from "./assistantChat";
 
 function resetStore() {
-  useAssistantChat.setState({ turns: [], history: [], busy: false });
+  useAssistantChat.setState({ turns: [], history: [], busy: false, sessions: [], sessionId: "initial" });
 }
 
 test("assistantChat: persisted storage key is versioned", () => {
@@ -86,4 +86,38 @@ test("assistantChat: turns and history are capped", () => {
   assert.ok(s.history.length <= 200, `history ${s.history.length} > 200`);
   // Newest entries survive the trim.
   assert.equal(s.history[s.history.length - 1].content, "r119");
+});
+
+
+test("sessions preserve separate histories and settle interrupted turns", () => {
+  resetStore();
+  const chat = () => useAssistantChat.getState();
+  chat().beginTurn("First topic");
+  chat().patchAssistant({content: "First answer"});
+  chat().finishTurn([{role: "user", content: "First topic"}, {role: "assistant", content: "First answer"}]);
+  const first = chat().sessionId;
+  chat().newSession();
+  const second = chat().sessionId;
+  assert.notEqual(first, second);
+  assert.deepEqual(chat().history, []);
+  chat().beginTurn("Second topic");
+  chat().patchAssistant({content: "Partial", tools: [{id: "t", name: "recall", args: "{}", tier: "read", status: "running"}]});
+  chat().switchSession(first);
+  assert.equal(chat().turns[0].content, "First topic");
+  assert.equal(chat().history.length, 2);
+  chat().switchSession(second);
+  assert.equal(chat().turns[0].content, "Second topic");
+  assert.equal(chat().busy, false);
+  assert.equal(chat().turns[1].streaming, undefined);
+  assert.equal(chat().turns[1].tools[0].status, "interrupted");
+  assert.deepEqual(chat().history, []);
+});
+
+test("legacy single conversation migrates without losing history", () => {
+  const merge = useAssistantChat.persist.getOptions().merge!;
+  const restored = merge({ turns: [{role: "user", content: "Existing conversation", tools: []}], history: [{role: "user", content: "Existing conversation"}] }, useAssistantChat.getState());
+  assert.equal(restored.sessionId, "initial");
+  assert.deepEqual(restored.sessions, []);
+  assert.equal(restored.turns[0].content, "Existing conversation");
+  assert.equal(restored.history[0].content, "Existing conversation");
 });

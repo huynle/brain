@@ -64,7 +64,7 @@ Speak uses browser speech recognition to fill the draft; the user reviews and se
 Browser support and microphone permission are required. HTTPS is required away from
 localhost. Unsupported browsers and HTTP previews can use phone-keyboard dictation.
 Recognition may use the browser vendor's online speech service. Closing chat stops it.
-The current conversation is stored on this device; this is not a server-backed session list.
+Conversations are saved on this device. Use the Conversation selector to reopen one, or New chat to start a separate history. Switching stops recording, playback and the active response; late callbacks cannot write into the selected conversation. This is not server-backed storage or cross-device synchronization. Each conversation retains up to 100 displayed turns and 200 replay messages.
 
 ### Optional spoken replies
 
@@ -91,5 +91,5 @@ It does not buffer the interrupting audio, so the opening syllable may be missed
 Actual echo rejection depends on the phone/browser; an Interrupt and speak button
 provides a fallback. Voice requests prefer one or two short sentences unless
 more detail is requested.
-This remains one local conversation; server conversation storage is not implemented. Speech provider and UI checks can be run with
+Saved conversations remain local to this browser; server conversation storage is not implemented. Speech provider and UI checks can be run with
 `go test ./internal/api` and `node web/scripts/verify-assistant-speech.mjs`.

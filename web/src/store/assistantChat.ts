@@ -40,7 +40,18 @@ export interface AssistantChatTurn {
   streaming?: boolean;
 }
 
+interface SavedConversation {
+  id: string;
+  title: string;
+  turns: AssistantChatTurn[];
+  history: AssistantHistoryMessage[];
+}
+
 interface AssistantChatState {
+  sessionId: string;
+  sessions: SavedConversation[];
+  newSession(): void;
+  switchSession(id: string): void;
   turns: AssistantChatTurn[];
   history: AssistantHistoryMessage[];
   busy: boolean;
@@ -118,9 +129,25 @@ function coerceHistory(raw: unknown): AssistantHistoryMessage[] {
   return raw as AssistantHistoryMessage[];
 }
 
+function snapshot(s: AssistantChatState): SavedConversation {
+  return { id: s.sessionId, title: s.turns.find(t => t.role === "user")?.content.slice(0, 60) || "New conversation", turns: coerceTurns(s.turns), history: s.history };
+}
+
 export const useAssistantChat = create<AssistantChatState>()(
   persist(
     (set) => ({
+      sessionId: "initial",
+      sessions: [],
+      newSession: () => set(s => ({
+        sessions: [...s.sessions.filter(c => c.id !== s.sessionId), snapshot(s)],
+        sessionId: crypto.randomUUID(), turns: [], history: [], busy: false,
+      })),
+      switchSession: (id) => set(s => {
+        const target = s.sessions.find(c => c.id === id);
+        if (!target || id === s.sessionId) return s;
+        return { sessions: [...s.sessions.filter(c => c.id !== s.sessionId), snapshot(s)], sessionId: id,
+          turns: coerceTurns(target.turns), history: target.history, busy: false };
+      }),
       turns: [],
       history: [],
       busy: false,
@@ -167,13 +194,15 @@ export const useAssistantChat = create<AssistantChatState>()(
     }),
     {
       name: ASSISTANT_CHAT_STORAGE_KEY,
-      partialize: (s) => ({ turns: s.turns, history: s.history }),
+      partialize: (s) => ({ turns: s.turns, history: s.history, sessionId: s.sessionId, sessions: s.sessions.filter(c => c.id !== s.sessionId) }),
       storage: createJSONStorage(() => safeStorage() ?? noopStorage),
       version: 1,
       merge: (persistedState, currentState) => {
         const p = (persistedState ?? {}) as Partial<AssistantChatState>;
         return {
           ...currentState,
+          sessionId: typeof p.sessionId === "string" ? p.sessionId : "initial",
+          sessions: Array.isArray(p.sessions) ? p.sessions.filter(c => c && typeof c.id === "string" && typeof c.title === "string").map(c => ({ ...c, turns: coerceTurns(c.turns), history: coerceHistory(c.history) })) : [],
           turns: coerceTurns(p.turns),
           history: coerceHistory(p.history),
           busy: false,

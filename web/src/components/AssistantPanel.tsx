@@ -29,6 +29,7 @@ import { useMergeRequests } from "../hooks/useMergeRequests";
 import {
   useAssistantChat,
   type AssistantToolChip,
+  type AssistantChatTurn,
 } from "../store/assistantChat";
 import {
   assistantChatStream,
@@ -119,6 +120,8 @@ export function AssistantPanel(): JSX.Element | null {
   // the vision model on send() and cleared afterward (current-turn only; not
   // persisted into history).
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const sessionId = useAssistantChat((s) => s.sessionId);
+  const sessions = useAssistantChat((s) => s.sessions);
   const turns = useAssistantChat((s) => s.turns);
   const busy = useAssistantChat((s) => s.busy);
   useEffect(() => {
@@ -180,11 +183,17 @@ export function AssistantPanel(): JSX.Element | null {
   if (!open) return null;
   if (typeof document === "undefined") return null;
 
-  const clearChat = () => {
+  const changeSession = (id?: string) => {
     setHandsFree(false);
     speech.stop();
     activeAbort?.abort();
-    useAssistantChat.getState().clear();
+    activeAbort = null;
+    setListening(false);
+    setPrompt("");
+    setPendingImages([]);
+    followLatest.current = true;
+    if (id) useAssistantChat.getState().switchSession(id);
+    else useAssistantChat.getState().newSession();
   };
 
   // addImageFiles ingests image blobs from a paste or drop, enforcing the
@@ -254,7 +263,8 @@ export function AssistantPanel(): JSX.Element | null {
     activeAbort = ac;
     let acc = "";
     const tools: AssistantToolChip[] = [];
-    const patchAssistant = chat.patchAssistant;
+    const isCurrent = () => useAssistantChat.getState().sessionId === chat.sessionId && activeAbort === ac;
+    const patchAssistant = (patch: Partial<AssistantChatTurn>) => { if (isCurrent()) chat.patchAssistant(patch); };
 
     try {
       await assistantChatStream(
@@ -316,7 +326,7 @@ export function AssistantPanel(): JSX.Element | null {
             : `Assistant error: ${(err as Error).message}`;
       if (msg) toast(msg, "error");
     } finally {
-      if (activeAbort === ac) activeAbort = null;
+      if (!isCurrent()) return;
       patchAssistant({ content: acc });
 
       // Record the finished turn in the replay history. Tool calls are
@@ -355,6 +365,7 @@ export function AssistantPanel(): JSX.Element | null {
       }
       if (acc) entries.push({ role: "assistant", content: acc });
       useAssistantChat.getState().finishTurn(entries);
+      activeAbort = null;
       if (
         acc &&
         spokenRepliesRef.current &&
@@ -388,12 +399,11 @@ export function AssistantPanel(): JSX.Element | null {
 
       <div className="assistant-card assistant-chat">
         <div className="assistant-chat-head">
-          <div className="assistant-title">Current conversation</div>
-          {turns.length > 0 && (
-            <button className="assistant-chat-clear" onClick={clearChat}>
-              New chat
-            </button>
-          )}
+          <select aria-label="Conversation" value={sessionId} onChange={e => changeSession(e.target.value)} style={{ minWidth: 0, flex: 1, maxWidth: "70%" }}>
+            <option value={sessionId}>{turns.find(t => t.role === "user")?.content.slice(0, 60) || "New conversation"}</option>
+            {sessions.filter(c => c.id !== sessionId).map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+          </select>
+          <button className="assistant-chat-clear" onClick={() => changeSession()}>New chat</button>
         </div>
 
         <div className="assistant-speech-controls">
@@ -559,6 +569,7 @@ export function AssistantPanel(): JSX.Element | null {
             </span>
           )}
           <AssistantMicrophone
+            key={sessionId}
             value={prompt}
             onChange={setPrompt}
             active={open}

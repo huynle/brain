@@ -4518,3 +4518,8 @@ body[data-theme="light"] .offline-sync-dialog { background: #fff; color: #1b232b
 .assistant-image-chips { max-height: 90px; overflow-y: auto; }
 body[data-theme="light"] .assistant-msg.assistant { background: #eef2f7; border-color: #c8d4df; }
 body[data-theme="light"] .assistant-msg.assistant .assistant-msg-body { color: #172635; }
+
+.assistant-speech-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; flex: 0 0 auto; }
+.assistant-speech-controls label { display: flex; align-items: center; gap: 6px; min-height: 32px; }
+.assistant-speech-controls span { flex-basis: 100%; }
+.assistant-read-aloud { align-self: flex-start; font-size: 11px; padding: 4px 8px; }

@@ -87,13 +87,23 @@ type EmbeddingConfig struct {
 }
 
 // AssistantConfig holds server-side LLM configuration for the built-in PWA assistant.
-type AssistantConfig struct {
+type AssistantSpeechConfig struct {
 	Enabled   bool   `yaml:"enabled"`
 	Provider  string `yaml:"provider"`
 	BaseURL   string `yaml:"base_url"`
 	APIKeyEnv string `yaml:"api_key_env"`
 	Model     string `yaml:"model"`
-	TimeoutMs int    `yaml:"timeout_ms"`
+	Voice     string `yaml:"voice"`
+}
+
+type AssistantConfig struct {
+	Speech    AssistantSpeechConfig `yaml:"speech"`
+	Enabled   bool                  `yaml:"enabled"`
+	Provider  string                `yaml:"provider"`
+	BaseURL   string                `yaml:"base_url"`
+	APIKeyEnv string                `yaml:"api_key_env"`
+	Model     string                `yaml:"model"`
+	TimeoutMs int                   `yaml:"timeout_ms"`
 }
 
 // AttachmentExtractionConfig holds multimodal model-role configuration for

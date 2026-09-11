@@ -569,6 +569,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		service.WithGoalPauseChecker(runnerSvc),
 	)
 	assistantSvc := api.NewAssistantService(api.AssistantServiceOptions{
+		Speech:    api.SpeechOptions{Enabled: cfg.Assistant.Speech.Enabled, Provider: cfg.Assistant.Speech.Provider, BaseURL: cfg.Assistant.Speech.BaseURL, APIKeyEnv: cfg.Assistant.Speech.APIKeyEnv, Model: cfg.Assistant.Speech.Model, Voice: cfg.Assistant.Speech.Voice},
 		Enabled:   cfg.Assistant.Enabled,
 		Provider:  cfg.Assistant.Provider,
 		BaseURL:   cfg.Assistant.BaseURL,

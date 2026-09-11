@@ -24,6 +24,7 @@ type AssistantStreamingPlanner interface {
 }
 
 type AssistantServiceOptions struct {
+	Speech    SpeechOptions
 	Enabled   bool
 	Provider  string
 	BaseURL   string
@@ -50,6 +51,7 @@ type AssistantServiceOptions struct {
 }
 
 type AssistantService struct {
+	speech       SpeechSynthesizer
 	enabled      bool
 	provider     string
 	baseURL      string
@@ -66,12 +68,13 @@ type AssistantService struct {
 }
 
 type AssistantStatusResponse struct {
-	Available    bool     `json:"available"`
-	Mode         string   `json:"mode"`
-	Provider     string   `json:"provider,omitempty"`
-	Model        string   `json:"model,omitempty"`
-	Capabilities []string `json:"capabilities"`
-	Reason       string   `json:"reason,omitempty"`
+	SpeechAvailable bool     `json:"speech_available"`
+	Available       bool     `json:"available"`
+	Mode            string   `json:"mode"`
+	Provider        string   `json:"provider,omitempty"`
+	Model           string   `json:"model,omitempty"`
+	Capabilities    []string `json:"capabilities"`
+	Reason          string   `json:"reason,omitempty"`
 }
 
 type AssistantChatRequest struct {
@@ -202,6 +205,7 @@ func NewAssistantService(opts AssistantServiceOptions) *AssistantService {
 		maxTurns = 6
 	}
 	return &AssistantService{
+		speech:       newSpeechProvider(opts.Speech),
 		enabled:      opts.Enabled,
 		provider:     firstNonEmptyString(opts.Provider, "openrouter"),
 		baseURL:      firstNonEmptyString(opts.BaseURL, "https://openrouter.ai/api/v1"),
@@ -225,9 +229,10 @@ func (s *AssistantService) Status() AssistantStatusResponse {
 	// Legacy capability aliases still exposed for older PWA builds.
 	caps := append([]string{"chat", "attachments"}, toolNames...)
 	resp := AssistantStatusResponse{
-		Available:    s != nil && s.enabled && s.planner != nil,
-		Mode:         assistantModeAgentic,
-		Capabilities: caps,
+		Available:       s != nil && s.enabled && s.planner != nil,
+		Mode:            assistantModeAgentic,
+		Capabilities:    caps,
+		SpeechAvailable: s != nil && s.enabled && s.speech != nil,
 	}
 	if s != nil {
 		resp.Provider = s.provider

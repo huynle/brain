@@ -1,3 +1,4 @@
+import { useAssistantSpeech } from "../hooks/useAssistantSpeech";
 import { AssistantMicrophone } from "./AssistantMicrophone";
 /**
  * AssistantPanel — wireframe-parity port of `renderAssistantPanel`.
@@ -100,6 +101,12 @@ export function AssistantPanel(): JSX.Element | null {
   const isMobile = useIsMobile();
 
   const [listening, setListening] = useState(false);
+  const [spokenReplies, setSpokenReplies] = useState(false);
+  const speech = useAssistantSpeech(open);
+  const spokenRepliesRef = useRef(false);
+  spokenRepliesRef.current = spokenReplies;
+  const openRef = useRef(open);
+  openRef.current = open;
   const [prompt, setPrompt] = useState("");
   // Pasted/dropped images for the NEXT message, as base64 data URLs. Sent to
   // the vision model on send() and cleared afterward (current-turn only; not
@@ -164,6 +171,7 @@ export function AssistantPanel(): JSX.Element | null {
   if (typeof document === "undefined") return null;
 
   const clearChat = () => {
+    speech.stop();
     activeAbort?.abort();
     useAssistantChat.getState().clear();
   };
@@ -216,6 +224,7 @@ export function AssistantPanel(): JSX.Element | null {
     const message = prompt.trim();
     const images = pendingImages;
     if ((!message && images.length === 0) || busy || listening) return;
+    speech.stop();
     followLatest.current = true;
     setPrompt("");
     setPendingImages([]);
@@ -329,6 +338,13 @@ export function AssistantPanel(): JSX.Element | null {
       }
       if (acc) entries.push({ role: "assistant", content: acc });
       useAssistantChat.getState().finishTurn(entries);
+      if (
+        acc &&
+        spokenRepliesRef.current &&
+        openRef.current &&
+        !ac.signal.aborted
+      )
+        void speech.play(acc);
     }
   };
 
@@ -363,6 +379,25 @@ export function AssistantPanel(): JSX.Element | null {
           )}
         </div>
 
+        <div className="assistant-speech-controls">
+          <label>
+            <input
+              type="checkbox"
+              checked={spokenReplies}
+              onChange={(e) => {
+                setSpokenReplies(e.target.checked);
+                if (!e.target.checked) speech.stop();
+              }}
+            />{" "}
+            Spoken replies
+          </label>
+          {speech.state !== "idle" && (
+            <button type="button" onClick={speech.stop}>
+              {speech.state === "loading" ? "Cancel audio" : "Stop audio"}
+            </button>
+          )}
+          {speech.error && <span role="status">{speech.error}</span>}
+        </div>
         <div
           className="assistant-thread"
           ref={threadRef}
@@ -411,6 +446,15 @@ export function AssistantPanel(): JSX.Element | null {
                       ? "(no reply)"
                       : "")}
               </div>
+              {turn.role === "assistant" && !turn.streaming && turn.content && (
+                <button
+                  type="button"
+                  className="assistant-read-aloud"
+                  onClick={() => void speech.play(turn.content)}
+                >
+                  Read aloud
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -492,7 +536,10 @@ export function AssistantPanel(): JSX.Element | null {
             onChange={setPrompt}
             active={open}
             disabled={busy}
-            onListening={setListening}
+            onListening={(value) => {
+              if (value) speech.stop();
+              setListening(value);
+            }}
           />
           <div className="assistant-actions">
             <button

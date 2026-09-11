@@ -65,3 +65,24 @@ Browser support and microphone permission are required. HTTPS is required away f
 localhost. Unsupported browsers and HTTP previews can use phone-keyboard dictation.
 Recognition may use the browser vendor's online speech service. Closing chat stops it.
 The current conversation is stored on this device; this is not a server-backed session list.
+
+### Optional spoken replies
+
+The server accepts authenticated, admin-scoped `POST /api/v1/assistant/speech`
+with `{ "text": "A reply to read" }` and returns MP3. Input is bounded to 6,000
+characters and responses to 8 MiB. Provider credentials stay server-side.
+Configure `server.assistant.speech` with `enabled: true`, `provider: openrouter`,
+`model: hexgrad/kokoro-82m`, and `voice: af_heart`. Optional `base_url` and
+`api_key_env` default to OpenRouter and `OPENROUTER_API_KEY`.
+
+Read aloud plays individual replies. Spoken replies opts into playback of new
+responses for the current visit. Stop, new chat, sending a message, starting the
+microphone, and closing Assistant cancel playback. Replay of the last audio
+uses an in-memory cache. Browser autoplay restrictions show a manual-play hint.
+Audio failures leave the text conversation intact. Breeze is a future adapter
+behind `SpeechSynthesizer`; only OpenRouter is implemented at present.
+
+This remains one local conversation with optional dictation and playback;
+continuous listening, interruption detection and server conversation storage
+are not implemented. Speech provider and UI checks can be run with
+`go test ./internal/api` and `node web/scripts/verify-assistant-speech.mjs`.

@@ -1277,6 +1277,7 @@ export function summarizeTriggerResults(results: TriggerResponse[]): {
 // ─── Built-in Assistant ──────────────────────────────────────────
 
 export interface AssistantStatusResponse {
+  speech_available?: boolean;
   available: boolean;
   mode: "agentic" | "direct_llm" | "manual" | string;
   provider?: string;

@@ -215,7 +215,8 @@ func NewSchedulerService(tasks schedulerTaskService, pauses schedulerPauseChecke
 	return svc
 }
 
-func (s *SchedulerService) Start(ctx context.Context, interval time.Duration) {
+func (s *SchedulerService) Start(ctx context.Context, interval time.Duration) <-chan struct{} {
+	done := make(chan struct{})
 	if interval <= 0 {
 		interval = DefaultSchedulerInterval
 	}
@@ -226,6 +227,7 @@ func (s *SchedulerService) Start(ctx context.Context, interval time.Duration) {
 	s.mu.Unlock()
 
 	go func() {
+		defer close(done)
 		defer func() {
 			s.mu.Lock()
 			s.status.Running = false
@@ -246,6 +248,7 @@ func (s *SchedulerService) Start(ctx context.Context, interval time.Duration) {
 			}
 		}
 	}()
+	return done
 }
 
 func (s *SchedulerService) Status() types.SchedulerStatus {

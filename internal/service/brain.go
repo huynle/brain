@@ -36,8 +36,8 @@ type BrainServiceImpl struct {
 	bus             events.Bus
 	embeddingClient EmbeddingClient
 
-	embedWG    sync.WaitGroup // tracks in-flight background embedding refreshes
-	embedLocks sync.Map       // path → *sync.Mutex; serializes refreshes per entry
+	embedWork  asyncWork // owns detached embedding work, never the store
+	embedLocks sync.Map  // path → *sync.Mutex; serializes refreshes per entry
 }
 
 // NewBrainService creates a new BrainServiceImpl.
@@ -2153,18 +2153,16 @@ func (s *BrainServiceImpl) scheduleEmbeddingRefresh(path string) {
 	if s.embeddingClient == nil {
 		return
 	}
-	s.embedWG.Add(1)
-	go func() {
-		defer s.embedWG.Done()
+	s.embedWork.goRun(func(parent context.Context) {
 		lock := s.pathLock(path)
 		lock.Lock()
 		defer lock.Unlock()
-		ctx, cancel := context.WithTimeout(context.Background(), embeddingRefreshTimeout)
+		ctx, cancel := context.WithTimeout(parent, embeddingRefreshTimeout)
 		defer cancel()
 		if err := s.indexEmbeddingsForEntry(ctx, path); err != nil {
 			slog.Warn("background embedding refresh failed", "path", path, "error", err)
 		}
-	}()
+	})
 }
 
 // scheduleEmbeddingMetadataSync mirrors a metadata-only change (status,
@@ -2190,13 +2188,11 @@ func (s *BrainServiceImpl) scheduleEmbeddingMetadataSync(path string) {
 	if s.embeddingClient == nil {
 		return
 	}
-	s.embedWG.Add(1)
-	go func() {
-		defer s.embedWG.Done()
+	s.embedWork.goRun(func(parent context.Context) {
 		lock := s.pathLock(path)
 		lock.Lock()
 		defer lock.Unlock()
-		ctx, cancel := context.WithTimeout(context.Background(), embeddingRefreshTimeout)
+		ctx, cancel := context.WithTimeout(parent, embeddingRefreshTimeout)
 		defer cancel()
 		row, err := s.storage.GetNoteByPath(ctx, path)
 		if err != nil || row == nil {
@@ -2208,15 +2204,19 @@ func (s *BrainServiceImpl) scheduleEmbeddingMetadataSync(path string) {
 		if err := s.storage.SyncNoteEmbeddingMetadata(ctx, row); err != nil {
 			slog.Warn("failed to sync embedding metadata", "path", path, "error", err)
 		}
-	}()
+	})
 }
 
 // WaitForPendingEmbeddings blocks until every background embedding refresh and
-// metadata sync scheduled so far has finished. Used by tests; also suitable
-// for a bounded drain on graceful shutdown.
+// metadata sync scheduled so far has finished. This nonterminal test drain
+// requires callers to stop submitting; graph shutdown uses Close instead.
 func (s *BrainServiceImpl) WaitForPendingEmbeddings() {
-	s.embedWG.Wait()
+	s.embedWork.wait()
 }
+
+// Close fences, cancels and joins detached embeddings. The caller must drain
+// synchronous requests first. It never closes the borrowed TenantStore.
+func (s *BrainServiceImpl) Close() { s.embedWork.close() }
 
 // AttachmentDerivedTextChanged refreshes semantic embeddings for entries linked
 // to an attachment whose derived text has changed.

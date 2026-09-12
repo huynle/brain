@@ -71,6 +71,7 @@ export default defineConfig({
       // The OAuth flow does full-page redirects to server-rendered routes; the
       // SW must let these through to the network rather than serving the shell.
       workbox: {
+        importScripts: ["/push-sw.js"],
         navigateFallback: "/index.html",
         navigateFallbackDenylist: [
           /^\/read(?:\.html)?(?:\?|$)/,

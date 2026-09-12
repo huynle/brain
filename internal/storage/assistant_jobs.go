@@ -246,6 +246,27 @@ func (s *Store) Update(owner, id string, fn func(*Record) error) (Record, error)
 
 // All is only for the trusted runner scheduler. HTTP callers must use List.
 func (s *Store) All() ([]Record, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.list("", "") }
+
+// NotificationJobs reads only recent terminal job summaries, never prompts,
+// transcripts or delegated credentials, for the background push dispatcher.
+func (s *Store) NotificationJobs() ([]Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query(`SELECT owner, json_extract(data,'$.id'), json_extract(data,'$.state'), json_extract(data,'$.revision'), json_extract(data,'$.updated_at') FROM assistant_jobs WHERE json_extract(data,'$.state') IN ('completed','failed','paused','cancelled') AND json_extract(data,'$.updated_at') >= ?`, time.Now().Add(-24*time.Hour).UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []Record{}
+	for rows.Next() {
+		var r Record
+		if err := rows.Scan(&r.Owner, &r.ID, &r.State, &r.Revision, &r.Updated); err != nil {
+			return nil, err
+		}
+		result = append(result, r)
+	}
+	return result, rows.Err()
+}
 func (s *Store) List(owner, conversation string) ([]Record, error) {
 	if owner == "" {
 		return nil, ErrNotFound

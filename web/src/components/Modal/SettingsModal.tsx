@@ -29,6 +29,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Modal } from "../common/Modal";
+import { PhoneNotifications } from "../PhoneNotifications";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
 import { useModal } from "../../store/modal";
@@ -383,6 +384,7 @@ export function SettingsModal(): JSX.Element {
         </>
       }
     >
+      <PhoneNotifications />
       {body}
     </Modal>
   );

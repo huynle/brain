@@ -28,6 +28,7 @@ import (
 	"github.com/huynle/brain-api/internal/oauth"
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/service"
+	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/tenant"
 	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/internal/webui"
@@ -630,6 +631,13 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	logBuf := logbuffer.New(logbuffer.DefaultMaxLines)
 
 	// ─── API Handler & Router ───────────────────────────────────────
+	pushSvc, err := storage.OpenPhonePush(filepath.Join(dataDir, "push", "notifications.db"))
+	if err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("open phone notifications: %w", err)
+	}
+	pushCleanup := cleanup
+	cleanup = func() { _ = pushSvc.Close(); pushCleanup() }
 	bulkSvc := service.NewBulkJobService(brainSvc, store, taskSvc, func(project string) {
 		hub.PublishProjectDirty(project)
 		resp, err := taskSvc.GetTasks(ctx, project)
@@ -646,6 +654,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	cleanup = func() { bulkSvc.Stop(); previousCleanup() }
 	handler := api.NewHandler(
 		brainSvc,
+		api.WithPushService(pushSvc),
 		api.WithAttachmentService(attachmentSvc),
 		api.WithTaskService(taskSvc),
 		api.WithBulkJobService(bulkSvc),
@@ -677,6 +686,9 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithCredentialVerifier(credVerifier),
 		api.WithPasswordTokenStore(control),
 	)
+	stopPush := handler.StartPush(ctx)
+	beforePushStop := cleanup
+	cleanup = func() { stopPush(); beforePushStop() }
 
 	// ─── Rate Limiting ─────────────────────────────────────────────
 	var rateLimiter *api.RateLimiter

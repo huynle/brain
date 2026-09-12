@@ -13,6 +13,7 @@ import { UpdateBanner } from "./components/common/UpdateBanner";
 import { Login } from "./pages/Login";
 import { AuthCallback } from "./pages/AuthCallback";
 import { Dashboard } from "./pages/Dashboard";
+import { useWorkspace } from "./store/workspace";
 
 export function App() {
   const mobile = useIsMobile();
@@ -62,6 +63,19 @@ function Gate({
 }: {
   status: ReturnType<typeof useAuth.getState>["status"];
 }) {
+  useEffect(() => {
+    if (status === "loading" || status === "needs-login") return;
+    const open = (target: string | null) => {
+      if (target === "assistant") useWorkspace.getState().setAssistantOpen(true);
+      if (target === "reminders") useWorkspace.getState().openInFocus("reminders", {}, "Reminders");
+    };
+    const url = new URL(location.href);
+    const target = url.searchParams.get("notification");
+    if (target) {open(target); url.searchParams.delete("notification"); history.replaceState(null, "", url);}
+    const receive = (event: MessageEvent) => {if (event.data?.type === "brain-notification") open(event.data.target);};
+    navigator.serviceWorker?.addEventListener("message", receive);
+    return () => navigator.serviceWorker?.removeEventListener("message", receive);
+  }, [status]);
   if (status === "loading") return <Loading label="Connecting to Brain…" />;
   if (status === "needs-login") return <Login />;
   // Authenticated. Panes-v2 is the default and only dashboard as of Phase 9.

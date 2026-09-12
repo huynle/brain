@@ -64,6 +64,15 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 			// Auth so the actor is present in context.
 			r.Use(RequestRecorder)
 
+			// Installation-wide reminder notifications require full access.
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*"))
+				if o.handler != nil {
+					r.Get("/push", o.handler.HandlePush)
+					r.Post("/push/{action}", o.handler.HandlePush)
+				}
+			})
+
 			// ─── Server request log (read:* scope) ─────────────────
 			r.Group(func(r chi.Router) {
 				r.Use(RequireScope("admin:*", "runner:*", "read:*"))

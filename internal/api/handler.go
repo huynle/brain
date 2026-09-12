@@ -4,11 +4,13 @@ import (
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/logbuffer"
 	"github.com/huynle/brain-api/internal/realtime"
+	"github.com/huynle/brain-api/internal/storage"
 	"sync"
 )
 
 // Handler holds service dependencies for HTTP handlers.
 type Handler struct {
+	push                  *storage.PhonePush
 	entrySyncMu           sync.Mutex
 	executionBudgets      ExecutionBudgetStore
 	supervisorCheckpoints SupervisorCheckpointStore

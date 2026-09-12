@@ -1312,6 +1312,19 @@ func InitSchema(db *sql.DB) error {
 // writes. Only an absent version table is fresh; catalog/read/scan failures
 // must not turn an unreadable database into permission to initialize it.
 func checkSchemaCompatibility(db *sql.DB) (version int, exists bool, err error) {
+	// The successor's reserved control namespace is never a legacy bootstrap
+	// input, including partial/unknown artifacts with an absent or lowered stamp.
+	// This is a narrow refusal, NOT successor admission or an exact catalog audit
+	// of historical legacy schemas. Keep their existing initialization semantics.
+	var provenance int
+	if err := db.QueryRow(`SELECT count(*) FROM (
+SELECT name FROM main.sqlite_schema UNION ALL SELECT name FROM sqlite_temp_schema
+) WHERE lower(name) GLOB 'schema_provenance*'`).Scan(&provenance); err != nil {
+		return 0, false, fmt.Errorf("inspect schema provenance: %w", err)
+	}
+	if provenance != 0 {
+		return 0, true, fmt.Errorf("successor schema provenance is not supported by runtime version %d", CurrentSchemaVersion)
+	}
 	var kind string
 	err = db.QueryRow("SELECT type FROM main.sqlite_master WHERE name = 'schema_version' COLLATE NOCASE").Scan(&kind)
 	if err == sql.ErrNoRows {

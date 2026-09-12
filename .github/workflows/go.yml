@@ -36,12 +36,22 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Set up just
+        uses: extractions/setup-just@v3
+
       - name: Unscoped storage historical ratchet
         if: github.event_name == 'pull_request'
         env:
           BRAIN_STORAGE_RATCHET_BASE: ${{ github.event.pull_request.base.sha }}
           GOMAXPROCS: '2'
-        run: go test -p 1 ./internal/storage -run '^TestProductionUnscopedStorage(Baseline)?$' -count=1 -v
+        run: |
+          : "${BRAIN_STORAGE_RATCHET_BASE:?actual pull_request.base.sha is required}"
+          go test -p 1 ./internal/storage -run '^TestProduction(UnscopedStorage(Baseline)?|StoragePackageFunctionsBaseline)$' -count=1 -v
+
+      - name: Tenant isolation gate
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: just tenant-isolation-gate
 
       - name: Vet
         run: go vet ./...
@@ -54,6 +64,7 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            : "${PR_BASE_SHA:?actual pull_request.base.sha is required}"
             export BRAIN_STORAGE_RATCHET_BASE="$PR_BASE_SHA"
           fi
           go test ./... -v -count=1 -coverprofile=coverage.out

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -113,6 +114,9 @@ func relationalSnapshot(t *testing.T, q interface {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
+	// ORDER BY 1 is not a total order (tenant_id is commonly column one).
+	// Canonicalize complete rows, retaining duplicates, independently of indexes.
+	sort.Strings(result)
 	return result
 }
 

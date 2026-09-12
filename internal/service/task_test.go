@@ -2437,7 +2437,7 @@ func newTestTaskServiceWithDefaults(t *testing.T, defaults config.TaskDefaultsCo
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { db.Close() })
 
 	brainDir := t.TempDir()
 	cfg := &config.Config{

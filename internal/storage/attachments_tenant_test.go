@@ -198,7 +198,7 @@ func TestTenantAttachmentsGuards(t *testing.T) {
 		}
 	}
 	t.Run("v28 foreign", func(t *testing.T) { check(t, foreign, context.Background()) })
-	for i, h := range []*TenantStore{nil, {}, {tenantID: tenant.Local}, {StorageLayer: s}, {StorageLayer: &StorageLayer{}, tenantID: tenant.Local}} {
+	for i, h := range []*TenantStore{nil, {}, {tenantID: tenant.Local}, {db: s.db}} {
 		t.Run(fmt.Sprintf("invalid-%d", i), func(t *testing.T) { check(t, h, context.Background()) })
 	}
 	t.Run("nil context", func(t *testing.T) { check(t, local, nil) })

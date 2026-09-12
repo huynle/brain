@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/tenant"
 	"github.com/huynle/brain-api/internal/tenantfs"
 )
@@ -22,7 +23,7 @@ func TestTenantBlobLayoutAndExclusions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repo.Close()
-	r, err := tenantfs.New(repo, base)
+	r, err := tenantfs.New(storagetest.Registry(t, repo), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +150,7 @@ func TestLegacyBlobIORetainsAnchorsAcrossRestartAndPromotion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r, err := tenantfs.New(repo, filepath.Join(first, "brain"))
+		r, err := tenantfs.New(storagetest.Registry(t, repo), filepath.Join(first, "brain"))
 		if err != nil {
 			t.Fatal(err)
 		}

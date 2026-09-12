@@ -11,7 +11,7 @@ import (
 // production wedge fix: previously task_placement_reasons grew to 894k
 // rows because every failed placement decision was appended forever.
 func TestRecordPlacementReason_KeepsPerTaskHistoryBounded(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert 100 placement decisions for one task.

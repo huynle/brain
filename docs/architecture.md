@@ -119,10 +119,10 @@ are checked again per operation, including after registration and root drift.
 - Existing unbound constructors remain for legacy/internal callers and tests.
   They must not be used as a tenant-isolation boundary. Server composition uses
   the bound constructors.
-- `IndexChanged` reconciliation and `RebuildAll` still act on global database
-  content rows; service query/reference ownership, FTS, attachment metadata,
-  queues, and background-job authorization are separate work. Do not run these
-  consumers as a multi-tenant service or claim cross-tenant database isolation.
+- P4.8 now scopes index reconciliation/rebuild through TenantStore. P4.10 removes
+  owner promotion across the workload surface; runtime remains local-only schema
+  28, with staged-29 fixtures only. Background authorization and activation remain
+  separate work. See [P4.10 scope and inventory](p4-10-storage-surface.md).
 - No backup/restore service, quota accounting, crash-safe blob intent protocol,
   tenant deletion lifecycle, or public activation is added by this foundation.
 
@@ -149,8 +149,10 @@ This is an ownership migration, **not SQL isolation**.
   tenant-existence checks, new database, per-tenant DB registry or database stamp.
 - `ControlStore.ValidateToken` and `GetAccessToken` implement the existing API
   and OAuth validator interfaces. They authenticate possession of a token, not
-  deployment-operator authority. Normal token validation retains its existing
-  asynchronous `last_used` update.
+   deployment-operator authority. P4.10 makes the best-effort `last_used` update
+   synchronous with the validation request context, leaving no detached telemetry
+   after validation returns. Update failure does not deny authentication; write
+   contention can add latency. Authorization and revocation semantics are unchanged.
 - `ControlStore.TenantRegistry(auth.DeploymentOperator)` returns
   `(tenantfs.Repository, error)`: exactly `ListTenantRoots` and
   `RegisterTenantRoots`, preserving the resolver's serialized validation policy.
@@ -251,7 +253,9 @@ functions (no retained/returned raw pointer, alias, or raw workload call):
   Its historical database-path choice is unchanged by P3.5.
 - `internal/storage/storagetest/store.go`: fixture-only local view factories;
   production imports are forbidden. Storage implementation tests may keep raw
-  owners. Fixture cleanup may still use the temporarily promoted `Close()`.
+  owners. `New(t,path)` registers owner cleanup; `NewWithDB` borrows the caller's
+  explicitly owned DB. There is no TenantStore.Close. Register worker cleanup
+  after owner cleanup so LIFO drains workers before closing the database.
 
 `internal/storage/ownership_test.go` is the production ownership policy, **not
 P3.7's method ratchet**. It scans Go source including build-tagged files, resolves
@@ -287,25 +291,28 @@ only exact server environment `BRAIN_ALLOW_REMOTE_BOOTSTRAP=true` bypassing the
 peer restriction. A configured password, active API credential, or unexpired
 OAuth/password access token closes bootstrap permanently. An atomic writer-first
 transaction permits only one bootstrap winner. Credential issuance and startup
-backfill persist `brain:system/install_claimed` in existing `entry_meta`; password
+backfill persist `brain:system/install_claimed` in existing `entry_meta` on v28
+(`operator_install_claim` on privately staged v29); password
 configuration is stamped before background workers start. Revocation, deletion,
 expiry, config removal, and restart cannot reopen it. The global install claim
 is excluded from tracked-entry stats and is **not a per-tenant registry/stamp**.
 No unrelated P1 filesystem/CORS/bind-auth changes were imported by this work.
 
-### Mandatory transition deadline
+### P4.10 final receiver boundary
 
-**P4.10 must remove the `TenantStore` embedding.** Until then `DB()`,
-`ValidateToken()`, `Close()`, `Control()`, `ForTenant()` and all other promoted
-`StorageLayer` methods ARE present, as is the exported embedded pointer. A caller
-can bypass/rebind a handle or close the shared pool. Zero/literal tenant handles
-are not a usable boundary. Binding an ID neither authorizes that tenant nor adds
-SQL predicates. **Multi mode remains disabled; no isolation claim is made.**
+TenantStore is now unembedded, with only a private SQL pool and tenant binding.
+`DB`, `ValidateToken`, `Close`, `Control`, `ForTenant`, `SingleModeTokens` and the
+exported embedded owner are absent, including promotion. Callers must name a
+tenant to obtain workload data through the production storage surface; this is
+not principal authorization or proof of predicates inside correctly typed methods.
+**Multi mode remains disabled.** Runtime stays local-only schema 28; public
+constructors still refuse privately staged 29.
 
-Future identity methods need explicit allowlist review, and system-wide
-maintenance needs its operator boundary. P4 receiver moves/predicate work and
-P4.10's removal must independently prove SQL isolation and absence of raw escape
-hatches. P3.5 alone is not permission to enable or deploy multi mode.
+See [P4.10 complete table/method inventory](p4-10-storage-surface.md) for all 89
+moved workload methods, existing content groups, private identity ownership, the
+exact four raw methods, separate seven package functions and verification limits.
+Predicate/raw-SQL/new-table audits remain P4.11/anti-rot; constructor/migration
+body review and the three audited lifetime seams are independent requirements.
 
 ## Notes/list/search receiver transition (P4.4)
 
@@ -333,12 +340,11 @@ and `recursive_triggers` variants; receiver tests exercise the finalized catalog
 Short-ID/path/title lookup remains fuzzy within the bound tenant, and title
 project preference remains a rank, not a project filter.
 
-**Final activation must remove the local-v28 query route and every
-`legacyLocalContent` bridge**, alongside the remaining receiver moves,
-un-embedding, identity/bootstrap/install-claim cutover and atomic v29 publication.
-Do not enable v29 in constructors to accommodate this plane, and do not preserve
-v28 routing as recovery for a failed v29 search. The embedding still exposes raw
-methods from unmoved planes; this is not public multi-tenant readiness.
+**Final activation must remove the local-v28 query route.** P4.10 has removed the
+legacy raw bridge and embedding, and moved identity/bootstrap/install-claim
+routing without public v29 publication. Do not enable v29 in constructors to
+accommodate this plane or preserve v28 routing as recovery for a failed v29 search.
+This is not public multi-tenant readiness.
 
 ## Unscoped storage debt ratchets (P3.7)
 
@@ -390,7 +396,8 @@ Renames/moves of inventoried functions/files require review, not automatic rebas
 close inventory; `Close` **definitions remain in the method golden**. The existing
 `ownership_test.go` continues auditing raw owners' lifecycle calls, holders,
 constructors, explicit embedded `StorageLayer` access and privileged seams. It is
-unchanged. Neither checker proves safety of a promoted `TenantStore.Close` call.
+unchanged for production seams. P4.10 separately proves TenantStore.Close absent
+using real-package go/types; its registry fixture exception is test-only.
 Scans exclude `_test.go`, testdata/fixture directories (`storagetest`), vendored
 dependencies, node_modules and git/worktree metadata; all other Go files are parsed
 even when build constraints disable them. Malformed production Go fails the scan.
@@ -398,7 +405,10 @@ even when build constraints disable them. Malformed production Go fails the scan
 There are **no SQL-predicate, raw-SQL, new-table, authorization or query-body
 guarantees**. Existing local-only query guards and disabled multi-mode startup must
 remain. P4's scoped SQL work needs its own tests; **P4.10 un-embedding supplies the
-compile-time barrier** that these syntax inventories cannot provide.
+type-surface barrier** that these syntax inventories cannot provide. A separate
+package-function allowlist prevents exporting removed workload methods as free
+functions; it is not folded into the independent call-site vocabulary. Both the
+package-function and original inventories retain trusted-base anti-growth checks.
 
 ### Historical anti-growth gate
 

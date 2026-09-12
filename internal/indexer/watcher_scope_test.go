@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -160,8 +161,8 @@ func TestFileWatcher_DanglingSiblingLateContentRoots(t *testing.T) {
 		t.Run(contentRoot, func(t *testing.T) {
 			ctx := context.Background()
 			root := t.TempDir()
-			store := newTestStorage(t)
-			roots, err := tenantfs.New(store, root)
+			store, db := newTestStorageWithDB(t)
+			roots, err := tenantfs.New(storagetest.RegistryWithDB(t, db), root)
 			if err != nil {
 				t.Fatal(err)
 			}

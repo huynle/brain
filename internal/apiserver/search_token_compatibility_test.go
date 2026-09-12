@@ -22,7 +22,7 @@ func TestPreChangeTokenResolvesLocalSearchAfterReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	old, err := storagetest.NewWithDB(db)
+	_, err = storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestPreChangeTokenResolvesLocalSearchAfterReopen(t *testing.T) {
 	if _, err := db.Exec("INSERT INTO notes(path,short_id,title) VALUES('projects/p/note/same.md','same0001','legacyneedle')"); err != nil {
 		t.Fatal(err)
 	}
-	if err := old.Close(); err != nil {
+	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 	v, err := openSingleModeStorage(context.Background(), tenant.ModeSingle, path, dir, false)

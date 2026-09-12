@@ -14,8 +14,8 @@ import (
 )
 
 // This is an ownership/call-site policy, not the P3.7 method ratchet and not
-// isolation. The raw DB accessor is removed, but other promoted methods remain
-// until P4.10 un-embeds StorageLayer.
+// isolation. The real-package go/types proof separately guards the absence of
+// promoted owner/control escapes on the now-unembedded TenantStore.
 func storageOwnershipPolicy(path string, source any) ([]string, error) {
 	if strings.HasSuffix(path, "_test.go") {
 		return nil, nil
@@ -141,6 +141,11 @@ func storageOwnershipPolicy(path string, source any) ([]string, error) {
 		}
 		if s.Sel.Name == "TenantRegistry" || s.Sel.Name == "TokenAdmin" || s.Sel.Name == "SingleModeTokens" {
 			deny = !storageImpl && (!owner || path == "internal/doctor/checks.go")
+			// Fixture-only registry replaces removed raw/promoted root methods.
+			// Production imports of this exact helper package remain forbidden.
+			if fixture && function(s) == "Registry" && s.Sel.Name == "TenantRegistry" {
+				deny = false
+			}
 		}
 		if deny {
 			violations = append(violations, fmt.Sprintf("%s:%d: %s requires an audited ownership seam", path, fset.Position(s.Pos()).Line, s.Sel.Name))
@@ -172,6 +177,9 @@ func TestStorageOwnershipPolicyChecker(t *testing.T) {
 		{"handler offline bypass", "internal/api/extra.go", `package api; import "github.com/huynle/brain-api/internal/tokens"; var grant = tokens.CreateTokenDirect`, true},
 		{"no directory exemption", "internal/apiserver/new.go", `package apiserver; import s "github.com/huynle/brain-api/internal/storage"; var open = s.New`, true},
 		{"tenant", "internal/service/new.go", `package service; import s "github.com/huynle/brain-api/internal/storage"; type X struct { store *s.TenantStore }`, false},
+		{"fixture registry", "internal/storage/storagetest/store.go", `package storagetest; func Registry() { c.TenantRegistry(cap) }`, false},
+		{"fixture not broad privilege", "internal/storage/storagetest/store.go", `package storagetest; func Registry() { c.TokenAdmin(cap) }`, true},
+		{"fixture import forbidden", "internal/service/new.go", `package service; import "github.com/huynle/brain-api/internal/storage/storagetest"; var f = storagetest.Registry`, true},
 		{"tests", "internal/api/new_test.go", `package api; import s "github.com/huynle/brain-api/internal/storage"; var open = s.New`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -8,11 +8,10 @@ import (
 )
 
 func TestScheduleSourceRetainsTenantView(t *testing.T) {
-	view, err := storagetest.New(t.TempDir() + "/brain.db")
+	view, err := storagetest.New(t, t.TempDir() + "/brain.db")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer view.Close()
 	s := NewStorageScheduleSource(view)
 	if s.store != view || s.store.TenantID() != tenant.Local {
 		t.Fatal("schedule source lost tenant view")

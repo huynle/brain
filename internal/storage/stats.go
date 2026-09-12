@@ -9,7 +9,11 @@ import (
 
 // GetStats returns aggregate storage statistics.
 // Supports optional path prefix filters via StatsOptions.
-func (s *StorageLayer) GetStats(ctx context.Context, opts *StatsOptions) (*Stats, error) {
+func (s *TenantStore) GetStats(ctx context.Context, opts *StatsOptions) (*Stats, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	// One predicate reused by all five queries below. It is rendered against
 	// a bare `path` and against the aliased `n.path` of the stale join, so
 	// build it twice from the same prefix set rather than string-patching.
@@ -17,15 +21,17 @@ func (s *StorageLayer) GetStats(ctx context.Context, opts *StatsOptions) (*Stats
 	pathPred, pathParam := pathPrefixClause("path", prefixes)
 	stalePred, _ := pathPrefixClause("n.path", prefixes)
 
-	pathFilter := ""
+	pathFilter, noteParams := scope.where("1=1")
 	if pathPred != "" {
-		pathFilter = " WHERE " + pathPred
+		pathFilter += " AND " + pathPred
 	}
+	pathFilter = " WHERE " + pathFilter
+	noteParams = append(noteParams, pathParam...)
 
 	// 1. Total notes count.
 	var totalNotes int
-	err := s.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM notes"+pathFilter, pathParam...,
+	err = s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM notes"+pathFilter, noteParams...,
 	).Scan(&totalNotes)
 	if err != nil {
 		return nil, fmt.Errorf("get stats total: %w", err)
@@ -34,7 +40,7 @@ func (s *StorageLayer) GetStats(ctx context.Context, opts *StatsOptions) (*Stats
 	// 2. Count by type (GROUP BY type).
 	byType := make(map[string]int)
 	typeRows, err := s.db.QueryContext(ctx,
-		"SELECT type, COUNT(*) FROM notes"+pathFilter+" GROUP BY type", pathParam...,
+		"SELECT type, COUNT(*) FROM notes"+pathFilter+" GROUP BY type", noteParams...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get stats by type: %w", err)
@@ -58,21 +64,24 @@ func (s *StorageLayer) GetStats(ctx context.Context, opts *StatsOptions) (*Stats
 	}
 
 	// 3. Orphan count (notes with no incoming links).
-	// Shares orphanPredicate with GetOrphans — the two used to carry separate
-	// copies of this condition and drifted apart.
-	orphanQuery := `SELECT COUNT(*) FROM notes WHERE ` + orphanPredicate
+	// Use the same tenant-filtered graph inputs as GetOrphans.
+	prefix, orphanParams := graphContentScope(scope)
+	orphanQuery := prefix + `SELECT COUNT(*) FROM graph_notes WHERE
+		id NOT IN (SELECT target_id FROM graph_links WHERE target_id IS NOT NULL)
+		AND path NOT IN (SELECT target_path FROM graph_links)`
 	if pathPred != "" {
 		orphanQuery += " AND " + pathPred
 	}
 	var orphanCount int
-	err = s.db.QueryRowContext(ctx, orphanQuery, pathParam...).Scan(&orphanCount)
+	err = s.db.QueryRowContext(ctx, orphanQuery, append(orphanParams, pathParam...)...).Scan(&orphanCount)
 	if err != nil {
 		return nil, fmt.Errorf("get stats orphans: %w", err)
 	}
 
 	// 4. Tracked count (entries in entry_meta).
-	trackedQuery := "SELECT COUNT(*) FROM entry_meta WHERE path != ?"
-	trackedParams := append([]interface{}{installClaimedPath}, pathParam...)
+	trackedPred, trackedParams := scope.where("path != ?", installClaimedPath)
+	trackedQuery := "SELECT COUNT(*) FROM entry_meta WHERE " + trackedPred
+	trackedParams = append(trackedParams, pathParam...)
 	if pathPred != "" {
 		trackedQuery += " AND " + pathPred
 	}
@@ -83,14 +92,23 @@ func (s *StorageLayer) GetStats(ctx context.Context, opts *StatsOptions) (*Stats
 	}
 
 	// 5. Stale count (never verified or verified > 30 days ago).
+	join := "n.path = em.path"
+	if scope.owner != "" {
+		join += " AND n.tenant_id = em.tenant_id"
+	}
 	staleQuery := `SELECT COUNT(*) FROM notes n
-		LEFT JOIN entry_meta em ON n.path = em.path
+		LEFT JOIN entry_meta em ON ` + join + `
 		WHERE (em.last_verified IS NULL OR em.last_verified < datetime('now', '-30 days'))`
+	staleParams := []interface{}{}
+	if scope.owner != "" {
+		staleQuery += " AND n.tenant_id = ?"
+		staleParams = append(staleParams, scope.owner)
+	}
 	if stalePred != "" {
 		staleQuery += " AND " + stalePred
 	}
 	var staleCount int
-	err = s.db.QueryRowContext(ctx, staleQuery, pathParam...).Scan(&staleCount)
+	err = s.db.QueryRowContext(ctx, staleQuery, append(staleParams, pathParam...)...).Scan(&staleCount)
 	if err != nil {
 		return nil, fmt.Errorf("get stats stale: %w", err)
 	}

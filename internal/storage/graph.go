@@ -103,20 +103,6 @@ func (s *TenantStore) GetRelated(ctx context.Context, path string, limit int) ([
 	return notes, nil
 }
 
-// orphanPredicate is the legacy stats condition for "no incoming links": a
-// note is linked-to if some link resolves to its id OR names its path unresolved.
-// GetOrphans uses the same two arms over tenant-filtered graph inputs instead.
-//
-// Those two queries used to disagree — orphans consulted only target_id — so an
-// entry with an unresolved but path-matching inbound link was reported as an
-// orphan and simultaneously returned a backlink. Both halves are expressed as
-// NOT IN against an indexed column so the check stays cheap on a large brain.
-// links.target_path is NOT NULL, so neither subquery can poison the NOT IN.
-//
-// It applies to `notes` unaliased. Keep stats compatible until its receiver moves.
-const orphanPredicate = `id NOT IN (SELECT target_id FROM links WHERE target_id IS NOT NULL)
-	AND path NOT IN (SELECT target_path FROM links)`
-
 // GetOrphans finds notes with no incoming links — neither a resolved link
 // pointing at the note's id nor an unresolved one naming its path.
 // Supports optional type filter and limit. Returns a non-nil empty slice if none found.
@@ -163,7 +149,6 @@ func (s *TenantStore) GetOrphans(ctx context.Context, opts *OrphanOptions) ([]*N
 
 // Filter the entire graph before evaluating nested lookups or OR arms. Both
 // child ownership and endpoint ownership are required even for damaged rows.
-// The legacy orphanPredicate above remains solely for the unmigrated stats plane.
 func (s *TenantStore) graphScope(ctx context.Context) (string, []interface{}, error) {
 	scope, err := s.contentScope(ctx)
 	if err != nil {

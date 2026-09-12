@@ -10,28 +10,28 @@ import (
 // consent, PKCE and refresh-token possession checks. None enumerates identities
 // or grants general token administration / deployment-operator authority.
 func (c *ControlStore) CreateOAuthClient(ctx context.Context, client *OAuthClient) error {
-	return c.backing.CreateOAuthClient(ctx, client)
+	return (identityStore{db: c.backing.db}).createOAuthClient(ctx, client)
 }
 func (c *ControlStore) GetOAuthClient(ctx context.Context, id string) (*OAuthClient, error) {
-	return c.backing.GetOAuthClient(ctx, id)
+	return (identityStore{db: c.backing.db}).getOAuthClient(ctx, id)
 }
 func (c *ControlStore) CreateAuthCode(ctx context.Context, code *OAuthAuthCode) error {
-	return c.backing.CreateAuthCode(ctx, code)
+	return (identityStore{db: c.backing.db}).createAuthCode(ctx, code)
 }
 func (c *ControlStore) ConsumeAuthCode(ctx context.Context, code string) (*OAuthAuthCode, error) {
-	return c.backing.ConsumeAuthCode(ctx, code)
+	return (identityStore{db: c.backing.db}).consumeAuthCode(ctx, code)
 }
 func (c *ControlStore) CreateAccessToken(ctx context.Context, token *OAuthAccessToken) error {
-	return c.backing.CreateAccessToken(ctx, token)
+	return (identityStore{db: c.backing.db}).createAccessToken(ctx, token)
 }
 func (c *ControlStore) SaveAccessToken(ctx context.Context, token, clientID, scope string, expiresAt int64) error {
-	return c.backing.SaveAccessToken(ctx, token, clientID, scope, expiresAt)
+	return (identityStore{db: c.backing.db}).saveAccessToken(ctx, token, clientID, scope, expiresAt)
 }
 func (c *ControlStore) CreateRefreshToken(ctx context.Context, token *OAuthRefreshToken) error {
-	return c.backing.CreateRefreshToken(ctx, token)
+	return (identityStore{db: c.backing.db}).createRefreshToken(ctx, token)
 }
 func (c *ControlStore) ConsumeRefreshToken(ctx context.Context, token string) (*OAuthRefreshToken, error) {
-	return c.backing.ConsumeRefreshToken(ctx, token)
+	return (identityStore{db: c.backing.db}).consumeRefreshToken(ctx, token)
 }
 
 // MarkInstallClaimed is system-wide initialization, not a request operation.
@@ -39,5 +39,5 @@ func (c *ControlStore) MarkInstallClaimed(ctx context.Context, cap auth.Deployme
 	if !cap.Valid() {
 		return auth.ErrOperatorRequired
 	}
-	return c.backing.MarkInstallClaimed(ctx)
+	return (identityStore{db: c.backing.db}).markInstallClaimed(ctx)
 }

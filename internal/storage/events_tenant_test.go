@@ -101,7 +101,7 @@ func TestTenantEventsGuards(t *testing.T) {
 			if err := op(foreign, context.Background()); err == nil {
 				t.Fatal("v28 foreign accepted")
 			}
-			for _, invalid := range []*TenantStore{nil, {}, {StorageLayer: owner}} {
+			for _, invalid := range []*TenantStore{nil, {}, {db: owner.db}} {
 				if err := op(invalid, context.Background()); err == nil {
 					t.Fatal("invalid handle accepted")
 				}

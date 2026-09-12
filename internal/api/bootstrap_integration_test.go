@@ -75,14 +75,14 @@ func TestBootstrapHTTP_InstallAndPeerPolicy(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "revoked", "deleted":
-				if err := s.CreateToken(ctx, "old", "old-secret", "admin:*"); err != nil {
+				if err := singleModeTokens(t, s).CreateToken(ctx, "old", "old-secret", "admin:*"); err != nil {
 					t.Fatal(err)
 				}
 				if tc.credential == "revoked" {
-					if err := s.RevokeToken(ctx, "old"); err != nil {
+					if err := singleModeTokens(t, s).RevokeToken(ctx, "old"); err != nil {
 						t.Fatal(err)
 					}
-				} else if err := s.DeleteTokenPermanent(ctx, "old"); err != nil {
+				} else if _, err := db.ExecContext(ctx, "DELETE FROM api_tokens WHERE name='old'"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -97,7 +97,7 @@ func TestBootstrapHTTP_InstallAndPeerPolicy(t *testing.T) {
 			if w.Code != tc.want {
 				t.Fatalf("status = %d, want %d: %s", w.Code, tc.want, w.Body.String())
 			}
-			got, err := s.GetTokenByName(ctx, "first")
+			got, err := singleModeTokens(t, s).GetTokenByName(ctx, "first")
 			if tc.want == 201 {
 				var body createTokenResponse
 				if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
@@ -167,7 +167,7 @@ func TestBootstrapHTTP_ConcurrentSingleWinner(t *testing.T) {
 	if counts[201] != 1 || counts[403] != requests-1 {
 		t.Fatalf("HTTP statuses = %v, want one 201 and %d 403", counts, requests-1)
 	}
-	tokens, err := s.ListTokens(context.Background(), true)
+	tokens, err := singleModeTokens(t, s).ListTokens(context.Background(), true)
 	if err != nil || len(tokens) != 1 {
 		t.Fatalf("stored tokens = %d, err = %v", len(tokens), err)
 	}

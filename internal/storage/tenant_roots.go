@@ -42,14 +42,14 @@ func listTenantRoots(ctx context.Context, q rootQuerier) ([]tenantfs.Mapping, er
 
 // ListTenantRoots returns a complete authoritative snapshot, never content-index
 // derived data. Reindexing must not delete this operator-owned configuration.
-func (s *StorageLayer) ListTenantRoots(ctx context.Context) ([]tenantfs.Mapping, error) {
+func (s identityStore) listTenantRoots(ctx context.Context) ([]tenantfs.Mapping, error) {
 	return listTenantRoots(ctx, s.db)
 }
 
 // RegisterTenantRoots serializes check-and-insert across shared SQLite connections
 // and processes. No replacement/delete API: changing ownership needs a separate
 // fenced lifecycle migration. The validator is mandatory trusted policy.
-func (s *StorageLayer) RegisterTenantRoots(ctx context.Context, m tenantfs.Mapping, validate func([]tenantfs.Mapping) error) error {
+func (s identityStore) registerTenantRoots(ctx context.Context, m tenantfs.Mapping, validate func([]tenantfs.Mapping) error) error {
 	if !m.ID.Valid() || validate == nil {
 		return fmt.Errorf("invalid tenant root registration")
 	}

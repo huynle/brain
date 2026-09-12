@@ -196,11 +196,10 @@ func newAttachmentServiceWithDBForTest(t *testing.T, maxSize int64) (*Attachment
 
 func newAttachmentServiceWithBrainForTest(t *testing.T, brain api.BrainService) (*AttachmentServiceImpl, *storage.TenantStore, *recordingBlobStore) {
 	t.Helper()
-	store, err := storagetest.New(t.TempDir() + "/brain.db")
+	store, err := storagetest.New(t, t.TempDir() + "/brain.db")
 	if err != nil {
 		t.Fatalf("storage.New failed: %v", err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
 	blobs := newRecordingBlobStore()
 	return NewAttachmentService(store, blobs, brain, 1024), store, blobs
 }
@@ -727,11 +726,10 @@ func TestAttachmentServiceCreateEnforcesMIMEPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store, err := storagetest.New(t.TempDir() + "/brain.db")
+			store, err := storagetest.New(t, t.TempDir() + "/brain.db")
 			if err != nil {
 				t.Fatalf("storage.New failed: %v", err)
 			}
-			t.Cleanup(func() { _ = store.Close() })
 			svc := NewAttachmentService(store, newRecordingBlobStore(), nil, 1024, WithAttachmentMIMEPolicy(tt.allowed, tt.blocked))
 
 			_, err = svc.Create(context.Background(), "proj", types.CreateAttachmentRequest{
@@ -840,11 +838,10 @@ func TestAttachmentServiceOpenTextPrefersReadyDerivedText(t *testing.T) {
 }
 
 func TestAttachmentServiceStoreDerivedTextInvokesChangeHookForLinkedEntriesAndSwallowsHookError(t *testing.T) {
-	store, err := storagetest.New(t.TempDir() + "/brain.db")
+	store, err := storagetest.New(t, t.TempDir() + "/brain.db")
 	if err != nil {
 		t.Fatalf("storage.New failed: %v", err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
 	blobs := newRecordingBlobStore()
 	hook := &recordingAttachmentDerivedChangeHook{err: errors.New("embedding refresh unavailable")}
 	svc := NewAttachmentService(store, blobs, nil, 1024, WithAttachmentDerivedChangeHook(hook))
@@ -879,11 +876,10 @@ func TestAttachmentServiceStoreDerivedTextInvokesChangeHookForLinkedEntriesAndSw
 }
 
 func TestAttachmentServiceExtractAttachmentTextInvokesChangeHookOnlyForTerminalDerivedText(t *testing.T) {
-	store, err := storagetest.New(t.TempDir() + "/brain.db")
+	store, err := storagetest.New(t, t.TempDir() + "/brain.db")
 	if err != nil {
 		t.Fatalf("storage.New failed: %v", err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
 	blobs := newRecordingBlobStore()
 	hook := &recordingAttachmentDerivedChangeHook{}
 	svc := NewAttachmentService(store, blobs, nil, 1024, WithAttachmentDerivedChangeHook(hook))
@@ -1123,12 +1119,12 @@ func TestAttachmentServiceCreateValidationAndCleanup(t *testing.T) {
 	})
 
 	t.Run("does not delete existing blob when metadata write fails", func(t *testing.T) {
-		svc, store, blobs := newAttachmentServiceForTest(t, 1024)
+		svc, _, blobs, db := newAttachmentServiceWithDBForTest(t, 1024)
 		created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{Filename: "note.txt", Size: 4}, strings.NewReader("data"))
 		if err != nil {
 			t.Fatalf("initial Create returned error: %v", err)
 		}
-		if err := store.Close(); err != nil {
+		if err := db.Close(); err != nil {
 			t.Fatalf("Close storage failed: %v", err)
 		}
 

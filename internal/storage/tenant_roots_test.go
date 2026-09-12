@@ -49,7 +49,7 @@ func TestTenantRootsMigrationFrom27(t *testing.T) {
 	}
 	ctx := context.Background()
 	base := filepath.Join(filepath.Dir(path), "brain")
-	r, err := tenantfs.New(s, base)
+	r, err := tenantfs.New(registryHandle(t, s), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestTenantRootsMigrationFrom27(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = s.Close() })
-		r, err = tenantfs.New(s, base)
+		r, err = tenantfs.New(registryHandle(t, s), base)
 		if err != nil {
 			t.Fatal(err)
 		}

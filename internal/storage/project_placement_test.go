@@ -7,7 +7,7 @@ import (
 )
 
 func TestProjectPlacement_DefaultAndPersistence(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	defaultPlacement, err := s.GetProjectPlacement(ctx, "brain")

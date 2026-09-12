@@ -115,7 +115,7 @@ func TestTenantSearchSchemaBeforeEmpty(t *testing.T) {
 	}
 	assertSearchDenied(foreign, context.Background())
 	assertSearchDenied(local, nil)
-	for _, s := range []*TenantStore{nil, {}, {tenantID: tenant.Local}, {StorageLayer: &StorageLayer{}, tenantID: tenant.Local}} {
+	for _, s := range []*TenantStore{nil, {}, {tenantID: tenant.Local}} {
 		assertSearchDenied(s, context.Background())
 	}
 	for _, version := range []int{0, 27, 29, 30} {

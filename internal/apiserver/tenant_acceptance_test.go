@@ -3,6 +3,7 @@ package apiserver
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/huynle/brain-api/internal/auth"
 	"github.com/huynle/brain-api/internal/blobstore"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/service"
@@ -45,7 +47,19 @@ func newGraphFixture(t testing.TB, n int) *graphFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	roots, err := tenantfs.New(owner, root) // real registry, test-only owner access
+	control, err := owner.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cap, err := auth.AuthenticateLocalDatabaseOwner(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := control.TenantRegistry(cap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots, err := tenantfs.New(registry, root) // real guarded registry
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +120,57 @@ func (f *graphFixture) graph(t testing.TB, id tenant.ID) *tenantGraph {
 
 const collisionPath = "projects/shared/note/same0001.md"
 const targetPath = "projects/shared/note/same0002.md"
+
+func TestTenantAcceptancePhaseOneTelemetry(t *testing.T) {
+	f := newGraphFixture(t, 2)
+	for _, id := range f.ids {
+		seedGraphContent(t, f, id)
+	}
+	if _, err := f.db.Exec(`INSERT INTO entry_meta(tenant_id,path,last_verified) VALUES(?,?,datetime('now'))`, f.ids[0].String(), collisionPath); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range f.ids {
+		g := f.graph(t, id)
+		h := tenantContentRoutes(g.handler)
+		for j := 0; j <= i; j++ {
+			w := graphRequest(h, id, "GET", "/api/v1/entries/same0001", "")
+			if w.Code != 200 {
+				t.Fatal(w.Body.String())
+			}
+		}
+		g.Close()
+		var count int
+		if err := f.db.QueryRow(`SELECT access_count FROM entry_meta WHERE tenant_id=? AND path=?`, id.String(), collisionPath).Scan(&count); err != nil || count != i+1 {
+			t.Fatalf("persisted recall %s: %d %v", id, count, err)
+		}
+		next := f.graph(t, id)
+		h = tenantContentRoutes(next.handler)
+		w := graphRequest(h, id, "GET", "/api/v1/stats?project=shared", "")
+		if w.Code != 200 {
+			t.Fatalf("stats %d %s", w.Code, w.Body.String())
+		}
+		var result map[string]interface{}
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		// Match the public payload, not internal storage structs.
+		data, _ := result["data"].(map[string]interface{})
+		if data == nil {
+			data = result
+		}
+		if data["totalEntries"] != float64(2) || data["staleCount"] != float64(i+1) || data["orphanCount"] != float64(1) || data["trackedEntries"] != float64(1) {
+			t.Fatalf("stats isolation: %s", w.Body.String())
+		}
+		w = graphRequest(h, id, "GET", "/api/v1/stale?project=shared&days=30", "")
+		if w.Code != 200 || strings.Contains(w.Body.String(), f.ids[1-i].String()+" secretmarker") {
+			t.Fatalf("stale isolation: %d %s", w.Code, w.Body.String())
+		}
+		if strings.Contains(w.Body.String(), collisionPath) != (i == 1) {
+			t.Fatalf("same-path verification leaked: %s", w.Body.String())
+		}
+		next.Close()
+	}
+}
 
 func writeGraphNote(t testing.TB, f *graphFixture, id tenant.ID, path, body string) {
 	t.Helper()

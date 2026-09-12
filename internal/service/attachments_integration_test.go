@@ -10,6 +10,7 @@ import (
 
 	"github.com/huynle/brain-api/internal/blobstore"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/tenant"
 	"github.com/huynle/brain-api/internal/tenantfs"
 	"github.com/huynle/brain-api/internal/types"
@@ -19,14 +20,18 @@ func TestAttachmentServiceCompatibilityRejectsBeforeBlobIO(t *testing.T) {
 	for _, mode := range []string{"nonlocal-v28", "zero-handle", "unsupported-schema", "closed-store"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
-			svc, store, blobs, db := newAttachmentServiceWithDBForTest(t, 1024)
+			svc, _, blobs, db := newAttachmentServiceWithDBForTest(t, 1024)
 			switch mode {
 			case "nonlocal-v28":
 				id, err := tenant.Parse("tenant-b")
 				if err != nil {
 					t.Fatal(err)
 				}
-				svc.storage, err = store.ForTenant(id)
+				owner, err := storage.NewWithDB(db)
+				if err != nil {
+					t.Fatal(err)
+				}
+				svc.storage, err = owner.ForTenant(id)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -37,7 +42,7 @@ func TestAttachmentServiceCompatibilityRejectsBeforeBlobIO(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "closed-store":
-				if err := store.Close(); err != nil {
+				if err := db.Close(); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -68,7 +73,7 @@ func TestAttachmentServiceCompatibilityRejectsBeforeBlobIO(t *testing.T) {
 func TestAttachmentServiceLocalCrossProjectLifecycle(t *testing.T) {
 	ctx := context.Background()
 	brain, store, root, db := newTestBrainServiceWithDB(t)
-	roots, err := tenantfs.New(store, root)
+	roots, err := tenantfs.New(storagetest.RegistryWithDB(t, db), root)
 	if err != nil {
 		t.Fatal(err)
 	}

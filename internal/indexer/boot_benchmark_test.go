@@ -74,7 +74,7 @@ func BenchmarkBootAttachmentTree(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			defer store.Close()
+			defer db.Close()
 			idx := NewIndexer(root, store)
 			if r, err := idx.IndexChanged(); err != nil || r.Added != notes || len(r.Errors) != 0 {
 				b.Fatalf("seed: %+v, %v", r, err)

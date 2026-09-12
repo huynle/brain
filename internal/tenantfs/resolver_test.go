@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/tenant"
 	"github.com/huynle/brain-api/internal/tenantfs"
 )
@@ -20,11 +21,7 @@ var b = tenant.MustParse("tenant-b")
 
 func repository(t *testing.T, s *storage.StorageLayer) tenantfs.Repository {
 	t.Helper()
-	repo, ok := any(s).(tenantfs.Repository)
-	if !ok {
-		t.Fatal("shared storage does not implement durable tenant root repository")
-	}
-	return repo
+	return storagetest.Registry(t, s)
 }
 func open(t *testing.T, db, base string) (*storage.StorageLayer, *tenantfs.Resolver) {
 	t.Helper()

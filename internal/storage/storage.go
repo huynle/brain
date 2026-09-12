@@ -176,7 +176,7 @@ func newFromDB(db *sql.DB) (*StorageLayer, error) {
 	}
 
 	s := &StorageLayer{db: db}
-	if err := s.backfillInstallClaim(context.Background()); err != nil {
+	if err := (identityStore{db: db}).backfillInstallClaim(context.Background()); err != nil {
 		return nil, err
 	}
 	return s, nil

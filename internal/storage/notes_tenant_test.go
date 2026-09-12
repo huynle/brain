@@ -323,22 +323,8 @@ func TestTenantNotesExecutionSchemaGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertNoteOperationsDenied(t, closed, ctx)
-	for _, s := range []*TenantStore{nil, {}, {tenantID: tenant.Local}, {StorageLayer: &StorageLayer{}, tenantID: tenant.Local}} {
+	for _, s := range []*TenantStore{nil, {}, {tenantID: tenant.Local}} {
 		assertNoteOperationsDenied(t, s, ctx)
-	}
-}
-
-func TestTenantNotesLegacyBridgesRefuseV29(t *testing.T) {
-	owner, _, _ := migratedNoteStores(t)
-	ctx := context.Background()
-	if h, err := legacyLocalContent(ctx, owner); err == nil || h != nil {
-		t.Fatal("v29 bridge bound local")
-	}
-	if _, err := legacyNoteByPath(ctx, owner, "missing"); err == nil {
-		t.Fatal("v29 path bridge accepted")
-	}
-	if err := owner.ActivateTask(ctx, "missing", nil); err == nil {
-		t.Fatal("v29 activation accepted")
 	}
 }
 

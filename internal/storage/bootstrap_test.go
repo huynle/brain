@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/huynle/brain-api/internal/tenant"
 	"path/filepath"
 	"testing"
 	"time"
@@ -60,8 +61,8 @@ func TestBootstrapToken_TwoHandles(t *testing.T) {
 	ctx := claimContext(t)
 	start := make(chan struct{})
 	results := make(chan error, 2)
-	for i, s := range []*StorageLayer{a, b} {
-		go func(i int, s *StorageLayer) {
+	for i, s := range []*TokenAdmin{adminHandle(t, a), adminHandle(t, b)} {
+		go func(i int, s *TokenAdmin) {
 			<-start
 			results <- s.BootstrapToken(ctx, fmt.Sprintf("admin-%d", i), fmt.Sprintf("secret-%d", i), false)
 		}(i, s)
@@ -79,7 +80,7 @@ func TestBootstrapToken_TwoHandles(t *testing.T) {
 	if wins != 1 {
 		t.Fatalf("bootstrap successes = %d, want exactly one", wins)
 	}
-	tokens, err := a.ListTokens(ctx)
+	tokens, err := adminHandle(t, a).ListTokens(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func TestBootstrapToken_TwoHandles(t *testing.T) {
 		t.Fatalf("tokens = %+v", tokens)
 	}
 	requireClaim(t, b, 1)
-	if err := a.DeleteTokenPermanent(ctx, tokens[0].Name); err != nil {
+	if err := adminHandle(t, a).DeleteTokenPermanent(ctx, tokens[0].Name); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.Close(); err != nil {
@@ -97,7 +98,7 @@ func TestBootstrapToken_TwoHandles(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := openClaimStore(t, path)
-	requireClosed(t, c.BootstrapToken(ctx, "again", "again", false))
+	requireClosed(t, adminHandle(t, c).BootstrapToken(ctx, "again", "again", false))
 }
 
 func TestBootstrapToken_LegacyCredentials(t *testing.T) {
@@ -117,7 +118,7 @@ func TestBootstrapToken_LegacyCredentials(t *testing.T) {
 				}
 				claimExec(t, s, "INSERT INTO oauth_access_tokens(token, client_id, expires_at, created_at) VALUES ('legacy', 'client', ?, 1)", expiry)
 			}
-			err := s.BootstrapToken(ctx, "admin", "secret", kind == "password")
+			err := adminHandle(t, s).BootstrapToken(ctx, "admin", "secret", kind == "password")
 			if kind == "expired-oauth" || kind == "revoked-api" {
 				if err != nil {
 					t.Fatal(err)
@@ -135,7 +136,7 @@ func TestBootstrapToken_LegacyCredentials(t *testing.T) {
 			requireClaim(t, s, 1)
 			claimExec(t, s, "DELETE FROM api_tokens")
 			claimExec(t, s, "DELETE FROM oauth_access_tokens")
-			requireClosed(t, s.BootstrapToken(ctx, "later", "later", false))
+			requireClosed(t, adminHandle(t, s).BootstrapToken(ctx, "later", "later", false))
 		})
 	}
 }
@@ -144,13 +145,13 @@ func TestBootstrapToken_InsertFailureRollsBack(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := claimContext(t)
 	claimExec(t, s, "INSERT INTO api_tokens(name, token, revoked_at) VALUES ('used', 'old', 'revoked')")
-	err := s.BootstrapToken(ctx, "used", "new", false)
+	err := adminHandle(t, s).BootstrapToken(ctx, "used", "new", false)
 	var closed *BootstrapClosedError
 	if err == nil || errors.As(err, &closed) {
 		t.Fatalf("want insertion error, got %v", err)
 	}
 	requireClaim(t, s, 0)
-	if err := s.BootstrapToken(ctx, "fresh", "fresh", false); err != nil {
+	if err := adminHandle(t, s).BootstrapToken(ctx, "fresh", "fresh", false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -161,7 +162,7 @@ func TestInstallClaim_CredentialWrites(t *testing.T) {
 			s := newTestStorage(t)
 			ctx := claimContext(t)
 			if kind == "api-revoke" || kind == "api-delete" {
-				if err := s.CreateToken(ctx, "existing", "secret", "read:*"); err != nil {
+				if err := adminHandle(t, s).CreateToken(ctx, "existing", "secret", "read:*"); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -169,13 +170,13 @@ func TestInstallClaim_CredentialWrites(t *testing.T) {
 				if kind == "expired-oauth" {
 					expiry = time.Now().Unix() - 1
 				}
-				if err := s.CreateAccessToken(ctx, &OAuthAccessToken{Token: "secret", ClientID: "client", ExpiresAt: expiry}); err != nil {
+				if err := controlHandle(t, s).CreateAccessToken(ctx, &OAuthAccessToken{Token: "secret", ClientID: "client", ExpiresAt: expiry}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if kind == "expired-oauth" {
 				requireClaim(t, s, 0)
-				if err := s.BootstrapToken(ctx, "admin", "admin", false); err != nil {
+				if err := adminHandle(t, s).BootstrapToken(ctx, "admin", "admin", false); err != nil {
 					t.Fatal(err)
 				}
 				return
@@ -184,21 +185,21 @@ func TestInstallClaim_CredentialWrites(t *testing.T) {
 			var err error
 			switch kind {
 			case "api-revoke":
-				err = s.RevokeToken(ctx, "existing")
+				err = adminHandle(t, s).RevokeToken(ctx, "existing")
 			case "api-delete":
-				err = s.DeleteTokenPermanent(ctx, "existing")
+				err = adminHandle(t, s).DeleteTokenPermanent(ctx, "existing")
 			case "oauth-revoke":
-				err = s.RevokeAccessToken(ctx, "secret")
+				err = (identityStore{db: s.db}).revokeAccessToken(ctx, "secret")
 			case "oauth-client-revoke":
-				err = s.RevokeAccessTokensByClient(ctx, "client")
+				err = (identityStore{db: s.db}).revokeAccessTokensByClient(ctx, "client")
 			case "oauth-expiry":
 				claimExec(t, s, "UPDATE oauth_access_tokens SET expires_at = 1")
-				err = s.CleanupExpiredAccessTokens(ctx)
+				err = (identityStore{db: s.db}).cleanupExpiredAccessTokens(ctx)
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			requireClosed(t, s.BootstrapToken(ctx, "admin", "admin", false))
+			requireClosed(t, adminHandle(t, s).BootstrapToken(ctx, "admin", "admin", false))
 		})
 	}
 }
@@ -235,7 +236,7 @@ func TestInstallClaim_StartupBackfill(t *testing.T) {
 				t.Fatal(err)
 			}
 			s = openClaimStore(t, path)
-			err := s.BootstrapToken(claimContext(t), "admin", "admin", false)
+			err := adminHandle(t, s).BootstrapToken(claimContext(t), "admin", "admin", false)
 			if want == 1 {
 				requireClosed(t, err)
 			} else if err != nil {
@@ -248,20 +249,24 @@ func TestInstallClaim_StartupBackfill(t *testing.T) {
 func TestInstallClaim_MarkPresenceAndStats(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := claimContext(t)
-	if err := s.MarkInstallClaimed(ctx); err != nil {
+	if err := controlHandle(t, s).MarkInstallClaimed(ctx, operatorCapability(t)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MarkInstallClaimed(ctx); err != nil {
+	if err := controlHandle(t, s).MarkInstallClaimed(ctx, operatorCapability(t)); err != nil {
 		t.Fatal(err)
 	}
 	requireClaim(t, s, 1)
 	claimExec(t, s, "UPDATE entry_meta SET access_count = 0, last_accessed = NULL, last_verified = NULL WHERE path = ?", claimPath)
-	requireClosed(t, s.BootstrapToken(ctx, "admin", "secret", false))
-	if err := s.RecordAccess(ctx, "projects/test/note/example.md"); err != nil {
+	requireClosed(t, adminHandle(t, s).BootstrapToken(ctx, "admin", "secret", false))
+	content, err := s.ForTenant(tenant.Local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := content.RecordAccess(ctx, "projects/test/note/example.md"); err != nil {
 		t.Fatal(err)
 	}
 	for _, opts := range []*StatsOptions{nil, {Path: "projects/test/"}, {Paths: []string{"projects/test/", "brain:"}}} {
-		stats, err := s.GetStats(ctx, opts)
+		stats, err := content.GetStats(ctx, opts)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -280,10 +285,10 @@ func TestInstallClaim_CredentialWriteAtomicity(t *testing.T) {
 			var err error
 			table := "api_tokens"
 			if kind == "api" {
-				err = s.CreateToken(ctx, "admin", "secret", "")
+				err = adminHandle(t, s).CreateToken(ctx, "admin", "secret", "")
 			} else {
 				table = "oauth_access_tokens"
-				err = s.CreateAccessToken(ctx, &OAuthAccessToken{Token: "secret", ClientID: "client"})
+				err = controlHandle(t, s).CreateAccessToken(ctx, &OAuthAccessToken{Token: "secret", ClientID: "client"})
 			}
 			if err == nil {
 				t.Fatal("credential write succeeded despite marker failure")
@@ -325,10 +330,12 @@ func TestInstallClaim_CredentialInsertFailureRollsBack(t *testing.T) {
 			s := newTestStorage(t)
 			ctx := claimContext(t)
 			table := "api_tokens"
-			create := func() error { return s.CreateToken(ctx, "admin", "secret", "") }
+			create := func() error { return adminHandle(t, s).CreateToken(ctx, "admin", "secret", "") }
 			if kind == "oauth" {
 				table = "oauth_access_tokens"
-				create = func() error { return s.CreateAccessToken(ctx, &OAuthAccessToken{Token: "secret", ClientID: "client"}) }
+				create = func() error {
+					return controlHandle(t, s).CreateAccessToken(ctx, &OAuthAccessToken{Token: "secret", ClientID: "client"})
+				}
 			}
 			claimExec(t, s, "CREATE TRIGGER reject_credential BEFORE INSERT ON "+table+" BEGIN SELECT RAISE(ABORT, 'reject credential'); END")
 			if err := create(); err == nil {
@@ -336,7 +343,7 @@ func TestInstallClaim_CredentialInsertFailureRollsBack(t *testing.T) {
 			}
 			requireClaim(t, s, 0)
 			claimExec(t, s, "DROP TRIGGER reject_credential")
-			if err := s.BootstrapToken(ctx, "fresh", "fresh", false); err != nil {
+			if err := adminHandle(t, s).BootstrapToken(ctx, "fresh", "fresh", false); err != nil {
 				t.Fatal(err)
 			}
 		})

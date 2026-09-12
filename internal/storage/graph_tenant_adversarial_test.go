@@ -304,7 +304,7 @@ func TestTenantGraphExecutionGuards(t *testing.T) {
 		}
 	}
 	ctx := context.Background()
-	for i, s := range []*TenantStore{nil, {}, {tenantID: tenant.Local}, {StorageLayer: &StorageLayer{}, tenantID: tenant.Local}} {
+	for i, s := range []*TenantStore{nil, {}, {tenantID: tenant.Local}} {
 		t.Run(fmt.Sprintf("invalid handle %d", i), func(t *testing.T) { deny(t, s, ctx, false) })
 	}
 	owner := newTestStorage(t)

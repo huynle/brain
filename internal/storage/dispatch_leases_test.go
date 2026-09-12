@@ -6,7 +6,7 @@ import (
 )
 
 func TestDispatchLeaseSchema_FreshDB(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	var name string
 	if err := s.db.QueryRow(
@@ -43,7 +43,7 @@ func TestDispatchLeaseSchema_FreshDB(t *testing.T) {
 }
 
 func TestDispatchLeaseOperations_AreAtomicAndPersistState(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	lease, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{
@@ -139,7 +139,7 @@ func TestDispatchLeaseOperations_AreAtomicAndPersistState(t *testing.T) {
 }
 
 func TestDispatchLeaseRejectAndExpire(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	lease, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "task-2", AssignedRunnerID: "runner-1", AssignedMachineID: "machine-1", PushedAt: 1000, ExpiresAt: 1500})
@@ -196,7 +196,7 @@ func TestDispatchLeaseRejectAndExpire(t *testing.T) {
 // the lease TTL. Liveness is owned by claim renewal, and re-dispatch after
 // a crash still works via CreateDispatchLease's expires_at<now overwrite.
 func TestExpireDispatchLeases_LeavesAckedLeases(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	lease, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "long-task", AssignedRunnerID: "runner-1", AssignedMachineID: "machine-1", PushedAt: 1000, ExpiresAt: 1500})
@@ -238,7 +238,7 @@ func TestExpireDispatchLeases_LeavesAckedLeases(t *testing.T) {
 }
 
 func TestDispatchLeaseExpiredCommandsAreIgnoredAndRedispatchable(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	lease, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{
@@ -302,7 +302,7 @@ func TestDispatchLeaseExpiredCommandsAreIgnoredAndRedispatchable(t *testing.T) {
 }
 
 func TestDispatchLeaseAckRejectRequireMatchingLeaseID(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	lease, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "lease-bound-task", AssignedRunnerID: "runner-1", AssignedMachineID: "machine-1", PushedAt: 1000, ExpiresAt: 2000})
 	if err != nil || !created {
@@ -335,7 +335,7 @@ func TestDispatchLeaseAckRejectRequireMatchingLeaseID(t *testing.T) {
 }
 
 func TestDispatchLeaseRedispatchUsesDifferentLeaseID(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	first, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "redispatch-task", AssignedRunnerID: "runner-old", AssignedMachineID: "machine-old", PushedAt: 1000, ExpiresAt: 1500})
 	if err != nil || !created {
@@ -381,7 +381,7 @@ func TestDispatchLeaseRedispatchUsesDifferentLeaseID(t *testing.T) {
 }
 
 func TestPlacementReasons_AreQueryableSeparatelyFromTaskContent(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	if err := s.RecordPlacementReason(ctx, &PlacementReasonRow{
@@ -467,7 +467,7 @@ func TestDispatchLeaseAndPlacementReason_MigrationFromV18(t *testing.T) {
 }
 
 func TestListExpiredDispatchLeasesForReconciliation(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	cases := []DispatchLeaseCreate{
@@ -494,7 +494,7 @@ func TestListExpiredDispatchLeasesForReconciliation(t *testing.T) {
 }
 
 func TestClearDispatchLease_RemovesRegardlessOfRunner(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Create a lease against runner-old, then clear it without specifying runner.
@@ -527,7 +527,7 @@ func TestClearDispatchLease_RemovesRegardlessOfRunner(t *testing.T) {
 }
 
 func TestClearDispatchLease_MissingRowIsNoop(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	cleared, err := s.ClearDispatchLease(ctx, "brain-api", "never-existed")
@@ -540,7 +540,7 @@ func TestClearDispatchLease_MissingRowIsNoop(t *testing.T) {
 }
 
 func TestClearDispatchLease_DoesNotTouchOtherTasks(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	if _, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{

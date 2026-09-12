@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"os"
 	"path/filepath"
 	"sync"
@@ -46,8 +47,8 @@ func awaitWatchSignal(t *testing.T, ch <-chan struct{}) {
 
 func TestFileWatcher_RootCreatedDuringInitialScan(t *testing.T) {
 	root := t.TempDir()
-	store := newTestStorage(t)
-	repo := &blockedWatchRoots{Repository: store, entered: make(chan struct{}), release: make(chan struct{})}
+	store, db := newTestStorageWithDB(t)
+	repo := &blockedWatchRoots{Repository: storagetest.RegistryWithDB(t, db), entered: make(chan struct{}), release: make(chan struct{})}
 	roots, err := tenantfs.New(repo, root)
 	if err != nil {
 		t.Fatal(err)
@@ -101,8 +102,8 @@ func TestFileWatcher_StopDrainsWorkBeforeRestart(t *testing.T) {
 	for _, work := range []string{"rescan", "debounce flush"} {
 		t.Run(work, func(t *testing.T) {
 			root := t.TempDir()
-			store := newTestStorage(t)
-			repo := &blockedWatchRoots{Repository: store, entered: make(chan struct{}), release: make(chan struct{})}
+			store, db := newTestStorageWithDB(t)
+			repo := &blockedWatchRoots{Repository: storagetest.RegistryWithDB(t, db), entered: make(chan struct{}), release: make(chan struct{})}
 			roots, err := tenantfs.New(repo, root)
 			if err != nil {
 				t.Fatal(err)
@@ -217,8 +218,8 @@ func TestFileWatcher_StopDrainsWorkBeforeRestart(t *testing.T) {
 
 func TestFileWatcher_RootRecoveryAdmissionFailureStopsWatch(t *testing.T) {
 	root := t.TempDir()
-	store := newTestStorage(t)
-	roots, err := tenantfs.New(store, root)
+	store, db := newTestStorageWithDB(t)
+	roots, err := tenantfs.New(storagetest.RegistryWithDB(t, db), root)
 	if err != nil {
 		t.Fatal(err)
 	}

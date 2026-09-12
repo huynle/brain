@@ -1,21 +1,18 @@
 package storage
 
 import (
+	"database/sql"
 	"errors"
 
 	"github.com/huynle/brain-api/internal/tenant"
 )
 
-// TenantStore names a tenant; it does not authorize access. Notes/list/search,
-// graph/links/tags, index maintenance, embeddings/events and attachment
-// metadata/references/derivations enforce execution-time schema routing and v29
-// tenant predicates. Other planes remain
-// unmigrated; SQL attachment ownership does not bind or authorize a physical CAS.
-// TEMPORARY until P4.10: embedding promotes ALL StorageLayer methods, including
-// Close, ValidateToken and unscoped queries. The raw DB accessor is removed;
-// multi mode must remain disabled until the remaining receiver moves/un-embedding.
+// TenantStore names a tenant; it does not authorize access. It borrows the shared
+// pool without exposing owner lifecycle, rebinding or identity operations.
+// Workload methods validate execution-time schema routing: local-only v28 or
+// tenant predicates on privately staged v29. Runtime multi mode remains disabled.
 type TenantStore struct {
-	*StorageLayer
+	db       *sql.DB
 	tenantID tenant.ID
 }
 
@@ -28,7 +25,7 @@ func (s *StorageLayer) ForTenant(id tenant.ID) (*TenantStore, error) {
 	if s == nil {
 		return nil, errors.New("nil storage layer")
 	}
-	return &TenantStore{StorageLayer: s, tenantID: id}, nil
+	return &TenantStore{db: s.db, tenantID: id}, nil
 }
 
 // TenantID returns the immutable binding, not an authorization grant.

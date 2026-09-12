@@ -28,9 +28,9 @@ func TestStorageViewsShareDatabaseAndBoundLocalIdentity(t *testing.T) {
 	if _, err := v.roots.ProvisionLocal(ctx, dir, filepath.Join(dir, "attachments")); err != nil {
 		t.Fatal(err)
 	}
-	roots, err := v.tenant.ListTenantRoots(ctx)
-	if err != nil || len(roots) != 1 || roots[0].ID != tenant.Local {
-		t.Fatalf("registry and workload do not share database: roots=%v err=%v", roots, err)
+	root, err := v.roots.Lookup(ctx, tenant.Local)
+	if err != nil || root.ID != tenant.Local {
+		t.Fatalf("registered local mapping unavailable: root=%v err=%v", root, err)
 	}
 	if err := v.tokens.BootstrapToken(ctx, "first", "first-secret", false); err != nil {
 		t.Fatal(err)

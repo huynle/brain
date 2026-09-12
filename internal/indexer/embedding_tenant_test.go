@@ -10,8 +10,12 @@ import (
 )
 
 func TestEmbeddingIndexerRejectsNonlocalLegacy(t *testing.T) {
-	store := newTestStorage(t)
-	foreign, err := store.ForTenant(tenant.MustParse("acme"))
+	_, db := newTestStorageWithDB(t)
+	owner, err := storage.NewWithDB(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := owner.ForTenant(tenant.MustParse("acme"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,6 +40,10 @@ func TestEmbeddingIndexerRejectsNonlocalLegacy(t *testing.T) {
 // taught to activate v29. Keep these records deliberately similar across owners.
 func TestEmbeddingIndexerTenantIsolation(t *testing.T) {
 	store, db := newTestStorageWithDB(t)
+	owner, err := storage.NewWithDB(db)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	ids := []int64{}
 	for i, path := range []string{"global/a.md", "global/b.md"} {
@@ -73,7 +81,7 @@ func TestEmbeddingIndexerTenantIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	b, err := store.ForTenant(tenant.MustParse("acme"))
+	b, err := owner.ForTenant(tenant.MustParse("acme"))
 	if err != nil {
 		t.Fatal(err)
 	}

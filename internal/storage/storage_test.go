@@ -720,7 +720,7 @@ func TestFeatureCascadeRootsTable_FreshDB(t *testing.T) {
 }
 
 func TestFeatureCascadeRoots_RoundTrip(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	if err := s.UpsertFeatureCascadeRoot(ctx, "proj", "root-a", true); err != nil {
@@ -757,7 +757,7 @@ func TestFeatureCascadeRoots_RoundTrip(t *testing.T) {
 }
 
 func TestBrainClientTables_FreshDB(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	for _, table := range []string{"brain_clients", "brain_client_workspaces"} {
 		var name string
@@ -1335,7 +1335,7 @@ func TestFeaturePauseStateTable_FreshDB(t *testing.T) {
 }
 
 func TestFeaturePauseState_RoundTrip(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	if paused, err := s.IsFeaturePaused(ctx, "proj", "feat"); err != nil || paused {
@@ -1373,7 +1373,7 @@ func TestFeaturePauseState_RoundTrip(t *testing.T) {
 // either match nothing or, read loosely, be taken for "every task with no
 // feature".
 func TestFeaturePauseState_RefusesEmptyIDs(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	if err := s.SetFeaturePaused(ctx, "", "feat", true); err == nil {
 		t.Error("empty project id was accepted")

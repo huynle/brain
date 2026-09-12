@@ -7,6 +7,10 @@ compatibility guard and dormant relational component. The SQLite inventory and
 integration delta below supersede the old v27 baseline; route/cache/loop sections
 remain the P0 classification checklist, not a fresh exhaustive route audit.
 This is a manual source inventory, not implemented tenancy or passing isolation evidence.
+P4.10 phase-8 receiver/lifetime update: see the
+[complete current method and table inventory](p4-10-storage-surface.md), which
+supersedes the historical promoted-method and install-claim routing notes below.
+The route/cache/loop classification remains a future audit checklist.
 See [security contracts](multi-tenant-security-contracts.md) for approved decisions
 D01-D13 and required verification V01-V16, still NOT RUN by P0.
 
@@ -201,23 +205,22 @@ that workload or establish runtime receiver isolation.
 
 ### Integrated ownership delta and unresolved cutover
 
-- `handles.go` still **embeds StorageLayer** in TenantStore pending P4.10.
-  Notes/list/search, graph and attachments have scoped receivers; P4.7 moved
-  embeddings/events and P4.8 moved index maintenance. P4.8 removes StorageLayer.DB
-  and Indexer.DB outright (including promotion to TenantStore). Remaining promoted
-  control/close and unscoped methods are still tracked by the ratchet. ControlStore
-  uses private named backing and operator-gated registry/token adapters (`control.go`).
+- P4.10 **removes StorageLayer embedding**: all workload receivers now use the
+  private pool and immutable tenant binding. Raw methods are exactly Close,
+  ForTenant, Control and SingleModeTokens, none promoted onto TenantStore.
+  The separate exported package-function allowlist contains seven reviewed
+  constructors/migration/pure helpers. ControlStore uses private named backing
+  and operator-gated registry/token adapters, with private identityStore SQL.
   This is not complete tenant isolation or authority to enable multi mode.
 - Server `buildHTTPHandler` opens single-mode local/control views, persists roots,
   and passes bound filesystem policies to consumers. `tenant_roots` remains
   authoritative across restart. Index/reindex now use typed tenant-scoped methods;
   real migrated A/B fixtures cover rebuild/incremental/embedding preservation and
   v28 fixtures retain exact projects/global paths. Runtime remains schema v28.
-- The live install claim still lives in `entry_meta` and credential/bootstrap
-  writers still use that location. Staged `operator_install_claim` is not yet a
-  routed ControlStore implementation. Removing it from workload metadata requires
-  all bootstrap, password, token/OAuth issuance and startup readers/writers to switch
-  together, with capability boundaries and permanent-claim tests retained.
+- The live v28 install claim remains in `entry_meta`. P4.10 routes privately
+  staged v29 identity/bootstrap operations to `operator_install_claim`, preserving
+  capability boundaries and permanent-claim tests. Workload metadata cannot edit
+  the reserved marker; this is not public schema publication.
 - The phase 1 storage guard cannot retroactively protect old binaries; server
   `config.MigrateDataDir` and mkdir happen **before** storage.New. Do not interpret
   storage tests as a whole-server no-filesystem-mutation guarantee.
@@ -231,8 +234,8 @@ measured synthetic evidence and the final post-P4.11 Amos-copy/recovery gate.
 
 Current project purge (`internal/storage/project_purge.go`) retains events/shared
 blob bytes and omits feature pause, workspace observations, generation dedup and
-path metadata. Its claim that note deletion cascades entry_meta is not supported
-by the DDL. Tenant erasure must inventory these explicitly, not reuse purge as-is.
+path metadata. Note deletion does not cascade entry_meta (the receiver comment now
+states this explicitly). Tenant erasure must inventory these, not reuse purge as-is.
 
 ## Routes
 

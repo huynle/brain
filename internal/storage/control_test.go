@@ -14,7 +14,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func operatorCapability(t *testing.T) auth.DeploymentOperator {
+func operatorCapability(t testing.TB) auth.DeploymentOperator {
 	t.Helper()
 	hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
 	if err != nil {
@@ -29,7 +29,7 @@ func operatorCapability(t *testing.T) auth.DeploymentOperator {
 	return cap
 }
 
-func controlHandle(t *testing.T, s *StorageLayer) *ControlStore {
+func controlHandle(t testing.TB, s *StorageLayer) *ControlStore {
 	t.Helper()
 	c, err := s.Control()
 	if err != nil {
@@ -161,7 +161,7 @@ func TestControlSharedBacking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	maps, err = s.ListTenantRoots(ctx)
+	maps, err = registryHandle(t, s).ListTenantRoots(ctx)
 	if err != nil || len(maps) != 1 || maps[0] != m {
 		t.Fatalf("registry not shared: %v %v", maps, err)
 	}
@@ -201,10 +201,10 @@ func TestControlSharedBacking(t *testing.T) {
 	if err := a.DeleteTokenPermanent(ctx, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetTokenByName(ctx, "owner"); err == nil {
+	if _, err := a.GetTokenByName(ctx, "owner"); err == nil {
 		t.Fatal("delete did not reach shared backing")
 	}
-	if err := s.SaveAccessToken(ctx, "oauth-token", "client", "read:*", 4102444800); err != nil {
+	if err := c.SaveAccessToken(ctx, "oauth-token", "client", "read:*", 4102444800); err != nil {
 		t.Fatal(err)
 	}
 	oauthToken, err := c.GetAccessToken(ctx, "oauth-token")

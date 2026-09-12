@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,7 +11,7 @@ import (
 )
 
 func TestForTenantBinding(t *testing.T) {
-	s := &StorageLayer{} // No database: binding must never execute SQL.
+	s := &StorageLayer{db: &sql.DB{}} // Unopened sentinel: binding must never execute SQL.
 	invalid, err := s.ForTenant(tenant.ID{})
 	if invalid != nil || err == nil {
 		t.Fatal("zero tenant must return nil handle and error before SQL")
@@ -24,8 +25,8 @@ func TestForTenantBinding(t *testing.T) {
 		if got != id {
 			t.Fatalf("bound tenant = %v, want %v", got, id)
 		}
-		if result.StorageLayer != s {
-			t.Fatal("tenant handle must retain the same StorageLayer")
+		if result.db != s.db {
+			t.Fatal("tenant handle must borrow the same pool")
 		}
 	}
 }
@@ -34,9 +35,9 @@ func TestTenantListQueryRejectsInvalidHandlesBeforeSQL(t *testing.T) {
 	for name, handle := range map[string]*TenantStore{
 		"nil":              nil,
 		"zero":             {},
-		"zero ID":          {StorageLayer: &StorageLayer{}, tenantID: tenant.ID{}},
+		"zero ID":          {tenantID: tenant.ID{}},
 		"nil storage":      {tenantID: tenant.Local},
-		"non-local pre-P4": {StorageLayer: &StorageLayer{}, tenantID: tenant.MustParse("acme")},
+		"non-local pre-P4": {tenantID: tenant.MustParse("acme")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			for _, opts := range []*ListOptions{nil, {}, {ProjectID: "project"}} {
@@ -56,10 +57,7 @@ func TestTenantListQueryRejectsInvalidHandlesBeforeSQL(t *testing.T) {
 func TestTenantListQueryLocalCompatibility(t *testing.T) {
 	s := newTestContentStorage(t)
 	seedListNotes(t, s)
-	handle, err := s.ForTenant(tenant.Local)
-	if err != nil {
-		t.Fatal(err)
-	}
+	handle := s
 	for _, opts := range []*ListOptions{nil, {}, {ProjectID: "alpha", Limit: 1}} {
 		query, _, err := handle.listQuery(opts)
 		if err != nil || query == "" || strings.Contains(query, "tenant_id") {
@@ -102,7 +100,7 @@ func FuzzTenantQueryInvalidHandles(f *testing.F) {
 			}
 			// Even a handle constructed inside storage must fail closed. Parsed
 			// non-local IDs are not executable against the pre-P4 content schema.
-			forged := &TenantStore{StorageLayer: store, tenantID: id}
+			forged := &TenantStore{tenantID: id}
 			query, args, err := forged.listQuery(nil)
 			if err == nil || query != "" || args != nil {
 				t.Fatalf("query accepted before SQL: %q", raw)

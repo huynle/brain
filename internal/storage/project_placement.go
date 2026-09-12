@@ -33,13 +33,18 @@ func DefaultProjectPlacement(projectID string) *ProjectPlacementRow {
 	}
 }
 
-func (s *StorageLayer) GetProjectPlacement(ctx context.Context, projectID string) (*ProjectPlacementRow, error) {
+func (s *TenantStore) GetProjectPlacement(ctx context.Context, projectID string) (*ProjectPlacementRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	where, args := scope.where("project_id = ?", projectID)
 	var row ProjectPlacementRow
 	var preferredJSON, allowedJSON, labelsJSON, capabilitiesJSON, resourcesJSON string
-	err := s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, `
 		SELECT project_id, affinity, preferred_machines, allowed_machines, workspace_policy,
 		       required_labels, required_capabilities, resource_requirements
-		FROM project_placement WHERE project_id = ?`, projectID).Scan(
+		FROM project_placement WHERE `+where, args...).Scan(
 		&row.ProjectID, &row.Affinity, &preferredJSON, &allowedJSON, &row.WorkspacePolicy,
 		&labelsJSON, &capabilitiesJSON, &resourcesJSON,
 	)
@@ -67,7 +72,11 @@ func (s *StorageLayer) GetProjectPlacement(ctx context.Context, projectID string
 	return &row, nil
 }
 
-func (s *StorageLayer) UpsertProjectPlacement(ctx context.Context, row *ProjectPlacementRow) error {
+func (s *TenantStore) UpsertProjectPlacement(ctx context.Context, row *ProjectPlacementRow) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	if row == nil {
 		return fmt.Errorf("project placement row is nil")
 	}
@@ -94,12 +103,21 @@ func (s *StorageLayer) UpsertProjectPlacement(ctx context.Context, row *ProjectP
 	if err != nil {
 		return fmt.Errorf("marshal resource requirements: %w", err)
 	}
+	columns := "project_id, affinity, preferred_machines, allowed_machines, workspace_policy, required_labels, required_capabilities, resource_requirements, updated_at"
+	values, conflict := "?, ?, ?, ?, ?, ?, ?, ?, datetime('now')", "project_id"
+	args := []interface{}{row.ProjectID, row.Affinity, string(preferredJSON), string(allowedJSON), row.WorkspacePolicy,
+		string(labelsJSON), string(capabilitiesJSON), string(resourcesJSON)}
+	if scope.owner != "" {
+		columns += ", tenant_id"
+		values += ", ?"
+		conflict = "tenant_id, project_id"
+		args = append(args, scope.owner)
+	}
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO project_placement
-		  (project_id, affinity, preferred_machines, allowed_machines, workspace_policy,
-		   required_labels, required_capabilities, resource_requirements, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-		ON CONFLICT(project_id) DO UPDATE SET
+		  (`+columns+`)
+		VALUES (`+values+`)
+		ON CONFLICT(`+conflict+`) DO UPDATE SET
 		  affinity = excluded.affinity,
 		  preferred_machines = excluded.preferred_machines,
 		  allowed_machines = excluded.allowed_machines,
@@ -108,8 +126,7 @@ func (s *StorageLayer) UpsertProjectPlacement(ctx context.Context, row *ProjectP
 		  required_capabilities = excluded.required_capabilities,
 		  resource_requirements = excluded.resource_requirements,
 		  updated_at = datetime('now')`,
-		row.ProjectID, row.Affinity, string(preferredJSON), string(allowedJSON), row.WorkspacePolicy,
-		string(labelsJSON), string(capabilitiesJSON), string(resourcesJSON),
+		args...,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert project placement: %w", err)

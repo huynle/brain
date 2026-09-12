@@ -12,7 +12,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestSchemaCreation_OAuthTablesExist(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 
 	tables := []string{
 		"oauth_clients",
@@ -34,7 +34,7 @@ func TestSchemaCreation_OAuthTablesExist(t *testing.T) {
 }
 
 func TestSchemaCreation_OAuthIndexesExist(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 
 	indexes := []string{
 		"idx_oauth_auth_codes_client",
@@ -62,7 +62,7 @@ func TestSchemaCreation_OAuthIndexesExist(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateOAuthClient_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	client := &OAuthClient{
@@ -94,7 +94,7 @@ func TestCreateOAuthClient_Success(t *testing.T) {
 }
 
 func TestCreateOAuthClient_CustomClientID(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	client := &OAuthClient{
@@ -115,7 +115,7 @@ func TestCreateOAuthClient_CustomClientID(t *testing.T) {
 }
 
 func TestCreateOAuthClient_DuplicateID(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	client := &OAuthClient{
@@ -138,7 +138,7 @@ func TestCreateOAuthClient_DuplicateID(t *testing.T) {
 }
 
 func TestGetOAuthClient_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	client := &OAuthClient{
@@ -191,7 +191,7 @@ func TestGetOAuthClient_Success(t *testing.T) {
 }
 
 func TestGetOAuthClient_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	got, err := s.GetOAuthClient(ctx, "nonexistent")
@@ -204,7 +204,7 @@ func TestGetOAuthClient_NotFound(t *testing.T) {
 }
 
 func TestListOAuthClients_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
@@ -219,7 +219,7 @@ func TestListOAuthClients_Success(t *testing.T) {
 		}
 	}
 
-	clients, err := s.ListOAuthClients(ctx)
+	clients, err := (identityStore{db: s.db}).listOAuthClients(ctx)
 	if err != nil {
 		t.Fatalf("ListOAuthClients failed: %v", err)
 	}
@@ -229,10 +229,10 @@ func TestListOAuthClients_Success(t *testing.T) {
 }
 
 func TestListOAuthClients_Empty(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
-	clients, err := s.ListOAuthClients(ctx)
+	clients, err := (identityStore{db: s.db}).listOAuthClients(ctx)
 	if err != nil {
 		t.Fatalf("ListOAuthClients failed: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestListOAuthClients_Empty(t *testing.T) {
 // Auth code store
 // ---------------------------------------------------------------------------
 
-func createTestClient(t *testing.T, s *StorageLayer) *OAuthClient {
+func createTestClient(t *testing.T, s *identityTestFixture) *OAuthClient {
 	t.Helper()
 	ctx := context.Background()
 	client := &OAuthClient{
@@ -264,7 +264,7 @@ func createTestClient(t *testing.T, s *StorageLayer) *OAuthClient {
 }
 
 func TestCreateAuthCode_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -293,7 +293,7 @@ func TestCreateAuthCode_Success(t *testing.T) {
 }
 
 func TestConsumeAuthCode_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -332,7 +332,7 @@ func TestConsumeAuthCode_Success(t *testing.T) {
 }
 
 func TestConsumeAuthCode_Expired(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -358,7 +358,7 @@ func TestConsumeAuthCode_Expired(t *testing.T) {
 }
 
 func TestConsumeAuthCode_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	_, err := s.ConsumeAuthCode(ctx, "nonexistent")
@@ -368,7 +368,7 @@ func TestConsumeAuthCode_NotFound(t *testing.T) {
 }
 
 func TestCleanupExpiredCodes(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -398,7 +398,7 @@ func TestCleanupExpiredCodes(t *testing.T) {
 	}
 
 	// Cleanup
-	err := s.CleanupExpiredCodes(ctx)
+	err := (identityStore{db: s.db}).cleanupExpiredCodes(ctx)
 	if err != nil {
 		t.Fatalf("CleanupExpiredCodes failed: %v", err)
 	}
@@ -432,7 +432,7 @@ func TestCleanupExpiredCodes(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateAccessToken_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -457,7 +457,7 @@ func TestCreateAccessToken_Success(t *testing.T) {
 }
 
 func TestGetAccessToken_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -491,7 +491,7 @@ func TestGetAccessToken_Success(t *testing.T) {
 }
 
 func TestGetAccessToken_Expired(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -515,7 +515,7 @@ func TestGetAccessToken_Expired(t *testing.T) {
 }
 
 func TestGetAccessToken_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	_, err := s.GetAccessToken(ctx, "nonexistent")
@@ -525,7 +525,7 @@ func TestGetAccessToken_NotFound(t *testing.T) {
 }
 
 func TestRevokeAccessToken_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -538,7 +538,7 @@ func TestRevokeAccessToken_Success(t *testing.T) {
 		t.Fatalf("CreateAccessToken failed: %v", err)
 	}
 
-	err := s.RevokeAccessToken(ctx, "revoke-access")
+	err := (identityStore{db: s.db}).revokeAccessToken(ctx, "revoke-access")
 	if err != nil {
 		t.Fatalf("RevokeAccessToken failed: %v", err)
 	}
@@ -551,17 +551,17 @@ func TestRevokeAccessToken_Success(t *testing.T) {
 }
 
 func TestRevokeAccessToken_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
-	err := s.RevokeAccessToken(ctx, "nonexistent")
+	err := (identityStore{db: s.db}).revokeAccessToken(ctx, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent token, got nil")
 	}
 }
 
 func TestRevokeAccessTokensByClient_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -577,7 +577,7 @@ func TestRevokeAccessTokensByClient_Success(t *testing.T) {
 		}
 	}
 
-	err := s.RevokeAccessTokensByClient(ctx, client.ClientID)
+	err := (identityStore{db: s.db}).revokeAccessTokensByClient(ctx, client.ClientID)
 	if err != nil {
 		t.Fatalf("RevokeAccessTokensByClient failed: %v", err)
 	}
@@ -596,7 +596,7 @@ func TestRevokeAccessTokensByClient_Success(t *testing.T) {
 }
 
 func TestCleanupExpiredAccessTokens(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -621,7 +621,7 @@ func TestCleanupExpiredAccessTokens(t *testing.T) {
 		t.Fatalf("CreateAccessToken (valid) failed: %v", err)
 	}
 
-	err := s.CleanupExpiredAccessTokens(ctx)
+	err := (identityStore{db: s.db}).cleanupExpiredAccessTokens(ctx)
 	if err != nil {
 		t.Fatalf("CleanupExpiredAccessTokens failed: %v", err)
 	}
@@ -649,7 +649,7 @@ func TestCleanupExpiredAccessTokens(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateRefreshToken_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -674,7 +674,7 @@ func TestCreateRefreshToken_Success(t *testing.T) {
 }
 
 func TestConsumeRefreshToken_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -711,7 +711,7 @@ func TestConsumeRefreshToken_Success(t *testing.T) {
 }
 
 func TestConsumeRefreshToken_Expired(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -735,7 +735,7 @@ func TestConsumeRefreshToken_Expired(t *testing.T) {
 }
 
 func TestConsumeRefreshToken_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	_, err := s.ConsumeRefreshToken(ctx, "nonexistent")
@@ -745,7 +745,7 @@ func TestConsumeRefreshToken_NotFound(t *testing.T) {
 }
 
 func TestRevokeRefreshTokensByClient_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -760,7 +760,7 @@ func TestRevokeRefreshTokensByClient_Success(t *testing.T) {
 		}
 	}
 
-	err := s.RevokeRefreshTokensByClient(ctx, client.ClientID)
+	err := (identityStore{db: s.db}).revokeRefreshTokensByClient(ctx, client.ClientID)
 	if err != nil {
 		t.Fatalf("RevokeRefreshTokensByClient failed: %v", err)
 	}
@@ -775,7 +775,7 @@ func TestRevokeRefreshTokensByClient_Success(t *testing.T) {
 }
 
 func TestCleanupExpiredRefreshTokens(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -800,7 +800,7 @@ func TestCleanupExpiredRefreshTokens(t *testing.T) {
 		t.Fatalf("CreateRefreshToken (valid) failed: %v", err)
 	}
 
-	err := s.CleanupExpiredRefreshTokens(ctx)
+	err := (identityStore{db: s.db}).cleanupExpiredRefreshTokens(ctx)
 	if err != nil {
 		t.Fatalf("CleanupExpiredRefreshTokens failed: %v", err)
 	}
@@ -826,7 +826,7 @@ func TestCleanupExpiredRefreshTokens(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestOAuthForeignKeys_AuthCodeRequiresClient(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 
 	_, err := s.db.Exec(`
 		INSERT INTO oauth_auth_codes 
@@ -841,7 +841,7 @@ func TestOAuthForeignKeys_AuthCodeRequiresClient(t *testing.T) {
 func TestOAuthTokens_InsertWithoutClient(t *testing.T) {
 	// OAuth clients are stored in-memory (oauth.Store), not SQLite.
 	// Access/refresh tokens must be insertable without a matching client row.
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 
 	_, err := s.db.Exec(`
 		INSERT INTO oauth_access_tokens 
@@ -867,7 +867,7 @@ func TestOAuthTokens_InsertWithoutClient(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSchemaVersion_IsCurrent(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 
 	var ver int
 	err := s.db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&ver)

@@ -13,6 +13,7 @@ import (
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/storage/storagetest"
+	"github.com/huynle/brain-api/internal/tenant"
 )
 
 func TestBootstrapStartup_PasswordClaimPersistsWithoutRequest(t *testing.T) {
@@ -34,7 +35,11 @@ func TestBootstrapStartup_PasswordClaimPersistsWithoutRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	err = s.BootstrapToken(context.Background(), "late", "secret", false)
+	tokens, err := s.SingleModeTokens(tenant.ModeSingle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = tokens.BootstrapToken(context.Background(), "late", "secret", false)
 	var closed *storage.BootstrapClosedError
 	if !errors.As(err, &closed) {
 		t.Fatalf("bootstrap after password removal = %v, want closed", err)
@@ -53,7 +58,7 @@ func TestBootstrapStartup_PasswordClaimFailureStopsStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	s, err := storagetest.NewWithDB(db)
+	_, err = storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +70,7 @@ func TestBootstrapStartup_PasswordClaimFailureStopsStartup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = s.Close()
+	_ = db.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	h, _, cleanup, err := buildHTTPHandler(ctx, ServerOptions{Host: "localhost", BrainDir: dir})

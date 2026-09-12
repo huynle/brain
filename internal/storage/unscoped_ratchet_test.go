@@ -18,8 +18,9 @@ import (
 // list guards definitions, not new calls to existing methods; the separate site
 // list is a conservative spelling/count inventory, not type or data-flow analysis.
 // Neither detects missing predicates on correctly typed handles, raw SQL added
-// inside approved methods, or new unscoped tables. P4.10 must remove TenantStore's
-// StorageLayer embedding to establish the compile-time API boundary.
+// inside approved methods, or new unscoped tables. P4.10's real-package go/types
+// test separately establishes the unembedded API boundary; package functions
+// have an independent allowlist, never folded into this selector vocabulary.
 type debtSet map[string]bool
 
 func TestProductionUnscopedStorage(t *testing.T) {

@@ -22,7 +22,7 @@ func completeMigrationFixture(t *testing.T) (*sql.DB, string) {
 	db := relationalFixture(t)
 	relationalExec(t, db, "DELETE FROM tenant_roots")
 	brain, blob := t.TempDir(), t.TempDir()
-	resolver, err := tenantfs.New(&StorageLayer{db: db}, brain)
+	resolver, err := tenantfs.New(registryHandle(t, &StorageLayer{db: db}), brain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +367,7 @@ func BenchmarkTenantMigrationComplete78952(b *testing.B) {
 		if err := InitSchema(db); err != nil {
 			b.Fatal(err)
 		}
-		resolver, err := tenantfs.New(&StorageLayer{db: db}, base)
+		resolver, err := tenantfs.New(registryHandle(b, &StorageLayer{db: db}), base)
 		if err != nil {
 			b.Fatal(err)
 		}

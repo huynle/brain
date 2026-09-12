@@ -47,7 +47,11 @@ type RunnerRow struct {
 
 // UpsertRunner inserts a new runner or replaces an existing one with the same ID.
 // This is the primary registration/re-registration method.
-func (s *StorageLayer) UpsertRunner(ctx context.Context, runner *RunnerRow) error {
+func (s *TenantStore) UpsertRunner(ctx context.Context, runner *RunnerRow) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	labelsJSON, err := json.Marshal(runner.Labels)
 	if err != nil {
 		return fmt.Errorf("marshal labels: %w", err)
@@ -77,13 +81,34 @@ func (s *StorageLayer) UpsertRunner(ctx context.Context, runner *RunnerRow) erro
 		return fmt.Errorf("marshal capacity: %w", err)
 	}
 
-	_, err = s.db.ExecContext(ctx, `
+	columns, values, conflict := "", "", "runner_id"
+	args := []interface{}{}
+	if scope.owner != "" {
+		columns, values, conflict = "tenant_id,", "?,", "tenant_id,runner_id"
+		args = append(args, scope.owner)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Durable reference ownership, not enrollment or authentication. Only the
+	// registry writer creates this key, atomically with its registry row.
+	if scope.owner != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_runner_keys(tenant_id,runner_id) VALUES(?,?) ON CONFLICT(tenant_id,runner_id) DO NOTHING`, scope.owner, runner.RunnerID); err != nil {
+			return err
+		}
+	}
+	args = append(args, runner.RunnerID, runner.MachineID, runner.Hostname, string(labelsJSON), string(executorsJSON), string(capabilitiesJSON),
+		runner.DispatchPush, string(workspaceRootsJSON), string(projectsJSON), string(resourcesJSON), string(capacityJSON),
+		runner.Draining, runner.MaxParallel, runner.FeatureIDs, runner.RegisteredAt, runner.LastHeartbeat, runner.Status)
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO runners
-			(runner_id, machine_id, hostname, labels, executors, capabilities, dispatch_push,
+			(`+columns+`runner_id, machine_id, hostname, labels, executors, capabilities, dispatch_push,
 			 workspace_roots, projects, resources, capacity, draining, max_parallel,
 			 feature_ids, registered_at, last_heartbeat, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (runner_id) DO UPDATE SET
+		VALUES (`+values+`?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (`+conflict+`) DO UPDATE SET
 			machine_id      = excluded.machine_id,
 			hostname        = excluded.hostname,
 			labels          = excluded.labels,
@@ -100,25 +125,33 @@ func (s *StorageLayer) UpsertRunner(ctx context.Context, runner *RunnerRow) erro
 			registered_at   = excluded.registered_at,
 			last_heartbeat  = excluded.last_heartbeat,
 			status          = excluded.status`,
-		runner.RunnerID, runner.MachineID, runner.Hostname, string(labelsJSON), string(executorsJSON), string(capabilitiesJSON),
-		runner.DispatchPush, string(workspaceRootsJSON), string(projectsJSON), string(resourcesJSON), string(capacityJSON),
-		runner.Draining, runner.MaxParallel, runner.FeatureIDs, runner.RegisteredAt, runner.LastHeartbeat,
-		runner.Status,
+		args...,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert runner: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // GetRunner returns a runner by ID, or nil if not found.
-func (s *StorageLayer) GetRunner(ctx context.Context, runnerID string) (*RunnerRow, error) {
+func (s *TenantStore) GetRunner(ctx context.Context, runnerID string) (*RunnerRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	query := runnerSelectWithPause
+	pred, args := "r.runner_id = ?", []interface{}{runnerID}
+	if scope.owner != "" {
+		query += " AND p.tenant_id = r.tenant_id"
+		pred += " AND r.tenant_id = ?"
+		args = append(args, scope.owner)
+	}
 	var r RunnerRow
 	var labelsJSON, executorsJSON, capabilitiesJSON, workspaceRootsJSON, projectsJSON, resourcesJSON, capacityJSON string
 
-	err := s.db.QueryRowContext(ctx,
-		runnerSelectWithPause+" WHERE r.runner_id = ?",
-		runnerID,
+	err = s.db.QueryRowContext(ctx,
+		query+" WHERE "+pred,
+		args...,
 	).Scan(&r.RunnerID, &r.MachineID, &r.Hostname, &labelsJSON, &executorsJSON, &capabilitiesJSON, &r.DispatchPush,
 		&workspaceRootsJSON, &projectsJSON, &resourcesJSON, &capacityJSON, &r.Draining, &r.Paused,
 		&r.MaxParallel, &r.FeatureIDs, &r.RegisteredAt, &r.LastHeartbeat,
@@ -148,9 +181,18 @@ func (s *StorageLayer) GetRunner(ctx context.Context, runnerID string) (*RunnerR
 }
 
 // ListRunners returns all runners ordered by registered_at descending (newest first).
-func (s *StorageLayer) ListRunners(ctx context.Context) ([]RunnerRow, error) {
+func (s *TenantStore) ListRunners(ctx context.Context) ([]RunnerRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	query, args := runnerSelectWithPause, []interface{}{}
+	if scope.owner != "" {
+		query += " AND p.tenant_id = r.tenant_id WHERE r.tenant_id = ?"
+		args = append(args, scope.owner)
+	}
 	rows, err := s.db.QueryContext(ctx,
-		runnerSelectWithPause+" ORDER BY r.registered_at DESC",
+		query+" ORDER BY r.registered_at DESC", args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list runners: %w", err)
@@ -161,10 +203,23 @@ func (s *StorageLayer) ListRunners(ctx context.Context) ([]RunnerRow, error) {
 }
 
 // ListRunnersByStatus returns runners filtered by status.
-func (s *StorageLayer) ListRunnersByStatus(ctx context.Context, status string) ([]RunnerRow, error) {
+func (s *TenantStore) ListRunnersByStatus(ctx context.Context, status string) ([]RunnerRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	query, args := runnerSelectWithPause, []interface{}{status}
+	if scope.owner != "" {
+		query += " AND p.tenant_id = r.tenant_id"
+	}
+	query += " WHERE r.status = ?"
+	if scope.owner != "" {
+		query += " AND r.tenant_id = ?"
+		args = append(args, scope.owner)
+	}
 	rows, err := s.db.QueryContext(ctx,
-		runnerSelectWithPause+" WHERE r.status = ? ORDER BY r.registered_at DESC",
-		status,
+		query+" ORDER BY r.registered_at DESC",
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list runners by status: %w", err)
@@ -175,10 +230,15 @@ func (s *StorageLayer) ListRunnersByStatus(ctx context.Context, status string) (
 }
 
 // DeleteRunner removes a runner by ID. Returns true if a row was deleted.
-func (s *StorageLayer) DeleteRunner(ctx context.Context, runnerID string) (bool, error) {
+func (s *TenantStore) DeleteRunner(ctx context.Context, runnerID string) (bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, err
+	}
+	pred, args := scope.where("runner_id = ?", runnerID)
 	result, err := s.db.ExecContext(ctx,
-		"DELETE FROM runners WHERE runner_id = ?",
-		runnerID,
+		"DELETE FROM runners WHERE "+pred,
+		args...,
 	)
 	if err != nil {
 		return false, fmt.Errorf("delete runner: %w", err)
@@ -194,7 +254,11 @@ func (s *StorageLayer) DeleteRunner(ctx context.Context, runnerID string) (bool,
 // UpdateHeartbeat updates a runner's last_heartbeat timestamp and optionally
 // its running task count (stored in labels as "_running_tasks").
 // Returns an error if the runner does not exist.
-func (s *StorageLayer) UpdateHeartbeat(ctx context.Context, runnerID string, runningTasks int, stats map[string]interface{}) error {
+func (s *TenantStore) UpdateHeartbeat(ctx context.Context, runnerID string, runningTasks int, stats map[string]interface{}) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	now := time.Now().UnixMilli()
 
 	runner, err := s.GetRunner(ctx, runnerID)
@@ -218,9 +282,10 @@ func (s *StorageLayer) UpdateHeartbeat(ctx context.Context, runnerID string, run
 		return fmt.Errorf("marshal labels: %w", err)
 	}
 
+	pred, args := scope.where("runner_id = ?", now, string(labelsJSON), runnerID)
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE runners SET last_heartbeat = ?, labels = ? WHERE runner_id = ?",
-		now, string(labelsJSON), runnerID,
+		"UPDATE runners SET last_heartbeat = ?, labels = ? WHERE "+pred,
+		args...,
 	)
 	if err != nil {
 		return fmt.Errorf("update heartbeat: %w", err)
@@ -239,7 +304,7 @@ func (s *StorageLayer) UpdateHeartbeat(ctx context.Context, runnerID string, run
 // a runner reports current push-dispatch state. Nil pointer fields are left
 // unchanged; nil slices/maps are treated as not reported to preserve older
 // heartbeat behavior.
-func (s *StorageLayer) UpdateRunnerDispatchMetadata(ctx context.Context, runnerID string, dispatchPush *bool, labels map[string]string, workspaceRoots []string, projects []string, resources map[string]interface{}, capacity map[string]interface{}, draining *bool) error {
+func (s *TenantStore) UpdateRunnerDispatchMetadata(ctx context.Context, runnerID string, dispatchPush *bool, labels map[string]string, workspaceRoots []string, projects []string, resources map[string]interface{}, capacity map[string]interface{}, draining *bool) error {
 	runner, err := s.GetRunner(ctx, runnerID)
 	if err != nil {
 		return fmt.Errorf("update runner dispatch metadata get runner: %w", err)
@@ -278,22 +343,32 @@ func (s *StorageLayer) UpdateRunnerDispatchMetadata(ctx context.Context, runnerI
 
 // UpdateRunnerCapabilities replaces the existing nonsecret advertisement without
 // rewriting a stale snapshot of the rest of the runner row.
-func (s *StorageLayer) UpdateRunnerCapabilities(ctx context.Context, runnerID string, capabilities []string) error {
+func (s *TenantStore) UpdateRunnerCapabilities(ctx context.Context, runnerID string, capabilities []string) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	data, err := json.Marshal(capabilities)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, "UPDATE runners SET capabilities = ? WHERE runner_id = ?", string(data), runnerID)
+	pred, args := scope.where("runner_id = ?", string(data), runnerID)
+	_, err = s.db.ExecContext(ctx, "UPDATE runners SET capabilities = ? WHERE "+pred, args...)
 	return err
 }
 
 // UpdateAffinity updates a runner's feature_ids (comma-separated list of feature IDs
 // this runner has affinity for).
-func (s *StorageLayer) UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error {
+func (s *TenantStore) UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	featureStr := strings.Join(featureIDs, ",")
+	pred, args := scope.where("runner_id = ?", featureStr, runnerID)
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE runners SET feature_ids = ? WHERE runner_id = ?",
-		featureStr, runnerID,
+		"UPDATE runners SET feature_ids = ? WHERE "+pred,
+		args...,
 	)
 	if err != nil {
 		return fmt.Errorf("update affinity: %w", err)
@@ -310,10 +385,15 @@ func (s *StorageLayer) UpdateAffinity(ctx context.Context, runnerID string, feat
 
 // SetRunnerStatus updates a runner's status. Returns an error if the runner
 // does not exist.
-func (s *StorageLayer) SetRunnerStatus(ctx context.Context, runnerID, status string) error {
+func (s *TenantStore) SetRunnerStatus(ctx context.Context, runnerID, status string) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
+	pred, args := scope.where("runner_id = ?", status, runnerID)
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE runners SET status = ? WHERE runner_id = ?",
-		status, runnerID,
+		"UPDATE runners SET status = ? WHERE "+pred,
+		args...,
 	)
 	if err != nil {
 		return fmt.Errorf("set runner status: %w", err)
@@ -330,10 +410,15 @@ func (s *StorageLayer) SetRunnerStatus(ctx context.Context, runnerID, status str
 
 // UpdateRunnerMaxParallel updates a runner's max_parallel setting.
 // Returns an error if the runner does not exist.
-func (s *StorageLayer) UpdateRunnerMaxParallel(ctx context.Context, runnerID string, maxParallel int) error {
+func (s *TenantStore) UpdateRunnerMaxParallel(ctx context.Context, runnerID string, maxParallel int) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
+	pred, args := scope.where("runner_id = ?", maxParallel, runnerID)
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE runners SET max_parallel = ? WHERE runner_id = ?",
-		maxParallel, runnerID,
+		"UPDATE runners SET max_parallel = ? WHERE "+pred,
+		args...,
 	)
 	if err != nil {
 		return fmt.Errorf("update runner max_parallel: %w", err)
@@ -350,11 +435,16 @@ func (s *StorageLayer) UpdateRunnerMaxParallel(ctx context.Context, runnerID str
 
 // ExpireStaleRunners marks runners as "offline" if their last heartbeat is
 // older than the given threshold. Returns the number of runners updated.
-func (s *StorageLayer) ExpireStaleRunners(ctx context.Context, threshold time.Duration) (int64, error) {
+func (s *TenantStore) ExpireStaleRunners(ctx context.Context, threshold time.Duration) (int64, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return 0, err
+	}
 	cutoff := time.Now().UnixMilli() - threshold.Milliseconds()
+	pred, args := scope.where("status = 'online' AND last_heartbeat < ?", cutoff)
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE runners SET status = 'offline' WHERE status = 'online' AND last_heartbeat < ?",
-		cutoff,
+		"UPDATE runners SET status = 'offline' WHERE "+pred,
+		args...,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("expire stale runners: %w", err)
@@ -375,29 +465,33 @@ func (s *StorageLayer) ExpireStaleRunners(ctx context.Context, threshold time.Du
 // offline, mid SSE-reconnect, or restarted still stays paused. The row is
 // keyed by runner_id and deliberately survives deregistration — `brain runner
 // stop` deletes the runners row, and an operator's pause must outlive that.
-func (s *StorageLayer) SetRunnerPaused(ctx context.Context, runnerID string, paused bool) (bool, error) {
+func (s *TenantStore) SetRunnerPaused(ctx context.Context, runnerID string, paused bool) (bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, err
+	}
 	if runnerID == "" {
 		return false, fmt.Errorf("runner id is required")
 	}
-	var known string
-	err := s.db.QueryRowContext(ctx, "SELECT runner_id FROM runners WHERE runner_id = ?", runnerID).Scan(&known)
-	if err == sql.ErrNoRows {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("set runner paused (lookup): %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, `
+	query := `
 		INSERT INTO runner_pause_state (runner_id, paused, updated_at)
-		VALUES (?, ?, ?)
+		SELECT runner_id, ?, ? FROM runners WHERE runner_id = ?
 		ON CONFLICT(runner_id) DO UPDATE SET
 		  paused = excluded.paused,
-		  updated_at = excluded.updated_at`,
-		runnerID, boolToInt(paused), time.Now().UnixMilli(),
-	); err != nil {
+		  updated_at = excluded.updated_at`
+	args := []interface{}{boolToInt(paused), time.Now().UnixMilli(), runnerID}
+	if scope.owner != "" {
+		query = `INSERT INTO runner_pause_state(tenant_id,runner_id,paused,updated_at)
+		SELECT tenant_id,runner_id,?,? FROM runners WHERE runner_id=? AND tenant_id=?
+		ON CONFLICT(tenant_id,runner_id) DO UPDATE SET paused=excluded.paused,updated_at=excluded.updated_at`
+		args = append(args, scope.owner)
+	}
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
 		return false, fmt.Errorf("set runner paused: %w", err)
 	}
-	return true, nil
+	n, err := result.RowsAffected()
+	return n > 0, err
 }
 
 // ---------------------------------------------------------------------------

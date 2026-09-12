@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/huynle/brain-api/internal/auth"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/tenant"
@@ -37,7 +38,19 @@ func TestStartupPersistsLocalFilesystemBeforeScan(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	maps, err := store.ListTenantRoots(ctx)
+	control, err := store.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cap, err := auth.AuthenticateLocalDatabaseOwner(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := control.TenantRegistry(cap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maps, err := registry.ListTenantRoots(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

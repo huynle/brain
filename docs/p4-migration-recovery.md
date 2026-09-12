@@ -9,6 +9,24 @@ See [approved contracts](multi-tenant-security-contracts.md) D07/D08/D11 and the
 
 ## Stop/go prerequisites
 
+**Current status — `jr1xs3a3` phase 2 preparation, 2026-09-12:** see
+[final acceptance handoff](p4-final-acceptance-handoff.md) for pinned main/P4
+schema conflicts, eleven additional shared tables, Assistant/push sidecars,
+bounded repair ownership and the remaining acceptance ledger. Runtime 28 and
+private 29 are unchanged. Historical sections below describe their named phases,
+not current-main migration compatibility or release approval.
+
+Phase 1's preserved `schema_recovery_regression_test.go` adds
+`TestTenantMigrationPostcommitExitReopen`: a synthetic WAL subprocess exits via
+`os.Exit(0)` **after Commit returns**, without DB Close/cleanups. Reopen checks
+committed catalog/rows, legacy projections, controls/claim, sequences, local
+ownership, integrity/FKs and unchanged root/file identities/bytes; two repeated
+private validations must be no-ops. Public `New` still refuses private29. This is
+new postcommit evidence, distinct from the older `published` precommit SIGKILL
+checkpoint. It is not power-loss, post-new-write rollback, sidecar recovery or
+real Amos acceptance. The same file tests no-mutation refusal of synthetic main
+29/30 additions and v28 sync catalog refusal, **not their migration support**.
+
 **P4.3 Phase 2 update (2026-09-07):** the private outer owner described below
 now exists as `migrateTenantSchema(ctx, db, checkpoint)` in
 `internal/storage/schema_tenant_migration.go`. It is dormant and has **no runtime
@@ -79,7 +97,10 @@ receiver validation; no fictional parent rows are introduced to satisfy them.
 4. Include protected credential metadata (API token revocations, OAuth clients,
    codes/access/refresh records, install claim, configured-password metadata),
    root registry, and any available current revocation/deletion journal in the
-   same recovery record. Do not put secrets into logs or this runbook. Validate
+   same recovery record. Include Assistant jobs/conversations, push keys/devices/
+   deliveries, bulk/budget/supervisor ledgers, and offline sync devices, tombstones,
+   operation receipts and epoch (see the handoff). Unknown execution/delivery
+   outcomes must not be replayed automatically. Do not put secrets into logs or this runbook. Validate
    encryption-key recovery and restrict snapshot access. A DB is partly derived;
    reindexing markdown cannot reconstruct authoritative credentials/roots/claim.
 5. Plan disk for source + backup + isolated copy + old/new relational tables and

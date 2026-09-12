@@ -176,6 +176,7 @@ digest assertion.
 | Held HTTP and suspension | `TestTenantAcceptanceHeldHTTPAndSuspension` proves lease drain, capacity retention and rejection of later suspended admission. It blocks socket output **after** the handler executed: not P6 output fencing or retraction of authorized effects |
 | Indexer background ownership | `TestTenantPolicyScanAndWatcher`, `TestTenantScanPropagatesRegistryFailure`, `TestEmbeddingIndexerTenantIsolation`, `TestEmbeddingIndexerRejectsNonlocalLegacy`; not all future worker loops |
 | Operational rejection | `TestRunServerRejectsOperationalMultiBeforeStorage`, `TestStorageCompositionRejectsMultiBeforeOpeningDatabase`, `TestTenantHTTPRealFactoryAndUnsupportedSurfaces`, concurrent HTTP unsupported-route assertions |
+| New-main Assistant routes remain sealed | `TestTenantAcceptanceConcurrentHTTP`: `GET /api/v1/assistant/jobs`, `POST /api/v1/assistant/speech`, `POST /api/v1/assistant/transcribe`, `POST /api/v1/assistant/voice-diagnostics` return 501 for both fixture tenants. These supplement historical POST jobs/voice placeholders; they do not exercise main's handlers, providers, sidecars or P6 authentication. |
 
 ## Runtime boundary and remaining P5–P10 work
 

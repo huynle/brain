@@ -12,11 +12,19 @@ import (
 	"github.com/huynle/brain-api/internal/tenant"
 )
 
-// One operation is one real graph acquisition. Fixture provisioning (300 mapped
+// One operation is one real graph acquisition. Fixture provisioning (100/300/500 mapped
 // FTS tables in ONE SQLite file) is excluded. No embeddings/extraction/providers.
-// Fixed -benchtime=300x makes cold/uniform/hot-set runs directly comparable.
+// Use a fixed iteration count for comparisons; this is not HTTP/search load acceptance.
 func BenchmarkTenantGraphLoad(b *testing.B) {
-	f := newGraphFixture(b, 300)
+	for _, tenants := range []int{100, 300, 500} {
+		b.Run(fmt.Sprintf("tenants%d", tenants), func(b *testing.B) {
+			benchmarkTenantGraphLoad(b, tenants)
+		})
+	}
+}
+
+func benchmarkTenantGraphLoad(b *testing.B, tenants int) {
+	f := newGraphFixture(b, tenants)
 	for _, capacity := range []int{16, 32} {
 		for _, pattern := range []string{"cold", "uniform", "hot-set"} {
 			b.Run(fmt.Sprintf("cap%d/%s", capacity, pattern), func(b *testing.B) {
@@ -39,7 +47,7 @@ func BenchmarkTenantGraphLoad(b *testing.B) {
 					}
 				})
 				// Warm one graph to remove first-use package initialization. Root
-				// resolution still reads ALL 300 persisted mappings on every miss.
+				// resolution still reads ALL persisted mappings on every miss.
 				for _, id := range f.ids[:1] {
 					l, e := m.Acquire(context.Background(), id)
 					if e != nil {
@@ -73,14 +81,14 @@ func BenchmarkTenantGraphLoad(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					index := i % 300
+					index := i % tenants
 					if pattern == "uniform" {
-						index = (i * 137) % 300
+						index = (i * 137) % tenants
 					}
 					if pattern == "hot-set" {
 						index = i % 20
 						if i%10 == 0 {
-							index = 20 + (i/10)%280
+							index = 20 + (i/10)%(tenants-20)
 						}
 					}
 					id := f.ids[index]

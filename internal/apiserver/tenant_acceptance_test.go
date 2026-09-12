@@ -338,6 +338,19 @@ func TestTenantAcceptanceConcurrentHTTP(t *testing.T) {
 		t.Fatalf("builds=%d want 2 per round", builds.Load())
 	}
 	for _, id := range f.ids {
+		// Actual main cd22b4bd routes, not only historical placeholder paths.
+		// This proves sealing in the fixture router, not Assistant authorization.
+		for _, route := range []struct{ method, path string }{
+			{"GET", "/api/v1/assistant/jobs"},
+			{"POST", "/api/v1/assistant/speech"},
+			{"POST", "/api/v1/assistant/transcribe"},
+			{"POST", "/api/v1/assistant/voice-diagnostics"},
+		} {
+			w := graphRequest(h, id, route.method, route.path, "{}")
+			if w.Code != 501 {
+				t.Errorf("unsupported %s %s: %d %s", route.method, route.path, w.Code, w.Body.String())
+			}
+		}
 		for _, path := range []string{"/api/v1/entries/", "/api/v1/entries/bulk-update", "/api/v1/attachments/", "/api/v1/attachments/1/extract", "/api/v1/assistant/chat", "/api/v1/assistant/jobs", "/api/v1/assistant/voice", "/api/v1/push/subscribe", "/api/v1/tasks/shared/run", "/api/v1/config", "/api/v1/tokens/", "/mcp"} {
 			w := graphRequest(h, id, "POST", path, `{"title":"must not persist","type":"task","project":"shared"}`)
 			if w.Code != 501 {

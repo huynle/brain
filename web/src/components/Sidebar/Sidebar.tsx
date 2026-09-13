@@ -21,7 +21,10 @@ import { useProjects } from "../../hooks/useProjects";
 import { useEdgeResize } from "../../hooks/useEdgeResize";
 import type { StatusFilter } from "../../store/workspace";
 
-export function Sidebar(): JSX.Element {
+export function Sidebar({
+  mobile = false,
+  onClose,
+}: { mobile?: boolean; onClose?: () => void } = {}): JSX.Element {
   const collapsed = useWorkspace((s) => s.sidebarCollapsed);
   const toggleCollapsed = useWorkspace((s) => s.toggleSidebarCollapsed);
   const openModal = useModal((s) => s.open);
@@ -72,7 +75,7 @@ export function Sidebar(): JSX.Element {
   // beside the brand — already calls this same toggle. Two controls for
   // one switch, one of them floating over the content, is a worse answer
   // than the fixed one that is always in the same place.
-  if (collapsed) return <></>;
+  if (collapsed && !mobile) return <></>;
 
   return (
     <div className="sidebar">
@@ -80,8 +83,8 @@ export function Sidebar(): JSX.Element {
         <span className="sb-title">workspace</span>
         <button
           className="collapse-btn"
-          onClick={toggleCollapsed}
-          title="Collapse sidebar"
+          onClick={mobile ? onClose : toggleCollapsed}
+          title={mobile ? "Close navigation" : "Collapse sidebar"}
         >
           ⇤
         </button>
@@ -127,6 +130,7 @@ export function Sidebar(): JSX.Element {
         <button
           className="icon-btn"
           title="Settings"
+          aria-label="Settings"
           onClick={() => openModal("settings", {})}
         >
           ⚙

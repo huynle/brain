@@ -1,9 +1,9 @@
 import { useSyncExternalStore } from "react";
 
 // Single source of truth for "are we on a phone-sized screen". Matches the CSS
-// breakpoint used across the mobile styles (max-width: 720px). Implemented with
+// breakpoint used across the mobile styles (max-width: 900px). Implemented with
 // useSyncExternalStore so it updates on rotation/resize without effects.
-const QUERY = "(max-width: 720px)";
+const QUERY = "(max-width: 900px), (max-height: 500px) and (pointer: coarse)";
 
 function subscribe(cb: () => void): () => void {
   const mql = window.matchMedia(QUERY);

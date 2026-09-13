@@ -52,11 +52,12 @@ var tenantCoverageManifest = []struct {
 	{"webhooks", "CreateWebhook GetWebhook ListWebhooks UpdateWebhook DeleteWebhook CreateDelivery ListDeliveries", []func(*testing.T){TestPhase6WebhookIsolation, TestPhase6ScopeGuards}},
 	{"stats", "GetStats", []func(*testing.T){TestTenantPhaseOneStats}},
 	{"purge", "ListProjectNotePaths PurgeProjectState DeleteProjectNotes", []func(*testing.T){TestPhase6ProjectPurgeIsolation, TestTenantCollisionPurgeRollback}},
-	{"execution-scope", "executionScope", []func(*testing.T){TestExecutionLedgersScopeGuards, TestExecutionLedgersMainProfiles, TestExecutionLedgersOwnershipConstraints, TestExecutionLedgersExactTableInventory, TestExecutionLedgersReopen, TestExecutionLedgersLimitsAndForeignReads, TestExecutionLedgersInvalidHandles, TestExecutionLedgersBootstrapRefusal}},
+	{"execution-scope", "executionScope", []func(*testing.T){TestExecutionLedgersScopeGuards, TestExecutionLedgersMainProfiles, TestExecutionLedgersOwnershipConstraints, TestExecutionLedgersExactTableInventory, TestExecutionLedgersReopen, TestExecutionLedgersLimitsAndForeignReads, TestExecutionLedgersInvalidHandles, TestExecutionLedgersBootstrapRefusal, TestReceiverReadinessIsTenantLocal}},
 	{"bulk-ledger", "InsertBulkJob readBulkJobs ListBulkJobs GetBulkJob BulkJobByRequest BulkJobItems ClaimBulkJobItem FinishBulkJobItem TransitionBulkJob RetryBulkJob RecoverBulkJobs NextRunnableBulkJob QuarantineBulkJobItems", []func(*testing.T){TestExecutionLedgersBulkIsolation, TestExecutionLedgersBulkMutationIsolation}},
 	{"budget-ledger", "ConfigureExecutionBudget ExecutionBudget ReserveBudget SettleBudget", []func(*testing.T){TestExecutionLedgersBudgets}},
 	{"checkpoint-ledger", "SupervisorCheckpoints SupervisorCheckpoint CompareSupervisorCheckpoint SupervisorCheckpointVersions", []func(*testing.T){TestExecutionLedgersCheckpointsAndReceipts}},
 	{"operation-ledger", "BeginSupervisorOperation SupervisorOperation FinishSupervisorOperation", []func(*testing.T){TestExecutionLedgersCheckpointsAndReceipts}},
+	{"delivery-verification", "CompareDeliveryVerification", []func(*testing.T){TestTenantDeliveryVerificationCAS}},
 	{"entry-sync", "syncScope ReadEntryChanges ReadSelectedEntries ReserveSyncOperation CompleteSyncOperation SyncDevices SaveSyncDevice SyncNote", []func(*testing.T){TestTenantSyncIsolation, TestTenantSyncTriggerReplacement, TestSuccessorReceiverRouting, TestTenantSyncGuards, TestTenantSyncMainProfiles, TestTenantSyncConcurrentCAS, TestSuccessorElevenTableInventory, TestSuccessorSearchRouting, TestSuccessorPartialLedgerRefused}},
 }
 
@@ -78,8 +79,8 @@ func TestTenantWorkloadMethodInventory(t *testing.T) {
 			want[method] = group.name
 		}
 	}
-	if len(want) != 182 {
-		t.Fatalf("manifest has %d workload methods, want 182", len(want))
+	if len(want) != 183 {
+		t.Fatalf("manifest has %d workload methods, want 183", len(want))
 	}
 	files, err := filepath.Glob("*.go")
 	collisionMust(t, err)

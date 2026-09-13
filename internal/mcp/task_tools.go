@@ -29,6 +29,7 @@ func RegisterTaskTools(s *Server, client *APIClient) {
 	registerBrainBlockedInspectorDisable(s, client)
 	registerBrainDreamEnable(s, client)
 	registerBrainDreamDisable(s, client)
+	registerBrainResumeTaskWithContext(s, client)
 }
 
 // =============================================================================
@@ -1860,4 +1861,72 @@ func taskStatusSnapshot(resp *types.MultiTaskStatusResponse) map[string]string {
 		snap[t.ID] = t.Status
 	}
 	return snap
+}
+
+// =============================================================================
+// resume_task_with_context
+// =============================================================================
+
+// registerBrainResumeTaskWithContext exposes POST
+// /tasks/{project}/{taskId}/resume-with-context: resume a blocked/abandoned
+// task while injecting supervisor-authored context. The runner reattaches the
+// prior OpenCode session when it can be reloaded from disk, otherwise it
+// rehydrates a fresh session seeded with the prior transcript; Pi always
+// rehydrates. If the task's session is still live, the context is injected
+// into the running session with no relaunch.
+func registerBrainResumeTaskWithContext(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name: "resume_task_with_context",
+		Description: "Resume a blocked or abandoned task and inject supervisor-authored context into it. " +
+			"OpenCode reattaches the task's prior session when it can be reloaded (true same-session resume), " +
+			"otherwise it rehydrates a fresh session seeded with the prior transcript; Pi always rehydrates. " +
+			"If the task's session is still live, the context is injected into the running session without a relaunch. " +
+			"Targets POST /tasks/{project}/{taskId}/resume-with-context.",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project":             {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
+			"task_id":             {Type: "string", Description: "Task ID (8-char alphanumeric) to resume."},
+			"injected_context":    {Type: "string", Description: "Supervisor-authored context to hand the agent on resume. Required."},
+			"prefer_same_session": {Type: "boolean", Description: "Prefer reattaching the prior OpenCode session when viable (default: true). When false, always rehydrate a fresh session."},
+			"executor_override":   {Type: "string", Description: "Force the relaunch executor ('pi' or 'opencode'). Changing the executor forces rehydrate."},
+			"force":               {Type: "boolean", Description: "Resume even if the task is not detected as abandoned. Never overrides live-claim safety."},
+		}, Required: []string{"task_id", "injected_context"}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := ResolveProjectArg(args)
+		if projectID == "" {
+			return "", fmt.Errorf("project is required")
+		}
+		taskID := StringArg(args, "task_id", "")
+		if taskID == "" {
+			return "", fmt.Errorf("task_id is required")
+		}
+		injected := StringArg(args, "injected_context", "")
+		if injected == "" {
+			return "", fmt.Errorf("injected_context is required")
+		}
+
+		body := map[string]any{
+			"injected_context":    injected,
+			"prefer_same_session": BoolArg(args, "prefer_same_session", true),
+			"force":               BoolArg(args, "force", false),
+		}
+		if override := StringArg(args, "executor_override", ""); override != "" {
+			body["executor_override"] = override
+		}
+
+		var resp types.ResumeWithContextResult
+		path := "/tasks/" + url.PathEscape(projectID) + "/" + url.PathEscape(taskID) + "/resume-with-context"
+		if err := client.Request(ctx, "POST", path, body, nil, &resp); err != nil {
+			return "", err
+		}
+
+		summary := fmt.Sprintf("Resumed task %s in project %s: resumed=%t, mode=%s, injected_live=%t, session=%s.",
+			taskID, projectID, resp.Resumed, resp.ResumeMode, resp.InjectedLive, resp.TargetSessionID)
+		if resp.Reason != "" {
+			summary += " Reason: " + resp.Reason
+		}
+		if resp.AbandonReason != "" {
+			summary += fmt.Sprintf(" (abandon_reason=%s, prior_status=%s)", resp.AbandonReason, resp.PriorStatus)
+		}
+		return summary, nil
+	})
 }

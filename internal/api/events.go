@@ -185,6 +185,10 @@ func matchesEventFilters(evt types.Event, filters map[string]string) bool {
 			if evt.Source != val {
 				return false
 			}
+		case "task_id":
+			if evt.TaskID != val {
+				return false
+			}
 		case "feature_id":
 			if evt.FeatureID != val {
 				return false

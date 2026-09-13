@@ -8,6 +8,7 @@ import {
   liveSessionRef,
   resolveSessionRef,
   sessionSteerState,
+  sessionSubmitRoute,
 } from "./sessionRef";
 import type { OpencodeInstance } from "./types";
 
@@ -228,4 +229,67 @@ test("sessionSteerState: a host note wins over the generic wording", () => {
     canSteer: true,
     note: "",
   });
+});
+
+// ─── sessionSubmitRoute (how a submit is routed) ────────────────────
+
+const OWNER = { project_id: "p1", task_id: "t1" };
+
+test("sessionSubmitRoute: a live, addressable, streaming session steers", () => {
+  assert.deepEqual(sessionSubmitRoute(LIVE, "streaming", OWNER), {
+    kind: "steer",
+    target: { runner_id: "r1", instance_id: "i1", session_id: "ses_1" },
+  });
+  // Owner is irrelevant to the live steer route — it addresses the session,
+  // not the task.
+  assert.equal(
+    sessionSubmitRoute(LIVE, "polling", undefined).kind,
+    "steer",
+  );
+});
+
+test("sessionSubmitRoute: a history ref with an owning task resumes", () => {
+  const r = sessionSubmitRoute(
+    { mode: "history", runner_id: "r1", session_id: "ses_1", task_id: "t1", project_id: "p1" },
+    "none",
+    { project_id: "p1", task_id: "t1" },
+  );
+  assert.deepEqual(r, { kind: "resume", project_id: "p1", task_id: "t1" });
+});
+
+test("sessionSubmitRoute: a live ref whose stream ended resumes (not steer)", () => {
+  // The instance exited under us — the ref still says live, but delivery
+  // "ended" means we must relaunch, not steer a dead process.
+  const r = sessionSubmitRoute(LIVE, "ended", OWNER);
+  assert.deepEqual(r, { kind: "resume", project_id: "p1", task_id: "t1" });
+});
+
+test("sessionSubmitRoute: a finished session with no owning task is disabled", () => {
+  const r = sessionSubmitRoute(
+    { mode: "history", runner_id: "r1", session_id: "ses_1" },
+    "none",
+    undefined,
+  );
+  assert.equal(r.kind, "disabled");
+  assert.match(
+    r.kind === "disabled" ? r.reason : "",
+    /isn't attached to a task/,
+  );
+  // A partial owner (task id but no project) is also not addressable.
+  assert.equal(
+    sessionSubmitRoute(LIVE, "ended", { task_id: "t1" }).kind,
+    "disabled",
+  );
+});
+
+test("sessionSubmitRoute: a live session still discovering its id is disabled", () => {
+  const r = sessionSubmitRoute({ ...LIVE, session_id: undefined }, "streaming", OWNER);
+  assert.equal(r.kind, "disabled");
+  assert.match(r.kind === "disabled" ? r.reason : "", /Waiting for the session id/);
+});
+
+test("sessionSubmitRoute: no ref at all is disabled", () => {
+  const r = sessionSubmitRoute(undefined, "none", OWNER);
+  assert.equal(r.kind, "disabled");
+  assert.match(r.kind === "disabled" ? r.reason : "", /No session/);
 });

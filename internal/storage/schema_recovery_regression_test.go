@@ -138,7 +138,7 @@ func TestSchemaCompatibilityMainAdditionsBeforeMutation(t *testing.T) {
 					s.Close()
 					t.Fatal("returned storage for incompatible main schema")
 				}
-				if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%d is newer than supported version 28", version)) {
+				if err == nil || !strings.Contains(err.Error(), "unreviewed source catalog") {
 					t.Fatalf("expected version preflight refusal, got %v", err)
 				}
 				if !reflect.DeepEqual(before, recoverySnapshot(t, db)) {
@@ -197,7 +197,7 @@ func TestTenantMigrationPostcommitChild(t *testing.T) {
 }
 
 func TestTenantMigrationPostcommitExitReopen(t *testing.T) {
-	if CurrentSchemaVersion != 28 || pendingTenantSchemaVersion != 29 {
+	if CurrentSchemaVersion != 30 || pendingTenantSchemaVersion != 29 {
 		t.Fatal("runtime/private version contract changed")
 	}
 	db, blob := completeMigrationFixture(t)
@@ -269,7 +269,7 @@ UPDATE notes SET lead=NULL, body='different target body' WHERE id=11;`)
 		t.Fatalf("expected committed WAL: %v", err)
 	}
 	// Supported runtime must STILL refuse this artifact. Reopen below is test-only.
-	if s, err := New(path); s != nil || err == nil || !strings.Contains(err.Error(), "29 is newer than supported version 28") {
+	if s, err := New(path); s != nil || err == nil || !strings.Contains(err.Error(), "private tenant schema is not publicly supported") {
 		if s != nil {
 			s.Close()
 		}

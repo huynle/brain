@@ -64,6 +64,15 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 			// Auth so the actor is present in context.
 			r.Use(RequestRecorder)
 
+			// Installation-wide reminder notifications require full access.
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*"))
+				if o.handler != nil {
+					r.Get("/push", o.handler.HandlePush)
+					r.Post("/push/{action}", o.handler.HandlePush)
+				}
+			})
+
 			// ─── Server request log (read:* scope) ─────────────────
 			r.Group(func(r chi.Router) {
 				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
@@ -147,6 +156,18 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				}
 			})
 
+			// Durable bulk jobs are administrative entry mutations and their audit trail.
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*"))
+				if o.handler != nil && o.handler.bulkJobs != nil {
+					r.Post("/bulk-jobs", o.handler.HandleCreateBulkJob)
+					r.Get("/bulk-jobs", o.handler.HandleListBulkJobs)
+					r.Get("/bulk-jobs/{jobID}", o.handler.HandleGetBulkJob)
+					r.Get("/bulk-jobs/{jobID}/items", o.handler.HandleBulkJobItems)
+					r.Post("/bulk-jobs/{jobID}/control", o.handler.HandleControlBulkJob)
+				}
+			})
+
 			// ─── Search (read:* scope) ──────────────────────────
 			r.Group(func(r chi.Router) {
 				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
@@ -166,6 +187,25 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					r.Post("/embeddings/backfill", o.handler.HandleEmbeddingBackfill)
 				} else {
 					r.Post("/embeddings/backfill", notImplemented)
+				}
+			})
+
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+				if o.handler != nil {
+					r.Get("/sync/entries", o.handler.HandleEntryChanges)
+					r.Post("/sync/entries/selected", o.handler.HandleSelectedEntryChanges)
+					r.Get("/sync/identity", o.handler.HandleEntrySyncIdentity)
+				}
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*"))
+				if o.handler != nil {
+					r.Post("/sync/entries", o.handler.HandleEntrySyncMutation)
+					r.Get("/sync/devices", o.handler.HandleSyncDevices)
+					r.Post("/sync/devices/{deviceID}/report", o.handler.HandleSyncReport)
+					r.Get("/sync/devices/{deviceID}/operations/{operationID}/diff", o.handler.HandleSyncDiff)
+					r.Post("/sync/devices/{deviceID}/operations/{operationID}/reconcile", o.handler.HandleSyncReconcile)
 				}
 			})
 
@@ -249,10 +289,35 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					r.Post("/", o.handler.HandleIngestEvents)
 					r.Get("/stream", o.handler.HandleEventStream)
 					r.Get("/recent", o.handler.HandleRecentEvents)
+					r.With(RequireScope("admin:*", "runner:*", "read:*")).Get("/wait", o.handler.HandleEventWait)
+					r.With(RequireScope("admin:*", "runner:*", "read:*")).Get("/resource-health", o.handler.HandleResourceHealth)
 				} else {
 					r.Post("/", notImplemented)
 					r.Get("/stream", notImplemented)
 					r.Get("/recent", notImplemented)
+				}
+			})
+
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+				if o.handler != nil {
+					r.Get("/supervision/capabilities", o.handler.HandleSupervisorCapabilities)
+					if o.handler.executionBudgets != nil {
+						r.Get("/supervision/budgets", o.handler.HandleExecutionBudget)
+						r.With(RequireScope("admin:*")).Post("/supervision/budgets", o.handler.HandleExecutionBudget)
+					}
+					if o.handler.supervisorCheckpoints != nil {
+						r.Get("/supervision/checkpoints", o.handler.HandleSupervisorCheckpoints)
+						r.With(RequireScope("admin:*")).Post("/supervision/checkpoints", o.handler.HandleSupervisorCheckpoints)
+					}
+					if o.handler.supervisorOperations != nil {
+						r.With(RequireScope("admin:*")).Post("/supervision/operations", o.handler.HandleSupervisorOperation)
+						r.With(RequireScope("admin:*")).Get("/supervision/operations/{operationId}", o.handler.HandleSupervisorOperation)
+					}
+					r.Get("/supervision/dispatch-preview", o.handler.HandleDispatchPreview)
+					if o.handler.tasks != nil && o.handler.events != nil {
+						r.Get("/supervision/snapshot", o.handler.HandleSupervisorSnapshot)
+					}
 				}
 			})
 
@@ -291,10 +356,15 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				r.Group(func(r chi.Router) {
 					r.Use(RequireScope("admin:*"))
 					if o.handler != nil && o.handler.assistant != nil {
+						r.Post("/transcribe", o.handler.HandleAssistantTranscription)
+						r.Post("/voice-diagnostics", o.handler.HandleAssistantVoiceDiagnostics)
+						r.Post("/speech", o.handler.HandleAssistantSpeech)
 						r.Post("/chat", o.handler.HandleAssistantChat)
 						r.Post("/chat/stream", o.handler.HandleAssistantChatStream)
+						r.Get("/jobs", o.handler.HandleConversationJobs)
 						r.Post("/goal-draft", o.handler.HandleAssistantGoalDraft)
 					} else {
+						r.Post("/speech", notImplemented)
 						r.Post("/chat", notImplemented)
 						r.Post("/chat/stream", notImplemented)
 						r.Post("/goal-draft", notImplemented)
@@ -558,6 +628,9 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						}
 					})
 
+					if o.handler != nil && o.handler.tasks != nil {
+						r.With(RequireScope("admin:*", "runner:*", "read:*")).Get("/{taskId}/delivery", o.handler.HandleDeliveryGate)
+					}
 					// Log retrieval — read:* scope
 					r.Group(func(r chi.Router) {
 						r.Use(RequireScope("admin:*", "runner:*", "read:*"))
@@ -578,13 +651,16 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/features/{featureId}/run", o.handler.HandleRunFeature)
 							r.Delete("/features/{featureId}/run", o.handler.HandleCancelDependentChain)
 							r.Post("/features/{featureId}/resume", o.handler.HandleResumeFeature)
+							r.Post("/features/{featureId}/resume-with-context", o.handler.HandleResumeFeatureWithContext)
 							// Project-level fanout: run every ready feature in this project.
 							// Distinct from /features/{featureId}/run — no featureId path segment.
 							r.Post("/run", o.handler.HandleRunProject)
 							r.Post("/{taskId}/trigger", o.handler.HandleTriggerTask)
 							r.Post("/{taskId}/dispatch", o.handler.HandleDispatchTask)
 							r.Post("/{taskId}/run", o.handler.HandleRunTask)
+							r.Post("/{taskId}/delivery", o.handler.HandleDeliveryVerification)
 							r.Post("/{taskId}/resume", o.handler.HandleResumeTask)
+							r.Post("/{taskId}/resume-with-context", o.handler.HandleResumeWithContext)
 							// Project wipe. Lives on the tasks tree because
 							// that is where a project is addressed by name,
 							// but it erases every entry type, not just tasks.
@@ -596,11 +672,13 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/features/{featureId}/run", notImplemented)
 							r.Delete("/features/{featureId}/run", notImplemented)
 							r.Post("/features/{featureId}/resume", notImplemented)
+							r.Post("/features/{featureId}/resume-with-context", notImplemented)
 							r.Post("/run", notImplemented)
 							r.Post("/{taskId}/trigger", notImplemented)
 							r.Post("/{taskId}/dispatch", notImplemented)
 							r.Post("/{taskId}/run", notImplemented)
 							r.Post("/{taskId}/resume", notImplemented)
+							r.Post("/{taskId}/resume-with-context", notImplemented)
 							r.Delete("/", notImplemented)
 						}
 					})
@@ -722,8 +800,15 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					// Session history is instance-independent: a completed
 					// session is served by ID from any connected runner that
 					// holds its on-disk storage.
+					r.Get("/runners/{runnerId}/sessions/{sessionId}/descendants", o.handler.HandleControlSessionDescendants)
+					r.Get("/runners/{runnerId}/sessions/{sessionId}/tail", o.handler.HandleControlSessionTail)
 					r.Get("/runners/{runnerId}/sessions/{sessionId}/history",
 						o.handler.HandleControlSessionHistory)
+					// Child (subagent) sessions are likewise instance-independent:
+					// discovered by ID from any connected runner via persisted
+					// parent_id linkage.
+					r.Get("/runners/{runnerId}/sessions/{sessionId}/children",
+						o.handler.HandleControlSessionChildren)
 					r.Post("/runners/{runnerId}/tasks/{taskId}/abort", o.handler.HandleControlAbortTask)
 					// Runner shell: an unrestricted command on the runner
 					// host, streamed back as SSE. control:* already implies

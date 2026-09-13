@@ -114,7 +114,7 @@ func TestTenantEventsGuards(t *testing.T) {
 			if err := op(local, ctx); !errors.Is(err, context.Canceled) {
 				t.Fatalf("canceled: %v", err)
 			}
-			if _, err := owner.db.Exec("UPDATE schema_version SET version=30"); err != nil {
+			if _, err := owner.db.Exec("UPDATE schema_version SET version=32"); err != nil {
 				t.Fatal(err)
 			}
 			if err := op(local, context.Background()); err == nil {

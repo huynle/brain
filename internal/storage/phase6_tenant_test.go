@@ -199,7 +199,7 @@ func TestPhase6ScopeGuards(t *testing.T) {
 	}
 	unknownOwner := newTestStorage(t)
 	unknown, _ := unknownOwner.ForTenant(tenant.Local)
-	relationalExec(t, unknownOwner.db, "UPDATE schema_version SET version=30")
+	relationalExec(t, unknownOwner.db, "UPDATE schema_version SET version=32")
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 	for i, op := range ops {

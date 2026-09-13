@@ -1,5 +1,11 @@
 # P4 final acceptance handoff — preparation only
 
+**Current bounded implementation evidence:** [j9amjg42 phase5](p4-phase5-integration.md)
+now reconciles pinned main and its caller/storage surfaces. The runtime is
+single-mode30 with private29/tenant31 still publicly refused. This historical
+preparation ledger does not override that update; its real-copy, load, physical,
+authorization and release-composition obligations remain open.
+
 `jr1xs3a3`, phase 2, 2026-09-12. No migration/activation, schema edits, merge,
 commit, Brain task access or production/remote access. P4 HEAD:
 `f9c68205abb3803430a77f915342073405496888`; audited main:

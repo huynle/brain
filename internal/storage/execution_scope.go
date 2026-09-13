@@ -7,7 +7,8 @@ import (
 	"github.com/huynle/brain-api/internal/tenant"
 )
 
-// No staging admission. A successor must pass the complete private validator.
+// No staging admission. A successor must pass exact shared catalog validation
+// and bound-tenant readiness, not a global migration/file rehearsal.
 // Main's already-keyed ledgers remain local-only on exact archived profiles.
 // This preflight is not authorization or a concurrent schema-migration fence.
 func (s *TenantStore) executionScope(ctx context.Context, group string) (string, error) {
@@ -34,7 +35,7 @@ func (s *TenantStore) executionScope(ctx context.Context, group string) (string,
 		return "", err
 	}
 	if version == successorSchemaVersion {
-		if err = validateSuccessorSchema(ctx, tx, true); err != nil {
+		if err = validateSuccessorReceiver(ctx, tx, s.tenantID); err != nil {
 			return "", err
 		}
 		return id.String(), nil

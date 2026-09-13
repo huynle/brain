@@ -1,5 +1,23 @@
 # Brain Architecture
 
+## Current P4 source integration status (j9amjg42 phase5)
+
+The dated P3/P4 descriptions below retain historical phase details. Where they
+say runtime28 or that newer-main features are absent, the current contract is:
+**single-mode runtime30**, genuine reviewed main28/29/30 upgrading through ordinary
+startup, and **public refusal of private29 and tenant31**. Multi mode remains off.
+See [phase5 integration and evidence](p4-phase5-integration.md) for the pinned source,
+admission policy, sidecar boundaries, and exact verification scope.
+
+Ordinary tenant31 receiver readiness validates exact shared catalog/ownership
+definitions but only the bound tenant's row relationships, sync identity, FTS
+contents and CAS files. Missing/corrupt A files or FTS segments must not deny B's
+read. Durable root mappings still participate in global exclusion/alias policy;
+this does not make shared catalog corruption or unsafe root overlap acceptable.
+Full global row, FTS, root and CAS validation remains mandatory for dormant
+migration and explicit migration reopen/idempotency verification. Never substitute
+the receiver check at those offline verification gates.
+
 ## Model Roles
 
 Brain uses separate model roles for embedding and attachment extraction. These roles serve different parts of the content pipeline and should remain independently configurable.

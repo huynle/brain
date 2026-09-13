@@ -1,3 +1,11 @@
+import {
+  cachedEntry,
+  cachedList,
+  cachedSummary,
+  offlineAvailable,
+  queueCreate,
+  queueEdit,
+} from "./offline/sync";
 // Typed HTTP client for brain-api. Attaches the bearer token, transparently
 // refreshes on 401 (once), and exposes thin wrappers for the endpoints the PWA
 // uses. Task mutations go through the entries endpoint (PATCH/DELETE
@@ -35,6 +43,8 @@ import type {
   ResumeFeatureResult,
   ResumeTaskOptions,
   ResumeTaskResult,
+  ResumeWithContextOptions,
+  ResumeWithContextResult,
   RunnerListResponse,
   RunnerPauseResponse,
   RunnerStatusResponse,
@@ -79,10 +89,13 @@ function buildUrl(path: string, query?: FetchOpts["query"]): string {
   return url;
 }
 
-async function doFetch(path: string, opts: FetchOpts): Promise<Response> {
-  const auth = useAuth.getState();
+async function doFetch(
+  path: string,
+  opts: FetchOpts,
+  token = useAuth.getState().token,
+): Promise<Response> {
   const headers: Record<string, string> = {
-    ...auth.authHeader(),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...opts.headers,
   };
   let body: BodyInit | undefined;
@@ -102,10 +115,11 @@ async function doFetch(path: string, opts: FetchOpts): Promise<Response> {
 }
 
 export async function api<T>(path: string, opts: FetchOpts = {}): Promise<T> {
-  let res = await doFetch(path, opts);
+  const token = useAuth.getState().token;
+  let res = await doFetch(path, opts, token);
 
   if (res.status === 401) {
-    const refreshed = await useAuth.getState().onUnauthorized();
+    const refreshed = await useAuth.getState().onUnauthorized(token);
     if (refreshed) {
       res = await doFetch(path, opts);
     }
@@ -143,7 +157,9 @@ export function encodeEntryPath(p: string): string {
 export const getHealth = () => api<Health>("/api/v1/health");
 
 export const getProjects = () =>
-  api<ProjectListResponse>("/api/v1/tasks").then((r) => r.projects || []);
+  offlineAvailable()
+    ? cachedSummary().then((summary) => summary.projects)
+    : api<ProjectListResponse>("/api/v1/tasks").then((r) => r.projects || []);
 
 export const getTasks = (projectId: string, signal?: AbortSignal) =>
   api<TaskListResponse>(`/api/v1/tasks/${encodeURIComponent(projectId)}`, {
@@ -187,13 +203,17 @@ export interface CreateEntryResponse {
 }
 
 export const createEntry = (body: CreateEntryRequest) =>
-  api<CreateEntryResponse>("/api/v1/entries", { method: "POST", body });
+  offlineAvailable()
+    ? queueCreate(body)
+    : api<CreateEntryResponse>("/api/v1/entries", { method: "POST", body });
 
 export const updateEntry = (path: string, patch: Record<string, unknown>) =>
-  api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}`, {
-    method: "PATCH",
-    body: patch,
-  });
+  offlineAvailable()
+    ? queueEdit(path, patch)
+    : api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+        method: "PATCH",
+        body: patch,
+      });
 
 export const moveEntry = (path: string, project: string) =>
   api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}/move`, {
@@ -204,17 +224,21 @@ export const moveEntry = (path: string, project: string) =>
 // Full-file (frontmatter + body) get/update — an in-app $EDITOR equivalent so
 // the PWA can edit the entire entry, not just metadata or the body.
 export const getEntryRaw = (path: string) =>
-  api<Response>(`/api/v1/entries/${encodeEntryPath(path)}`, {
-    headers: { Accept: "text/x-brain-full" },
-    raw: true,
-  }).then((r) => r.text());
+  offlineAvailable()
+    ? cachedEntry(path).then((e) => e.raw)
+    : api<Response>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+        headers: { Accept: "text/x-brain-full" },
+        raw: true,
+      }).then((r) => r.text());
 
 export const updateEntryRaw = (path: string, content: string) =>
-  api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "text/x-brain-full" },
-    rawBody: content,
-  });
+  offlineAvailable()
+    ? queueEdit(path, undefined, content)
+    : api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "text/x-brain-full" },
+        rawBody: content,
+      });
 
 // Delete a single entry. `force` bypasses the server's live-claim guard,
 // which refuses (409) to delete a task an online runner is executing.
@@ -871,6 +895,28 @@ export const resumeFeature = (
     },
   );
 
+// Resume a task and inject supervisor-authored context via
+// POST /tasks/{project}/{task}/resume-with-context. Distinct from resumeTask:
+// carries the typed text as injected_context and reports back the route the
+// runner took (resume_mode / injected_live). Used by the Session view when the
+// user submits into a FINISHED session — the endpoint relaunches (rehydrate or
+// same_session) or, when the session turns out to still be live, injects into
+// it (live_injected) with no status flip. prefer_same_session is sent
+// explicitly (the Go decode does not default an absent field — see ADR
+// 7ihrqpi4); callers that omit it get true.
+export const resumeTaskWithContext = (
+  projectId: string,
+  taskId: string,
+  opts: ResumeWithContextOptions,
+) =>
+  api<ResumeWithContextResult>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}/resume-with-context`,
+    {
+      method: "POST",
+      body: { prefer_same_session: true, ...opts },
+    },
+  );
+
 /** Response from POST /tasks/{project}/run — fans out RunFeatureNow across
  *  every ready feature in the project. Skipped features (no ready tasks)
  *  show up in results with a reason and count in featuresSkipped. */
@@ -1231,6 +1277,7 @@ export function summarizeTriggerResults(results: TriggerResponse[]): {
 // ─── Built-in Assistant ──────────────────────────────────────────
 
 export interface AssistantStatusResponse {
+  speech_available?: boolean;
   available: boolean;
   mode: "agentic" | "direct_llm" | "manual" | string;
   provider?: string;
@@ -1312,6 +1359,7 @@ export const assistantChat = (body: {
   message: string;
   model?: string;
   attachments?: string[];
+  images?: string[];
   context?: Record<string, string>;
   history?: AssistantHistoryMessage[];
 }) =>
@@ -1333,10 +1381,14 @@ export interface AssistantStreamEvent {
 
 export async function assistantChatStream(
   body: {
+	conversation_id?: string;
+	inbox?: boolean;
     project?: string;
     message: string;
+    voice?: boolean;
     model?: string;
     attachments?: string[];
+    images?: string[];
     context?: Record<string, string>;
     history?: AssistantHistoryMessage[];
   },
@@ -1637,6 +1689,33 @@ export const controlSessionHistory = (runnerId: string, sessionId: string) =>
     `/api/v1/control/runners/${encodeURIComponent(runnerId)}/sessions/${encodeURIComponent(sessionId)}/history`,
   );
 
+export interface SessionChildDescriptor {
+  session_id: string;
+  parent_id: string;
+  title?: string;
+  created?: number;
+  agent?: string;
+  children?: SessionChildDescriptor[];
+}
+
+// controlSessionChildren discovers the child (subagent) sessions of a session
+// by ID — sourced from OpenCode's persisted parent_id linkage, so it works
+// without a live instance. recursive walks the tree up to `depth` levels.
+export const controlSessionChildren = (
+  runnerId: string,
+  sessionId: string,
+  opts?: { recursive?: boolean; depth?: number },
+) =>
+  api<SessionChildDescriptor[]>(
+    `/api/v1/control/runners/${encodeURIComponent(runnerId)}/sessions/${encodeURIComponent(sessionId)}/children`,
+    {
+      query: {
+        recursive: opts?.recursive ? "true" : undefined,
+        depth: opts?.depth,
+      },
+    },
+  );
+
 export const controlSpawnInstance = (
   runnerId: string,
   spec: SpawnInstanceSpec,
@@ -1793,11 +1872,12 @@ export async function controlExec(
 ): Promise<void> {
   const url = `/api/v1/control/runners/${encodeURIComponent(runnerId)}/exec`;
 
+  let requestToken = useAuth.getState().token;
   const open = (): Promise<Response> =>
     fetch(url, {
       method: "POST",
       headers: {
-        ...useAuth.getState().authHeader(),
+        ...(requestToken ? { Authorization: `Bearer ${requestToken}` } : {}),
         "Content-Type": "application/json",
         Accept: "text/event-stream",
         "Cache-Control": "no-cache",
@@ -1808,8 +1888,11 @@ export async function controlExec(
 
   let res = await open();
   if (res.status === 401) {
-    const refreshed = await useAuth.getState().onUnauthorized();
-    if (refreshed) res = await open();
+    const refreshed = await useAuth.getState().onUnauthorized(requestToken);
+    if (refreshed) {
+      requestToken = useAuth.getState().token;
+      res = await open();
+    }
   }
 
   if (!res.ok) {
@@ -1873,6 +1956,7 @@ export const listEntries = (query?: {
   type?: string;
   status?: string;
   limit?: number;
+  offset?: number;
   global?: string;
   /** Comma-separated multi-project scope, e.g. "hindsight,pwa,global".
    *  The reserved member "global" admits project-less entries. Supersedes
@@ -1880,7 +1964,15 @@ export const listEntries = (query?: {
   projects?: string;
   sortBy?: "created" | "modified" | "priority" | "completed" | "title";
   sortOrder?: "asc" | "desc";
-}) => api<ListEntriesResponse>("/api/v1/entries", { query });
+}) =>
+  offlineAvailable()
+    ? cachedList(query).then((entries) => ({
+        entries: entries.slice(0, query?.limit ?? 100),
+        total: entries.length,
+        limit: query?.limit ?? 100,
+        offset: 0,
+      }))
+    : api<ListEntriesResponse>("/api/v1/entries", { query });
 
 // ─── Automations (mirrors the TUI Automations tab) ───────────────
 // Fetches all automation entries (project-scoped + global/built-in), the
@@ -1967,12 +2059,38 @@ export async function executeAutomation(
 }
 
 export const getEntry = (path: string) =>
-  api<BrainEntry>(`/api/v1/entries/${encodeEntryPath(path)}`, {
-    query: { include: "attachments" },
-  });
+  offlineAvailable()
+    ? cachedEntry(path)
+    : api<BrainEntry>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+        query: { include: "attachments" },
+      });
 
-export const search = (req: SearchRequest) =>
-  api<SearchResponse>("/api/v1/search", { method: "POST", body: req });
+export async function search(req: SearchRequest): Promise<SearchResponse> {
+  const local = async () => {
+    const entries = await cachedList(req as unknown as Record<string, unknown>);
+    return {
+      results: entries.slice(0, req.limit ?? 50).map((e) => ({
+        ...e,
+        snippet: e.content.slice(0, 240),
+        match_source: "local_fts",
+      })),
+      total: entries.length,
+    };
+  };
+  if (
+    offlineAvailable() && !navigator.onLine
+  )
+    return local();
+  try {
+    return await api<SearchResponse>("/api/v1/search", {
+      method: "POST",
+      body: req,
+    });
+  } catch (e) {
+    if (offlineAvailable() && !(e instanceof ApiError)) return local();
+    throw e;
+  }
+}
 
 // ─── Entry graph (backlinks / outlinks / related) ────────────────
 // The graph routes address entries by 8-char short id (single path
@@ -2012,16 +2130,26 @@ export const getBrainStats = (
   project?: string,
   global?: boolean,
   projects?: string,
-) =>
-  api<BrainStats>("/api/v1/stats", {
-    query: projects
-      ? { projects }
-      : global
-        ? { global: "true" }
-        : project
-          ? { project }
-          : undefined,
-  });
+): Promise<Pick<BrainStats, "totalEntries" | "byType">> =>
+  offlineAvailable()
+    ? cachedSummary(
+        projects
+          ? { projects }
+          : global
+            ? { global: true }
+            : project
+              ? { project }
+              : {},
+      )
+    : api<BrainStats>("/api/v1/stats", {
+        query: projects
+          ? { projects }
+          : global
+            ? { global: "true" }
+            : project
+              ? { project }
+              : undefined,
+      });
 
 export const embedBackfill = (body: {
   project?: string;
@@ -2199,3 +2327,8 @@ export const updateServerConfig = (cfg: ServerConfig) =>
     method: "PUT",
     body: { config: cfg },
   });
+
+
+/** Metadata only: never transmit the transcript or raw audio to diagnostics. */
+export const assistantVoiceDiagnostic = (body: {attempt: string; event: string; error: string; elapsed_ms: number; results: number; android: boolean; hands_free: boolean}) =>
+  api<void>("/api/v1/assistant/voice-diagnostics", {method: "POST", body});

@@ -41,14 +41,14 @@ interface AuthState {
   token: string | null;
   mode: AuthMode | null;
   error: string | null;
-  init: () => Promise<void>;
+  init: (lightweight?: boolean) => Promise<void>;
   beginLogin: () => Promise<void>;
   loginPassword: (username: string, password: string) => Promise<void>;
   handleCallback: (code: string, state: string) => Promise<string>;
   setManualToken: (token: string) => void;
   logout: () => void;
   /** Mark that the server rejected our token; try refresh, else needs-login. */
-  onUnauthorized: () => Promise<boolean>;
+  onUnauthorized: (rejectedToken?: string | null) => Promise<boolean>;
   authHeader: () => Record<string, string>;
 }
 
@@ -78,7 +78,9 @@ function saveTokens(
 }
 
 // Refresh a password-mode session via the dedicated /api/v1/auth/refresh endpoint.
-async function exchangePasswordRefresh(): Promise<boolean> {
+async function exchangePasswordRefresh(
+  isCurrent: () => boolean,
+): Promise<boolean> {
   const refresh = localStorage.getItem(LS.refreshToken);
   if (!refresh) return false;
   const res = await fetch("/api/v1/auth/refresh", {
@@ -88,11 +90,30 @@ async function exchangePasswordRefresh(): Promise<boolean> {
   });
   if (!res.ok) return false;
   const data = await res.json();
+  if (!isCurrent()) return false;
   saveTokens(data, "password");
   return true;
 }
 
+async function bindOfflineScope(token: string, isCurrent = () => true) {
+  const res = await fetch("/api/v1/sync/identity", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok)
+    throw new Error(
+      "Could not verify the offline account. Try signing in again.",
+    );
+  const { scope } = await res.json();
+  if (typeof scope !== "string" || !/^[a-f0-9]{64}$/.test(scope))
+    throw new Error("Invalid offline account identity");
+  if (!isCurrent()) return;
+  localStorage.setItem("brain.offline.scope", scope);
+  localStorage.removeItem("brain.offline.anonymous");
+}
+
 function clearTokens() {
+  localStorage.removeItem("brain.offline.scope");
+  localStorage.removeItem("brain.offline.anonymous");
   localStorage.removeItem(LS.accessToken);
   localStorage.removeItem(LS.refreshToken);
   localStorage.removeItem(LS.expiresAt);
@@ -121,7 +142,8 @@ async function registerClient(): Promise<{ id: string; secret: string }> {
   }
   const data = await res.json();
   localStorage.setItem(LS.clientId, data.client_id);
-  if (data.client_secret) localStorage.setItem(LS.clientSecret, data.client_secret);
+  if (data.client_secret)
+    localStorage.setItem(LS.clientSecret, data.client_secret);
   return { id: data.client_id, secret: data.client_secret || "" };
 }
 
@@ -130,7 +152,7 @@ function clearClient() {
   localStorage.removeItem(LS.clientSecret);
 }
 
-async function exchangeRefresh(): Promise<boolean> {
+async function exchangeRefresh(isCurrent: () => boolean): Promise<boolean> {
   const refresh = localStorage.getItem(LS.refreshToken);
   const clientId = localStorage.getItem(LS.clientId);
   if (!refresh || !clientId) return false;
@@ -146,8 +168,41 @@ async function exchangeRefresh(): Promise<boolean> {
   });
   if (!res.ok) return false;
   const data = await res.json();
+  if (!isCurrent()) return false;
   saveTokens(data);
   return true;
+}
+
+// Refresh tokens rotate on consumption. Share the exchange across requests and
+// serialize it across browser tabs, re-reading storage after acquiring the lock.
+let authGeneration = 0;
+const refreshes = new Map<string, Promise<boolean>>();
+function refreshCredentials(
+  mode: AuthMode | null,
+  token: string,
+): Promise<boolean> {
+  const existing = refreshes.get(token);
+  if (existing) return existing;
+  const exchange = async () => {
+    const isCurrent = () => localStorage.getItem(LS.accessToken) === token;
+    if (!isCurrent()) return !!localStorage.getItem(LS.accessToken);
+    const ok =
+      mode === "password"
+        ? await exchangePasswordRefresh(isCurrent)
+        : mode === "oauth"
+          ? await exchangeRefresh(isCurrent)
+          : false;
+    return ok || (!isCurrent() && !!localStorage.getItem(LS.accessToken));
+  };
+  const promise = (async () => {
+    if (typeof navigator !== "undefined" && navigator.locks)
+      return await navigator.locks.request("brain-auth-refresh", exchange);
+    return await exchange();
+  })().finally(() => {
+    refreshes.delete(token);
+  });
+  refreshes.set(token, promise);
+  return promise;
 }
 
 export const useAuth = create<AuthState>((set, get) => ({
@@ -163,25 +218,55 @@ export const useAuth = create<AuthState>((set, get) => ({
     return h;
   },
 
-  async init() {
+  async init(_lightweight = false) {
+    const generation = authGeneration;
+    const current = () => generation === authGeneration;
+    const finish = (patch: Partial<AuthState>) => {
+      if (current()) set(patch);
+    };
     const mode = localStorage.getItem(LS.mode) as AuthMode | null;
     const { token, expiresAt } = storedToken();
 
     if (token) {
       // Manual tokens never expire from our side.
       if (mode === "manual" || expiresAt > now() + 30) {
-        set({ status: "authenticated", token, mode });
+        if (!localStorage.getItem("brain.offline.scope")) {
+          try {
+            await bindOfflineScope(token, current);
+          } catch (e) {
+            finish({
+              status: "needs-login",
+              token: null,
+              mode: null,
+              error: String(e),
+            });
+            return;
+          }
+        }
+        finish({ status: "authenticated", token, mode });
         return;
       }
       // Access token expired/expiring — try a silent refresh for the mode.
-      const refreshed =
-        mode === "password" ? await exchangePasswordRefresh() : await exchangeRefresh();
+      let refreshed = false;
+      try {
+        refreshed = await refreshCredentials(mode, token);
+      } catch {
+        if (localStorage.getItem("brain.offline.scope")) {
+          finish({ status: "authenticated", token, mode });
+          return;
+        }
+      }
+      if (!current()) return;
       if (refreshed) {
-        set({
+        finish({
           status: "authenticated",
           token: localStorage.getItem(LS.accessToken),
           mode: mode ?? "oauth",
         });
+        return;
+      }
+      if (!navigator.onLine && localStorage.getItem("brain.offline.scope")) {
+        finish({ status: "authenticated", token, mode });
         return;
       }
       clearTokens();
@@ -189,19 +274,30 @@ export const useAuth = create<AuthState>((set, get) => ({
 
     // No usable token. Probe whether the server even requires auth.
     try {
-      const res = await fetch("/api/v1/tasks", { headers: {} });
+      const res = await fetch("/api/v1/sync/identity", { headers: {} });
+      if (!current()) return;
       if (res.status === 401) {
-        set({ status: "needs-login", token: null, mode: null });
+        finish({ status: "needs-login", token: null, mode: null });
       } else {
-        set({ status: "anonymous", token: null, mode: null });
+        localStorage.setItem("brain.offline.scope", "anonymous");
+        localStorage.setItem("brain.offline.anonymous", "true");
+        finish({ status: "anonymous", token: null, mode: null });
       }
     } catch {
-      // Network error — assume login is needed; the UI surfaces the error.
-      set({ status: "needs-login", token: null, mode: null });
+      // Only reopen an anonymous cache after this origin previously verified it.
+      finish({
+        status:
+          localStorage.getItem("brain.offline.anonymous") === "true"
+            ? "anonymous"
+            : "needs-login",
+        token: null,
+        mode: null,
+      });
     }
   },
 
   async beginLogin() {
+    ++authGeneration;
     set({ error: null });
     try {
       const { id } = await registerClient();
@@ -212,7 +308,9 @@ export const useAuth = create<AuthState>((set, get) => ({
       sessionStorage.setItem(SS.state, state);
       sessionStorage.setItem(
         SS.returnTo,
-        window.location.pathname + window.location.search,
+        window.location.pathname +
+          window.location.search +
+          window.location.hash,
       );
 
       const params = new URLSearchParams({
@@ -233,6 +331,8 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 
   async loginPassword(username, password) {
+    const generation = ++authGeneration;
+    const current = () => generation === authGeneration;
     set({ error: null });
     const res = await fetch("/api/v1/auth/login", {
       method: "POST",
@@ -243,7 +343,8 @@ export const useAuth = create<AuthState>((set, get) => ({
       let msg = "Login failed";
       if (res.status === 401) msg = "Invalid username or password";
       else if (res.status === 429) msg = "Too many attempts — try again later";
-      else if (res.status === 404) msg = "Password login is not enabled on this server";
+      else if (res.status === 404)
+        msg = "Password login is not enabled on this server";
       else {
         const txt = await res.text().catch(() => "");
         if (txt) msg = txt.slice(0, 200);
@@ -252,6 +353,11 @@ export const useAuth = create<AuthState>((set, get) => ({
       throw new Error(msg);
     }
     const data = await res.json();
+    if (!current()) return;
+    localStorage.removeItem("brain.offline.scope");
+    localStorage.removeItem("brain.offline.anonymous");
+    await bindOfflineScope(data.access_token, current);
+    if (!current()) return;
     saveTokens(data, "password");
     set({
       status: "authenticated",
@@ -262,14 +368,17 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 
   async handleCallback(code, state) {
+    ++authGeneration;
     const expectedState = sessionStorage.getItem(SS.state);
     const verifier = sessionStorage.getItem(SS.verifier);
     if (!expectedState || state !== expectedState) {
       throw new Error("state mismatch — possible CSRF, please retry login");
     }
-    if (!verifier) throw new Error("missing PKCE verifier — please retry login");
+    if (!verifier)
+      throw new Error("missing PKCE verifier — please retry login");
     const clientId = localStorage.getItem(LS.clientId);
-    if (!clientId) throw new Error("missing client registration — please retry");
+    if (!clientId)
+      throw new Error("missing client registration — please retry");
 
     const body = new URLSearchParams({
       grant_type: "authorization_code",
@@ -288,6 +397,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       throw new Error(`token exchange failed (${res.status}): ${txt}`);
     }
     const data = await res.json();
+    await bindOfflineScope(data.access_token);
     saveTokens(data);
     sessionStorage.removeItem(SS.verifier);
     sessionStorage.removeItem(SS.state);
@@ -303,13 +413,42 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 
   setManualToken(token) {
-    localStorage.setItem(LS.accessToken, token);
-    localStorage.setItem(LS.mode, "manual");
-    localStorage.removeItem(LS.expiresAt);
-    set({ status: "authenticated", token, mode: "manual", error: null });
+    const generation = ++authGeneration;
+    const current = () => generation === authGeneration;
+    set({ status: "loading", error: null });
+    void bindOfflineScope(token, current)
+      .then(() => {
+        if (!current()) return;
+        localStorage.setItem(LS.accessToken, token);
+        localStorage.setItem(LS.mode, "manual");
+        localStorage.removeItem(LS.expiresAt);
+        set({ status: "authenticated", token, mode: "manual", error: null });
+      })
+      .catch(
+        (e) =>
+          current() &&
+          set({
+            status: "needs-login",
+            token: null,
+            mode: null,
+            error: String(e),
+          }),
+      );
   },
 
   logout() {
+    ++authGeneration;
+    // Stop lock-screen delivery on shared devices when explicitly signing out.
+    const pushToken = get().token;
+    if ("serviceWorker" in navigator) {
+      void navigator.serviceWorker.getRegistration().then(async reg => {
+        const sub = await reg?.pushManager?.getSubscription();
+        if (!sub) return;
+        try {
+          await fetch("/api/v1/push/unsubscribe", {method: "POST", headers: {"Content-Type":"application/json", ...(pushToken ? {Authorization:`Bearer ${pushToken}`} : {})}, body:JSON.stringify({endpoint:sub.endpoint}), keepalive:true});
+        } finally { await sub.unsubscribe(); }
+      }).catch(() => {});
+    }
     // Best-effort revoke for password sessions; fire-and-forget.
     if (get().mode === "password") {
       const refresh = localStorage.getItem(LS.refreshToken);
@@ -326,19 +465,44 @@ export const useAuth = create<AuthState>((set, get) => ({
     set({ status: "needs-login", token: null, mode: null });
   },
 
-  async onUnauthorized() {
+  async onUnauthorized(rejectedToken = get().token) {
+    // Late 401s must never refresh or clear a newer login.
+    if (rejectedToken !== get().token) return !!get().token;
+    if (!rejectedToken) {
+      if (get().status === "anonymous") {
+        ++authGeneration;
+        clearTokens();
+        set({ status: "needs-login", token: null, mode: null });
+      }
+      return false;
+    }
     const mode = get().mode;
-    if (mode === "oauth" && (await exchangeRefresh())) {
-      set({ token: localStorage.getItem(LS.accessToken) });
+    const refreshed = await refreshCredentials(mode, rejectedToken);
+    if (get().token !== rejectedToken) return !!get().token;
+    if (refreshed) {
+      const token = localStorage.getItem(LS.accessToken);
+      if (!token) return false;
+      set({ token, mode: localStorage.getItem(LS.mode) as AuthMode | null });
       return true;
     }
-    if (mode === "password" && (await exchangePasswordRefresh())) {
-      set({ token: localStorage.getItem(LS.accessToken) });
-      return true;
-    }
+    if (localStorage.getItem(LS.accessToken) !== rejectedToken) return false;
+    ++authGeneration;
     clearTokens();
-    // Keep the client registration; it may still be valid for a fresh login.
     set({ status: "needs-login", token: null, mode: null });
     return false;
   },
 }));
+
+// Login/logout and token refresh in another tab must also update its in-memory
+// credentials before that tab can read a newly selected offline namespace.
+if (
+  typeof window !== "undefined" &&
+  typeof window.addEventListener === "function"
+) {
+  window.addEventListener("storage", (event) => {
+    if (event.key === LS.accessToken) {
+      ++authGeneration;
+      void useAuth.getState().init();
+    }
+  });
+}

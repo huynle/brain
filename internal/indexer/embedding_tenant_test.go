@@ -75,7 +75,10 @@ func TestEmbeddingIndexerTenantIsolation(t *testing.T) {
 		"UPDATE notes SET tenant_id='acme' WHERE path='global/b.md'",
 		"UPDATE entry_attachments SET tenant_id='acme' WHERE note_id=(SELECT id FROM notes WHERE tenant_id='acme')",
 		"UPDATE attachment_derived SET tenant_id='acme' WHERE attachment_id IN (SELECT attachment_id FROM entry_attachments WHERE tenant_id='acme')",
-		"INSERT INTO schema_version(version) VALUES(29)",
+		// Synthetic query-seam fixture, never passed to public admission or
+		// provenance classification. Complete migration is tested in storage.
+		"CREATE TABLE tenants(id TEXT PRIMARY KEY)",
+		"DELETE FROM schema_version; INSERT INTO schema_version(version) VALUES(29)",
 	} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)

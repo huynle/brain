@@ -226,11 +226,8 @@ func TestSuccessorSelectionRejectsUnknownCatalog(t *testing.T) {
 		"CREATE TEMP TABLE notes(x)",
 	} {
 		t.Run(mutation, func(t *testing.T) {
-			db := compatibilityDB(t, filepath.Join(t.TempDir(), "source.db"))
+			db := archivedSchemaFixture(t, provenanceSources[0].revision)
 			db.SetMaxOpenConns(1)
-			if err := InitSchema(db); err != nil {
-				t.Fatal(err)
-			}
 			if _, err := db.Exec(mutation); err != nil {
 				t.Fatal(err)
 			}

@@ -1,12 +1,13 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 28
+const CurrentSchemaVersion = 30
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -523,6 +524,12 @@ func migrateSchema(db *sql.DB) error {
 	if err != nil || !exists {
 		return err
 	}
+	return migrateAdmittedSchema(db, ver)
+}
+
+// Only InitSchema and the checked migration entry point supply this version,
+// after read-only admission and before any bootstrap DDL changes the catalog.
+func migrateAdmittedSchema(db *sql.DB, ver int) error {
 
 	if ver < 2 {
 		// v2: add revoked_at column to api_tokens for soft revocation.
@@ -1027,6 +1034,27 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 30 {
+		for _, ddl := range []string{createExecutionBudgets, createBudgetReservations, createSupervisorCheckpointVersions} {
+			if _, err := db.Exec(ddl); err != nil {
+				return err
+			}
+		}
+		if _, err := db.Exec(createSupervisorCheckpoints); err != nil {
+			return err
+		}
+		if _, err := db.Exec(createSupervisorOperations); err != nil {
+			return fmt.Errorf("migrate v30 supervisor operations: %w", err)
+		}
+	}
+	if ver < 29 {
+		for _, ddl := range []string{createBulkJobsTable, createBulkJobItemsTable, createBulkJobItemsIndex} {
+			if _, err := db.Exec(ddl); err != nil {
+				return fmt.Errorf("migrate v29 (bulk jobs): %w", err)
+			}
+		}
+	}
+
 	if ver < 28 {
 		if _, err := db.Exec(createTenantRootsTable); err != nil {
 			return fmt.Errorf("migrate v28 (tenant_roots): %w", err)
@@ -1223,11 +1251,20 @@ func searchSubstring(s, substr string) bool {
 // schema_version belongs to the shared migration owner, not either handle. There
 // is no per-tenant database registry, schema initialization, or database stamp.
 func InitSchema(db *sql.DB) error {
-	if _, _, err := checkSchemaCompatibility(db); err != nil {
+	version, _, err := checkSchemaCompatibility(db)
+	if err != nil {
 		return err
 	}
 	// Tables (order matters for foreign keys)
 	tables := []string{
+		createExecutionBudgets,
+		createBudgetReservations,
+		createSupervisorCheckpointVersions,
+		createSupervisorCheckpoints,
+		createSupervisorOperations,
+		createBulkJobsTable,
+		createBulkJobItemsTable,
+		createBulkJobItemsIndex,
 		createNotesTable,
 		createLinksTable,
 		createTagsTable,
@@ -1283,7 +1320,7 @@ func InitSchema(db *sql.DB) error {
 	}
 
 	// Run migrations for existing databases (may drop/recreate tables).
-	if err := migrateSchema(db); err != nil {
+	if err := migrateAdmittedSchema(db, version); err != nil {
 		return fmt.Errorf("migrate schema: %w", err)
 	}
 	if err := ensureNoteEmbeddingsTable(db); err != nil {
@@ -1295,6 +1332,10 @@ func InitSchema(db *sql.DB) error {
 		if _, err := db.Exec(ddl); err != nil {
 			return fmt.Errorf("create index: %w", err)
 		}
+	}
+
+	if err := initEntrySync(db); err != nil {
+		return fmt.Errorf("entry sync schema: %w", err)
 	}
 
 	// Set schema version (idempotent: INSERT OR REPLACE)
@@ -1325,15 +1366,15 @@ SELECT name FROM main.sqlite_schema UNION ALL SELECT name FROM sqlite_temp_schem
 	if provenance != 0 {
 		return 0, true, fmt.Errorf("successor schema provenance is not supported by runtime version %d", CurrentSchemaVersion)
 	}
-	// Execution ledgers are absent from runtime28. A partial staging catalog
-	// (including an empty/lowered version table) must not be bootstrapped around.
-	// This only refuses newer artifacts; it does not initialize/admit main29/30
-	// or change the private29 migration/catalog contract.
+	// Newer ledger/sync/tenant artifacts require exact source classification,
+	// including with an empty/lowered version table. Historical legacy inputs
+	// without these artifacts retain their existing initialization policy.
 	var ledgers int
 	if err := db.QueryRow(`SELECT count(*) FROM (
 SELECT name FROM main.sqlite_schema UNION ALL SELECT name FROM sqlite_temp_schema
 ) WHERE lower(name) IN ('bulk_jobs','bulk_job_items','execution_budgets','budget_reservations',
-'supervisor_checkpoints','supervisor_checkpoint_versions','supervisor_operations')`).Scan(&ledgers); err != nil {
+ 'supervisor_checkpoints','supervisor_checkpoint_versions','supervisor_operations',
+ 'entry_sync_devices','entry_sync_identity','entry_sync_changes','entry_sync_operations','tenants')`).Scan(&ledgers); err != nil {
 		return 0, false, fmt.Errorf("inspect execution ledger schema: %w", err)
 	}
 	var kind string
@@ -1357,8 +1398,19 @@ SELECT name FROM main.sqlite_schema UNION ALL SELECT name FROM sqlite_temp_schem
 	if version > CurrentSchemaVersion {
 		return version, true, fmt.Errorf("database schema version %d is newer than supported version %d", version, CurrentSchemaVersion)
 	}
-	if ledgers != 0 {
-		return version, true, fmt.Errorf("execution ledger schema is not supported by runtime version %d", CurrentSchemaVersion)
+	if ledgers != 0 || version >= 29 {
+		tx, e := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+		if e != nil {
+			return version, true, e
+		}
+		defer func() { _ = tx.Rollback() }()
+		profile, e := classifySchemaSource(context.Background(), tx)
+		if e != nil {
+			return version, true, e
+		}
+		if profile == "private29" {
+			return version, true, fmt.Errorf("private tenant schema is not publicly supported")
+		}
 	}
 	return version, true, nil
 }

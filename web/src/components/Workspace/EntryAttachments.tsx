@@ -2,7 +2,7 @@
  * EntryAttachments — the attachment strip below an entry's body.
  *
  * Pictures (including SVG) render inline as a figure with its caption;
- * everything else becomes a file row you can download. Attachments the
+ * everything else becomes a file row with an in-page preview and download. Attachments the
  * body already displays inline via markdown are skipped, so a figure
  * referenced in prose doesn't also appear again in the strip.
  *
@@ -10,6 +10,7 @@
  * it's how the PDF/image extractor makes a binary searchable, and it is
  * usually long enough to bury the entry if shown by default.
  */
+import { AttachmentLink } from "./AttachmentPreview";
 import { useState } from "react";
 import { AttachmentImage } from "./AttachmentImage";
 import { useAttachmentBlob } from "../../hooks/useAttachmentBlob";
@@ -89,11 +90,10 @@ function AttachmentFileRow({
             Text
           </button>
         )}
+        <AttachmentLink attachment={attachment}>Preview</AttachmentLink>
         <AttachmentDownload attachment={attachment} />
       </div>
-      {textOpen && hasText && (
-        <pre className="att-file-text">{text!.text}</pre>
-      )}
+      {textOpen && hasText && <pre className="att-file-text">{text!.text}</pre>}
     </div>
   );
 }
@@ -105,23 +105,40 @@ function AttachmentDownload({
 }: {
   attachment: AttachmentReference;
 }): JSX.Element | null {
-  const { url, loading } = useAttachmentBlob(attachment.download_url);
+  const { url, load } = useAttachmentBlob(attachment.download_url, false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
   if (!attachment.download_url) return null;
-  if (loading || !url) {
-    return (
-      <span className="entry-act" aria-disabled="true">
-        …
-      </span>
-    );
-  }
   return (
-    <a
-      className="entry-act"
-      href={url}
-      download={attachment.filename || `attachment-${attachment.id}`}
-      title="Download"
-    >
-      ↓
-    </a>
+    <>
+      <button
+        type="button"
+        className="entry-act"
+        disabled={busy}
+        title="Download"
+        aria-label={`Download ${attachment.filename || "attachment"}`}
+        onClick={async () => {
+          setBusy(true);
+          setError(false);
+          try {
+            const href = url ?? (await load());
+            if (!href) throw new Error("Missing download");
+            const a = document.createElement("a");
+            a.href = href;
+            a.download = attachment.filename || `attachment-${attachment.id}`;
+            document.body.append(a);
+            a.click();
+            a.remove();
+          } catch {
+            setError(true);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? "…" : "↓"}
+      </button>
+      {error && <span role="alert">Download failed. Try again.</span>}
+    </>
   );
 }

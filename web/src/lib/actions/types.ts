@@ -84,6 +84,8 @@ export interface ActionDescriptor {
   disabledReason?: string;
   /** Renders in the destructive tone. */
   danger?: boolean;
+  /** Run long mutations in the global operation tray after confirmation. */
+  background?: boolean;
   /** Route through the confirm dialog before `run`. */
   confirm?: ActionConfirm;
   /**

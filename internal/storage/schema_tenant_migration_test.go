@@ -62,7 +62,7 @@ func TestTenantMigrationComposition(t *testing.T) {
 	if v, err := GetSchemaVersion(db); err != nil || v != 29 {
 		t.Fatalf("future version = %d: %v", v, err)
 	}
-	if CurrentSchemaVersion != 28 {
+	if CurrentSchemaVersion != 30 {
 		t.Fatal("runtime activated")
 	}
 	for table, want := range before {

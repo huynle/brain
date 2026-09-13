@@ -351,6 +351,44 @@ func (pm *ProcessManager) UpdateIdleSince(taskID string, idleSince string) {
 	info.Task.IdleSince = idleSince
 }
 
+// SetPendingSteer marks/clears the PendingSteer flag on a tracked task.
+func (pm *ProcessManager) SetPendingSteer(taskID string, pending bool) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	info, exists := pm.processes[taskID]
+	if !exists {
+		return
+	}
+	info.Task.PendingSteer = pending
+}
+
+// UpdateLastActivity advances the LastActivity timestamp on a tracked task,
+// never moving it backwards.
+func (pm *ProcessManager) UpdateLastActivity(taskID string, t time.Time) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	info, exists := pm.processes[taskID]
+	if !exists {
+		return
+	}
+	if t.After(info.Task.LastActivity) {
+		info.Task.LastActivity = t
+	}
+}
+
+// SetStallRecovered marks/clears that a bounded stall recovery has already
+// run for a tracked task. Checked on the next stall edge to escalate an
+// unrecoverable stall to blocked.
+func (pm *ProcessManager) SetStallRecovered(taskID string, recovered bool) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	info, exists := pm.processes[taskID]
+	if !exists {
+		return
+	}
+	info.Task.StallRecovered = recovered
+}
+
 // IsRunning checks if a process is still alive.
 func (pm *ProcessManager) IsRunning(taskID string) bool {
 	pm.mu.Lock()
@@ -488,20 +526,35 @@ func (pm *ProcessManager) CheckCompletion(taskID string, checkTaskFile bool) Com
 	// task forever. Checked before every completion path below.
 	if procExited && info.Proc.ExitCode() == 0 && info.Task.OpencodePort > 0 {
 		if sessionStatusForPort(info.Task.OpencodePort) == "busy" {
-			pm.mu.Lock()
-			if info.Task.BusyHoldSince.IsZero() {
-				info.Task.BusyHoldSince = time.Now()
+			// The raw busy flag lingers after a question-tool turn: the
+			// turn ended but the session still reports busy. If the
+			// transcript confirms the latest assistant turn completed,
+			// don't hold — fall through to normal completion. Only hold
+			// when genuinely still busy (turn not ended), when we have no
+			// session id to probe, or when the probe is unavailable
+			// (conservative: preserve the old hold).
+			turnEnded := false
+			if info.Task.SessionID != "" {
+				if ended, _, ok := checkOpencodeTurnEnded(info.Task.OpencodePort, info.Task.SessionID); ok && ended {
+					turnEnded = true
+				}
 			}
-			held := time.Since(info.Task.BusyHoldSince)
-			pm.mu.Unlock()
-			if held < steerHoldMax {
-				slog.Info("driver exited but session busy; holding completion for in-flight turn",
-					"task_id", taskID, "port", info.Task.OpencodePort,
-					"held", held.Round(time.Second))
-				return CompletionRunning
+			if !turnEnded {
+				pm.mu.Lock()
+				if info.Task.BusyHoldSince.IsZero() {
+					info.Task.BusyHoldSince = time.Now()
+				}
+				held := time.Since(info.Task.BusyHoldSince)
+				pm.mu.Unlock()
+				if held < steerHoldMax {
+					slog.Info("driver exited but session busy; holding completion for in-flight turn",
+						"task_id", taskID, "port", info.Task.OpencodePort,
+						"held", held.Round(time.Second))
+					return CompletionRunning
+				}
+				slog.Warn("session still busy after hold window; completing anyway",
+					"task_id", taskID, "held", held.Round(time.Second))
 			}
-			slog.Warn("session still busy after hold window; completing anyway",
-				"task_id", taskID, "held", held.Round(time.Second))
 		}
 	}
 

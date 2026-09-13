@@ -64,6 +64,10 @@ func computeTaskStats(tasks []types.ResolvedTask) FeatureTaskStats {
 			continue
 		}
 		stats.Total++
+		if (task.Status == "completed" || task.Status == "validated") && len(task.DeliveryVerification.Unmet()) > 0 {
+			stats.Blocked++
+			continue
+		}
 		switch task.Status {
 		case "pending":
 			stats.Pending++

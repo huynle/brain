@@ -302,7 +302,7 @@ func TestTenantNotesExecutionSchemaGuard(t *testing.T) {
 	if _, err := local.GetNoteByPath(ctx, "missing"); err != nil {
 		t.Fatal(err)
 	}
-	for _, version := range []int{28, 0, 27, 29, 30} {
+	for _, version := range []int{28, 0, 27, 29, 32} {
 		relationalExec(t, owner.db, "DELETE FROM schema_version")
 		if _, err := owner.db.Exec("INSERT INTO schema_version(version) VALUES(?)", version); err != nil {
 			t.Fatal(err)

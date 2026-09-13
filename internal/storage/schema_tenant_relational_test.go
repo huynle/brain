@@ -3,7 +3,6 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -39,16 +38,9 @@ func relationalExec(t *testing.T, q interface {
 
 func relationalFixture(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "v28.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := archivedSchemaFixture(t, provenanceSources[0].revision)
 	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = db.Close() })
 	relationalExec(t, db, "PRAGMA foreign_keys=ON")
-	if err := InitSchema(db); err != nil {
-		t.Fatal(err)
-	}
 	// Deleted high IDs exercise sqlite_sequence preservation, not just MAX(id).
 	relationalExec(t, db, `INSERT INTO notes(id,path,short_id) VALUES(900,'deleted','deleted'); DELETE FROM notes WHERE id=900;
  INSERT INTO notes(id,path,short_id,title) VALUES(10,'projects/p/task/same.md','same','source'),(11,'target','target','target');
@@ -216,7 +208,7 @@ func TestTenantRelationalBackfill(t *testing.T) {
 			t.Fatalf("rollback changed %s", table)
 		}
 	}
-	if CurrentSchemaVersion != 28 {
+	if CurrentSchemaVersion != 30 {
 		t.Fatalf("premature schema advance: %d", CurrentSchemaVersion)
 	}
 }

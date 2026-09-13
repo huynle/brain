@@ -202,7 +202,7 @@ func TestTenantAttachmentsGuards(t *testing.T) {
 		t.Run(fmt.Sprintf("invalid-%d", i), func(t *testing.T) { check(t, h, context.Background()) })
 	}
 	t.Run("nil context", func(t *testing.T) { check(t, local, nil) })
-	for _, version := range []int{27, 30} {
+	for _, version := range []int{27, 32} {
 		if _, err := s.db.Exec("UPDATE schema_version SET version=?", version); err != nil {
 			t.Fatal(err)
 		}

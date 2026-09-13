@@ -1,3 +1,4 @@
+import { reportBackgroundResult } from "../store/backgroundOperations";
 /**
  * useProjectActionContext — binds the pure project-action builders to
  * real effects (API calls, focus-pane navigation, toasts).
@@ -131,6 +132,7 @@ export function useProjectActionContext(): ProjectActionContext {
             typeToConfirm: pid,
           }),
         );
+        reportBackgroundResult(summarizeDeleteProjectResult(result), result.failed > 0);
         forgetProject(pid);
         await queryClient.invalidateQueries({ queryKey: ["projects"] });
         void queryClient.invalidateQueries({ queryKey: ["entries"] });

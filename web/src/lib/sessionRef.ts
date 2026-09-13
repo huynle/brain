@@ -171,3 +171,71 @@ export function sessionSteerState(
   }
   return { canSteer: true, note: "" };
 }
+
+/**
+ * How a Session-view input submit should be routed, decided purely from the
+ * ref, its live delivery state, and the owning {project,task} the caller has
+ * resolved. The Session view's one always-present input keys off this — see
+ * ADR projects/brain-api/decision/7ihrqpi4.md, Decision 2.
+ *
+ *   • steer    — live, addressable, stream not ended → live prompt_async into
+ *                the running session (unchanged behavior).
+ *   • resume   — a recorded transcript (history ref) OR a live ref whose
+ *                stream ended under us, AND an owning task is known → the
+ *                resume-with-context backend relaunches the task with the
+ *                typed text as injected_context.
+ *   • disabled — starting (live, no session id yet) or finished-but-no-owning-
+ *                task (adhoc/continuation sessions). The input renders disabled
+ *                with the reason, never hidden.
+ *
+ * `owner` is the {project_id, task_id} the caller derived from the ref
+ * (history refs carry it directly; a live-ended ref resolves it off the
+ * instance registry row). A finished session with no owning task cannot be
+ * addressed by resume-with-context, so it is disabled by design.
+ */
+export type SubmitRoute =
+  | {
+      kind: "steer";
+      target: { runner_id: string; instance_id: string; session_id: string };
+    }
+  | { kind: "resume"; project_id: string; task_id: string }
+  | { kind: "disabled"; reason: string };
+
+export function sessionSubmitRoute(
+  sref: SessionRef | undefined,
+  delivery: "streaming" | "polling" | "ended" | "none",
+  owner: { project_id?: string; task_id?: string } | undefined,
+): SubmitRoute {
+  if (!sref) return { kind: "disabled", reason: "No session to show." };
+
+  const { canSteer } = sessionSteerState(sref, delivery);
+  if (canSteer && sref.mode === "live" && sref.session_id) {
+    return {
+      kind: "steer",
+      target: {
+        runner_id: sref.runner_id,
+        instance_id: sref.instance_id,
+        session_id: sref.session_id,
+      },
+    };
+  }
+
+  // Live but still discovering the session id — transient, not resumable yet.
+  if (sref.mode === "live" && !sref.session_id) {
+    return { kind: "disabled", reason: "Waiting for the session id…" };
+  }
+
+  // Everything else is a finished session (history ref, or a live ref whose
+  // stream ended). Resumable only when we know the owning task.
+  if (owner?.project_id && owner?.task_id) {
+    return {
+      kind: "resume",
+      project_id: owner.project_id,
+      task_id: owner.task_id,
+    };
+  }
+  return {
+    kind: "disabled",
+    reason: "This session isn't attached to a task, so it can't be resumed.",
+  };
+}

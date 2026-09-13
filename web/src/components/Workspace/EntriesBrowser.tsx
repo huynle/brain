@@ -23,6 +23,7 @@
  * store effects.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useOffline } from "../../lib/offline/sync";
 import { ErrorState } from "../common/ErrorState";
 import { Loading } from "../common/Loading";
 import { EntryReader } from "./EntryReader";
@@ -184,8 +185,12 @@ export function EntriesBrowser(): JSX.Element {
   const moveSelection = (dir: 1 | -1) => {
     if (rows.length === 0) return;
     const idx = rows.findIndex((r) => r.path === selectedPath);
-    const next = idx === -1 ? (dir === 1 ? 0 : rows.length - 1)
-      : Math.min(rows.length - 1, Math.max(0, idx + dir));
+    const next =
+      idx === -1
+        ? dir === 1
+          ? 0
+          : rows.length - 1
+        : Math.min(rows.length - 1, Math.max(0, idx + dir));
     const row = rows[next];
     if (!row) return;
     selectEntry(row.path);
@@ -253,8 +258,10 @@ export function EntriesBrowser(): JSX.Element {
     </div>
   );
 
+  const online = useOffline((s) => s.online);
   const listPane = (
     <div className="entries-list" ref={listRef}>
+      {!online && <p role="status">Offline: showing cached entries only.</p>}
       {searching && searchRes.searching && rows.length === 0 ? (
         <Loading label="Searching…" />
       ) : list.error && !searching ? (
@@ -295,8 +302,7 @@ export function EntriesBrowser(): JSX.Element {
               <span className="entry-row-title">{r.title}</span>
               <button
                 className={
-                  "entry-pin" +
-                  (comparePins.includes(r.path) ? " active" : "")
+                  "entry-pin" + (comparePins.includes(r.path) ? " active" : "")
                 }
                 title={
                   comparePins.includes(r.path)
@@ -314,6 +320,15 @@ export function EntriesBrowser(): JSX.Element {
             {r.sub && <div className="entry-row-sub">{r.sub}</div>}
           </div>
         ))
+      )}
+      {!searching && list.hasMore && (
+        <button
+          className="btn"
+          disabled={list.loadingMore}
+          onClick={list.loadMore}
+        >
+          {list.loadingMore ? "Loading…" : "Load more entries"}
+        </button>
       )}
     </div>
   );
@@ -347,9 +362,7 @@ export function EntriesBrowser(): JSX.Element {
               <select
                 value={strategy}
                 title="Search strategy"
-                onChange={(e) =>
-                  setStrategy(e.target.value as SearchStrategy)
-                }
+                onChange={(e) => setStrategy(e.target.value as SearchStrategy)}
               >
                 <option value="fts">text</option>
                 <option value="semantic">semantic</option>
@@ -395,10 +408,7 @@ export function EntriesBrowser(): JSX.Element {
               title="Sort"
               onChange={(e) => {
                 const [by, order] = e.target.value.split(":");
-                setSort(
-                  by as typeof sortBy,
-                  order as typeof sortOrder,
-                );
+                setSort(by as typeof sortBy, order as typeof sortOrder);
               }}
             >
               {SORT_OPTIONS.map((o) => (

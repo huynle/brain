@@ -11,10 +11,8 @@ import (
 
 func TestTenantRootsMigrationFrom27(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "shared.sqlite")
-	s, err := New(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := &StorageLayer{db: archivedSchemaFixture(t, provenanceSources[0].revision)}
+	var err error
 	if _, err = s.db.Exec("DROP TABLE IF EXISTS tenant_roots; DELETE FROM schema_version; INSERT INTO schema_version(version) VALUES (27)"); err != nil {
 		t.Fatal(err)
 	}
@@ -32,6 +30,13 @@ func TestTenantRootsMigrationFrom27(t *testing.T) {
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
+	runArchivedSchema(t, provenanceSources[0].revision, path)
+	legacy := compatibilityDB(t, path)
+	relationalExec(t, legacy, "DROP TABLE tenant_roots; DELETE FROM schema_version; INSERT INTO schema_version(version) VALUES(27)")
+	relationalExec(t, legacy, "INSERT INTO feature_pause_state(project_id,feature_id,paused,updated_at) VALUES ('legacy-project','legacy-feature',1,'2026-09-06T00:00:00Z')")
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
 	s, err = New(path)
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +49,7 @@ func TestTenantRootsMigrationFrom27(t *testing.T) {
 	if count != 1 {
 		t.Fatal("migration did not create durable tenant_roots table")
 	}
-	if version, err := GetSchemaVersion(s.db); err != nil || version != 28 {
+	if version, err := GetSchemaVersion(s.db); err != nil || version != CurrentSchemaVersion {
 		t.Fatalf("upgraded version = %d, err %v", version, err)
 	}
 	ctx := context.Background()

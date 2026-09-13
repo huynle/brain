@@ -99,7 +99,7 @@ func newGraphFixture(t testing.TB, n int) *graphFixture {
 		}
 	}
 	var version int
-	if err := db.QueryRow("SELECT MAX(version) FROM schema_version").Scan(&version); err != nil || version != 29 || storage.CurrentSchemaVersion != 28 {
+	if err := db.QueryRow("SELECT MAX(version) FROM schema_version").Scan(&version); err != nil || version != 31 || storage.CurrentSchemaVersion != 30 {
 		t.Fatalf("staging guard: %d %v", version, err)
 	}
 	return f

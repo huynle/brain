@@ -196,7 +196,7 @@ func newAttachmentServiceWithDBForTest(t *testing.T, maxSize int64) (*Attachment
 
 func newAttachmentServiceWithBrainForTest(t *testing.T, brain api.BrainService) (*AttachmentServiceImpl, *storage.TenantStore, *recordingBlobStore) {
 	t.Helper()
-	store, err := storagetest.New(t, t.TempDir() + "/brain.db")
+	store, err := storagetest.New(t, t.TempDir()+"/brain.db")
 	if err != nil {
 		t.Fatalf("storage.New failed: %v", err)
 	}
@@ -726,7 +726,7 @@ func TestAttachmentServiceCreateEnforcesMIMEPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store, err := storagetest.New(t, t.TempDir() + "/brain.db")
+			store, err := storagetest.New(t, t.TempDir()+"/brain.db")
 			if err != nil {
 				t.Fatalf("storage.New failed: %v", err)
 			}
@@ -838,7 +838,7 @@ func TestAttachmentServiceOpenTextPrefersReadyDerivedText(t *testing.T) {
 }
 
 func TestAttachmentServiceStoreDerivedTextInvokesChangeHookForLinkedEntriesAndSwallowsHookError(t *testing.T) {
-	store, err := storagetest.New(t, t.TempDir() + "/brain.db")
+	store, err := storagetest.New(t, t.TempDir()+"/brain.db")
 	if err != nil {
 		t.Fatalf("storage.New failed: %v", err)
 	}
@@ -876,7 +876,7 @@ func TestAttachmentServiceStoreDerivedTextInvokesChangeHookForLinkedEntriesAndSw
 }
 
 func TestAttachmentServiceExtractAttachmentTextInvokesChangeHookOnlyForTerminalDerivedText(t *testing.T) {
-	store, err := storagetest.New(t, t.TempDir() + "/brain.db")
+	store, err := storagetest.New(t, t.TempDir()+"/brain.db")
 	if err != nil {
 		t.Fatalf("storage.New failed: %v", err)
 	}

@@ -142,6 +142,94 @@ func TestPiExecutor_BuildPrompt_Resume(t *testing.T) {
 	}
 }
 
+// TestPiExecutor_Spawn_ResumeWithContext_RehydratesAndInjects proves the
+// end-to-end SpawnOptions plumbing for the Pi executor: resume fields
+// (ResumeMode/ResumeSessionID/InjectedContext/PriorTranscript) flow from
+// SpawnOptions through Spawn into the prompt the Pi process actually receives.
+//
+// Because Pi has no session continuation (CanResumeSession is always false), a
+// same_session request MUST coerce to the rehydrate prompt at the executor
+// boundary — never a same-session prompt, and never a fresh --session against
+// the stored id. The assertions read the prompt file Spawn wrote and require
+// the rehydrate preamble, the bounded prior-transcript section, the
+// authoritative task content, and the delimited supervisor-injected-context
+// block. Against pre-feature behavior (selectResumePrompt / rehydrate builder
+// absent, Spawn falling back to the legacy IsResume prompt) this fails: there
+// is no rehydrate preamble and the injected context never appears.
+func TestPiExecutor_Spawn_ResumeWithContext_RehydratesAndInjects(t *testing.T) {
+	stateDir := t.TempDir()
+	cfg := testPiConfig()
+	cfg.StateDir = stateDir
+
+	e := NewPiExecutor(cfg)
+	// Stub the process so no real pi binary is required; Spawn still writes
+	// the prompt file we assert against before invoking the command.
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("/bin/cat")
+	}
+
+	task := resumeTestTask() // carries authoritative Content
+
+	const priorTranscript = "PRIOR TURN: I was editing retry.go when the runner died."
+	opts := SpawnOptions{
+		Mode:            ExecutionModeHeadless,
+		Workdir:         t.TempDir(),
+		ResumeMode:      ResumeModeSameSession, // Pi must coerce this to rehydrate
+		ResumeSessionID: "ses_stored_should_be_ignored_by_pi",
+		InjectedContext: testInjected,
+		PriorTranscript: priorTranscript,
+	}
+
+	result, err := e.Spawn(context.Background(), task, "proj", opts)
+	if err != nil {
+		t.Fatalf("Spawn returned error: %v", err)
+	}
+	if result.PromptFile == "" {
+		t.Fatal("PromptFile is empty; cannot verify prompt content")
+	}
+
+	raw, err := os.ReadFile(result.PromptFile)
+	if err != nil {
+		t.Fatalf("read prompt file: %v", err)
+	}
+	prompt := string(raw)
+
+	// Rehydrate preamble — proves same_session was coerced to rehydrate for Pi.
+	if !strings.Contains(prompt, "## Resume (rehydrated)") {
+		t.Errorf("Pi resume prompt missing rehydrate preamble; got:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "## Resume (same session)") {
+		t.Error("Pi must not emit a same-session prompt (no session continuation)")
+	}
+
+	// Supervisor injected context flows through and is delimited.
+	if !strings.Contains(prompt, testInjected) {
+		t.Errorf("injected context %q missing from Pi resume prompt", testInjected)
+	}
+	if !strings.Contains(prompt, injectedContextOpen) || !strings.Contains(prompt, injectedContextClose) {
+		t.Error("injected-context delimiters missing from Pi resume prompt")
+	}
+
+	// Bounded prior transcript is included.
+	if !strings.Contains(prompt, transcriptSectionHeader) {
+		t.Error("prior-transcript section header missing from Pi resume prompt")
+	}
+	if !strings.Contains(prompt, priorTranscript) {
+		t.Error("prior transcript body missing from Pi resume prompt")
+	}
+
+	// Authoritative task body always survives.
+	if !strings.Contains(prompt, "Authoritative brain task body that must always survive.") {
+		t.Error("authoritative task content missing from Pi resume prompt")
+	}
+
+	// The stored session id must NOT leak into the Pi prompt: Pi cannot reload
+	// a session, so pinning it would be misleading.
+	if strings.Contains(prompt, "ses_stored_should_be_ignored_by_pi") {
+		t.Error("stored session id leaked into Pi rehydrate prompt")
+	}
+}
+
 // =============================================================================
 // ResolveWorkdir Tests (delegates to common)
 // =============================================================================

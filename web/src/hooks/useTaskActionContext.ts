@@ -1,3 +1,4 @@
+import { reportBackgroundResult } from "../store/backgroundOperations";
 /**
  * useTaskActionContext — binds the pure task-action builders to real
  * effects (API calls, modal navigation, toasts).
@@ -116,6 +117,7 @@ export function useTaskActionContextFactory(): (
 
       setStatus: async (task: Task, status: TaskStatus) => {
         await setTaskStatus(task, status);
+        reportBackgroundResult(`${task.title || task.id} → ${STATUS_LABELS[status] ?? status}`);
         toast(
           `${task.title || task.id} → ${STATUS_LABELS[status] ?? status}`,
           "success",
@@ -123,6 +125,7 @@ export function useTaskActionContextFactory(): (
       },
 
       deleteTask: async (task: Task) => {
+        const originalModal = useModal.getState().target;
         await withForceRetry(
           (force) => deleteEntry(task.path, force),
           forceConfirmFor({
@@ -136,7 +139,8 @@ export function useTaskActionContextFactory(): (
         );
         // Close whatever modal was showing this task; leaving a detail
         // view open on a deleted entry produces a confusing "not found".
-        closeModal();
+        if (useModal.getState().target === originalModal) closeModal();
+        reportBackgroundResult(`Deleted ${task.title || task.id}`);
         toast(`Deleted ${task.title || task.id}`, "success");
       },
 

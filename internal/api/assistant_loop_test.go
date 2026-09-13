@@ -369,3 +369,36 @@ func TestRunAgentLoop_RespectsCancelledContext(t *testing.T) {
 		t.Fatalf("scripted server got %d calls, want 0 (loop should have bailed)", len(scripted.seen))
 	}
 }
+
+func TestRunAgentLoop_VoiceStyleDoesNotReplaceToolPolicy(t *testing.T) {
+	for _, voice := range []bool{false, true} {
+		scripted := newScriptedOpenRouter([]string{makeSSE(`{"choices":[{"delta":{"content":"Hello."}}]}`)})
+		server := httptest.NewServer(scripted.handler(t))
+		t.Setenv("BRAIN_TEST_VOICE_KEY", "fixture")
+		planner := NewOpenRouterAssistantPlanner("openrouter", server.URL, "BRAIN_TEST_VOICE_KEY", "fixture", 0)
+		svc := NewAssistantService(AssistantServiceOptions{Enabled: true, Planner: planner})
+		_, err := svc.runAgentLoop(context.Background(), AssistantChatRequest{Message: "Hello", Voice: voice}, nil)
+		server.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload struct {
+			Messages []chatMessage `json:"messages"`
+		}
+		if err := json.Unmarshal(scripted.seen[0], &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Messages[0].Content != assistantSystemPrompt() {
+			t.Fatal("tool policy replaced")
+		}
+		containsVoice := false
+		for _, m := range payload.Messages {
+			if m.Role == "system" && strings.Contains(m.Content, "one or two short sentences") {
+				containsVoice = true
+			}
+		}
+		if containsVoice != voice {
+			t.Fatalf("voice policy=%v request=%v", containsVoice, voice)
+		}
+	}
+}

@@ -44,7 +44,7 @@ func TestTenantFTSBackfill(t *testing.T) {
 	if err := stageTenantFTS(tx); err != nil {
 		t.Fatalf("repeat validation: %v", err)
 	}
-	if err := tx.QueryRow(`SELECT max(version) FROM schema_version`).Scan(&n); err != nil || n != 28 || CurrentSchemaVersion != 28 {
+	if err := tx.QueryRow(`SELECT max(version) FROM schema_version`).Scan(&n); err != nil || n != 28 || CurrentSchemaVersion != 30 {
 		t.Fatalf("version advanced: %d %v", n, err)
 	}
 }

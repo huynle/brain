@@ -46,6 +46,7 @@ func NewHTTPHandler(apiClient *APIClient) *HTTPHandler {
 			RegisterTaskTools(s, client)
 			RegisterFeatureTools(s, client)
 			RegisterRunnerTools(s, client)
+			RegisterSupervisorTools(s, client)
 			RegisterObservabilityTools(s, client)
 			RegisterProjectTools(s, client)
 			RegisterControlTools(s, client)
@@ -108,10 +109,18 @@ func (h *HTTPHandler) handlePost(w http.ResponseWriter, r *http.Request) {
 	// Create an authenticated MCP server for this request.
 	// Extract the Bearer token from the request and forward it to the API client
 	// so tool calls authenticate against the brain API.
-	client := h.apiClient
+	// Public link generation must not leak the loopback address used for API
+	// callbacks. Host/protocol are display hints only, never request destinations.
+	copyClient := *h.apiClient
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	copyClient.readerBaseURL = scheme + "://" + r.Host
+	client := &copyClient
 	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
 		if token := extractBearer(authHeader); token != "" {
-			client = h.apiClient.WithAuthToken(token)
+			client = client.WithAuthToken(token)
 		}
 	}
 	server := h.serverFactory(client)

@@ -88,8 +88,9 @@ func buildScopedListQuery(opts *ListOptions, scope contentScope) (string, []inte
 			params = append(params, opts.Priority)
 		}
 		if opts.PathPrefix != "" {
-			where = append(where, "path LIKE ?")
-			params = append(params, opts.PathPrefix+"%")
+			where = append(where, "path LIKE ? ESCAPE '\\'")
+			prefix := strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(opts.PathPrefix)
+			params = append(params, prefix+"%")
 		}
 		if opts.Tag != "" {
 			predicate, args := scope.where("tag = ?", opts.Tag)

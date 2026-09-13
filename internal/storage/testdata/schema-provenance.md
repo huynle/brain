@@ -1,5 +1,15 @@
 # j9amjg42 phase 1: archived source fixtures
 
+**Phase5 addendum:** this document retains the phase1/2 historical record below.
+Public single-mode admission now accepts genuine pinned main28/29/30 and initializes
+runtime30; private29/tenant31 remain refused. The resulting fresh runtime30 catalog
+matches the existing `main30-devices` pin byte-for-byte; no pin was loosened or
+replaced. Archived fixture generation still executes immutable Git source; pristine
+closed fixture bytes are cached per revision within a test process and copied for
+each independent fixture. Single-mode sync initialization retains main's sequence
+consumption; dormant migration never reseeds existing history. See
+[phase5 evidence](../../../docs/p4-phase5-integration.md).
+
 The executable fixture is `schema_provenance_test.go`, not the earlier synthetic
 main-additions fixture and not target `InitSchema` with appended DDL. It reads
 immutable Git objects with `git show`, retains the complete archived `schema.go`,

@@ -23,7 +23,9 @@ import (
 	"github.com/huynle/brain-api/internal/indexer"
 	mcppkg "github.com/huynle/brain-api/internal/mcp"
 	"github.com/huynle/brain-api/internal/oauth"
+	"github.com/huynle/brain-api/internal/phonepush"
 	"github.com/huynle/brain-api/internal/service"
+	"github.com/huynle/brain-api/internal/tenant"
 	"github.com/huynle/brain-api/internal/webui"
 	"github.com/huynle/brain-api/pkg/pathutil"
 )
@@ -45,6 +47,7 @@ type ServerOptions struct {
 	TaskDefaults    config.TaskDefaultsConfig
 	FeatureCheckout config.FeatureCheckoutConfig
 	Tenancy         config.TenancyConfig
+	FeatureDelivery config.FeatureDeliveryConfig
 	// IndexWatch, when enabled, runs a filesystem watcher that re-indexes
 	// out-of-band writes to BrainDir. Off by default; see
 	// config.IndexWatchConfig for why.
@@ -322,10 +325,10 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		BrainDir: opts.BrainDir, Host: opts.Host, Port: opts.Port,
 		EnableAuth: opts.EnableAuth, CORSOrigin: opts.CORSOrigin,
 		OAuthPIN: opts.OAuthPIN, JWTSecret: opts.JWTSecret,
-		TaskDefaults: opts.TaskDefaults, FeatureCheckout: opts.FeatureCheckout,
+		TaskDefaults: opts.TaskDefaults, FeatureCheckout: opts.FeatureCheckout, FeatureDelivery: opts.FeatureDelivery,
 		Tenancy: opts.Tenancy, Embedding: opts.Embedding, Attachments: attachments,
 		AttachmentExtraction: opts.AttachmentExtraction, Assistant: opts.Assistant,
-	}, graphIdentity{tokens: views.tokens, verifier: credVerifier, passwords: control})
+	}, graphIdentity{tokens: views.tokens, verifier: credVerifier, passwords: control, assistantMCPURL: assistantMCPBaseURL(opts)})
 	if err != nil {
 		cleanup()
 		return nil, "", nil, err
@@ -454,12 +457,51 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		cleanup()
 		return nil, "", nil, fmt.Errorf("failed to ensure built-in feature checkout simple automation: %w", err)
 	}
-	// Workers are boot-owned, not a side effect of constructing/residing in a
-	// graph cache. Single mode starts them once, after built-in installation.
+	// Phase 3: register the built-in per-feature git-delivery automation. It
+	// fires on feature.completed only for features whose folded delivery_mode
+	// is "mr" or "local_merge" (default "none" does not match), so nothing is
+	// pushed or merged unless a feature explicitly opts in. Gated on the
+	// separate FeatureDelivery.Enabled toggle (default OFF).
+	if err := service.EnsureBuiltInFeatureDeliveryAutomation(ctx, brainSvc, service.BuiltInFeatureDeliveryConfig{
+		Enabled:            cfg.FeatureDelivery.Enabled,
+		MergeTargetBranch:  cfg.TaskDefaults.MergeTargetBranch,
+		MergeStrategy:      cfg.TaskDefaults.MergeStrategy,
+		RemoteBranchPolicy: cfg.TaskDefaults.RemoteBranchPolicy,
+		TargetWorkdir:      cfg.TaskDefaults.TargetWorkdir,
+	}); err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("failed to ensure built-in feature delivery automation: %w", err)
+	}
+	// Workers remain boot-owned and joined before the graph/shared owner.
 	stopWorkers := startSingleGraphWorkers(ctx, graph)
 	graphCleanup := cleanup
 	var cleanupOnce sync.Once
 	cleanup = func() { cleanupOnce.Do(func() { stopWorkers(); graphCleanup() }) }
+	if cfg.Assistant.Enabled && os.Getenv("BRAIN_ASSISTANT_JOBS") == "true" {
+		stopJobs, err := graph.assistant.StartConversationJobs(tenant.Into(ctx, tenant.Local), filepath.Join(dataDir, "assistant-jobs", "jobs.db"))
+		if err != nil {
+			cleanup()
+			return nil, "", nil, fmt.Errorf("start conversation worker: %w", err)
+		}
+		previousCleanup := cleanup
+		cleanup = func() { stopJobs(); previousCleanup() }
+	}
+
+	// ─── API Handler & Router ───────────────────────────────────────
+	pushSvc, err := phonepush.OpenPhonePush(filepath.Join(dataDir, "push", "notifications.db"))
+	if err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("open phone notifications: %w", err)
+	}
+	pushCleanup := cleanup
+	cleanup = func() { _ = pushSvc.Close(); pushCleanup() }
+	graph.bulk.Start(tenant.Into(ctx, tenant.Local), scanDone)
+	previousCleanup := cleanup
+	cleanup = func() { graph.bulk.Stop(); previousCleanup() }
+	api.WithPushService(pushSvc)(graph.handler)
+	stopPush := graph.handler.StartPush(ctx)
+	beforePushStop := cleanup
+	cleanup = func() { stopPush(); beforePushStop() }
 
 	// ─── Rate Limiting ─────────────────────────────────────────────
 	var rateLimiter *api.RateLimiter
@@ -542,4 +584,17 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// the SPA + static assets for browser navigations and delegates all API,
 	// OAuth, MCP, and well-known routes back to the router untouched.
 	return webui.Handler(router), dbPath, cleanup, nil
+}
+
+// assistantMCPBaseURL builds the loopback base URL (no /api/v1 suffix) the UI
+// assistant uses to reach this same server's REST API when executing the
+// full Brain MCP tool set. Scheme tracks the listener: TLS ⇒ https so the
+// callback validates against the self-signed cert trusted for loopback rather
+// than hitting the TLS listener as plain HTTP.
+func assistantMCPBaseURL(opts ServerOptions) string {
+	scheme := "http"
+	if opts.TLSCert != "" && opts.TLSKey != "" {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://localhost:%d", scheme, opts.Port)
 }

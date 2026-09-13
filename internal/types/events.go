@@ -42,17 +42,23 @@ const (
 	EventProjectResumed = "project.resumed"
 
 	// Task lifecycle events.
-	EventTaskClaimed       = "task.claimed"
-	EventTaskClaimRejected = "task.claim_rejected"
-	EventTaskStarted       = "task.started"
-	EventTaskCompleted     = "task.completed"
-	EventTaskFailed        = "task.failed"
-	EventTaskBlocked       = "task.blocked"
-	EventTaskCancelled     = "task.cancelled"
-	EventTaskReleased      = "task.released"
-	EventTaskStatusChanged = "task.status_changed"
-	EventTaskTriggered     = "task.triggered"
-	EventTaskIdleDetected  = "task.idle_detected"
+	EventTaskDeliveryChanged         = "task.delivery_changed"
+	EventSupervisorCheckpointChanged = "supervisor.checkpoint_changed"
+	EventSessionActivity             = "session.activity"
+	EventSessionPermission           = "session.permission_requested"
+	EventTaskResourceSample          = "task.resource_sample"
+	EventTaskResourcePressure        = "task.resource_pressure"
+	EventTaskClaimed                 = "task.claimed"
+	EventTaskClaimRejected           = "task.claim_rejected"
+	EventTaskStarted                 = "task.started"
+	EventTaskCompleted               = "task.completed"
+	EventTaskFailed                  = "task.failed"
+	EventTaskBlocked                 = "task.blocked"
+	EventTaskCancelled               = "task.cancelled"
+	EventTaskReleased                = "task.released"
+	EventTaskStatusChanged           = "task.status_changed"
+	EventTaskTriggered               = "task.triggered"
+	EventTaskIdleDetected            = "task.idle_detected"
 	// EventTaskResumeRequested fires when POST /resume sets a task's
 	// resume_requested flag and flips its status back to pending. Distinct
 	// from EventTaskStatusChanged so consumers can distinguish user-initiated
@@ -137,6 +143,7 @@ type EventCoverage struct {
 
 // AllEventTypes enumerates all valid event type strings.
 var AllEventTypes = []string{
+	EventTaskResourceSample, EventTaskResourcePressure, EventSessionActivity, EventSessionPermission, EventTaskDeliveryChanged, EventSupervisorCheckpointChanged,
 	EventRunnerStarted, EventRunnerStopped,
 	EventRunnerPollComplete, EventRunnerStateSaved,
 	EventRunnerAllPaused, EventRunnerAllResumed, EventRunnerSessionDiscovered,

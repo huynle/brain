@@ -354,7 +354,7 @@ func (s *SchedulerService) ScheduleProject(ctx context.Context, projectID string
 		return result, nil
 	}
 
-	runners, err := s.runners.ListRunners(ctx)
+	runners, err := s.candidateRunners(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list runners: %w", err)
 	}
@@ -524,7 +524,7 @@ func (s *SchedulerService) RunTaskNow(ctx context.Context, projectID, taskID str
 		return resp, nil
 	}
 
-	runners, err := s.runners.ListRunners(ctx)
+	runners, err := s.candidateRunners(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list runners: %w", err)
 	}
@@ -1088,4 +1088,10 @@ func (s *SchedulerService) recordNoCandidate(ctx context.Context, projectID, tas
 		return fmt.Errorf("clear stale dispatch lease for %s: %w", taskID, err)
 	}
 	return nil
+}
+
+// candidateRunners is the shared read used by automatic dispatch, explicit
+// dispatch and previews. Preview introduces no new storage ownership path.
+func (s *SchedulerService) candidateRunners(ctx context.Context) ([]types.RunnerInfo, error) {
+	return s.runners.ListRunners(ctx)
 }

@@ -140,7 +140,7 @@ func TestMigratedIndexerMaintenanceIsolation(t *testing.T) {
 }
 
 func TestIndexerMaintenanceV28PathsAndGuards(t *testing.T) {
-	if storage.CurrentSchemaVersion != 28 {
+	if storage.CurrentSchemaVersion != 30 {
 		t.Fatal("runtime schema activated")
 	}
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "brain.db"))
@@ -185,7 +185,7 @@ func TestIndexerMaintenanceV28PathsAndGuards(t *testing.T) {
 		want    string
 	}{
 		{"nonlocal-v28", foreign, 28, "v28 content requires local tenant"},
-		{"unsupported", local, 30, "unsupported tenant content schema 30"},
+		{"unsupported", local, 32, "unsupported tenant content schema 32"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// Empty disk means no subsequent InsertNote can accidentally supply

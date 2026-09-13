@@ -11,7 +11,7 @@ import (
 )
 
 func TestWorkloadConstructorsRetainTenantView(t *testing.T) {
-	view, err := storagetest.New(t, t.TempDir() + "/brain.db")
+	view, err := storagetest.New(t, t.TempDir()+"/brain.db")
 	if err != nil {
 		t.Fatal(err)
 	}

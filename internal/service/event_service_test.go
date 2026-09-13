@@ -992,6 +992,177 @@ func TestCheckFeatureCompletion_ProgressEventCarriesCheckoutMode(t *testing.T) {
 	}
 }
 
+// -----------------------------------------------------------------------------
+// foldDeliveryMode (Phase 2 — ADR D7)
+// -----------------------------------------------------------------------------
+
+func TestFoldDeliveryMode(t *testing.T) {
+	tests := []struct {
+		name  string
+		tasks []types.ResolvedTask
+		want  string
+	}{
+		{
+			name:  "empty slice defaults to none",
+			tasks: nil,
+			want:  "none",
+		},
+		{
+			name:  "empty non-nil slice defaults to none",
+			tasks: []types.ResolvedTask{},
+			want:  "none",
+		},
+		{
+			name: "all none stays none",
+			tasks: []types.ResolvedTask{
+				{ID: "t1"},
+				{ID: "t2", DeliveryMode: "none"},
+			},
+			want: "none",
+		},
+		{
+			name: "one mr wins",
+			tasks: []types.ResolvedTask{
+				{ID: "t1"},
+				{ID: "t2", DeliveryMode: "mr"},
+			},
+			want: "mr",
+		},
+		{
+			name: "one local_merge wins",
+			tasks: []types.ResolvedTask{
+				{ID: "t1"},
+				{ID: "t2", DeliveryMode: "local_merge"},
+			},
+			want: "local_merge",
+		},
+		{
+			name: "mr plus local_merge conflicts",
+			tasks: []types.ResolvedTask{
+				{ID: "t1", DeliveryMode: "mr"},
+				{ID: "t2", DeliveryMode: "local_merge"},
+			},
+			want: "conflict",
+		},
+		{
+			name: "backward-compat bridge: auto_pr merge_policy contributes mr",
+			tasks: []types.ResolvedTask{
+				{ID: "t1", MergePolicy: "auto_pr"},
+			},
+			want: "mr",
+		},
+		{
+			name: "backward-compat bridge: auto_merge merge_policy contributes local_merge",
+			tasks: []types.ResolvedTask{
+				{ID: "t1", MergePolicy: "auto_merge"},
+			},
+			want: "local_merge",
+		},
+		{
+			name: "bridge conflict: auto_pr vs auto_merge",
+			tasks: []types.ResolvedTask{
+				{ID: "t1", MergePolicy: "auto_pr"},
+				{ID: "t2", MergePolicy: "auto_merge"},
+			},
+			want: "conflict",
+		},
+		{
+			name: "explicit delivery_mode wins over merge_policy bridge",
+			tasks: []types.ResolvedTask{
+				{ID: "t1", DeliveryMode: "mr", MergePolicy: "auto_merge"},
+			},
+			want: "mr",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := foldDeliveryMode(tt.tasks); got != tt.want {
+				t.Fatalf("foldDeliveryMode() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// -----------------------------------------------------------------------------
+// CheckFeatureCompletion — delivery_mode metadata enrichment (Phase 2)
+// -----------------------------------------------------------------------------
+
+func TestCheckFeatureCompletion_EmitsDeliveryModeMetadata_MR(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed", DeliveryMode: "mr"},
+			{ID: "t2", FeatureID: "feat-1", Status: "completed"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != types.EventFeatureCompleted {
+		t.Fatalf("expected feature.completed, got %q", events[0].Type)
+	}
+	if got := events[0].Metadata["delivery_mode"]; got != "mr" {
+		t.Fatalf("expected metadata delivery_mode=mr, got %q", got)
+	}
+}
+
+func TestCheckFeatureCompletion_DefaultsDeliveryModeToNone(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed"},
+			{ID: "t2", FeatureID: "feat-1", Status: "completed"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if got := events[0].Metadata["delivery_mode"]; got != "none" {
+		t.Fatalf("expected metadata delivery_mode=none (default), got %q", got)
+	}
+}
+
+func TestCheckFeatureCompletion_ProgressEventCarriesDeliveryMode(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed", DeliveryMode: "local_merge"},
+			{ID: "t2", FeatureID: "feat-1", Status: "pending", DeliveryMode: "local_merge"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != types.EventFeatureProgress {
+		t.Fatalf("expected feature.progress, got %q", events[0].Type)
+	}
+	if got := events[0].Metadata["delivery_mode"]; got != "local_merge" {
+		t.Fatalf("expected progress metadata delivery_mode=local_merge, got %q", got)
+	}
+}
+
 // =============================================================================
 // Interface compliance
 // =============================================================================
@@ -1005,4 +1176,105 @@ func TestEventServiceImpl_ImplementsInterface(t *testing.T) {
 		Recent(context.Context, int, map[string]string) ([]types.Event, error)
 		Subscribe(context.Context, map[string]string) (<-chan types.Event, func())
 	} = svc
+}
+
+// -----------------------------------------------------------------------------
+// foldTargetBranch + merge_target_branch event-metadata threading (mr-mode bug)
+// -----------------------------------------------------------------------------
+
+func TestFoldTargetBranch_AllEmptyReturnsEmpty(t *testing.T) {
+	got := foldTargetBranch([]types.ResolvedTask{{}, {}})
+	if got != "" {
+		t.Fatalf("expected empty target for no merge_target_branch, got %q", got)
+	}
+}
+
+func TestFoldTargetBranch_SingleValueWins(t *testing.T) {
+	got := foldTargetBranch([]types.ResolvedTask{
+		{MergeTargetBranch: "main"},
+		{}, // empty is ignored
+	})
+	if got != "main" {
+		t.Fatalf("expected target=main, got %q", got)
+	}
+}
+
+func TestFoldTargetBranch_AgreementIsFine(t *testing.T) {
+	got := foldTargetBranch([]types.ResolvedTask{
+		{MergeTargetBranch: "release"},
+		{MergeTargetBranch: "release"},
+	})
+	if got != "release" {
+		t.Fatalf("expected target=release, got %q", got)
+	}
+}
+
+func TestFoldTargetBranch_ConflictReturnsEmpty(t *testing.T) {
+	// Disagreement must not be silently resolved to one side — return "" so
+	// the script falls back to its own default rather than guessing.
+	got := foldTargetBranch([]types.ResolvedTask{
+		{MergeTargetBranch: "main"},
+		{MergeTargetBranch: "dev"},
+	})
+	if got != "" {
+		t.Fatalf("expected empty target on conflict, got %q", got)
+	}
+}
+
+// TestCheckFeatureCompletion_ThreadsDeliveryModeAndTargetBranch is the
+// event-metadata half of the mr-mode regression: an explicit delivery_mode +
+// merge_target_branch on the completed feature's tasks must both land on the
+// feature.completed event's metadata (the same in-band path the rendered
+// delivery script reads through {{.DeliveryMode}} / {{.MergeTargetBranch}}).
+func TestCheckFeatureCompletion_ThreadsDeliveryModeAndTargetBranch(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed", DeliveryMode: "mr", MergeTargetBranch: "main"},
+			{ID: "t2", FeatureID: "feat-1", Status: "completed", DeliveryMode: "mr", MergeTargetBranch: "main"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if got := events[0].Metadata["delivery_mode"]; got != "mr" {
+		t.Fatalf("expected metadata delivery_mode=mr, got %q", got)
+	}
+	if got := events[0].Metadata["merge_target_branch"]; got != "main" {
+		t.Fatalf("expected metadata merge_target_branch=main, got %q", got)
+	}
+}
+
+// TestCheckFeatureCompletion_OmitsTargetBranchWhenAbsent asserts we do not
+// stamp an empty merge_target_branch key (the script then falls back to its
+// config default → main), matching the "only when the feature agrees on a
+// non-empty target" contract.
+func TestCheckFeatureCompletion_OmitsTargetBranchWhenAbsent(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed", DeliveryMode: "mr"},
+			{ID: "t2", FeatureID: "feat-1", Status: "completed", DeliveryMode: "mr"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if _, ok := events[0].Metadata["merge_target_branch"]; ok {
+		t.Fatalf("did not expect merge_target_branch metadata when no target set, got %q", events[0].Metadata["merge_target_branch"])
+	}
 }

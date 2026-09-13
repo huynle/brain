@@ -312,14 +312,14 @@ func TestTenantGraphExecutionGuards(t *testing.T) {
 	foreign, _ := owner.ForTenant(tenant.MustParse("acme"))
 	t.Run("nonlocal v28", func(t *testing.T) { deny(t, foreign, ctx, false) })
 	t.Run("nil context valid v28", func(t *testing.T) { deny(t, local, nil, false) })
-	for _, version := range []int{0, 27, 29, 30} {
+	for _, version := range []int{0, 27, 29, 32} {
 		relationalExec(t, owner.db, "DELETE FROM schema_version")
 		if _, err := owner.db.Exec("INSERT INTO schema_version(version) VALUES(?)", version); err != nil {
 			t.Fatal(err)
 		}
 		t.Run(fmt.Sprintf("version %d old columns", version), func(t *testing.T) {
-			deny(t, local, ctx, version == 29)
-			deny(t, foreign, ctx, version == 29)
+			deny(t, local, ctx, false)
+			deny(t, foreign, ctx, false)
 		})
 	}
 	relationalExec(t, owner.db, "DELETE FROM schema_version")

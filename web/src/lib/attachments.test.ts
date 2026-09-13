@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   attachmentKindLabel,
+  attachmentPreviewKind,
   attachmentLabel,
   collectInlinedAttachmentIds,
   formatBytes,
@@ -12,7 +13,12 @@ import {
 import type { AttachmentReference } from "./types";
 
 function att(over: Partial<AttachmentReference>): AttachmentReference {
-  return { id: "1", filename: "gradient.png", content_type: "image/png", ...over };
+  return {
+    id: "1",
+    filename: "gradient.png",
+    content_type: "image/png",
+    ...over,
+  };
 }
 
 const PNG = att({ id: "1", filename: "gradient.png" });
@@ -119,4 +125,23 @@ test("attachments: ids used inline are detected so the strip can skip them", () 
 test("attachments: a body with no images inlines nothing", () => {
   assert.equal(collectInlinedAttachmentIds("plain text", LIST).size, 0);
   assert.equal(collectInlinedAttachmentIds("![x](gradient.png)", []).size, 0);
+});
+
+test("preview kinds keep HTML and XML inert and do not guess from filenames", () => {
+  const a = (content_type: string) => ({
+    id: "x",
+    filename: "fake.pdf",
+    content_type,
+  });
+  assert.equal(attachmentPreviewKind(a("image/svg+xml")), "image");
+  assert.equal(attachmentPreviewKind(a("application/pdf")), "pdf");
+  assert.equal(attachmentPreviewKind(a("text/html; charset=utf-8")), "text");
+  assert.equal(attachmentPreviewKind(a("application/xml")), "text");
+  assert.equal(attachmentPreviewKind(a("audio/wav")), "audio");
+  assert.equal(attachmentPreviewKind(a("video/mp4")), "video");
+  assert.equal(
+    attachmentPreviewKind(a("application/octet-stream")),
+    "unsupported",
+  );
+  assert.doesNotThrow(() => resolveAttachmentSrc("bad%encoding", []));
 });

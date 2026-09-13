@@ -1,5 +1,12 @@
 # P4.10 — final storage receiver and owner boundary
 
+**Current integration addendum:** the original phase-8 record below is historical.
+[j9amjg42 phase5](p4-phase5-integration.md) integrates pinned newer-main, supports
+single-mode runtime30, and keeps private29/tenant31 publicly refused. Its narrow
+Assistant/push sidecar packages do not expand the four raw receiver or seven
+storage package-function inventories. The workload method manifest is now 183
+(excluding TenantID/contentScope), including delivery verification and sync.
+
 Implementation phase 8, on `16ba6a3e` plus the preserved, uncommitted phases 1–7.
 This is **not P4.11, P6, deployment, migration publication or activation**.
 `CurrentSchemaVersion` remains **28**. Public constructors refuse staged 29;

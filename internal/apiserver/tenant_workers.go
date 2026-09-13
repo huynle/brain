@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/huynle/brain-api/internal/service"
+	"github.com/huynle/brain-api/internal/tenant"
 )
 
 // startSingleGraphWorkers is boot-only. It preserves the immediate scheduler,
@@ -14,8 +15,9 @@ import (
 // joins every loop before the caller closes the graph and finally the DB owner.
 // The caller owns startup and invokes this exactly once per single-mode boot.
 func startSingleGraphWorkers(parent context.Context, g *tenantGraph) func() {
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancel(tenant.Into(parent, g.id))
 	done := []<-chan struct{}{
+		wireSupervisorControlEvents(ctx, g.bridge, g.runners, g.events),
 		g.tasks.StartClaimCleanup(ctx, service.DefaultClaimCleanupInterval),
 		g.runners.StartLifecycleManager(ctx, service.DefaultLifecycleInterval),
 		g.scheduler.Start(ctx, service.DefaultSchedulerInterval),

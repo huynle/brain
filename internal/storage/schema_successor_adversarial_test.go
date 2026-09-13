@@ -17,6 +17,11 @@ import (
 
 func TestSuccessorSearchRouting(t *testing.T) {
 	db := successorPrivateFixture(t)
+	s := &TenantStore{db: db, tenantID: tenant.MustParse("a")}
+	public, err := s.SearchNotes(context.Background(), "alpha", nil)
+	if err != nil || len(public) != 1 {
+		t.Fatalf("successor public search: %v %v", public, err)
+	}
 	tx, e := db.Begin()
 	collisionMust(t, e)
 	defer tx.Rollback()

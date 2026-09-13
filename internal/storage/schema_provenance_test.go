@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -86,11 +87,34 @@ func main() {
 `
 }
 
+var archivedFixtureCache struct {
+	sync.Mutex
+	files map[string][]byte
+}
+
 func archivedSchemaFixture(t *testing.T, revision string) *sql.DB {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "source.db")
-	runArchivedSchema(t, revision, path)
+	func() {
+		archivedFixtureCache.Lock()
+		defer archivedFixtureCache.Unlock()
+		if data, ok := archivedFixtureCache.files[revision]; ok {
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		runArchivedSchema(t, revision, path)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if archivedFixtureCache.files == nil {
+			archivedFixtureCache.files = map[string][]byte{}
+		}
+		archivedFixtureCache.files[revision] = data
+	}()
 	db := compatibilityDB(t, path)
 	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
 		t.Fatal(err)
@@ -322,25 +346,14 @@ UPDATE sqlite_sequence SET seq=900 WHERE name='entry_sync_changes';`
 	}
 }
 
-func TestSchemaProvenanceDoesNotAdmitRuntime(t *testing.T) {
-	if CurrentSchemaVersion != 28 || pendingTenantSchemaVersion != 29 {
-		t.Fatal("phase 1 changed schema versions")
+func TestSchemaProvenanceDoesNotAdmitOldPrivateMigration(t *testing.T) {
+	if CurrentSchemaVersion != 30 || pendingTenantSchemaVersion != 29 {
+		t.Fatal("runtime/private schema contract changed")
 	}
 	for _, source := range provenanceSources[1:] {
 		t.Run(source.revision[:8], func(t *testing.T) {
 			db := archivedSchemaFixture(t, source.revision)
 			before := recoverySnapshot(t, db)
-			if err := InitSchema(db); err == nil {
-				t.Fatal("runtime InitSchema admitted main source")
-			}
-			if owner, err := NewWithDB(db); err == nil {
-				_ = owner.Close()
-				t.Fatal("runtime NewWithDB admitted main source")
-			}
-			if owner, err := New(recoveryPath(t, db)); err == nil {
-				_ = owner.Close()
-				t.Fatal("runtime New admitted main source")
-			}
 			if err := migrateTenantSchema(context.Background(), db, nil); err == nil {
 				t.Fatal("old private migrator admitted main source")
 			}

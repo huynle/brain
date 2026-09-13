@@ -65,7 +65,7 @@ func tenantSearchTable(ctx context.Context, tx *sql.Tx, owner tenant.ID) (string
 		return "", fmt.Errorf("%w: %w", ErrTenantSearchUnavailable, err)
 	}
 	if version == successorSchemaVersion {
-		if err := validateSuccessorSchema(ctx, tx, true); err != nil {
+		if err := validateSuccessorReceiver(ctx, tx, owner); err != nil {
 			return "", fmt.Errorf("%w: %w", ErrTenantSearchUnavailable, err)
 		}
 	}

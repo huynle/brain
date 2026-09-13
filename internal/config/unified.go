@@ -87,13 +87,23 @@ type EmbeddingConfig struct {
 }
 
 // AssistantConfig holds server-side LLM configuration for the built-in PWA assistant.
-type AssistantConfig struct {
+type AssistantSpeechConfig struct {
 	Enabled   bool   `yaml:"enabled"`
 	Provider  string `yaml:"provider"`
 	BaseURL   string `yaml:"base_url"`
 	APIKeyEnv string `yaml:"api_key_env"`
 	Model     string `yaml:"model"`
-	TimeoutMs int    `yaml:"timeout_ms"`
+	Voice     string `yaml:"voice"`
+}
+
+type AssistantConfig struct {
+	Speech    AssistantSpeechConfig `yaml:"speech"`
+	Enabled   bool                  `yaml:"enabled"`
+	Provider  string                `yaml:"provider"`
+	BaseURL   string                `yaml:"base_url"`
+	APIKeyEnv string                `yaml:"api_key_env"`
+	Model     string                `yaml:"model"`
+	TimeoutMs int                   `yaml:"timeout_ms"`
 }
 
 // AttachmentExtractionConfig holds multimodal model-role configuration for
@@ -138,6 +148,7 @@ type ServerConfig struct {
 	LogMaxBackups   int                   `yaml:"log_max_backups"` // rotated backups to keep (default 5)
 	TaskDefaults    TaskDefaultsConfig    `yaml:"task_defaults"`
 	FeatureCheckout FeatureCheckoutConfig `yaml:"feature_checkout"`
+	FeatureDelivery FeatureDeliveryConfig `yaml:"feature_delivery"`
 	IndexWatch      IndexWatchConfig      `yaml:"index_watch"`
 	Tenancy         TenancyConfig         `yaml:"tenancy"`
 	Embedding       EmbeddingConfig       `yaml:"embedding"`
@@ -155,6 +166,12 @@ type FeatureCheckoutConfig struct {
 // TenancyConfig selects the deployment's tenant resolution mode.
 type TenancyConfig struct {
 	Mode tenant.Mode `yaml:"mode"`
+}
+
+// FeatureDeliveryConfig controls the built-in per-feature git delivery
+// automation (opt-in: default disabled at workspace level too).
+type FeatureDeliveryConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // IndexWatchConfig controls the filesystem watcher that keeps SQLite in sync
@@ -233,6 +250,7 @@ type TaskDefaultsConfig struct {
 	RemoteBranchPolicy string   `yaml:"remote_branch_policy"`
 	OpenPRBeforeMerge  *bool    `yaml:"open_pr_before_merge"`
 	TargetWorkdir      string   `yaml:"target_workdir"`
+	DeliveryMode       string   `yaml:"delivery_mode"`
 }
 
 // MCPConfig holds MCP integration configuration.
@@ -402,6 +420,7 @@ func defaultConfig() UnifiedConfig {
 			EnableAuth:      false,
 			CORSOrigin:      "", // Same-origin only; cross-origin access is opt-in.
 			FeatureCheckout: FeatureCheckoutConfig{Enabled: true},
+			FeatureDelivery: FeatureDeliveryConfig{Enabled: false},
 			TaskDefaults: TaskDefaultsConfig{
 				ExecutionMode:      "worktree",
 				MergePolicy:        "auto_merge",

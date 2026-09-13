@@ -14,7 +14,10 @@
  * `.p2-*` scoping. `body.mobile` and `body.sidebar-collapsed` classes
  * drive mobile / sidebar-collapsed layouts.
  */
-import { useEffect } from "react";
+import { useEffect, useState, useRef } from "react";
+import { withoutNav } from "../lib/navBridge";
+import { Modal } from "../components/common/Modal";
+import { useModal } from "../store/modal";
 import { Topbar } from "../components/Topbar";
 import { Statusbar } from "../components/Statusbar";
 import { Sidebar } from "../components/Sidebar/Sidebar";
@@ -43,7 +46,13 @@ export function Dashboard(): JSX.Element {
   const sidebarDockOpen = useWorkspace((s) => s.sidebarDockOpen);
   const drawerWidth = useWorkspace((s) => s.drawerWidth);
   const sidebarWidth = useWorkspace((s) => s.sidebarWidth);
+  const assistantWidth = useWorkspace((s) => s.assistantWidth);
   const isMobile = useIsMobile();
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const modalKind = useModal((s) => s.kind);
+  useEffect(() => {
+    if (modalKind || !isMobile) setNavigationOpen(false);
+  }, [modalKind, isMobile]);
 
   const { data: projects, isLoading, error, refetch } = useProjects();
   const token = useAuth((s) => s.token);
@@ -71,14 +80,6 @@ export function Dashboard(): JSX.Element {
     mql.addEventListener("change", resolve);
     return () => mql.removeEventListener("change", resolve);
   }, [theme]);
-
-  // Reflect mobile + sidebar-collapsed states on body for CSS to hook.
-  useEffect(() => {
-    document.body.classList.toggle("mobile", isMobile);
-    return () => {
-      document.body.classList.remove("mobile");
-    };
-  }, [isMobile]);
 
   useEffect(() => {
     document.body.classList.toggle("sidebar-collapsed", sidebarCollapsed);
@@ -111,6 +112,29 @@ export function Dashboard(): JSX.Element {
   // Back/Forward for pane navigation. Mounted here for the same reason as
   // the line above: the back stack outlives any one view.
   useDockNavHistory();
+
+  const mobileStart = useRef({
+    handled: false,
+    entryRequested: new URLSearchParams(window.location.search).has("entry"),
+  });
+  // A shared entry URL must be visible even when a mobile overlay was saved
+  // in the previous workspace. Preserve its panes; only dismiss the overlay.
+  useEffect(() => {
+    if (mobileStart.current.handled) return;
+    mobileStart.current.handled = true;
+    if (!isMobile) return;
+    if (mobileStart.current.entryRequested) {
+      const workspace = useWorkspace.getState();
+      withoutNav(() => workspace.setView("entries"));
+      workspace.setSidebarDockOpen(false);
+      workspace.setAssistantOpen(false);
+    } else {
+      const workspace = useWorkspace.getState();
+      withoutNav(() => workspace.setView("overview"));
+      workspace.setSidebarDockOpen(false);
+      workspace.setAssistantOpen(false);
+    }
+  }, [isMobile]);
 
   // Single owner of the pause / scheduler polling. Every pause indicator in
   // the tree reads the same cache entries without adding a timer — see the
@@ -147,13 +171,14 @@ export function Dashboard(): JSX.Element {
   const appStyle = {
     ["--sidebar-w" as never]: `${sidebarWidth}px`,
     ["--drawer-w" as never]: `${drawerWidth}px`,
+    ["--assistant-w" as never]: `${assistantWidth}px`,
   } as React.CSSProperties;
 
   return (
     <>
       <div id="app" style={appStyle}>
-        <Topbar />
-        <Sidebar />
+        <Topbar onOpenNavigation={() => setNavigationOpen(true)} />
+        {!isMobile && <Sidebar />}
         {isMobile && <MobileNav />}
         <Workspace />
         <Statusbar />
@@ -161,10 +186,29 @@ export function Dashboard(): JSX.Element {
          * desktop. On mobile SidebarDock portals itself to
          * document.body instead — see SidebarDock.tsx. */}
         <SidebarDock />
+        {/* Same mount strategy as SidebarDock: a direct #app child so
+         * `grid-area: assistant` slots it in as a real grid column on
+         * desktop; on mobile it portals to document.body as a fixed
+         * overlay — see AssistantPanel.tsx. */}
+        <AssistantPanel />
       </div>
+      {isMobile && navigationOpen && (
+        <Modal
+          title="Workspace navigation"
+          className="mobile-navigation"
+          onClose={() => setNavigationOpen(false)}
+        >
+          <Sidebar mobile onClose={() => setNavigationOpen(false)} />
+          <button
+            className="mobile-navigation-done"
+            onClick={() => setNavigationOpen(false)}
+          >
+            Done
+          </button>
+        </Modal>
+      )}
       <ModalHost />
       <CommandPalette />
-      <AssistantPanel />
     </>
   );
 }

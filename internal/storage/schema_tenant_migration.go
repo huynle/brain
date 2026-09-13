@@ -316,6 +316,13 @@ func (r migrationRootRepository) RegisterTenantRoots(context.Context, tenantfs.M
 }
 
 func validateTenantMigrationFiles(ctx context.Context, tx *sql.Tx, owned bool) error {
+	return validateTenantFiles(ctx, tx, owned, tenant.ID{})
+}
+
+// A zero selection is reserved for the full offline migration/reopen wrapper.
+// Receivers pass their validated binding and retain all mappings for exclusion
+// and root-identity policy, but stat/hash only that tenant's roots and blobs.
+func validateTenantFiles(ctx context.Context, tx *sql.Tx, owned bool, selected tenant.ID) error {
 	maps, err := listTenantRoots(ctx, tx)
 	if err != nil {
 		return err
@@ -327,10 +334,17 @@ func validateTenantMigrationFiles(ctx context.Context, tx *sql.Tx, owned bool) e
 	if err != nil {
 		return err
 	}
-	if _, err = resolver.Lookup(ctx, tenant.Local); err != nil {
+	required := tenant.Local
+	if selected.Valid() {
+		required = selected
+	}
+	if _, err = resolver.Lookup(ctx, required); err != nil {
 		return err
 	}
 	for _, m := range maps {
+		if selected.Valid() && m.ID != selected {
+			continue
+		}
 		if _, err = resolver.Lookup(ctx, m.ID); err != nil {
 			return err
 		}
@@ -355,7 +369,12 @@ func validateTenantMigrationFiles(ctx context.Context, tx *sql.Tx, owned bool) e
 	}
 	if owned {
 		var n int
-		if err = tx.QueryRow("SELECT count(*) FROM tenants WHERE id NOT IN (SELECT tenant_id FROM tenant_roots)").Scan(&n); err != nil {
+		query, args := "SELECT count(*) FROM tenants WHERE id NOT IN (SELECT tenant_id FROM tenant_roots)", []any{}
+		if selected.Valid() {
+			query += " AND id=?"
+			args = append(args, selected.String())
+		}
+		if err = tx.QueryRow(query, args...).Scan(&n); err != nil {
 			return err
 		}
 		if n != 0 {
@@ -366,7 +385,12 @@ func validateTenantMigrationFiles(ctx context.Context, tx *sql.Tx, owned bool) e
 	if owned {
 		owner = "tenant_id"
 	}
-	rows, err := tx.Query("SELECT " + owner + ",digest,size FROM attachments")
+	query, args := "SELECT "+owner+",digest,size FROM attachments", []any{}
+	if selected.Valid() {
+		query += " WHERE tenant_id=?"
+		args = append(args, selected.String())
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}

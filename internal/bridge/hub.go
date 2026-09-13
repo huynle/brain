@@ -28,7 +28,8 @@ var (
 // requests and event streams over it. Events are fanned out to browser SSE
 // subscribers via the realtime hub on topic instance:{runnerID}:{instanceID}.
 type Hub struct {
-	rt *realtime.Hub
+	rt              *realtime.Hub
+	controlObserver func(string, string, json.RawMessage)
 
 	mu    sync.Mutex
 	conns map[string]*runnerConn
@@ -210,6 +211,32 @@ func (h *Hub) FetchHistory(ctx context.Context, runnerID, sessionID string) ([]b
 	res, err := conn.roundTrip(ctx, Frame{
 		Type:      FrameHistory,
 		SessionID: sessionID,
+		TimeoutMs: DefaultTimeoutMs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if res.Error != "" {
+		return nil, errors.New(res.Error)
+	}
+	return res.Body, nil
+}
+
+// FetchChildren asks a runner for the child (subagent) sessions of a session
+// by ID, even when no live instance hosts it — the runner reads OpenCode's
+// persisted parent_id linkage from SQLite/on-disk storage. With recursive=true
+// the tree is walked up to depth levels. Returns raw JSON (a nested array of
+// child session descriptors).
+func (h *Hub) FetchChildren(ctx context.Context, runnerID, sessionID string, recursive bool, depth int) ([]byte, error) {
+	conn := h.conn(runnerID)
+	if conn == nil {
+		return nil, ErrRunnerNotConnected
+	}
+	res, err := conn.roundTrip(ctx, Frame{
+		Type:      FrameChildren,
+		SessionID: sessionID,
+		Recursive: recursive,
+		Depth:     depth,
 		TimeoutMs: DefaultTimeoutMs,
 	})
 	if err != nil {
@@ -673,6 +700,9 @@ func (c *runnerConn) handleFrame(f Frame) {
 
 	case FrameInstanceEvent:
 		c.trackControlEvent(f.InstanceID, f.Event)
+		if c.hub.controlObserver != nil {
+			c.hub.controlObserver(c.runnerID, f.InstanceID, f.Event)
+		}
 		c.publishEvent(f.InstanceID, "instance_event", f.Event)
 
 	case FrameStreamEvent:
@@ -780,4 +810,10 @@ func (c *runnerConn) trackControlEvent(instanceID string, raw json.RawMessage) {
 	case evt.Type == "session.updated" || evt.Type == "message.updated":
 		live.status = types.InstanceStatusBusy
 	}
+}
+
+// SetControlObserver installs a nonblocking observer before serving connections.
+// It receives the existing always-on stream, never activates transcript streams.
+func (h *Hub) SetControlObserver(observer func(string, string, json.RawMessage)) {
+	h.controlObserver = observer
 }

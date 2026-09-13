@@ -8,6 +8,12 @@ Brain API is a REST service for AI agent memory and knowledge management, with a
 
 ## Key Commands
 
+**Current P4 status:** [phase5 source integration](docs/p4-phase5-integration.md)
+supersedes historical runtime28 statements below: public runtime30 is single-only;
+private29/tenant31 remain publicly refused. Preserve scoped receiver readiness and
+full global dormant-migration verification as separate boundaries. Do not widen
+storage guard allowances or enable tenant routes based on these fixtures.
+
 ```bash
 # Development
 just build           # Build all Go binaries

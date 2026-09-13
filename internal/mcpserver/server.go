@@ -36,6 +36,7 @@ func RunMCPServer(ctx context.Context, opts MCPOptions, stdin io.Reader, stdout 
 	mcp.RegisterTaskTools(server, client)
 	mcp.RegisterFeatureTools(server, client)
 	mcp.RegisterRunnerTools(server, client)
+	mcp.RegisterSupervisorTools(server, client)
 	mcp.RegisterObservabilityTools(server, client)
 	mcp.RegisterControlTools(server, client)
 	mcp.RegisterProjectTools(server, client)

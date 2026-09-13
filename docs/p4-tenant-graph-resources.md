@@ -1,5 +1,11 @@
 # P4.9 — tenant graph resource ownership
 
+**Current integration addendum:** the newer-main work described as absent below
+has been reconciled in [j9amjg42 phase5](p4-phase5-integration.md). Single-mode
+sidecars retain their original paths; bulk readiness, scan shutdown, supervisor
+event processing and sidecar workers are boot-owned and joined, not started by
+cache construction. The read-only tenant route allowlist remains unchanged.
+
 Scope: phases 1–3 on `ce103b16`, not multi-mode activation. Runtime still uses
 schema 28 and the existing single-mode startup guard. Phase 2 adds an internal
 cache/request-selection seam; phase 3 exercises it on test-only staged 29.

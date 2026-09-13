@@ -19,14 +19,16 @@ import (
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/tenant"
 	"github.com/huynle/brain-api/internal/tenantfs"
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // graphIdentity is supplied only by trusted single-mode composition. Never give
 // future tenant graphs the single-mode token adapter or platform capabilities.
 type graphIdentity struct {
-	tokens    api.TokenService
-	verifier  api.CredentialVerifier
-	passwords api.PasswordTokenStore
+	tokens          api.TokenService
+	verifier        api.CredentialVerifier
+	passwords       api.PasswordTokenStore
+	assistantMCPURL string
 }
 
 // tenantGraph is an immutable binding, not an authorization grant or a pool
@@ -39,6 +41,8 @@ type tenantGraph struct {
 	handler           *api.Handler
 	indexer           *indexer.Indexer
 	brain             *service.BrainServiceImpl
+	assistant         *api.AssistantService
+	bulk              *service.BulkJobService
 	tasks             *service.TaskServiceImpl
 	runners           *service.RunnerRegistryServiceImpl
 	scheduler         *service.SchedulerService
@@ -48,6 +52,8 @@ type tenantGraph struct {
 	reminders         *service.ReminderService
 	webhooks          *service.WebhookServiceImpl
 	eventHub          *realtime.EventHub
+	events            *service.EventServiceImpl
+	bridge            *bridge.Hub
 	hub               *realtime.Hub
 	webhookDispatcher *realtime.WebhookDispatcher
 	triggerDispatcher *realtime.TriggerDispatcher
@@ -110,23 +116,41 @@ func newTenantGraph(ctx context.Context, store *storage.TenantStore, roots *tena
 	// deployment-wide project list or an unscoped fallback task.
 	automations.SetProjectLister(tasks)
 	bridgeHub := bridge.NewHub(hub)
+	tasks.SetLiveInjector(newBridgeLiveInjector(runners, bridgeHub))
 	goals := service.NewGoalService(brain, tasks, store, service.WithGoalSteerer(newBridgeGoalSteerer(runners, bridgeHub)), service.WithGoalPauseChecker(runner))
 	assistant := api.NewAssistantService(api.AssistantServiceOptions{
-		Enabled:   cfg.Assistant.Enabled,
-		Provider:  cfg.Assistant.Provider,
-		BaseURL:   cfg.Assistant.BaseURL,
-		APIKeyEnv: cfg.Assistant.APIKeyEnv,
-		Model:     cfg.Assistant.Model,
-		Timeout:   time.Duration(cfg.Assistant.TimeoutMs) * time.Millisecond,
-		Brain:     brain,
-		Goals:     goals,
-		Tasks:     tasks,
-		Runner:    runner,
-		Runners:   runners,
-		Events:    events,
+		Speech:     api.SpeechOptions{Enabled: cfg.Assistant.Speech.Enabled, Provider: cfg.Assistant.Speech.Provider, BaseURL: cfg.Assistant.Speech.BaseURL, APIKeyEnv: cfg.Assistant.Speech.APIKeyEnv, Model: cfg.Assistant.Speech.Model, Voice: cfg.Assistant.Speech.Voice},
+		MCPBaseURL: identity.assistantMCPURL,
+		Enabled:    cfg.Assistant.Enabled,
+		Provider:   cfg.Assistant.Provider,
+		BaseURL:    cfg.Assistant.BaseURL,
+		APIKeyEnv:  cfg.Assistant.APIKeyEnv,
+		Model:      cfg.Assistant.Model,
+		Timeout:    time.Duration(cfg.Assistant.TimeoutMs) * time.Millisecond,
+		Brain:      brain,
+		Goals:      goals,
+		Tasks:      tasks,
+		Runner:     runner,
+		Runners:    runners,
+		Events:     events,
 	})
 	reminders := service.NewReminderService(brain, store, service.WithReminderEventIngester(events), service.WithReminderPauseChecker(runner))
+	bulk := service.NewBulkJobService(brain, store, tasks, func(project string) {
+		hub.PublishProjectDirty(project)
+		resp, err := tasks.GetTasks(tenant.Into(ctx, store.TenantID()), project)
+		if err == nil {
+			hub.PublishTaskSnapshot(project, types.SSETasksSnapshotData{
+				SSEEventData: types.SSEEventData{Type: types.SSEEventTasksSnapshot, Transport: "sse", Timestamp: types.TimeNowUTC().Format("2006-01-02T15:04:05Z"), ProjectID: project},
+				Tasks:        resp.Tasks, Count: resp.Count, Stats: resp.Stats, Cycles: resp.Cycles,
+			})
+		}
+	})
+	bulk.SetEventService(events)
 	handler := api.NewHandler(brain,
+		api.WithBulkJobService(bulk),
+		api.WithSupervisorOperations(store),
+		api.WithExecutionBudgets(store),
+		api.WithSupervisorCheckpoints(store),
 		api.WithAttachmentService(attachments),
 		api.WithTaskService(tasks),
 		api.WithRunnerService(runner),
@@ -160,6 +184,8 @@ func newTenantGraph(ctx context.Context, store *storage.TenantStore, roots *tena
 		handler:           handler,
 		indexer:           idx,
 		brain:             brain,
+		assistant:         assistant,
+		bulk:              bulk,
 		tasks:             tasks,
 		runners:           runners,
 		scheduler:         scheduler,
@@ -169,6 +195,8 @@ func newTenantGraph(ctx context.Context, store *storage.TenantStore, roots *tena
 		reminders:         reminders,
 		webhooks:          webhooks,
 		eventHub:          eventHub,
+		events:            events,
+		bridge:            bridgeHub,
 		hub:               hub,
 		webhookDispatcher: realtime.NewWebhookDispatcher(eventHub, webhooks),
 		triggerDispatcher: realtime.NewTriggerDispatcher(eventHub, service.NewTriggerService(service.NewTriggerTaskStoreAdapter(store))),

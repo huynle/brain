@@ -68,7 +68,7 @@ func TestPreChangeTokenResolvesLocalSearchAfterReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer check.Close()
-	if version, err := storage.GetSchemaVersion(check); err != nil || version != 28 {
+	if version, err := storage.GetSchemaVersion(check); err != nil || version != 30 {
 		t.Fatalf("runtime version=%d %v", version, err)
 	}
 }

@@ -51,7 +51,19 @@ export function SessionsSection({
                 fontSize: 12,
               }}
             >
-              <code style={{ fontSize: 11 }}>{ref.session_id.slice(0, 18)}…</code>
+              <code
+                className="copyable"
+                style={{ fontSize: 11, cursor: "pointer" }}
+                title={`Click to copy: ${ref.session_id}`}
+                onClick={() =>
+                  navigator.clipboard
+                    ?.writeText(ref.session_id)
+                    .then(() => toast("Session ID copied", "info"))
+                    .catch(() => toast("Copy failed", "error"))
+                }
+              >
+                {ref.session_id.slice(0, 18)}… ⧉
+              </code>
               <span style={{ color: "#6b757e" }}>
                 {(task.sessions?.[ref.session_id]?.timestamp ?? "").slice(0, 16)}
                 {task.sessions?.[ref.session_id]?.hostname

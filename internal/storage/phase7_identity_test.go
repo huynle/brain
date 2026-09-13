@@ -15,7 +15,8 @@ import (
 // Only these identity tests stage v29. Public open/initialization stays at v28.
 func phase7Store(t *testing.T, version int) *StorageLayer {
 	t.Helper()
-	s := newTestStorage(t)
+	s := &StorageLayer{db: archivedSchemaFixture(t, provenanceSources[0].revision)}
+	s.db.SetMaxOpenConns(1)
 	if version == 29 {
 		relationalExec(t, s.db, "PRAGMA foreign_keys=OFF")
 		tx, err := s.db.Begin()

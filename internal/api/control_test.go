@@ -35,6 +35,11 @@ type mockBridgeService struct {
 	abortCalls []string
 	abortErr   error
 
+	childrenOut           []byte
+	childrenErr           error
+	lastChildrenRecursive bool
+	lastChildrenDepth     int
+
 	execCalls  []execCall
 	execFunc   func(ctx context.Context, runnerID, execID, command, workdir string, timeoutMs int) error
 	execErr    error
@@ -118,6 +123,17 @@ func (m *mockBridgeService) FetchHistory(ctx context.Context, runnerID, sessionI
 		return nil, m.historyErr
 	}
 	return m.historyOut, nil
+}
+
+func (m *mockBridgeService) FetchChildren(ctx context.Context, runnerID, sessionID string, recursive bool, depth int) ([]byte, error) {
+	m.mu.Lock()
+	m.lastChildrenRecursive = recursive
+	m.lastChildrenDepth = depth
+	m.mu.Unlock()
+	if m.childrenErr != nil {
+		return nil, m.childrenErr
+	}
+	return m.childrenOut, nil
 }
 
 func (m *mockBridgeService) AcquireStream(runnerID, instanceID string) (func(), error) {
@@ -251,6 +267,7 @@ func newControlTestRouterWithHub(mock *mockBridgeService, registry *mockRunnerRe
 	h := NewHandler(&mockBrainService{}, opts...)
 	r := chi.NewRouter()
 	r.Post("/control/runners/{runnerId}/tasks/{taskId}/abort", h.HandleControlAbortTask)
+	r.Get("/control/runners/{runnerId}/sessions/{sessionId}/children", h.HandleControlSessionChildren)
 	r.Post("/control/runners/{runnerId}/exec", h.HandleControlExec)
 	r.Post("/control/runners/{runnerId}/exec/{execId}/signal", h.HandleControlExecSignal)
 	r.Route("/control/runners/{runnerId}/instances", func(r chi.Router) {
@@ -409,6 +426,80 @@ type stringError string
 func (e stringError) Error() string { return string(e) }
 
 func errContains(s string) error { return stringError(s) }
+
+func TestControlSessionChildren_OK(t *testing.T) {
+	mock := &mockBridgeService{childrenOut: []byte(`[{"session_id":"ses_c","parent_id":"ses_p"}]`)}
+	router := newControlTestRouter(mock, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/control/runners/r1/sessions/ses_p/children", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("children: got %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "ses_c") {
+		t.Errorf("body should pass through, got %s", rec.Body.String())
+	}
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+	if mock.lastChildrenRecursive {
+		t.Errorf("recursive should default to false")
+	}
+	if mock.lastChildrenDepth != 0 {
+		t.Errorf("depth should default to 0, got %d", mock.lastChildrenDepth)
+	}
+}
+
+func TestControlSessionChildren_Recursive(t *testing.T) {
+	mock := &mockBridgeService{childrenOut: []byte(`[]`)}
+	router := newControlTestRouter(mock, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/control/runners/r1/sessions/ses_p/children?recursive=true&depth=3", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("children: got %d %s", rec.Code, rec.Body.String())
+	}
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+	if !mock.lastChildrenRecursive {
+		t.Errorf("recursive should be parsed as true")
+	}
+	if mock.lastChildrenDepth != 3 {
+		t.Errorf("depth should be parsed as 3, got %d", mock.lastChildrenDepth)
+	}
+}
+
+func TestControlSessionChildren_Error(t *testing.T) {
+	mock := &mockBridgeService{childrenErr: errContains("runner bridge not connected")}
+	router := newControlTestRouter(mock, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/control/runners/r1/sessions/ses_p/children", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("expected 502 for disconnected runner, got %d", rec.Code)
+	}
+}
+
+func TestControlSessionChildren_EmptyBody(t *testing.T) {
+	mock := &mockBridgeService{childrenOut: nil}
+	router := newControlTestRouter(mock, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/control/runners/r1/sessions/ses_p/children", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("children: got %d %s", rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != "[]" {
+		t.Errorf("empty body must serialize as [], got %q", got)
+	}
+}
 
 func TestControlSpawn(t *testing.T) {
 	var gotSpec types.SpawnInstanceSpec

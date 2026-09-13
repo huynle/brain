@@ -169,3 +169,15 @@ func TestHandler_HashedAssetsAreImmutable(t *testing.T) {
 		t.Errorf("expected immutable cache header for %s, got %q", asset, cc)
 	}
 }
+
+func TestWasmContentType(t *testing.T) {
+	if got := contentTypeFor("assets/sqlite3-abc.wasm"); got != "application/wasm" {
+		t.Fatalf("WASM streaming compilation requires application/wasm, got %q", got)
+	}
+}
+
+func TestModuleJavaScriptContentType(t *testing.T) {
+	if got := contentTypeFor("/assets/pdf.worker.min-test.mjs"); got != "text/javascript; charset=utf-8" {
+		t.Fatalf("module worker MIME = %q", got)
+	}
+}

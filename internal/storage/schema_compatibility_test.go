@@ -46,7 +46,7 @@ func compatibilityRows(t *testing.T, db *sql.DB, query string) []string {
 func TestSchemaCompatibilityRefusesBeforeMutation(t *testing.T) {
 	for _, entry := range []string{"init", "migration", "with-db", "new", "new-special-path"} {
 		for _, fixture := range []struct{ name, ddl, read, want string }{
-			{"future", "CREATE TABLE schema_version(version INTEGER PRIMARY KEY, applied_at TEXT); INSERT INTO schema_version VALUES (28,'old'),(29,'future');", "SELECT version || ':' || applied_at FROM schema_version ORDER BY version", "newer"},
+			{"future", "CREATE TABLE schema_version(version INTEGER PRIMARY KEY, applied_at TEXT); INSERT INTO schema_version VALUES (28,'old'),(32,'future');", "SELECT version || ':' || applied_at FROM schema_version ORDER BY version", "newer"},
 			{"missing-column", "CREATE TABLE schema_version(broken TEXT); INSERT INTO schema_version VALUES ('sentinel');", "SELECT broken FROM schema_version", "schema version"},
 			{"noninteger", "CREATE TABLE schema_version(version TEXT); INSERT INTO schema_version VALUES ('broken');", "SELECT version FROM schema_version", "schema version"},
 		} {
@@ -119,12 +119,12 @@ func TestSchemaCompatibilitySupportedAndFresh(t *testing.T) {
 	for _, version := range []int{-1, 0, 27, 28} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "brain.db")
+			if version > 0 {
+				runArchivedSchema(t, provenanceSources[0].revision, path)
+			}
 			if version >= 0 {
 				db := compatibilityDB(t, path)
 				if version > 0 {
-					if err := InitSchema(db); err != nil {
-						t.Fatal(err)
-					}
 					if _, err := db.Exec("DELETE FROM schema_version; INSERT INTO schema_version(version) VALUES (?)", version); err != nil {
 						t.Fatal(err)
 					}
@@ -141,8 +141,8 @@ func TestSchemaCompatibilitySupportedAndFresh(t *testing.T) {
 					t.Fatal(err)
 				}
 				got, err := GetSchemaVersion(s.db)
-				if err != nil || got != 28 {
-					t.Fatalf("version=%d err=%v; must remain v28", got, err)
+				if err != nil || got != 30 {
+					t.Fatalf("version=%d err=%v; expected single runtime30", got, err)
 				}
 				s.Close()
 			}
@@ -180,7 +180,7 @@ func TestSchemaCompatibilityFutureInWAL(t *testing.T) {
 	if err := InitSchema(db); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; INSERT INTO schema_version(version, applied_at) VALUES (29, 'future')"); err != nil {
+	if _, err := db.Exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; INSERT INTO schema_version(version, applied_at) VALUES (32, 'future')"); err != nil {
 		t.Fatal(err)
 	}
 	// Keep the writer open so the future stamp remains in the WAL. An
@@ -209,7 +209,7 @@ func TestSchemaCompatibilityFutureInWAL(t *testing.T) {
 		for i, q := range queries {
 			before[i] = compatibilityRows(t, db, q)
 		}
-		if err := open(); err == nil || !strings.Contains(err.Error(), "29 is newer than supported version 28") {
+		if err := open(); err == nil || !strings.Contains(err.Error(), "32 is newer than supported version 30") {
 			t.Fatalf("expected future refusal, got %v", err)
 		}
 		for i, q := range queries {
@@ -226,13 +226,13 @@ func TestSchemaCompatibilityConstructorRegressions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version, err := GetSchemaVersion(s.db); err != nil || version != 28 {
+		if version, err := GetSchemaVersion(s.db); err != nil || version != 30 {
 			t.Fatalf("version=%d err=%v", version, err)
 		}
 		s.Close()
 		if path != ":memory:" {
 			db := compatibilityDB(t, path)
-			if version, err := GetSchemaVersion(db); err != nil || version != 28 {
+			if version, err := GetSchemaVersion(db); err != nil || version != 30 {
 				t.Fatalf("literal path version=%d err=%v", version, err)
 			}
 		}

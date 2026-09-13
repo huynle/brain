@@ -22,10 +22,15 @@
  * says so out loud and offers the way back.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { OcMessage, OcPart } from "../../lib/types";
+import type { OcMessage, OcPart, SessionRef } from "../../lib/types";
 import { isInjectedCheckin } from "../../lib/transcript";
 import { messageModel, modelLabel, modelTitle } from "../../lib/messageModel";
 import { TerminalText } from "../common/TerminalText";
+import { useSessionTranscript } from "../../hooks/useSessionTranscript";
+import {
+  childSessionRef,
+  subagentDrilldownState,
+} from "../../lib/subagent";
 
 function toolTitle(part: OcPart): string {
   const state = part.state;
@@ -45,7 +50,104 @@ function toolStatusColor(status?: string): string {
   }
 }
 
-function PartView({ part }: { part: OcPart }): JSX.Element | null {
+/**
+ * SubagentDrilldown — lazy, expandable inline view of a subagent's child
+ * session transcript. Reuses the same useSessionTranscript + <Transcript>
+ * plumbing as any other session; the fetch/subscribe only starts once
+ * expanded. Recurses into subagents-of-subagents through <Transcript>, whose
+ * per-hook applyEvent filter keeps each nested pane pinned to its own session.
+ */
+function SubagentDrilldown({
+  childRef,
+  childId,
+  depth,
+  ancestors,
+  maxDepth,
+  title,
+}: {
+  childRef: SessionRef;
+  childId: string;
+  depth: number;
+  ancestors: string[];
+  maxDepth: number;
+  title?: string;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  // Lazy: only fetch/subscribe once expanded (the hook treats null as disabled).
+  const transcript = useSessionTranscript(open ? childRef : null);
+  return (
+    <details
+      open={open}
+      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+      style={{
+        marginLeft: 12,
+        borderLeft: "1px solid var(--p2-border,#333a42)",
+        paddingLeft: 8,
+      }}
+    >
+      <summary
+        style={{
+          cursor: "pointer",
+          fontSize: 11,
+          color: "var(--p2-accent,#f4b23a)",
+        }}
+      >
+        ↳ subagent session {title ? `· ${title}` : ""}{" "}
+        <span style={{ color: "var(--p2-fg-faint,#6b757e)" }}>{childId}</span>
+      </summary>
+      {open &&
+        (transcript.isLoading ? (
+          <div
+            style={{
+              color: "var(--p2-fg-faint,#6b757e)",
+              padding: 8,
+              fontSize: 11,
+            }}
+          >
+            Loading subagent transcript…
+          </div>
+        ) : transcript.error ? (
+          <div
+            style={{
+              color: "var(--p2-danger,#e06c5f)",
+              padding: 8,
+              fontSize: 11,
+            }}
+          >
+            Subagent transcript unavailable — the child session may be
+            unreadable or its instance is gone.
+          </div>
+        ) : (
+          <Transcript
+            messages={transcript.messages}
+            sessionRef={childRef}
+            depth={depth + 1}
+            ancestors={[...ancestors, childId]}
+            maxDepth={maxDepth}
+            resetKey={childId}
+            follow={false}
+            emptyText="No child session recorded."
+          />
+        ))}
+    </details>
+  );
+}
+
+interface PartViewProps {
+  part: OcPart;
+  sessionRef?: SessionRef;
+  depth: number;
+  ancestors: string[];
+  maxDepth: number;
+}
+
+function PartView({
+  part,
+  sessionRef,
+  depth,
+  ancestors,
+  maxDepth,
+}: PartViewProps): JSX.Element | null {
   switch (part.type) {
     case "text":
       return part.text ? (
@@ -75,45 +177,84 @@ function PartView({ part }: { part: OcPart }): JSX.Element | null {
       const input = part.state?.input;
       const output = part.state?.output;
       const error = part.state?.error;
+      // Drill-down context: only when this pane has a sessionRef (drill-down
+      // enabled) and this is a subagent part whose child session id resolves.
+      // Gating logic lives in lib/subagent.subagentDrilldownState (the single
+      // source of truth, unit-tested there).
+      const { childId, canDrill, capped, cappedReason } = subagentDrilldownState(
+        part,
+        sessionRef,
+        ancestors,
+        depth,
+        maxDepth,
+      );
+      const drillTitle =
+        typeof part.state?.title === "string" ? part.state.title : undefined;
       return (
-        <details>
-          <summary style={{ cursor: "pointer", fontSize: 11 }}>
-            <span style={{ color: "var(--p2-fg-dim, #9098a1)" }}>
-              {toolTitle(part)}
-            </span>{" "}
-            <span style={{ color: toolStatusColor(status) }}>
-              · {status || "pending"}
-            </span>
-          </summary>
-          {/*
-            Tool payloads are captured terminal output — a bash/test tool
-            under a pty hands back npm/pytest/cargo colour and CR spinner
-            frames verbatim. They go through the same renderer the raw-log
-            panes use, or the chat pane (now the default) shows the exact
-            `[0m` residue the log panes were fixed for.
-          */}
-          {input !== undefined && (
-            <pre style={{ opacity: 0.8 }}>
-              <TerminalText
-                text={
-                  typeof input === "string"
-                    ? input
-                    : JSON.stringify(input, null, 2)
-                }
-              />
-            </pre>
+        <>
+          <details>
+            <summary style={{ cursor: "pointer", fontSize: 11 }}>
+              <span style={{ color: "var(--p2-fg-dim, #9098a1)" }}>
+                {toolTitle(part)}
+              </span>{" "}
+              <span style={{ color: toolStatusColor(status) }}>
+                · {status || "pending"}
+              </span>
+            </summary>
+            {/*
+              Tool payloads are captured terminal output — a bash/test tool
+              under a pty hands back npm/pytest/cargo colour and CR spinner
+              frames verbatim. They go through the same renderer the raw-log
+              panes use, or the chat pane (now the default) shows the exact
+              `[0m` residue the log panes were fixed for.
+            */}
+            {input !== undefined && (
+              <pre style={{ opacity: 0.8 }}>
+                <TerminalText
+                  text={
+                    typeof input === "string"
+                      ? input
+                      : JSON.stringify(input, null, 2)
+                  }
+                />
+              </pre>
+            )}
+            {output && (
+              <pre>
+                <TerminalText text={output} />
+              </pre>
+            )}
+            {error && (
+              <pre style={{ color: "var(--p2-danger, #e06c5f)" }}>
+                <TerminalText text={error} />
+              </pre>
+            )}
+          </details>
+          {canDrill && (
+            <SubagentDrilldown
+              childRef={childSessionRef(sessionRef as SessionRef, childId as string)}
+              childId={childId as string}
+              depth={depth}
+              ancestors={ancestors}
+              maxDepth={maxDepth}
+              title={drillTitle}
+            />
           )}
-          {output && (
-            <pre>
-              <TerminalText text={output} />
-            </pre>
+          {capped && (
+            <div
+              style={{
+                marginLeft: 12,
+                fontSize: 11,
+                color: "var(--p2-fg-faint, #6b757e)",
+              }}
+            >
+              ↳ subagent{" "}
+              {cappedReason === "cycle"
+                ? "(cycle)"
+                : "(max depth reached)"}
+            </div>
           )}
-          {error && (
-            <pre style={{ color: "var(--p2-danger, #e06c5f)" }}>
-              <TerminalText text={error} />
-            </pre>
-          )}
-        </details>
+        </>
       );
     }
     case "step-start":
@@ -124,7 +265,19 @@ function PartView({ part }: { part: OcPart }): JSX.Element | null {
   }
 }
 
-function MessageView({ message }: { message: OcMessage }): JSX.Element {
+function MessageView({
+  message,
+  sessionRef,
+  depth,
+  ancestors,
+  maxDepth,
+}: {
+  message: OcMessage;
+  sessionRef?: SessionRef;
+  depth: number;
+  ancestors: string[];
+  maxDepth: number;
+}): JSX.Element {
   const role = message.info.role === "user" ? "user" : "assistant";
   const injected = isInjectedCheckin(message);
   const model = messageModel(message.info);
@@ -172,7 +325,14 @@ function MessageView({ message }: { message: OcMessage }): JSX.Element {
         append-only within a message and never reordered.
       */}
       {message.parts.map((p, i) => (
-        <PartView key={p.id || `${message.info.id}-part-${i}`} part={p} />
+        <PartView
+          key={p.id || `${message.info.id}-part-${i}`}
+          part={p}
+          sessionRef={sessionRef}
+          depth={depth}
+          ancestors={ancestors}
+          maxDepth={maxDepth}
+        />
       ))}
     </div>
   );
@@ -193,6 +353,17 @@ export interface TranscriptProps {
   /** Show the "Jump to latest" affordance while detached. Off for
    *  read-only history, where nothing new is arriving below. */
   follow?: boolean;
+  /** The session this transcript renders. When provided, subagent ("task")
+   *  tool parts gain an inline drill-down into their child session. When
+   *  omitted (e.g. a decorative embed), drill-down is disabled and rendering
+   *  is exactly as before. */
+  sessionRef?: SessionRef;
+  /** Current nesting depth (0 at the root). Guards the visual depth cap. */
+  depth?: number;
+  /** Session ids on the path from the root to here — the cycle guard. */
+  ancestors?: string[];
+  /** Visual depth cap for nested subagent drill-downs. */
+  maxDepth?: number;
 }
 
 export function Transcript({
@@ -202,6 +373,10 @@ export function Transcript({
   emptyText = "No messages yet.",
   resetKey,
   follow = false,
+  sessionRef,
+  depth = 0,
+  ancestors = [],
+  maxDepth = 8,
 }: TranscriptProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -280,7 +455,14 @@ export function Transcript({
         )}
         {/* Same reason as the parts above: messages are append-only. */}
         {messages.map((m, i) => (
-          <MessageView key={m.info.id || `msg-${i}`} message={m} />
+          <MessageView
+            key={m.info.id || `msg-${i}`}
+            message={m}
+            sessionRef={sessionRef}
+            depth={depth}
+            ancestors={ancestors}
+            maxDepth={maxDepth}
+          />
         ))}
       </div>
       {follow && !pinned && messages.length > 0 && (

@@ -17,9 +17,11 @@ export function Login() {
   return (
     <div
       style={{
-        height: "100dvh",
+        height: "var(--mobile-viewport-height, 100dvh)",
+        overflow: "auto",
+        boxSizing: "border-box",
         display: "flex",
-        alignItems: "center",
+        alignItems: "safe center",
         justifyContent: "center",
         padding: 12,
       }}
@@ -40,9 +42,12 @@ export function Login() {
             alt="Brain"
             style={{ borderRadius: 16 }}
           />
-          <h1 style={{ margin: 0, color: "var(--cyan)", fontSize: 20 }}>Brain</h1>
+          <h1 style={{ margin: 0, color: "var(--cyan)", fontSize: 20 }}>
+            Brain
+          </h1>
           <p className="muted" style={{ maxWidth: 320, fontSize: 12.5 }}>
-            Sign in to view tasks, automations, runners, and your knowledge base.
+            Sign in to view tasks, automations, runners, and your knowledge
+            base.
           </p>
 
           {error && (
@@ -56,7 +61,10 @@ export function Login() {
 
           {view === "choices" && (
             <div className="col" style={{ width: "min(92%, 340px)" }}>
-              <button className="btn primary" onClick={() => setView("password")}>
+              <button
+                className="btn primary"
+                onClick={() => setView("password")}
+              >
                 Sign in with password
               </button>
               <button
@@ -135,7 +143,11 @@ export function Login() {
                 autoFocus
                 onChange={(e) => setToken(e.target.value)}
               />
-              <button className="btn primary" type="submit" disabled={!token.trim()}>
+              <button
+                className="btn primary"
+                type="submit"
+                disabled={!token.trim()}
+              >
                 Save token
               </button>
               <button

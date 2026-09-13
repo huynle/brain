@@ -169,11 +169,13 @@ export function useTaskRowRenderer({
           // Shift-click anywhere on the row is a selection gesture, not
           // an open: range from the anchor, or start a selection here.
           if (e.shiftKey) {
+            preview.cancel();
             rangeTaskSel(projectId, orderedTaskIds, t.id);
             return;
           }
           // Selection mode is modal: clicks toggle, they never open.
-          if (selActive) {
+          if (selActive || e.metaKey || e.ctrlKey) {
+            preview.cancel();
             toggleTaskSel(projectId, t.id);
             return;
           }
@@ -195,7 +197,7 @@ export function useTaskRowRenderer({
           if ((e.target as HTMLElement).closest(".selbox")) return;
           // A double-click in multi-select mode must not open — mirror
           // the click guards.
-          if (selActive) return;
+          if (selActive || e.shiftKey || e.metaKey || e.ctrlKey) return;
           preview.cancel();
           openInFocus("task-detail", { projectId, taskId: t.id }, label);
         }}
@@ -230,8 +232,10 @@ export function useTaskRowRenderer({
             role="checkbox"
             aria-checked={marked}
             aria-label={`Select ${label}`}
+                  title="Select · Shift-click for a range · Cmd/Ctrl-click a row to toggle"
             onClick={(e) => {
               e.stopPropagation();
+              preview.cancel();
               if (e.shiftKey) rangeTaskSel(projectId, orderedTaskIds, t.id);
               else toggleTaskSel(projectId, t.id);
             }}

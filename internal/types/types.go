@@ -121,7 +121,7 @@ var MergePolicies = []string{"prompt_only", "auto_pr", "auto_merge"}
 var MergeStrategies = []string{"squash", "merge", "rebase"}
 var RemoteBranchPolicies = []string{"keep", "delete"}
 var ExecutionModes = []string{"worktree", "current_branch"}
-var Executors = []string{"opencode", "pi", "script"}
+var Executors = []string{"opencode", "pi", "script", "assistant"}
 
 // CheckoutModes lists valid values for CheckoutMode on tasks/entries.
 // "ai" (default) runs the LLM-based feature-checkout skill; "simple" triggers a
@@ -145,6 +145,43 @@ func IsValidCheckoutMode(s string) bool {
 		}
 	}
 	return false
+}
+
+// DeliveryModes lists valid values for DeliveryMode. "none" (default) means
+// no git delivery runs; "mr" opens a provider MR; "local_merge" squash-merges
+// into the target locally. Empty string is treated as "none" downstream.
+var DeliveryModes = []string{"none", "mr", "local_merge"}
+
+// IsValidDeliveryMode reports whether s is a recognized delivery mode.
+// Empty string is treated as valid (defaults to "none" downstream).
+func IsValidDeliveryMode(s string) bool {
+	if s == "" {
+		return true
+	}
+	for _, v := range DeliveryModes {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// EffectiveDeliveryMode resolves the delivery mode to run, applying the
+// one-release backward-compat bridge from merge_policy when delivery_mode is
+// unset/none: auto_pr→mr, auto_merge→local_merge, else none. An explicit
+// non-"none" delivery_mode always wins. Returns "none"|"mr"|"local_merge".
+func EffectiveDeliveryMode(deliveryMode, mergePolicy string) string {
+	switch deliveryMode {
+	case "mr", "local_merge":
+		return deliveryMode
+	}
+	switch mergePolicy {
+	case "auto_pr":
+		return "mr"
+	case "auto_merge":
+		return "local_merge"
+	}
+	return "none"
 }
 
 // =============================================================================
@@ -334,14 +371,16 @@ type PlacementReason struct {
 
 // BrainEntry represents a single brain entry (note/task/plan/etc).
 type BrainEntry struct {
-	ID       string   `json:"id"`
-	Path     string   `json:"path"`
-	Title    string   `json:"title"`
-	Type     string   `json:"type"`
-	Status   string   `json:"status"`
-	Content  string   `json:"content"`
-	Tags     []string `json:"tags"`
-	Priority string   `json:"priority,omitempty"`
+	Revision             string                `json:"revision,omitempty"`
+	DeliveryVerification *DeliveryVerification `json:"delivery_verification,omitempty"`
+	ID                   string                `json:"id"`
+	Path                 string                `json:"path"`
+	Title                string                `json:"title"`
+	Type                 string                `json:"type"`
+	Status               string                `json:"status"`
+	Content              string                `json:"content"`
+	Tags                 []string              `json:"tags"`
+	Priority             string                `json:"priority,omitempty"`
 
 	// Attachments contains typed references to binary artifacts associated with
 	// this entry. Binary data is stored outside entry DTOs and referenced by ID.
@@ -384,6 +423,7 @@ type BrainEntry struct {
 	ExecutionMode      string `json:"execution_mode,omitempty"`
 	SessionMode        string `json:"session_mode,omitempty"`
 	CheckoutMode       string `json:"checkout_mode,omitempty"`
+	DeliveryMode       string `json:"delivery_mode,omitempty"`
 
 	// Task execution fields
 	UserOriginalRequest string   `json:"user_original_request,omitempty"`
@@ -449,6 +489,14 @@ type BrainEntry struct {
 	ResumeRequested   bool   `json:"resume_requested,omitempty"`
 	ResumeRequestedAt string `json:"resume_requested_at,omitempty"`
 
+	// Supervisor resume-with-context flow (Phase 3/4). Runtime-only, stamped by
+	// ResumeTaskWithContext and read by the Phase 4 runner. Mirrors the same
+	// fields on ResolvedTask; parseMetadataIntoEntry populates them here.
+	ResumeMode              string `json:"resume_mode,omitempty"`
+	ResumeInjectedContext   string `json:"resume_injected_context,omitempty"`
+	ResumePreferSameSession bool   `json:"resume_prefer_same_session,omitempty"`
+	ResumeExecutorOverride  string `json:"resume_executor_override,omitempty"`
+
 	// Failure retry accounting. Runtime-only (not frontmatter): written by
 	// the runner each time a task ends in failure/crash/timeout, reset to
 	// zero on success. A crashed task is reset to "pending" for retry, so
@@ -472,6 +520,9 @@ type SessionInfo struct {
 	MachineID string `json:"machine_id,omitempty"`
 	Hostname  string `json:"hostname,omitempty"`
 	Workdir   string `json:"workdir,omitempty"`
+	// ParentID records the OpenCode parent session id for subagent drill-down,
+	// enabling recursive child-transcript viewing. Empty for root sessions.
+	ParentID string `json:"parent_id,omitempty"`
 }
 
 // CronRun tracks a single cron execution.
@@ -733,6 +784,7 @@ type CreateEntryRequest struct {
 	SessionMode        string `json:"session_mode,omitempty"`
 	CompleteOnIdle     *bool  `json:"complete_on_idle,omitempty"`
 	CheckoutMode       string `json:"checkout_mode,omitempty"`
+	DeliveryMode       string `json:"delivery_mode,omitempty"`
 
 	UserOriginalRequest string   `json:"user_original_request,omitempty"`
 	TargetWorkdir       string   `json:"target_workdir,omitempty"`
@@ -791,12 +843,13 @@ type CreateEntryResponse struct {
 
 // UpdateEntryRequest is the request body for PATCH /entries/:id.
 type UpdateEntryRequest struct {
-	Status  *string  `json:"status,omitempty"`
-	Title   *string  `json:"title,omitempty"`
-	Content *string  `json:"content,omitempty"`
-	Append  *string  `json:"append,omitempty"`
-	Note    *string  `json:"note,omitempty"`
-	Tags    []string `json:"tags,omitempty"`
+	ExpectedRevision string   `json:"expected_revision,omitempty"`
+	Status           *string  `json:"status,omitempty"`
+	Title            *string  `json:"title,omitempty"`
+	Content          *string  `json:"content,omitempty"`
+	Append           *string  `json:"append,omitempty"`
+	Note             *string  `json:"note,omitempty"`
+	Tags             []string `json:"tags,omitempty"`
 
 	Attachments *[]AttachmentReference `json:"attachments,omitempty"`
 
@@ -826,6 +879,7 @@ type UpdateEntryRequest struct {
 	Executor           *string   `json:"executor,omitempty"`
 	Extensions         *[]string `json:"extensions,omitempty"`
 	CheckoutMode       *string   `json:"checkout_mode,omitempty"`
+	DeliveryMode       *string   `json:"delivery_mode,omitempty"`
 
 	// Origin provenance (see BrainEntry). Updatable so a task can be
 	// re-homed to a different machine, or its affinity relaxed, without
@@ -1198,15 +1252,16 @@ type LinkResponse struct {
 
 // ResolvedTask is a task with dependency resolution info.
 type ResolvedTask struct {
-	ID        string   `json:"id"`
-	Path      string   `json:"path"`
-	Title     string   `json:"title"`
-	Content   string   `json:"content,omitempty"`
-	Priority  string   `json:"priority"`
-	Status    string   `json:"status"`
-	ParentID  string   `json:"parent_id,omitempty"`
-	DependsOn []string `json:"depends_on"`
-	Created   string   `json:"created"`
+	DeliveryVerification *DeliveryVerification `json:"delivery_verification,omitempty"`
+	ID                   string                `json:"id"`
+	Path                 string                `json:"path"`
+	Title                string                `json:"title"`
+	Content              string                `json:"content,omitempty"`
+	Priority             string                `json:"priority"`
+	Status               string                `json:"status"`
+	ParentID             string                `json:"parent_id,omitempty"`
+	DependsOn            []string              `json:"depends_on"`
+	Created              string                `json:"created"`
 	// Modified/CompletedAt power the PWA's history ordering. Modified was
 	// historically declared by the web Task type but never sent.
 	Modified    string `json:"modified,omitempty"`
@@ -1223,6 +1278,7 @@ type ResolvedTask struct {
 	OpenPRBeforeMerge  *bool  `json:"open_pr_before_merge,omitempty"`
 	ExecutionMode      string `json:"execution_mode,omitempty"`
 	CheckoutMode       string `json:"checkout_mode,omitempty"`
+	DeliveryMode       string `json:"delivery_mode,omitempty"`
 
 	FeatureID        string   `json:"feature_id,omitempty"`
 	FeaturePriority  string   `json:"feature_priority,omitempty"`
@@ -1342,6 +1398,17 @@ type ResolvedTask struct {
 	// resume the same task forever.
 	ResumeRequested   bool   `json:"resume_requested,omitempty"`
 	ResumeRequestedAt string `json:"resume_requested_at,omitempty"`
+
+	// Supervisor resume-with-context flow (Phase 3/4). These extend the plain
+	// resume flags with the context blob and mode hints the runner reads at
+	// claim time. All runtime-only (never in on-disk frontmatter), preserved
+	// across re-index via service.runtimeKeys, and stamped by
+	// ResumeTaskWithContext. ResumeMode here is the API's ADVISORY intent; the
+	// runner finalizes same_session vs rehydrate via CanResumeSession.
+	ResumeMode              string `json:"resume_mode,omitempty"`
+	ResumeInjectedContext   string `json:"resume_injected_context,omitempty"`
+	ResumePreferSameSession bool   `json:"resume_prefer_same_session,omitempty"`
+	ResumeExecutorOverride  string `json:"resume_executor_override,omitempty"`
 
 	// AttemptCount is how many times this task has ended in failure. The
 	// runner increments it on each failure and clears it on success; when it
@@ -1682,6 +1749,7 @@ type FeatureCheckoutOptions struct {
 	OpenPRBeforeMerge  bool   `json:"open_pr_before_merge,omitempty"`
 	ExecutionMode      string `json:"execution_mode,omitempty"` // "worktree", "current_branch"
 	CheckoutMode       string `json:"checkout_mode,omitempty"`  // "ai" (default) or "simple"
+	DeliveryMode       string `json:"delivery_mode,omitempty"`  // "none" (default), "mr", or "local_merge"
 }
 
 // CheckoutFeatureResult is the response for CheckoutFeature.
@@ -1743,6 +1811,63 @@ type ResumeFeatureResult struct {
 	// TotalResults is len(Results) before any client-side cap. Populated
 	// only when Truncated=true so callers know how much detail was dropped.
 	TotalResults int `json:"total_results,omitempty"`
+}
+
+// Resume-mode string constants for ResumeWithContextResult.ResumeMode. These
+// name HOW the supervisor context injection was (or will be) applied:
+//   - same_session: relaunch reusing the prior OpenCode session id (best-effort
+//     intent from the API; the runner finalizes via CanResumeSession).
+//   - rehydrate:    relaunch WITHOUT reusing a session (fresh session, prior
+//     context re-injected through the rehydrate prompt).
+//   - live_injected: the task's session was still live, so the context was
+//     injected into the running session with no relaunch/status flip.
+const (
+	ResumeModeSameSession  = "same_session"
+	ResumeModeRehydrate    = "rehydrate"
+	ResumeModeLiveInjected = "live_injected"
+)
+
+// ResumeWithContextOptions is the request body for POST
+// /tasks/{project}/{task}/resume-with-context. Distinct from plain /resume in
+// that it carries an injected_context blob the runner (or a live session)
+// prepends to the resume prompt.
+//
+// InjectedContext is REQUIRED — the endpoint's whole purpose is to hand the
+// agent supervisor-authored context. PreferSameSession defaults to true when
+// the field is absent (see note in ResumeTaskWithContext). ExecutorOverride
+// lets a supervisor force "opencode"/"pi" for the relaunch. Force carries the
+// same semantics as ResumeTaskOptions.Force.
+type ResumeWithContextOptions struct {
+	InjectedContext   string `json:"injected_context"`
+	PreferSameSession bool   `json:"prefer_same_session,omitempty"`
+	ExecutorOverride  string `json:"executor_override,omitempty"`
+	Force             bool   `json:"force,omitempty"`
+}
+
+// ResumeWithContextResult extends ResumeTaskResult with the extra fields the
+// context-injection flow reports. ResumeMode is one of the ResumeMode*
+// constants; for the relaunch path it is ADVISORY (the runner makes the
+// authoritative same_session-vs-rehydrate call via CanResumeSession). When
+// InjectedLive is true the context was delivered into a still-running session
+// and the task status was NOT flipped to pending.
+type ResumeWithContextResult struct {
+	ResumeTaskResult
+	ResumeMode      string `json:"resume_mode"`
+	TargetSessionID string `json:"target_session_id,omitempty"`
+	InjectedLive    bool   `json:"injected_live,omitempty"`
+}
+
+// ResumeWithContextFeatureResult is the fan-out response for POST
+// /features/{featureId}/resume-with-context. Mirrors ResumeFeatureResult but
+// carries the richer per-task ResumeWithContextResult entries. Truncation and
+// TotalResults follow the same handler-owned convention as ResumeFeatureResult.
+type ResumeWithContextFeatureResult struct {
+	FeatureID    string                    `json:"feature_id"`
+	TotalResumed int                       `json:"total_resumed"`
+	TotalSkipped int                       `json:"total_skipped"`
+	Results      []ResumeWithContextResult `json:"results"`
+	Truncated    bool                      `json:"truncated,omitempty"`
+	TotalResults int                       `json:"total_results,omitempty"`
 }
 
 // RunnerStatusResponse is the response for GET /tasks/runner/status.

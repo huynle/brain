@@ -8,11 +8,11 @@ import (
 	"fmt"
 )
 
-// classifySchemaSource recognizes reviewed source catalogs only. Constructors and
-// migrations do not call it. The private execution-ledger preflight uses it to
-// distinguish genuine local main29/30 from private29. Recognition is NOT runtime
-// admission, authorization, data integrity, root/CAS readiness or permission to
-// migrate. The caller owns a stable transaction and must fence schema writers
+// classifySchemaSource recognizes reviewed source catalogs only. Public admission,
+// dormant successor selection and execution-ledger preflight use it to distinguish
+// genuine local main29/30 from private29. Recognition alone is NOT authorization,
+// data integrity, root/CAS readiness or permission to migrate. Each caller applies
+// its separate admission policy. The caller owns a stable transaction and must fence schema writers
 // before using a result for a future migration. It performs no writes or PRAGMAs.
 //
 // Main pins are SHA-256 of JSON [][4]string (type,name,tbl_name,coalesce(sql,”)),

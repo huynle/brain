@@ -1,11 +1,12 @@
 package types
 
 // BulkJobRequest names a bounded, immutable union of paths and filters.
-// Retry an uncertain submission with the SAME RequestID and body.
+// RequestID is an idempotency key: retry an uncertain submission with the SAME
+// key and body to recover its existing job rather than submit another mutation.
 type BulkJobRequest struct {
 	Label         string             `json:"label,omitempty"`
 	RequestID     string             `json:"request_id"`
-	Operation     string             `json:"operation"`
+	Operation     string             `json:"operation"` // archive, delete, set_status, move
 	Paths         []string           `json:"paths,omitempty"`
 	Filters       []BulkUpdateFilter `json:"filters,omitempty"`
 	Status        string             `json:"status,omitempty"`

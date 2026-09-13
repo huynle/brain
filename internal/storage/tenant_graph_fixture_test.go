@@ -36,10 +36,10 @@ func TestTenantGraphFixtureStage(t *testing.T) {
 	if err := db.QueryRow("SELECT count(*) FROM notes").Scan(&count); err != nil || count != 0 {
 		t.Fatal("fixture must be empty", err)
 	}
-	if v, err := GetSchemaVersion(db); err != nil || v != 28 || CurrentSchemaVersion != 28 {
-		t.Fatal("fixture must be v28", err)
+	if v, err := GetSchemaVersion(db); err != nil || v != 30 || CurrentSchemaVersion != 30 {
+		t.Fatal("fixture must be genuine runtime30", err)
 	}
-	if err := migrateTenantSchema(context.Background(), db, nil); err != nil {
+	if err := migrateSuccessorSchema(context.Background(), db, nil); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := db.Begin()
@@ -51,6 +51,9 @@ func TestTenantGraphFixtureStage(t *testing.T) {
 	for i := 1; i < n; i++ {
 		id, indexID := fmt.Sprintf("tenant-%03d", i), fmt.Sprintf("%032x", i)
 		if _, err := tx.Exec("INSERT INTO tenants(id,name,status,created_at) VALUES(?,?,'active','now')", id, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec("INSERT INTO entry_sync_identity VALUES(?,1,lower(hex(randomblob(16))))", id); err != nil {
 			t.Fatal(err)
 		}
 		name, err := tenantFTSName(indexID)
@@ -70,7 +73,7 @@ func TestTenantGraphFixtureStage(t *testing.T) {
 		relationalExec(t, tx, "DROP TRIGGER IF EXISTS "+name)
 		relationalExec(t, tx, ddl)
 	}
-	if err := checkFinalTenantSearchSchema(tx); err != nil {
+	if _, err := checkTenantSearchCatalogComplete(tx, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

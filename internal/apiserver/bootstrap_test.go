@@ -62,8 +62,8 @@ func TestBootstrapStartup_PasswordClaimFailureStopsStartup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Backfill has no credentials to copy. Only the password startup write
-	// hits this trigger, so this tests that specific error path.
+	// Exact runtime30 admission now refuses injected triggers before startup
+	// can write the claim. The unknown catalog must never reach a handler.
 	_, err = db.Exec(`CREATE TRIGGER reject_install_claim BEFORE INSERT ON entry_meta
 		WHEN NEW.path = 'brain:system/install_claimed'
 		BEGIN SELECT RAISE(ABORT, 'claim persistence unavailable'); END`)
@@ -77,7 +77,7 @@ func TestBootstrapStartup_PasswordClaimFailureStopsStartup(t *testing.T) {
 	if cleanup != nil {
 		defer cleanup()
 	}
-	if err == nil || !strings.Contains(err.Error(), "claim persistence unavailable") || h != nil {
+	if err == nil || !strings.Contains(err.Error(), "unreviewed source catalog") || h != nil {
 		t.Fatalf("startup handler present = %v, error = %v; want persistence failure and no handler", h != nil, err)
 	}
 }

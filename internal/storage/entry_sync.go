@@ -9,6 +9,33 @@ import (
 	"github.com/huynle/brain-api/internal/tenant"
 )
 
+// One latest change per path, including tombstones. REPLACE allocates a new
+// monotonic sequence. Triggers commit with the indexed data, including writes
+// from the file watcher and runtime metadata writers. No timestamp polling.
+const entrySyncSchema = `
+CREATE TABLE IF NOT EXISTS entry_sync_devices (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS entry_sync_identity (id INTEGER PRIMARY KEY CHECK(id=1), epoch TEXT NOT NULL);
+INSERT OR IGNORE INTO entry_sync_identity VALUES (1, lower(hex(randomblob(16))));
+CREATE TABLE IF NOT EXISTS entry_sync_changes (seq INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS entry_sync_operations (id TEXT PRIMARY KEY, hash TEXT NOT NULL, status INTEGER NOT NULL DEFAULT 0, body TEXT NOT NULL DEFAULT '');
+CREATE TRIGGER IF NOT EXISTS entry_sync_insert AFTER INSERT ON notes BEGIN
+ INSERT OR REPLACE INTO entry_sync_changes(path) VALUES (new.path);
+END;
+CREATE TRIGGER IF NOT EXISTS entry_sync_update AFTER UPDATE ON notes BEGIN
+ INSERT OR REPLACE INTO entry_sync_changes(path) VALUES (old.path);
+ INSERT OR REPLACE INTO entry_sync_changes(path) VALUES (new.path);
+END;
+CREATE TRIGGER IF NOT EXISTS entry_sync_delete AFTER DELETE ON notes BEGIN
+ INSERT OR REPLACE INTO entry_sync_changes(path) VALUES (old.path);
+END;
+INSERT OR IGNORE INTO entry_sync_changes(path) SELECT path FROM notes;
+`
+
+func initEntrySync(db *sql.DB) error {
+	_, err := db.Exec(entrySyncSchema)
+	return err
+}
+
 type EntrySyncRow struct {
 	Sequence int64
 	Path     string
@@ -42,7 +69,7 @@ func (s *TenantStore) syncScope(ctx context.Context, tx *sql.Tx, devices bool) (
 		return contentScope{}, err
 	}
 	if version == 31 {
-		if err := validateSuccessorSchema(ctx, tx, true); err != nil {
+		if err := validateSuccessorReceiver(ctx, tx, s.tenantID); err != nil {
 			return contentScope{}, err
 		}
 		return contentScope{owner: id.String()}, nil

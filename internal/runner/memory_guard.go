@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -68,12 +69,13 @@ type procSample struct {
 	PID      int
 	PPID     int
 	RSSBytes int64
+	Command  string
 }
 
 // sampleProcessTable snapshots every process on the host. Package variable so
 // tests can substitute a fixed table.
 var sampleProcessTable = func() (map[int]procSample, error) {
-	out, err := exec.Command("ps", "-eo", "pid=,ppid=,rss=").Output()
+	out, err := exec.Command("ps", "-eo", "pid=,ppid=,rss=,comm=").Output()
 	if err != nil {
 		return nil, fmt.Errorf("ps: %w", err)
 	}
@@ -96,7 +98,14 @@ func parseProcessTable(out []byte) (map[int]procSample, error) {
 		if err1 != nil || err2 != nil || err3 != nil {
 			continue
 		}
-		table[pid] = procSample{PID: pid, PPID: ppid, RSSBytes: rssKB * 1024}
+		command := ""
+		if len(fields) > 3 {
+			command = filepath.Base(fields[3])
+			if len(command) > 64 {
+				command = command[:64]
+			}
+		}
+		table[pid] = procSample{PID: pid, PPID: ppid, RSSBytes: rssKB * 1024, Command: command}
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err
@@ -328,11 +337,25 @@ func (tr *TaskRunner) checkMemoryLimits(ctx context.Context) {
 		return
 	}
 	running := tr.processMgr.GetAllRunning()
+	tr.resourceHealth.mu.Lock()
+	live := map[string]bool{}
+	for _, info := range running {
+		live[info.Task.ProjectID+":"+info.Task.ID+":"+info.Task.InstanceID] = true
+	}
+	for key := range tr.resourceHealth.warnings {
+		if !live[key] {
+			delete(tr.resourceHealth.warnings, key)
+		}
+	}
+	tr.resourceHealth.mu.Unlock()
 	if len(running) == 0 {
 		return
 	}
 	table, err := sampleProcessTable()
 	if err != nil {
+		for _, info := range running {
+			tr.publishResourceSample(info, nil, nil, limit, "sampling_failed")
+		}
 		tr.memoryGuardWarnOnce("sample", "memory guard: cannot sample process table: %v", err)
 		return
 	}
@@ -340,7 +363,7 @@ func (tr *TaskRunner) checkMemoryLimits(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if info.Proc == nil {
+		if info.Proc == nil || info.Proc.Exited() {
 			continue
 		}
 		roots := []int{info.Proc.Pid()}
@@ -349,7 +372,12 @@ func (tr *TaskRunner) checkMemoryLimits(ctx context.Context) {
 		}
 		tree := processTree(table, roots...)
 		rss := treeRSS(table, tree)
-		if rss <= limit {
+		unavailable := ""
+		if len(tree) == 0 || info.Proc.Exited() {
+			unavailable = "process_exited"
+		}
+		tr.publishResourceSample(info, table, tree, limit, unavailable)
+		if unavailable != "" || rss <= limit {
 			continue
 		}
 		tr.handleMemoryLimitExceeded(ctx, info, rss, limit, tree)

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"github.com/huynle/brain-api/internal/tenant"
 	"testing"
 )
 
@@ -665,7 +666,7 @@ func TestGraph_LinksCrossProjectAndGlobalScopes(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMigrateV25_InvalidatesChecksumsForLinkReextraction(t *testing.T) {
-	s := newTestContentStorage(t)
+	s := &TenantStore{db: archivedSchemaFixture(t, provenanceSources[0].revision), tenantID: tenant.Local}
 	ctx := context.Background()
 
 	withWiki := sampleNote("projects/test/mig/wiki.md", "migwik01", "Has Wiki Link")
@@ -724,7 +725,7 @@ func TestMigrateV25_InvalidatesChecksumsForLinkReextraction(t *testing.T) {
 }
 
 func TestMigrateV26_InvalidatesChecksumsForHTMLCommentReextraction(t *testing.T) {
-	s := newTestContentStorage(t)
+	s := &TenantStore{db: archivedSchemaFixture(t, provenanceSources[0].revision), tenantID: tenant.Local}
 	ctx := context.Background()
 
 	withComment := sampleNote("projects/test/mig/tmpl.md", "migcmt01", "Plan Template")

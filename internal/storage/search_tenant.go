@@ -10,7 +10,7 @@ import (
 
 // searchTenant owns one snapshot for catalog, all fallbacks, filtering, full-row
 // hydration and attachment merging. No code called inside it may use the pool.
-// Runtime remains v28; this path is reached only on the privately migrated v29.
+// This path is reached only on privately migrated tenant29/31, not runtime30.
 func (s *TenantStore) searchTenant(ctx context.Context, query, strategy string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -21,7 +21,7 @@ func (s *TenantStore) searchTenant(ctx context.Context, query, strategy string, 
 	if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(version),0) FROM main.schema_version").Scan(&version); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrTenantSearchUnavailable, err)
 	}
-	if version != 29 {
+	if version != 29 && version != successorSchemaVersion {
 		return nil, ErrTenantSearchUnavailable
 	}
 	name, err := tenantSearchTable(ctx, tx, s.tenantID)

@@ -70,7 +70,8 @@ export function attachmentLabel(a: AttachmentReference): string {
 export function resolveAttachmentSrc(
   src: string | undefined,
   attachments: readonly AttachmentReference[] | undefined,
-): { url: string; external: true } | { attachment: AttachmentReference } | null {
+):
+  { url: string; external: true } | { attachment: AttachmentReference } | null {
   const raw = (src || "").trim();
   if (!raw) return null;
   if (/^(https?:|data:|blob:)/i.test(raw)) return { url: raw, external: true };
@@ -84,9 +85,13 @@ export function resolveAttachmentSrc(
   }
 
   // Compare on the basename so "./figures/x.png" and "x.png" agree.
-  const base = decodeURIComponent(raw.split("?")[0].split("#")[0])
-    .split("/")
-    .pop();
+  let decoded = raw.split("?")[0].split("#")[0];
+  try {
+    decoded = decodeURIComponent(decoded);
+  } catch {
+    /* Treat malformed encodings literally. */
+  }
+  const base = decoded.split("/").pop();
   if (!base) return null;
   const hit = list.find((a) => a.filename === base || a.path?.endsWith(base));
   return hit ? { attachment: hit } : null;
@@ -114,4 +119,25 @@ export function collectInlinedAttachmentIds(
     if (hit && "attachment" in hit) ids.add(hit.attachment.id);
   }
   return ids;
+}
+
+export function attachmentPreviewKind(
+  a: AttachmentReference,
+): "image" | "pdf" | "audio" | "video" | "text" | "unsupported" {
+  const mime = (a.content_type || "").split(";")[0].trim().toLowerCase();
+  if (mime.startsWith("image/")) return "image";
+  if (mime === "application/pdf") return "pdf";
+  if (mime.startsWith("audio/")) return "audio";
+  if (mime.startsWith("video/")) return "video";
+  if (
+    mime.startsWith("text/") ||
+    [
+      "application/json",
+      "application/xml",
+      "application/javascript",
+      "application/yaml",
+    ].includes(mime)
+  )
+    return "text";
+  return "unsupported";
 }

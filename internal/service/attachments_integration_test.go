@@ -38,7 +38,7 @@ func TestAttachmentServiceCompatibilityRejectsBeforeBlobIO(t *testing.T) {
 			case "zero-handle":
 				svc.storage = &storage.TenantStore{}
 			case "unsupported-schema":
-				if _, err := db.Exec("UPDATE schema_version SET version = 30"); err != nil {
+				if _, err := db.Exec("UPDATE schema_version SET version = 32"); err != nil {
 					t.Fatal(err)
 				}
 			case "closed-store":
@@ -161,7 +161,7 @@ func TestAttachmentServiceLocalCrossProjectLifecycle(t *testing.T) {
 		t.Fatal("deleted source accepted derived text")
 	}
 	var version int
-	if err := db.QueryRow("SELECT MAX(version) FROM schema_version").Scan(&version); err != nil || version != 28 {
+	if err := db.QueryRow("SELECT MAX(version) FROM schema_version").Scan(&version); err != nil || version != 30 {
 		t.Fatalf("runtime version changed: %d, %v", version, err)
 	}
 }

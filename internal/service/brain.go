@@ -30,6 +30,7 @@ var _ AttachmentDerivedChangeHook = (*BrainServiceImpl)(nil)
 
 // BrainServiceImpl implements api.BrainService using filesystem + SQLite storage.
 type BrainServiceImpl struct {
+	mutationMu      sync.Mutex // serializes conditional API writes and append operations
 	config          *config.Config
 	storage         *storage.TenantStore
 	indexer         *indexer.Indexer
@@ -237,6 +238,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		SessionMode:         req.SessionMode,
 		CompleteOnIdle:      req.CompleteOnIdle,
 		CheckoutMode:        req.CheckoutMode,
+		DeliveryMode:        req.DeliveryMode,
 		TargetWorkdir:       frontmatter.SanitizeSimpleValue(req.TargetWorkdir),
 		OriginMachineID:     frontmatter.SanitizeSimpleValue(req.OriginMachineID),
 		OriginClientID:      frontmatter.SanitizeSimpleValue(req.OriginClientID),
@@ -374,6 +376,7 @@ func (s *BrainServiceImpl) Recall(ctx context.Context, pathOrID string, include 
 	}
 
 	entry := NoteRowToBrainEntry(row)
+	entry.Revision = s.entryRevision(ctx, row)
 	if wantsAttachmentMetadata(include) {
 		if err := s.enrichEntryAttachmentMetadata(ctx, &entry); err != nil {
 			return nil, err
@@ -587,6 +590,9 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["checkout_mode"].(string); ok {
 			fm.CheckoutMode = v
 		}
+		if v, ok := meta["delivery_mode"].(string); ok {
+			fm.DeliveryMode = v
+		}
 		if v, ok := meta["merge_strategy"].(string); ok {
 			fm.MergeStrategy = v
 		}
@@ -776,6 +782,9 @@ func updateRequestTouchedFields(req types.UpdateEntryRequest) map[string]bool {
 
 // Update modifies an existing brain entry.
 func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+	s.mutationMu.Lock()
+	unlock := sync.OnceFunc(s.mutationMu.Unlock)
+	defer unlock()
 	// Resolve the entry
 	row, err := s.resolveEntry(ctx, pathOrID)
 	if err != nil {
@@ -783,6 +792,15 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 	if row == nil {
 		return nil, api.ErrNotFound
+	}
+
+	if err := s.checkEntryRevision(ctx, row, req.ExpectedRevision); err != nil {
+		return nil, err
+	}
+	if req.ExpectedRevision != "" {
+		if err := s.validateDependencyUpdate(ctx, row, req); err != nil {
+			return nil, err
+		}
 	}
 
 	// Read file from disk
@@ -805,7 +823,7 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	body := doc.Body
 	// Check raw input before sanitization and the effective stored value when
 	// this patch does not set git_remote. Metadata-only values count too.
-	if fm.Type == "task" || (row.Type != nil && *row.Type == "task") {
+	if !retirementUpdate(req) && (fm.Type == "task" || (row.Type != nil && *row.Type == "task")) {
 		remote := fm.GitRemote
 		if req.GitRemote != nil {
 			remote = *req.GitRemote
@@ -916,6 +934,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 	if req.CheckoutMode != nil {
 		fm.CheckoutMode = *req.CheckoutMode
+	}
+	if req.DeliveryMode != nil {
+		fm.DeliveryMode = *req.DeliveryMode
 	}
 	if req.MergeStrategy != nil {
 		fm.MergeStrategy = *req.MergeStrategy
@@ -1120,12 +1141,16 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	// schedule, max_runs, etc. silently revert in the DB metadata even though
 	// the markdown file has the new value.
 	runtimeKeys := []string{
+		"delivery_verification",
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
 		"starts_at", "expires_at", "run_once_at", "timezone",
 		"resume_requested", "resume_requested_at",
+		"resume_mode", "resume_injected_context",
+		"resume_prefer_same_session", "resume_executor_override",
 		"abandoned_at", "abandoned_reason",
 		"attempt_count", "last_failed_at",
+		"mr_url",
 	}
 	userTouched := updateRequestTouchedFields(req)
 	var preservedFields map[string]interface{}
@@ -1167,6 +1192,7 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		_, _ = s.storage.MergeMetadata(ctx, row.Path, preservedFields)
 	}
 
+	unlock()
 	// Post-update: auto-create/update feature_schedule gate task if feature schedule fields are set
 	if fm.Type == "task" && fm.FeatureID != "" {
 		schedFields, hasFeatureSched := extractFeatureScheduleFromUpdate(req)
@@ -1733,6 +1759,8 @@ var durableMetadataFields = map[string]bool{
 // note, append), the changes are also written back to the markdown file on disk
 // and the file is re-indexed.
 func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	row, err := s.resolveEntry(ctx, pathOrID)
 	if err != nil {
 		return nil, err
@@ -1740,8 +1768,21 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 	if row == nil {
 		return nil, api.ErrNotFound
 	}
-	if err := validateMetadataGitRemote(ctx, s.storage, row, fields); err != nil {
-		return nil, err
+	if expected, ok := fields["expected_revision"]; ok {
+		value, ok := expected.(string)
+		if !ok || value == "" {
+			return nil, fmt.Errorf("%w: expected_revision must be a nonempty string", api.ErrInvalidInput)
+		}
+		if err := s.checkEntryRevision(ctx, row, value); err != nil {
+			return nil, err
+		}
+		delete(fields, "expected_revision")
+	}
+
+	if !retirementMetadata(fields) {
+		if err := validateMetadataGitRemote(ctx, s.storage, row, fields); err != nil {
+			return nil, err
+		}
 	}
 
 	// Status transitions stamp/clear completed_at. Injecting into the fields
@@ -1854,7 +1895,7 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	// DB-only metadata checked by UpdateMetadata. Validate that representation
 	// too, before the first write. This failure must not be treated as a
 	// best-effort file-sync error by the caller.
-	if fm.Type == "task" || (row.Type != nil && *row.Type == "task") || fields["type"] == "task" {
+	if !retirementMetadata(fields) && (fm.Type == "task" || (row.Type != nil && *row.Type == "task") || fields["type"] == "task") {
 		if err := validateConfiguredGitRemote(ctx, s.storage, fm.GitRemote); err != nil {
 			return err
 		}
@@ -2010,12 +2051,16 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	// schedule, starts_at, max_runs, etc. silently revert in the DB metadata
 	// even though the file has the new value.
 	runtimeKeys := []string{
+		"delivery_verification",
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
 		"starts_at", "expires_at", "run_once_at", "timezone",
 		"resume_requested", "resume_requested_at",
+		"resume_mode", "resume_injected_context",
+		"resume_prefer_same_session", "resume_executor_override",
 		"abandoned_at", "abandoned_reason",
 		"attempt_count", "last_failed_at",
+		"mr_url",
 	}
 	var preservedFields map[string]interface{}
 	if row.Metadata != "" && row.Metadata != "{}" {
@@ -2063,6 +2108,8 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 
 // Delete removes a brain entry by path or ID.
 func (s *BrainServiceImpl) Delete(ctx context.Context, pathOrID string) error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	row, err := s.resolveEntry(ctx, pathOrID)
 	if err != nil {
 		return err
@@ -2305,6 +2352,17 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 		SortBy:    req.SortBy,
 		SortOrder: req.SortOrder,
 		Priority:  req.Priority,
+	}
+
+	// Task lists and task mutations must resolve project scope identically.
+	// Older / hand-authored files may omit projectId or retain a stale value
+	// after an out-of-band move. The project directory is authoritative.
+	if req.Type == "task" && req.Project != "" && len(req.Projects) == 0 && (req.Global == nil || !*req.Global) {
+		if err := validateProjectID(req.Project); err != nil {
+			return nil, err
+		}
+		opts.ProjectID = ""
+		opts.PathPrefix = "projects/" + req.Project + "/task/"
 	}
 
 	// Handle global vs project filtering. A multi-project scope supersedes
@@ -2874,6 +2932,8 @@ func truncateAtBoundary(s string, limit int) string {
 // correctly before deleting the source, and treats index update failures as
 // non-fatal (they self-heal on re-index).
 func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProject string) (*types.MoveResult, error) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	if targetProject == "" {
 		return nil, fmt.Errorf("target project is required")
 	}
@@ -2915,6 +2975,13 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 		return nil, fmt.Errorf("source file does not exist on disk: %w", err)
 	}
 
+	// Moving to the current project is a no-op. Writing and then removing
+	// the same path would destroy the entry while reporting success.
+	if oldPath == newPath {
+		return &types.MoveResult{Success: true, From: oldPath, To: newPath,
+			OldPath: oldPath, NewPath: newPath, Project: targetProject, ID: entry.ID, Title: entry.Title}, nil
+	}
+
 	// Read old file content
 	content, err := os.ReadFile(oldAbsPath)
 	if err != nil {
@@ -2945,8 +3012,17 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 	if err := os.MkdirAll(newDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create directory %q: %w", newDir, err)
 	}
-	if err := os.WriteFile(newAbsPath, []byte(fileBuilder.String()), 0o644); err != nil {
-		return nil, fmt.Errorf("write file %q: %w", newAbsPath, err)
+	// Create exclusively: never overwrite an unrelated destination, even
+	// if it appeared between path validation and the actual write.
+	destination, err := os.OpenFile(newAbsPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("create destination %q: %w", newPath, err)
+	}
+	_, writeErr := destination.WriteString(fileBuilder.String())
+	closeErr := destination.Close()
+	if writeErr != nil || closeErr != nil {
+		_ = os.Remove(newAbsPath) // only the file created by this operation
+		return nil, fmt.Errorf("write destination %q: %w", newPath, errors.Join(writeErr, closeErr))
 	}
 
 	// SAFETY: Verify destination was written correctly before deleting source.

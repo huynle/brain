@@ -135,7 +135,7 @@ func (s *SchedulerService) RunFeatureWithOptions(ctx context.Context, projectID,
 		return resp, nil
 	}
 
-	runners, err := s.runners.ListRunners(ctx)
+	runners, err := s.candidateRunners(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list runners: %w", err)
 	}

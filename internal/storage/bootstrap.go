@@ -88,7 +88,19 @@ func installClaimTable(ctx context.Context, tx *sql.Tx) (string, error) {
 	case 28:
 		return "entry_meta", nil
 	case 29:
-		return "operator_install_claim", nil
+		profile, err := classifySchemaSource(ctx, tx)
+		if err != nil {
+			return "", err
+		}
+		if profile == "private29" {
+			return "operator_install_claim", nil
+		}
+		return "entry_meta", nil
+	case 30:
+		if _, err := classifySchemaSource(ctx, tx); err != nil {
+			return "", err
+		}
+		return "entry_meta", nil
 	case successorSchemaVersion:
 		if err := validateSuccessorSchema(ctx, tx, true); err != nil {
 			return "", err

@@ -8,10 +8,9 @@ import (
 	"github.com/huynle/brain-api/internal/tenant"
 )
 
-// contentScope is resolved at execution time, never at binding time. Runtime
-// constructors still support only v28. v29 is exercised by the dormant migration.
-// Remove the local-only v28 route at final atomic activation; never retain it
-// as a v29 error recovery path.
+// contentScope is resolved at execution time, never at binding time. Public
+// constructors admit reviewed single-mode sources and initialize runtime30.
+// Private29/tenant31 remain dormant; neither may fall back to single-mode SQL.
 type contentScope struct {
 	owner string
 }
@@ -31,14 +30,36 @@ func (s *TenantStore) contentScope(ctx context.Context) (contentScope, error) {
 		}
 		return contentScope{}, nil
 	case 29:
-		return contentScope{owner: s.tenantID.String()}, nil
+		var owned int
+		if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM main.sqlite_schema WHERE type='table' AND name='tenants'").Scan(&owned); err != nil {
+			return contentScope{}, err
+		}
+		if owned != 0 {
+			return contentScope{owner: s.tenantID.String()}, nil
+		}
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return contentScope{}, err
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := classifySchemaSource(ctx, tx); err != nil {
+			return contentScope{}, err
+		}
+		fallthrough
+	case 30:
+		if s.tenantID != tenant.Local {
+			return contentScope{}, errors.New("main content requires local tenant")
+		}
+		// Public owner construction performs exact, read-only source admission.
+		// Like legacy28, this route only permits the single-install local view.
+		return contentScope{}, nil
 	case successorSchemaVersion:
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return contentScope{}, err
 		}
 		defer func() { _ = tx.Rollback() }()
-		if err = validateSuccessorSchema(ctx, tx, true); err != nil {
+		if err = validateSuccessorReceiver(ctx, tx, s.tenantID); err != nil {
 			return contentScope{}, err
 		}
 		return contentScope{owner: s.tenantID.String()}, nil

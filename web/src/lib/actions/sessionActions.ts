@@ -197,6 +197,20 @@ export function buildSessionActions(
     run: () => ctx.copyText("Workdir", inst.workdir as string),
   });
 
+  // The full session id is otherwise only in a CSS-truncated header, and
+  // a wrong/truncated id sent to the control API silently no-ops
+  // (incident jc9ky1jn) — copy the FULL current session id, not a slice.
+  const currentSessionId = latestSessionId(inst);
+  actions.push({
+    id: "copy-session-id",
+    label: "Copy session ID",
+    group: "edit",
+    disabledReason: currentSessionId
+      ? ""
+      : "No session id reported for this process",
+    run: () => ctx.copyText("Session ID", currentSessionId as string),
+  });
+
   // ─── navigate ───────────────────────────────────────────────────
   actions.push({
     id: "watch",

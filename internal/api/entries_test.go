@@ -3629,6 +3629,10 @@ func TestAllowedMetadataUpdateFields_CoversKnownRuntimeAndDurableFields(t *testi
 		// at 0 and the retry cap never fired — the crash-loop it was written
 		// to stop kept running, silently, behind a warn-level log line.
 		"attempt_count", "last_failed_at",
+		// MR-URL write-back (Phase 4): the feature-delivery script PATCHes
+		// mr_url (and status mr_open) onto the merge_request entry via this
+		// endpoint once the MR is open. Runtime/audit-only — never frontmatter.
+		"mr_url",
 	}
 	for _, f := range append(durable, runtime...) {
 		if !AllowedMetadataUpdateFields[f] {

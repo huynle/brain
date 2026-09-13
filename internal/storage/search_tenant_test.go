@@ -118,7 +118,7 @@ func TestTenantSearchSchemaBeforeEmpty(t *testing.T) {
 	for _, s := range []*TenantStore{nil, {}, {tenantID: tenant.Local}} {
 		assertSearchDenied(s, context.Background())
 	}
-	for _, version := range []int{0, 27, 29, 30} {
+	for _, version := range []int{0, 27, 29, 32} {
 		relationalExec(t, owner.db, "DELETE FROM schema_version")
 		if _, err := owner.db.Exec("INSERT INTO schema_version(version) VALUES(?)", version); err != nil {
 			t.Fatal(err)
@@ -340,7 +340,7 @@ func TestTenantSearchLegacyTokenSurvivesMigration(t *testing.T) {
 	if err != nil || token == nil || token.Name != "pre-p4" || token.Token != secret || token.Scope != "read:*" {
 		t.Fatalf("legacy token validation: %+v %v", token, err)
 	}
-	if CurrentSchemaVersion != 28 {
+	if CurrentSchemaVersion != 30 {
 		t.Fatal("runtime activated")
 	}
 }

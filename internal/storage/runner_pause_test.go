@@ -193,7 +193,9 @@ func TestRunnerPauseState_MigrationFromV22(t *testing.T) {
 	}
 
 	// Migration is re-runnable.
-	if err := migrateSchema(db); err != nil {
+	// Repeat the admitted migration body, not public admission of its partial,
+	// deliberately unversioned unit-test output.
+	if err := migrateAdmittedSchema(db, 22); err != nil {
 		t.Fatalf("second migrateSchema failed: %v", err)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -194,6 +195,41 @@ func (h *Handler) HandleControlSessionHistory(w http.ResponseWriter, r *http.Req
 	sessionID := chi.URLParam(r, "sessionId")
 
 	body, err := h.bridge.FetchHistory(r.Context(), runnerID, sessionID)
+	if err != nil {
+		writeBridgeError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if len(body) > 0 {
+		// The response is already committed; a write failure here means the
+		// client hung up, and there is no status code left to change.
+		_, _ = w.Write(body)
+	} else {
+		// The response is already committed; a write failure here means the
+		// client hung up, and there is no status code left to change.
+		_, _ = w.Write([]byte("[]"))
+	}
+}
+
+// HandleControlSessionChildren handles
+// GET /control/runners/{runnerId}/sessions/{sessionId}/children[?recursive=true&depth=N]
+// — the child (subagent) sessions of a session by ID, even with no live
+// instance. Sourced from OpenCode's persisted parent_id linkage (SQLite /
+// on-disk storage), so it works for completed/historical sessions. With
+// recursive=true the tree is walked up to depth levels.
+func (h *Handler) HandleControlSessionChildren(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+	sessionID := chi.URLParam(r, "sessionId")
+	recursive := r.URL.Query().Get("recursive") == "true"
+	depth := 0
+	if d := r.URL.Query().Get("depth"); d != "" {
+		if n, err := strconv.Atoi(d); err == nil {
+			depth = n
+		}
+	}
+
+	body, err := h.bridge.FetchChildren(r.Context(), runnerID, sessionID, recursive, depth)
 	if err != nil {
 		writeBridgeError(w, err)
 		return

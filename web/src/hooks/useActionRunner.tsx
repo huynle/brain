@@ -15,6 +15,7 @@ import { useCallback, useState } from "react";
 import { ConfirmDialog } from "../components/common/ConfirmDialog";
 import { useUI } from "../store/ui";
 import { isEnabled, type ActionDescriptor } from "../lib/actions/types";
+import { startBackgroundOperation, useBackgroundOperations } from "../store/backgroundOperations";
 import { ForceDeclinedError } from "../lib/actions/forceRetry";
 
 export interface ActionRunner {
@@ -27,12 +28,17 @@ export interface ActionRunner {
 }
 
 export function useActionRunner(): ActionRunner {
+  const backgroundBusy = useBackgroundOperations((s) => s.operations.some((o) => o.state === "running"));
   const toast = useUI((s) => s.toast);
   const [pending, setPending] = useState<ActionDescriptor | null>(null);
   const [busy, setBusy] = useState(false);
 
   const execute = useCallback(
     async (action: ActionDescriptor) => {
+      if (action.background) {
+        void startBackgroundOperation(action.label, async () => { await action.run(); });
+        return;
+      }
       setBusy(true);
       try {
         await action.run();
@@ -50,6 +56,12 @@ export function useActionRunner(): ActionRunner {
       // without going through a rendered control at all.
       if (!isEnabled(action)) {
         if (action.disabledReason) toast(action.disabledReason, "warning");
+        return;
+      }
+
+      if (useBackgroundOperations.getState().operations.some((o) => o.state === "running") &&
+          (action.background || action.group === "state" || action.group === "danger")) {
+        toast("A background operation is running. Wait for it to finish before changing more tasks.", "warning");
         return;
       }
 
@@ -76,7 +88,7 @@ export function useActionRunner(): ActionRunner {
 
   const dialog = pending ? (
     <ConfirmDialog
-      confirm={pending.confirm!}
+      confirm={pending.background ? { ...pending.confirm!, body: `${pending.confirm!.body} Progress will appear in the background; keep this tab open.` } : pending.confirm!}
       danger={pending.danger}
       onCancel={() => setPending(null)}
       onConfirm={async () => {
@@ -99,5 +111,5 @@ export function useActionRunner(): ActionRunner {
     />
   ) : null;
 
-  return { run, dialog, busy };
+  return { run, dialog, busy: busy || backgroundBusy };
 }

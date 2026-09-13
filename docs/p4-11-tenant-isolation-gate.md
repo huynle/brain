@@ -1,5 +1,34 @@
 # P4.11 — tenant isolation gate
 
+## P4 repair phase 3 addendum — seven execution ledgers
+
+Repair task `j9amjg42`, phase 3, integrates the pinned main `cd22b4bd` storage
+behavior for `bulk_jobs`, `bulk_job_items`, `execution_budgets`,
+`budget_reservations`, `supervisor_checkpoints`,
+`supervisor_checkpoint_versions` and `supervisor_operations`.
+The executable receiver manifest now contains **174 workload methods/helpers**:
+the historical 149 below plus 25 execution-ledger methods/helpers. Raw receiver,
+control, package-function and call-site allowances are unchanged.
+
+`execution_ledgers_test.go` adds a separate exact seven-table inventory and real
+shared-SQLite A/B collision fixtures, independent full-row snapshots, contention,
+rollback, reopen, uncertain-outcome/no-replay checks and scope/schema refusal.
+The existing private29 26-table fixture remains unchanged. Its historical staging
+evidence, and the new deliberately incomplete ledger staging fixture, are **not
+successor readiness** or authorization to publish/admit tenant/31.
+
+`executionScope` replaces main's `bulkScope`/`listQuery` dependency with explicit
+context-to-immutable-receiver validation. Known main profiles are local-only and
+must contain the requested ledger group. Its exact, unpublished partial-staging
+branch is **temporary**: phase 4 must replace it with the **complete successor
+validator**, composed with sync, content/FTS, roots and provenance. Do not promote
+the partial catalog, broaden allowances or infer complete migration support from
+these receiver tests. Runtime28 and private29 remain unchanged; no routes or
+workers are enabled, and tenant/31 remains unpublished and unadmitted.
+
+The counts and phase evidence below describe their historical implementations;
+use `tenant_coverage_manifest_test.go` for the current exact receiver inventory.
+
 This gate consolidates the shared collision fixture, runtime tests, executable
 coverage manifest and canonical snapshot oracle, and runs them through
 `just check` and `.github/workflows/go.yml`. The sampled predicate-removal

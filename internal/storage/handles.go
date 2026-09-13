@@ -9,8 +9,10 @@ import (
 
 // TenantStore names a tenant; it does not authorize access. It borrows the shared
 // pool without exposing owner lifecycle, rebinding or identity operations.
-// Workload methods validate execution-time schema routing: local-only v28 or
-// tenant predicates on privately staged v29. Runtime multi mode remains disabled.
+// Content/legacy workload methods validate execution-time routing: local-only v28
+// or tenant predicates on privately staged v29. New execution ledgers instead
+// use executionScope: pinned local main profiles or exact unpublished partial
+// staging, never incomplete tenant/31. Runtime multi mode remains disabled.
 type TenantStore struct {
 	db       *sql.DB
 	tenantID tenant.ID

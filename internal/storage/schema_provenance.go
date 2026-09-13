@@ -8,8 +8,9 @@ import (
 	"fmt"
 )
 
-// classifySchemaSource recognizes reviewed source catalogs only. It is dormant:
-// no constructor, receiver or migration calls it. Recognition is NOT runtime
+// classifySchemaSource recognizes reviewed source catalogs only. Constructors and
+// migrations do not call it. The private execution-ledger preflight uses it to
+// distinguish genuine local main29/30 from private29. Recognition is NOT runtime
 // admission, authorization, data integrity, root/CAS readiness or permission to
 // migrate. The caller owns a stable transaction and must fence schema writers
 // before using a result for a future migration. It performs no writes or PRAGMAs.

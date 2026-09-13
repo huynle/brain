@@ -1325,9 +1325,23 @@ SELECT name FROM main.sqlite_schema UNION ALL SELECT name FROM sqlite_temp_schem
 	if provenance != 0 {
 		return 0, true, fmt.Errorf("successor schema provenance is not supported by runtime version %d", CurrentSchemaVersion)
 	}
+	// Execution ledgers are absent from runtime28. A partial staging catalog
+	// (including an empty/lowered version table) must not be bootstrapped around.
+	// This only refuses newer artifacts; it does not initialize/admit main29/30
+	// or change the private29 migration/catalog contract.
+	var ledgers int
+	if err := db.QueryRow(`SELECT count(*) FROM (
+SELECT name FROM main.sqlite_schema UNION ALL SELECT name FROM sqlite_temp_schema
+) WHERE lower(name) IN ('bulk_jobs','bulk_job_items','execution_budgets','budget_reservations',
+'supervisor_checkpoints','supervisor_checkpoint_versions','supervisor_operations')`).Scan(&ledgers); err != nil {
+		return 0, false, fmt.Errorf("inspect execution ledger schema: %w", err)
+	}
 	var kind string
 	err = db.QueryRow("SELECT type FROM main.sqlite_master WHERE name = 'schema_version' COLLATE NOCASE").Scan(&kind)
 	if err == sql.ErrNoRows {
+		if ledgers != 0 {
+			return 0, true, fmt.Errorf("execution ledger schema is not supported by runtime version %d", CurrentSchemaVersion)
+		}
 		return 0, false, nil
 	}
 	if err != nil {
@@ -1342,6 +1356,9 @@ SELECT name FROM main.sqlite_schema UNION ALL SELECT name FROM sqlite_temp_schem
 	}
 	if version > CurrentSchemaVersion {
 		return version, true, fmt.Errorf("database schema version %d is newer than supported version %d", version, CurrentSchemaVersion)
+	}
+	if ledgers != 0 {
+		return version, true, fmt.Errorf("execution ledger schema is not supported by runtime version %d", CurrentSchemaVersion)
 	}
 	return version, true, nil
 }

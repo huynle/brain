@@ -52,6 +52,11 @@ var tenantCoverageManifest = []struct {
 	{"webhooks", "CreateWebhook GetWebhook ListWebhooks UpdateWebhook DeleteWebhook CreateDelivery ListDeliveries", []func(*testing.T){TestPhase6WebhookIsolation, TestPhase6ScopeGuards}},
 	{"stats", "GetStats", []func(*testing.T){TestTenantPhaseOneStats}},
 	{"purge", "ListProjectNotePaths PurgeProjectState DeleteProjectNotes", []func(*testing.T){TestPhase6ProjectPurgeIsolation, TestTenantCollisionPurgeRollback}},
+	{"execution-scope", "executionScope", []func(*testing.T){TestExecutionLedgersScopeGuards, TestExecutionLedgersMainProfiles, TestExecutionLedgersOwnershipConstraints, TestExecutionLedgersExactTableInventory, TestExecutionLedgersReopen, TestExecutionLedgersLimitsAndForeignReads, TestExecutionLedgersInvalidHandles, TestExecutionLedgersBootstrapRefusal}},
+	{"bulk-ledger", "InsertBulkJob readBulkJobs ListBulkJobs GetBulkJob BulkJobByRequest BulkJobItems ClaimBulkJobItem FinishBulkJobItem TransitionBulkJob RetryBulkJob RecoverBulkJobs NextRunnableBulkJob QuarantineBulkJobItems", []func(*testing.T){TestExecutionLedgersBulkIsolation, TestExecutionLedgersBulkMutationIsolation}},
+	{"budget-ledger", "ConfigureExecutionBudget ExecutionBudget ReserveBudget SettleBudget", []func(*testing.T){TestExecutionLedgersBudgets}},
+	{"checkpoint-ledger", "SupervisorCheckpoints SupervisorCheckpoint CompareSupervisorCheckpoint SupervisorCheckpointVersions", []func(*testing.T){TestExecutionLedgersCheckpointsAndReceipts}},
+	{"operation-ledger", "BeginSupervisorOperation SupervisorOperation FinishSupervisorOperation", []func(*testing.T){TestExecutionLedgersCheckpointsAndReceipts}},
 }
 
 func tenantCoverageTestName(test func(*testing.T)) string {
@@ -72,8 +77,8 @@ func TestTenantWorkloadMethodInventory(t *testing.T) {
 			want[method] = group.name
 		}
 	}
-	if len(want) != 149 {
-		t.Fatalf("manifest has %d workload methods, want 149", len(want))
+	if len(want) != 174 {
+		t.Fatalf("manifest has %d workload methods, want 174", len(want))
 	}
 	files, err := filepath.Glob("*.go")
 	collisionMust(t, err)

@@ -54,6 +54,13 @@ func stageTenantRelationalSchema(tx *sql.Tx) (err error) {
 	if owned {
 		return checkRelationalOwnership(tx)
 	}
+	return rebuildUnownedRelationalSchema(tx)
+}
+
+// Caller must have validated the complete source catalog and disabled FKs.
+// Shared by the strict private29 owner and the exact-profile successor owner;
+// unlike the entry point this primitive neither admits nor relabels a version.
+func rebuildUnownedRelationalSchema(tx *sql.Tx) (err error) {
 
 	// Explicit legacy-local backfill is authorized by the migration contract.
 	// root_override is registry metadata, never a replacement for tenant_roots.
@@ -341,7 +348,21 @@ func auditRelationalInventory(tx *sql.Tx) (bool, error) {
 // Non-nil search manifests are private to the finalized FTS validator, which
 // checks every definition before substituting the exact search inventory.
 func auditRelationalInventoryWithSearch(tx *sql.Tx, searchTables map[string]bool, searchTriggers map[string]string) (bool, error) {
+	return auditRelationalInventoryComplete(tx, searchTables, searchTriggers, false)
+}
+
+func auditRelationalInventoryComplete(tx *sql.Tx, searchTables map[string]bool, searchTriggers map[string]string, successor bool) (bool, error) {
 	expected := map[string]bool{}
+	if successor {
+		// Not an allowance: every added object is checked byte-for-byte first.
+		if err := checkSuccessorAdditions(tx); err != nil {
+			return false, err
+		}
+		for _, name := range successorWorkloadTables() {
+			expected[name] = true
+		}
+		expected["schema_provenance"] = true
+	}
 	for _, s := range relationalTables {
 		expected[s.name] = true
 	}
@@ -379,7 +400,7 @@ func auditRelationalInventoryWithSearch(tx *sql.Tx, searchTables map[string]bool
 	// engine metadata. They are not tenant rows. SQLite invalidates per-table
 	// samples on DROP; the eventual outer migration may ANALYZE its final schema.
 	for _, name := range []string{"sqlite_stat1", "sqlite_stat4"} {
-		if actual[name] {
+		if actual[name] && !successor {
 			expected[name] = true
 		}
 	}
@@ -438,6 +459,16 @@ func auditRelationalInventoryWithSearch(tx *sql.Tx, searchTables map[string]bool
 	if owned {
 		for _, ddl := range append(append([]string{}, relationalClaimGuards...), relationalReferenceGuards...) {
 			triggers[strings.Fields(ddl)[2]] = ddl
+		}
+	}
+	if successor {
+		for name, ddl := range successorSyncTriggers() {
+			triggers[name] = ddl
+		}
+		for name, ddl := range successorControlDefinitions() {
+			if strings.HasPrefix(ddl, "CREATE TRIGGER ") {
+				triggers[name] = ddl
+			}
 		}
 	}
 	rows, err = tx.Query("SELECT name,sql FROM sqlite_schema WHERE type IN ('trigger','view')")

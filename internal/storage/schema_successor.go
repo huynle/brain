@@ -28,8 +28,8 @@ const successorSchemaVersion = 31
 // selectSuccessorSchema is a dormant, read-only planning seam. The caller owns
 // the transaction and fences schema writers before classification, and must call
 // this BEFORE staging or TEMP snapshots. It neither runs nor authorizes migration.
-// Even a database claiming tenant/31 is refused: its complete catalog validator
-// and atomic publisher do not exist until phase 4. Never feed these source versions
+// A database claiming tenant/31 is not a migration source; its complete repeat
+// validator is owned by migrateSuccessorSchema. Never feed these source versions
 // into the old v28->private29 owner or relabel them to reuse its staging helpers.
 func selectSuccessorSchema(ctx context.Context, tx *sql.Tx) (successorSchemaPlan, error) {
 	profile, err := classifySchemaSource(ctx, tx)
@@ -64,7 +64,7 @@ func describeSchemaSource(profile string) (schemaSource, error) {
 // this does not approve any workload/FTS/ledger/sync objects. schema_version keeps
 // its existing definition and history; provenance is a new immutable singleton.
 // Literals are independent of mutable legacy/private29 target DDL. No initializer
-// calls this function, and no publication helper is provided in phase 2.
+// calls this function. The dormant successor owner publishes these last.
 func successorControlDefinitions() map[string]string {
 	return map[string]string{
 		"schema_version": `CREATE TABLE schema_version (
@@ -95,9 +95,9 @@ func successorControlDefinitions() map[string]string {
 // history of a purportedly published successor. Success does NOT establish a
 // complete successor schema, original row preservation, integrity, authorization,
 // roots/CAS readiness or runtime admission. A fabricated record is not evidence of
-// migration: phase 4 must validate the entire catalog and preservation snapshots
+// migration: the successor owner validates the entire catalog and preservation snapshots
 // before publication. Committed repeat must validate everything, never repair.
-// This helper is deliberately unused by constructors and receivers.
+// Receivers reach it only through the complete successor validator.
 func readSuccessorProvenanceRecord(ctx context.Context, tx *sql.Tx) (schemaSource, error) {
 	if ctx == nil || tx == nil {
 		return schemaSource{}, fmt.Errorf("provenance inspection requires context and transaction")

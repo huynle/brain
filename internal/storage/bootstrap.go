@@ -89,6 +89,11 @@ func installClaimTable(ctx context.Context, tx *sql.Tx) (string, error) {
 		return "entry_meta", nil
 	case 29:
 		return "operator_install_claim", nil
+	case successorSchemaVersion:
+		if err := validateSuccessorSchema(ctx, tx, true); err != nil {
+			return "", err
+		}
+		return "operator_install_claim", nil
 	default:
 		return "", fmt.Errorf("unsupported identity schema %d", version)
 	}

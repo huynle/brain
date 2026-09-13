@@ -9,6 +9,141 @@ See [approved contracts](multi-tenant-security-contracts.md) D07/D08/D11 and the
 
 ## Stop/go prerequisites
 
+**Latest repair update — `j9amjg42` phase 4, 2026-09-12:** the dormant successor
+owner and its verification are described in the next section. Public runtime is
+still **28**, single-only; neither private29 nor successor31 is publicly admitted.
+All older private29 measurements and procedures below remain historical evidence
+for that distinct lineage, not instructions to migrate newer main through 29.
+
+### Phase 4: dormant atomic successor31
+
+Entry point: `migrateSuccessorSchema(ctx context.Context, db *sql.DB,
+checkpoint func(string) error) error`, in
+`internal/storage/schema_successor_migration.go`. It has no public initializer,
+CLI, service or worker caller. It is an offline/fenced composition seam, not a
+production migration command. Keep the coordinated-copy and writer-fencing
+requirements in this runbook, including the independent filesystem fence.
+
+#### Exact source and provenance contract
+
+`selectSuccessorSchema` uses `classifySchemaSource` before snapshots, staging or
+connection PRAGMA changes, then repeats classification under the SQLite writer
+reservation on the same reserved connection. Main catalogs are admitted by the
+existing byte-exact complete-catalog SHA-256 pins, not version numbers alone.
+Tests execute archived `InitSchema`, including its real historical initialization
+logic, rather than synthesizing main by adding tables to the current initializer.
+
+| Source profile | Source family/version | Archived fixture revision(s) |
+|---|---|---|
+| `main28` | `main` / 28 | `c0b28634355a91b24ab9e9415978f12866d3b5cd` |
+| `main29` | `main` / 29 | `44f963bbb0c5102390a06f6548088eda6d0f9832` |
+| `main30-pre-sync` | `main` / 30 | `3d2baaf450b1b93f981f6e03eb3ab07766237c21` |
+| `main30-initial-sync` | `main` / 30 | `d21ba2d948738bed6456c66f4453fc96a593d1b4` |
+| `main30-devices` | `main` / 30 | `7132bf0ce97cb961b3d233c915c1a99ef63708c2`, pinned main `cd22b4bdc3b5229621169fe5b214d7ffd12a6015` |
+| `private29` | `private-tenant` / 29 | Existing strict private relational/control/FTS catalog validators; generated FTS IDs and multiple owners are retained |
+
+The target is **`tenant` / 31**. A STRICT singleton `schema_provenance` records
+`singleton=1`, `source_profile`, `source_family`, `source_version`,
+`target_family='tenant'`, and `target_version=31`; exact guard triggers refuse
+update/delete/replacement. Original `schema_version` rows remain. The source
+version must agree with the recorded profile/family and preserved version history.
+Neither a numeric relabel nor a provenance record alone establishes readiness.
+Unknown/hybrid catalogs and TEMP objects are refused; main29 is never interpreted
+as private29. Existing source pins and old private29 manifests are unchanged.
+Profile recognition is necessary, not sufficient: populated rows, ownership,
+relationships and durable roots/CAS must also validate. These pins do not grant
+blanket support to every historical ALTER-derived or ANALYZE catalog at the same
+version. Unknown variants require separate review, not an allowance or repair.
+
+#### Atomic transformation and validation
+
+- The 26 unowned main relational tables receive `local`; already-owned private29
+  rows, durable keys, FTS mappings and permanent claim retain their original owners
+  and values. Main's permanent claim moves intact to `operator_install_claim`.
+- The seven execution-ledger tables copy existing owner columns and all original
+  payloads, revisions, history and receipt states. Nonlocal owners in a genuinely
+  single-mode main source are refused, not reassigned or provisioned as tenants.
+- The four existing unowned sync tables receive `local`: `entry_sync_devices`,
+  `entry_sync_identity`, `entry_sync_changes`, `entry_sync_operations`. Existing
+  history is copied, **never reconstructed from live notes**. Tombstones, epoch,
+  exact change sequences, allocated/absent sequence state, status0 reservations,
+  response bodies and device JSON bytes are preserved. Initial-sync sources gain
+  the previously absent devices table without reseeding their existing history.
+- Only sources with no sync history (`main28`, `main29`, `main30-pre-sync`,
+  `private29`) explicitly initialize per-owner epochs and current-note positions.
+  A shared physical AUTOINCREMENT sequence remains globally allocated; receiver
+  predicates scope positions and payloads to the selected tenant.
+- TEMP multiset snapshots compare original columns/ownership and control data;
+  sequence snapshots retain high-water values beyond live MAX IDs. The main path
+  composes relational rebuilding and tenant FTS in this same transaction. Private29
+  does not rebuild its existing relational/FTS state. Roots/CAS are validated, never
+  provisioned, moved or repaired by this owner.
+- `validateSuccessorSchema(ctx, tx, published)` checks the complete target:
+  exact new definitions/triggers/indexes, existing relational/control/FTS contracts,
+  owners, FKs, SQLite integrity, tenant sync identities, sequence consistency,
+  FTS row content **and inverted-index integrity**, and durable roots/CAS. The
+  precommit call uses `published=false`; published validation additionally checks
+  the immutable provenance record and version history. No broad catalog allowance
+  is added to the old private29 validator.
+- After snapshot comparison/removal and final validation, the **last database
+  writes** insert provenance and version31, followed by one commit. Checkpoints are
+  exactly `reserved`, `snapshot`, `relational`, `fts`, `sync`, `validated`,
+  `published`; `published` is still **before Commit**, not a postcommit checkpoint.
+  FK enforcement is restored/verified after commit or rollback, including caller
+  cancellation; restoration failure discards the connection and returns an error.
+- A repeat at31 validates and rolls back its inspection transaction: no reseeding,
+  repair or replay. FTS5 `integrity-check` uses INSERT command syntax despite being
+  validation, so complete validation does **not** work under `PRAGMA query_only=ON`.
+  A corruption test demonstrates why row comparison alone is insufficient. The
+  unknown-source refusal test separately verifies no FK PRAGMA change or data change.
+
+#### Receiver routing, evidence and remaining limits
+
+`executionScope` no longer admits the unpublished seven-ledger partial fixture;
+it requires complete successor validation at31. Ledger A/B fixtures now include
+full relational/FTS/root/provenance composition. `contentScope`, tenant search and
+private bootstrap claim routing recognize validated31; public `New`, `NewWithDB`
+and `InitSchema` still refuse it. Seven sync receivers plus `syncScope` preserve
+tenant-qualified snapshots, reservations and main's serialized-JSON CAS behavior.
+The old partial ledger DDL remains only as independent test material/refusal input.
+
+Note triggers cover insert/update/delete and explicit-row-ID REPLACE. A
+same-owner before-insert collision observation advances the old path even when
+SQLite suppresses implicit delete triggers (`recursive_triggers=0`). An ignored
+insert or implicit `NEW.id=-1` collision can create an extra change notification;
+readers return the still-live payload, not a false tombstone. Existing FTS guards
+abort foreign-row-ID replacements atomically, including their sync changes.
+
+Phase4 tests/results and exact parent verification commands are in
+[the phase4 isolation-gate addendum](p4-11-tenant-isolation-gate.md#p4-repair-phase-4--complete-dormant-successor-and-sync).
+Final implementation verification on uncommitted changes over `4f629a28`:
+`CI=1 go test ./... -count=1` passed all **37 packages**, storage **145.531s**;
+the named focused race slice passed **6 top-level tests plus 2 subtests** in
+**40.909s**. Build, repository-wide vet and whitespace checks exited 0;
+storage/types golangci-lint reported **0 issues**. These are the implementation
+run's measurements, not a fresh test run caused by this documentation update.
+
+Tests cover populated archived profiles, all 26 private A/B workload rows, eleven
+new-table ownership/FKs, exact history/JSON/high-water preservation, injected
+precommit rollback, and a main-devices WAL subprocess exiting after Commit without
+Close followed by unchanged reopen/repeat. They do not establish power-loss safety,
+post-new-write restore, actual Amos/coordinated-sidecar recovery, or load acceptance.
+Full successor validation on receiver entry scans data, FTS and roots/CAS and may
+incur substantial I/O/writer contention; no throughput guarantee is claimed.
+
+**Phase5 integration concerns:** public main29/30 admission and newer API/service/
+worker closure are still unimplemented here. Sync/ledger calls require matching
+tenant context and immutable receiver binding; naming a tenant is not authority.
+Retain all newer single-mode features and Assistant/push sidecars while reconciling
+their callers, preserve lifecycle/fencing and unknown-outcome semantics, and do not
+enable unsupported tenant routes/effects. Root readiness and FTS provisioning must
+precede successor admission; no receiver may repair missing state on access. Main's
+byte-JSON CAS was retained, not redesigned to accept differently serialized JSON.
+Independent review, aggregate `just check`, real recovery/load evidence and separate
+operator activation remain outstanding; no commit or Brain status change occurred.
+
+### Historical private29 preparation and evidence
+
 **Current status — `jr1xs3a3` phase 2 preparation, 2026-09-12:** see
 [final acceptance handoff](p4-final-acceptance-handoff.md) for pinned main/P4
 schema conflicts, eleven additional shared tables, Assistant/push sidecars,

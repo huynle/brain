@@ -32,6 +32,16 @@ func (s *TenantStore) contentScope(ctx context.Context) (contentScope, error) {
 		return contentScope{}, nil
 	case 29:
 		return contentScope{owner: s.tenantID.String()}, nil
+	case successorSchemaVersion:
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return contentScope{}, err
+		}
+		defer func() { _ = tx.Rollback() }()
+		if err = validateSuccessorSchema(ctx, tx, true); err != nil {
+			return contentScope{}, err
+		}
+		return contentScope{owner: s.tenantID.String()}, nil
 	default:
 		return contentScope{}, fmt.Errorf("unsupported tenant content schema %d", version)
 	}

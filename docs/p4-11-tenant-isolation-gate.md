@@ -1,6 +1,126 @@
 # P4.11 — tenant isolation gate
 
+## P4 repair phase 4 — complete dormant successor and sync
+
+Task `j9amjg42`, 2026-09-12, uncommitted implementation over `4f629a28`.
+**Runtime stays28; no public activation.** This section supersedes phase3's
+temporary partial-staging admission description, not its historical measurements
+or the unchanged private29 tests/manifests below.
+
+The private entry point is
+`migrateSuccessorSchema(ctx context.Context, db *sql.DB, checkpoint func(string) error) error`
+in `internal/storage/schema_successor_migration.go`. Exact sources are `main28`,
+`main29`, `main30-pre-sync`, `main30-initial-sync`, `main30-devices` and validated
+`private29`. The immutable successor record is `schema_provenance` singleton1:
+source profile/family/version → **`tenant`/31**, with preserved version history.
+Main profiles retain byte-exact catalog pins; private29 uses its existing strict
+catalog validators. See [the phase4 migration contract](p4-migration-recovery.md#phase-4-dormant-atomic-successor31)
+for pinned revisions, transformations and final-only publication order. No source
+is numerically relabeled, and no main29/private29 ambiguity is accepted.
+
+`executionScope`'s unpublished partial-staging branch is **removed**. Its A/B
+tests now run against complete migrated successor fixtures with real roots/CAS,
+tenant FTS, provenance and version31; the partial fixture is explicitly denied.
+`contentScope`, tenant search and private bootstrap routing also validate31.
+Public constructors/InitSchema still refuse successor31 and main29/30. Existing
+exact main-ledger preflights remain local-only; their private receiver tests are
+not public startup admission. Old private29 source tests remain unchanged.
+
+### Added storage surface and exact coverage
+
+There are **182 workload methods/helpers** in the executable receiver manifest:
+174 through phase3 plus these eight: `syncScope`, `ReadEntryChanges`,
+`ReadSelectedEntries`, `ReserveSyncOperation`, `CompleteSyncOperation`,
+`SyncDevices`, `SaveSyncDevice`, `SyncNote`. Raw receiver, control, exported
+package-function and call-site allowances have not grown.
+
+The four added sync tables are `entry_sync_devices`, `entry_sync_identity`,
+`entry_sync_changes`, `entry_sync_operations`. Alongside the seven phase3 ledgers,
+`TestSuccessorElevenTableInventory` checks the exact eleven-table set, nonempty A/B
+rows, ownership FKs, and the complete catalog-discovered tenant-column table set.
+Historical 26-table collision tests keep their original private29 fixture;
+`TestSuccessorPrivateAllOwnedRows` adds full A/B preservation through successor
+migration, including independently supplied foreign CAS bytes.
+
+| Exact test name | Evidence exercised |
+|---|---|
+| `TestSuccessorMigrationActualProfiles` | Six archived revisions/five main catalog profiles; populated 26 historical workloads plus available ledgers/sync; original bytes, owners, epochs, tombstones, receipts, JSON and sequence high-water preservation |
+| `TestSuccessorPrivateAllOwnedRows` | All historical A/B workloads, FTS snapshots, claim and roots survive private29→31 and repeat |
+| `TestSuccessorRollbackAndPublication` | Injected failures at all seven named precommit checkpoints for the five main source profiles; complete original snapshots restored |
+| `TestSuccessorPostcommitExitReopen` | Main-devices WAL child exits after Commit without Close; persisted sync/history/sequences and repeated validation remain unchanged |
+| `TestSuccessorUnknownSourceNoPragmaMutation` | Unknown catalog refused without changing initially disabled FK enforcement or data |
+| `TestSuccessorNonlocalSourceLedgerRefusal` | Foreign main-source ledger owners are refused, not reassigned |
+| `TestSuccessorRejectsTargetMutations` | Extra/missing/changed objects, ownership, epoch and sequence corruption refused without repair |
+| `TestSuccessorRejectsInvertedFTSCorruption` | Missing inverted segment rejected even when FTS content rows remain intact |
+| `TestSuccessorPartialLedgerRefused` | Old unpublished partial ledger fixture denied by every execution-ledger API method |
+| `TestSuccessorReceiverRouting` | Content, execution-ledger and permanent-claim routing on complete31 |
+| `TestSuccessorSearchRouting` | Tenant-local FTS query through successor catalog validation |
+| `TestTenantSyncIsolation` | Own payload/epoch reads, cursor reset, status0 no-replay reservation, response/hash behavior, device JSON CAS and independent foreign snapshots |
+| `TestTenantSyncTriggerReplacement` | Explicit-row-ID REPLACE under both recursive-trigger settings, rename/delete tombstones, foreign replacement refusal and unchanged foreign FTS/sync state |
+| `TestTenantSyncGuards` | Every sync method's invalid/missing/mismatched context/handle denial, page bounds and damaged-catalog checks |
+| `TestTenantSyncMainProfiles` | Exact main profile sync/devices availability and nonlocal refusal |
+| `TestTenantSyncConcurrentCAS` | Eight concurrent stale-version candidates produce one CAS winner; foreign state unchanged |
+| `TestSuccessorElevenTableInventory` | Eleven-table population/FKs and complete owned-table discovery |
+
+The existing `TestExecutionLedgers*` suite now uses complete successor fixtures
+for A/B behavior, while retaining actual-main profile and public refusal checks.
+The full storage suite also runs old private29 provenance hashes, manifests,
+relational/FTS tests and raw/control/type-boundary guards; none is waived.
+
+### Parent verification commands and recorded results
+
+```sh
+# All phase4 tests plus the migrated phase3 ledger tests, uncached:
+CI=1 go test ./internal/storage -run '^(TestSuccessor|TestTenantSync|TestExecutionLedgers)' -count=1
+
+# Exact final race slice (6 top-level tests, 2 recursive-trigger subtests):
+CI=1 go test -race ./internal/storage \
+  -run '^(TestTenantSyncIsolation|TestTenantSyncTriggerReplacement|TestTenantSyncConcurrentCAS|TestSuccessorReceiverRouting|TestSuccessorPostcommitExitReopen|TestSuccessorPrivateAllOwnedRows)$' \
+  -count=1 -v -timeout=5m
+
+CI=1 go test ./... -count=1
+go build ./...
+go vet ./...
+golangci-lint run ./internal/storage/... ./internal/types/...
+git diff --check
+```
+
+Final implementation run: full Go suite **37 packages passed**, storage
+**145.531s**; exact race slice **passed, 40.909s**, no reported races/failures.
+Build/vet/diff checks exited0; scoped lint reported **0 issues**. An earlier
+broad focused run passed in **55.363s**, before the final inverted-FTS/private
+all-row additions; the final full suite includes those additions. The final
+focused migration/private-row/inverted-corruption selection also passed in
+**4.928s**. These are recorded implementation results, not tests rerun for this
+documentation-only update. Aggregate `just check`, hosted CI, full-repository
+race and independent review were not performed by this phase.
+
+### Limitations and phase5 integration concerns
+
+- Complete validation includes FTS5's INSERT-syntax `integrity-check`: it is
+  validation, not repair, and is incompatible with `PRAGMA query_only=ON`.
+  Repeated migration validation rolls back and preserves all snapshot rows.
+- Receiver preflight performs full relational/FTS and roots/CAS validation; it
+  may be expensive and contend for the SQLite writer. No production throughput,
+  100/500-tenant cost or coordinated-copy recovery claim follows from these tests.
+- Sync sequence allocation is physically global, queries are tenant-qualified.
+  Before-insert collision observation can add an extra notification for an ignored
+  insert/implicit `NEW.id=-1` collision; hydration returns the still-live payload,
+  not a fabricated tombstone. Main's byte-JSON CAS behavior remains unchanged.
+- Phase5 must reconcile public main29/30 startup and newer API/service/worker
+  callers with matching tenant context/binding and schema availability. Preserve
+  newer single-mode features, Assistant/push sidecars and uncertain-effect receipts;
+  do not enable unsupported tenant routes, broad forwarding or worker effects.
+  No receiver may seed/repair missing history, roots or FTS during admission.
+- Authentication, lifecycle/output fencing, physical filesystem race protection,
+  actual-copy/sidecar restore, power-loss and post-new-write recovery, load gates
+  and separate operator activation remain outstanding. No commit, deployment,
+  public migration wiring or Brain status change was made.
+
 ## P4 repair phase 3 addendum — seven execution ledgers
+
+**Historical phase3 state:** its temporary staging branch described below was
+removed in phase4 above. Its then-current counts/results remain historical.
 
 Repair task `j9amjg42`, phase 3, integrates the pinned main `cd22b4bd` storage
 behavior for `bulk_jobs`, `bulk_job_items`, `execution_budgets`,

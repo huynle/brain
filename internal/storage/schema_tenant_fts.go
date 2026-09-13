@@ -42,6 +42,14 @@ func stageTenantFTS(tx *sql.Tx) (err error) {
 	if err = checkFTSDefinitions(tx, legacyFTSDefinitions()); err != nil {
 		return err
 	}
+	if err = rebuildTenantFTS(tx); err != nil {
+		return err
+	}
+	return checkFinalTenantSearchSchema(tx)
+}
+
+// Requires a validated, owned relational source in the same fenced transaction.
+func rebuildTenantFTS(tx *sql.Tx) (err error) {
 	if _, err = tx.Exec("SAVEPOINT p4_fts"); err != nil {
 		return err
 	}
@@ -112,7 +120,7 @@ func stageTenantFTS(tx *sql.Tx) (err error) {
 			return err
 		}
 	}
-	return checkFinalTenantSearchSchema(tx)
+	return checkTenantFTSContents(tx, mapping)
 }
 
 const tenantFTSMappingDDL = `CREATE TABLE tenant_fts(tenant_id TEXT PRIMARY KEY NOT NULL REFERENCES tenants(id),internal_id TEXT UNIQUE NOT NULL CHECK(length(internal_id)=32 AND internal_id NOT GLOB '*[^0-9a-f]*'))`
@@ -301,6 +309,10 @@ func checkFinalTenantSearchSchema(tx *sql.Tx) error {
 // scans belong to staging/maintenance, not each request. DDL and mappings must
 // remain server owned; this is not protection against an attacker with raw SQL.
 func checkTenantSearchCatalog(tx *sql.Tx) (map[string]string, error) {
+	return checkTenantSearchCatalogComplete(tx, false)
+}
+
+func checkTenantSearchCatalogComplete(tx *sql.Tx, successor bool) (map[string]string, error) {
 	mapping, err := readTenantFTSMapping(tx)
 	if err != nil {
 		return nil, err
@@ -321,7 +333,7 @@ func checkTenantSearchCatalog(tx *sql.Tx) (map[string]string, error) {
 	for name := range tables {
 		names[name] = true
 	}
-	if _, err := auditRelationalInventoryWithSearch(tx, names, tenantFTSTriggers(mapping)); err != nil {
+	if _, err := auditRelationalInventoryComplete(tx, names, tenantFTSTriggers(mapping), successor); err != nil {
 		return nil, err
 	}
 	if err := checkRelationalDefinitions(tx); err != nil {
@@ -331,6 +343,19 @@ func checkTenantSearchCatalog(tx *sql.Tx) (map[string]string, error) {
 }
 
 func checkTenantFTSContents(tx *sql.Tx, mapping map[string]string) error {
+	if err := checkTenantFTSRows(tx, mapping); err != nil {
+		return err
+	}
+	for _, id := range mapping {
+		name, _ := tenantFTSName(id)
+		if _, err := tx.Exec("INSERT INTO " + name + "(" + name + ") VALUES('integrity-check')"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkTenantFTSRows(tx *sql.Tx, mapping map[string]string) error {
 	for owner, id := range mapping {
 		name, _ := tenantFTSName(id)
 		var mismatch int
@@ -347,9 +372,6 @@ func checkTenantFTSContents(tx *sql.Tx, mapping map[string]string) error {
 		}
 		if mismatch != 0 {
 			return fmt.Errorf("FTS contains foreign or stale content")
-		}
-		if _, err := tx.Exec("INSERT INTO " + name + "(" + name + ") VALUES('integrity-check')"); err != nil {
-			return err
 		}
 	}
 	return nil

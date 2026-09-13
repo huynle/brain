@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
@@ -52,9 +51,8 @@ func ledgerAPI(t *testing.T, db *sql.DB, id tenant.ID) executionLedgerAPI {
 	return api
 }
 
-// Independent explicit partial staging fixture. NO published version, notes,
-// roots, credentials or FTS. This is NOT a valid full successor and must never
-// be admitted by New/InitSchema or the complete provenance classifier.
+// Independent seven-table definitions retained from phase 3. A catalog built
+// only from this subset must now be refused by ALL execution receivers.
 var ledgerFixtureDDL = []string{
 	`CREATE TABLE schema_version (
   version INTEGER PRIMARY KEY,
@@ -89,19 +87,10 @@ var ledgerTables = []string{"bulk_jobs", "bulk_job_items", "execution_budgets", 
 
 func ledgerFixture(t *testing.T) (*sql.DB, executionLedgerAPI, executionLedgerAPI, context.Context, context.Context) {
 	t.Helper()
-	db := compatibilityDB(t, filepath.Join(t.TempDir(), "partial.db"))
-	db.SetMaxOpenConns(1)
-	_, err := db.Exec("PRAGMA foreign_keys=ON")
-	collisionMust(t, err)
-	for _, ddl := range ledgerFixtureDDL {
-		_, err = db.Exec(ddl)
-		collisionMust(t, err)
-	}
+	db := successorPrivateFixture(t)
 	a, err := tenant.Parse("a")
 	collisionMust(t, err)
 	b, err := tenant.Parse("b")
-	collisionMust(t, err)
-	_, err = db.Exec(`INSERT INTO tenants VALUES('a','A','active','now',NULL),('b','B','active','now',NULL)`)
 	collisionMust(t, err)
 	return db, ledgerAPI(t, db, a), ledgerAPI(t, db, b), tenant.Into(context.Background(), a), tenant.Into(context.Background(), b)
 }
@@ -451,7 +440,7 @@ func TestExecutionLedgersScopeGuards(t *testing.T) {
 	if before != ledgerSnapshot(t, db, "a")+ledgerSnapshot(t, db, "b") {
 		t.Fatal("scope denial mutated ledgers")
 	}
-	for _, mutation := range []string{"INSERT INTO schema_version(version) VALUES(31)", "CREATE TABLE unexpected(id TEXT)", "DROP TABLE supervisor_checkpoint_versions", "CREATE TEMP TABLE bulk_jobs(id TEXT)"} {
+	for _, mutation := range []string{"INSERT INTO schema_version(version) VALUES(32)", "CREATE TABLE unexpected(id TEXT)", "DROP TABLE supervisor_checkpoint_versions", "CREATE TEMP TABLE bulk_jobs(id TEXT)"} {
 		t.Run(mutation, func(t *testing.T) {
 			db, a, _, ca, _ := ledgerFixture(t)
 			_, err := db.Exec(mutation)
@@ -616,7 +605,7 @@ func TestExecutionLedgersExactTableInventory(t *testing.T) {
 			t.Fatalf("missing direct tenant ownership for %s", table)
 		}
 	}
-	actual := compatibilityRows(t, db, `SELECT name FROM sqlite_schema WHERE type='table' AND name NOT IN ('tenants','schema_version') ORDER BY name`)
+	actual := compatibilityRows(t, db, `SELECT name FROM sqlite_schema WHERE type='table' AND (name GLOB 'bulk_*' OR name GLOB 'budget_*' OR name GLOB 'execution_*' OR name GLOB 'supervisor_*') ORDER BY name`)
 	want := []string{"budget_reservations", "bulk_job_items", "bulk_jobs", "execution_budgets", "supervisor_checkpoint_versions", "supervisor_checkpoints", "supervisor_operations"}
 	if !reflect.DeepEqual(actual, want) {
 		t.Fatal("partial table inventory drift", actual)

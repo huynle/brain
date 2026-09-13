@@ -57,6 +57,7 @@ var tenantCoverageManifest = []struct {
 	{"budget-ledger", "ConfigureExecutionBudget ExecutionBudget ReserveBudget SettleBudget", []func(*testing.T){TestExecutionLedgersBudgets}},
 	{"checkpoint-ledger", "SupervisorCheckpoints SupervisorCheckpoint CompareSupervisorCheckpoint SupervisorCheckpointVersions", []func(*testing.T){TestExecutionLedgersCheckpointsAndReceipts}},
 	{"operation-ledger", "BeginSupervisorOperation SupervisorOperation FinishSupervisorOperation", []func(*testing.T){TestExecutionLedgersCheckpointsAndReceipts}},
+	{"entry-sync", "syncScope ReadEntryChanges ReadSelectedEntries ReserveSyncOperation CompleteSyncOperation SyncDevices SaveSyncDevice SyncNote", []func(*testing.T){TestTenantSyncIsolation, TestTenantSyncTriggerReplacement, TestSuccessorReceiverRouting, TestTenantSyncGuards, TestTenantSyncMainProfiles, TestTenantSyncConcurrentCAS, TestSuccessorElevenTableInventory, TestSuccessorSearchRouting, TestSuccessorPartialLedgerRefused}},
 }
 
 func tenantCoverageTestName(test func(*testing.T)) string {
@@ -77,8 +78,8 @@ func TestTenantWorkloadMethodInventory(t *testing.T) {
 			want[method] = group.name
 		}
 	}
-	if len(want) != 174 {
-		t.Fatalf("manifest has %d workload methods, want 174", len(want))
+	if len(want) != 182 {
+		t.Fatalf("manifest has %d workload methods, want 182", len(want))
 	}
 	files, err := filepath.Glob("*.go")
 	collisionMust(t, err)

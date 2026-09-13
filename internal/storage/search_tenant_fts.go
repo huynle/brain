@@ -60,7 +60,16 @@ func tenantSearchTable(ctx context.Context, tx *sql.Tx, owner tenant.ID) (string
 	}
 	// *sql.Tx is deliberate: mapping, catalog, count and hits share a snapshot.
 	// An already-reserved single-connection transaction must never call the pool.
-	mapping, err := checkTenantSearchCatalog(tx)
+	var version int
+	if err := tx.QueryRowContext(ctx, "SELECT coalesce(max(version),0) FROM main.schema_version").Scan(&version); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrTenantSearchUnavailable, err)
+	}
+	if version == successorSchemaVersion {
+		if err := validateSuccessorSchema(ctx, tx, true); err != nil {
+			return "", fmt.Errorf("%w: %w", ErrTenantSearchUnavailable, err)
+		}
+	}
+	mapping, err := checkTenantSearchCatalogComplete(tx, version == successorSchemaVersion)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrTenantSearchUnavailable, err)
 	}

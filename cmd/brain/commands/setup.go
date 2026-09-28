@@ -361,13 +361,16 @@ func (c *ConfigCommand) executeShow(out io.Writer) error {
 		}
 	}
 
-	if cfg.Runner.Opencode.Agent != "" || cfg.Runner.Opencode.Model != "" {
+	if cfg.Runner.Opencode.Agent != "" || cfg.Runner.Opencode.Model != "" || cfg.Runner.Opencode.ConfigDir != "" {
 		fmt.Fprintf(out, "  OpenCode:\n")
 		if cfg.Runner.Opencode.Agent != "" {
 			fmt.Fprintf(out, "    Agent:     %s\n", cfg.Runner.Opencode.Agent)
 		}
 		if cfg.Runner.Opencode.Model != "" {
 			fmt.Fprintf(out, "    Model:     %s\n", cfg.Runner.Opencode.Model)
+		}
+		if cfg.Runner.Opencode.ConfigDir != "" {
+			fmt.Fprintf(out, "    ConfigDir: %s\n", cfg.Runner.Opencode.ConfigDir)
 		}
 	}
 	fmt.Fprintln(out)

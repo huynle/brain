@@ -128,6 +128,7 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 	fileCfg.StateDir = expandTilde(fileCfg.StateDir, homeDir)
 	fileCfg.WorkDir = expandTilde(fileCfg.WorkDir, homeDir)
 	fileCfg.RepoCacheDir = expandTilde(fileCfg.RepoCacheDir, homeDir)
+	fileCfg.Opencode.ConfigDir = expandTilde(fileCfg.Opencode.ConfigDir, homeDir)
 	fileCfg.Pi.AgentsDir = expandTilde(fileCfg.Pi.AgentsDir, homeDir)
 	fileCfg.Pi.ExtensionsDir = expandTilde(fileCfg.Pi.ExtensionsDir, homeDir)
 
@@ -187,9 +188,10 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		OpencodeDBMaxGB:           getEnvIntOrDefault("RUNNER_OPENCODE_DB_MAX_GB", intOrDefault(fileCfg.OpencodeDBMaxGB, fileHasOpencodeDBMax, DefaultOpencodeDBMaxGB)),
 		MaxTaskAttempts:           getEnvIntOrDefault("RUNNER_MAX_TASK_ATTEMPTS", firstNonZero(fileCfg.MaxTaskAttempts, DefaultMaxTaskAttempts)),
 		Opencode: OpencodeConfig{
-			Bin:   getEnvOrDefault("OPENCODE_BIN", firstNonEmpty(fileCfg.Opencode.Bin, "opencode")),
-			Agent: getEnvOrDefault("OPENCODE_AGENT", fileCfg.Opencode.Agent),
-			Model: getEnvOrDefault("OPENCODE_MODEL", fileCfg.Opencode.Model),
+			Bin:       getEnvOrDefault("OPENCODE_BIN", firstNonEmpty(fileCfg.Opencode.Bin, "opencode")),
+			Agent:     getEnvOrDefault("OPENCODE_AGENT", fileCfg.Opencode.Agent),
+			Model:     getEnvOrDefault("OPENCODE_MODEL", fileCfg.Opencode.Model),
+			ConfigDir: expandTilde(getEnvOrDefault("OPENCODE_CONFIG_DIR", fileCfg.Opencode.ConfigDir), homeDir),
 		},
 		Script: ScriptConfig{
 			Enabled:         getEnvBoolOrDefault("RUNNER_SCRIPT_ENABLED", fileCfg.Script.Enabled),

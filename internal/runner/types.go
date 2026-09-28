@@ -178,9 +178,10 @@ type ControlConfig struct {
 
 // OpencodeConfig holds configuration for the OpenCode executor.
 type OpencodeConfig struct {
-	Bin   string `yaml:"bin" json:"bin"`
-	Agent string `yaml:"agent" json:"agent"`
-	Model string `yaml:"model" json:"model"`
+	Bin       string `yaml:"bin" json:"bin"`
+	Agent     string `yaml:"agent" json:"agent"`
+	Model     string `yaml:"model" json:"model"`
+	ConfigDir string `yaml:"config_dir" json:"config_dir"`
 }
 
 // HooksConfig holds configuration for the event hook system.

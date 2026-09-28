@@ -783,6 +783,7 @@ opencode:
   bin: "/usr/local/bin/opencode"
   agent: "dev"
   model: "claude-sonnet-4"
+  config_dir: "~/.local/brain/executor/opencode"
 exclude_projects:
   - "test-project"
   - "legacy-project"
@@ -807,6 +808,9 @@ exclude_projects:
 	}
 	if cfg.Runner.Opencode.Model != "claude-sonnet-4" {
 		t.Errorf("Runner.Opencode.Model = %q, want %q", cfg.Runner.Opencode.Model, "claude-sonnet-4")
+	}
+	if cfg.Runner.Opencode.ConfigDir != "~/.local/brain/executor/opencode" {
+		t.Errorf("Runner.Opencode.ConfigDir = %q, want legacy value", cfg.Runner.Opencode.ConfigDir)
 	}
 
 	// Verify array fields

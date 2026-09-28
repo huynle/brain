@@ -70,7 +70,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 		"RUNNER_API_TIMEOUT", "RUNNER_TASK_TIMEOUT",
 		"RUNNER_REPO_CACHE_DIR", "RUNNER_GIT_TOKEN", "RUNNER_GIT_TOKEN_ENV",
 		"RUNNER_REQUIRE_HTTPS", "RUNNER_ALLOW_UNAUTHENTICATED_HTTPS",
-		"OPENCODE_BIN", "OPENCODE_AGENT", "OPENCODE_MODEL",
+		"OPENCODE_BIN", "OPENCODE_AGENT", "OPENCODE_MODEL", "OPENCODE_CONFIG_DIR",
 	}
 	for _, key := range envVars {
 		os.Unsetenv(key)
@@ -111,6 +111,9 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	}
 	if cfg.Opencode.Model != "" {
 		t.Errorf("Opencode.Model = %q, want empty", cfg.Opencode.Model)
+	}
+	if cfg.Opencode.ConfigDir != "" {
+		t.Errorf("Opencode.ConfigDir = %q, want empty", cfg.Opencode.ConfigDir)
 	}
 	homeDir, _ := os.UserHomeDir()
 	if cfg.WorkDir != homeDir {
@@ -270,7 +273,7 @@ func TestLoadConfig_YAMLFile(t *testing.T) {
 	for _, key := range []string{
 		"BRAIN_API_URL", "BRAIN_API_TOKEN",
 		"RUNNER_POLL_INTERVAL", "RUNNER_MAX_PARALLEL",
-		"OPENCODE_BIN", "OPENCODE_AGENT", "OPENCODE_MODEL",
+		"OPENCODE_BIN", "OPENCODE_AGENT", "OPENCODE_MODEL", "OPENCODE_CONFIG_DIR",
 	} {
 		os.Unsetenv(key)
 	}
@@ -362,6 +365,45 @@ poll_interval: 45
 	if cfg.PollInterval != 45 {
 		t.Errorf("PollInterval = %d, want 45 from file", cfg.PollInterval)
 	}
+}
+
+func TestLoadConfig_OpencodeConfigDir(t *testing.T) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `opencode:
+  config_dir: "~/.local/brain/executor/opencode-from-file"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	t.Run("yaml expands home", func(t *testing.T) {
+		t.Setenv("OPENCODE_CONFIG_DIR", "")
+		cfg, err := LoadConfigFrom(configPath)
+		if err != nil {
+			t.Fatalf("LoadConfigFrom: %v", err)
+		}
+		want := filepath.Join(homeDir, ".local", "brain", "executor", "opencode-from-file")
+		if cfg.Opencode.ConfigDir != want {
+			t.Fatalf("Opencode.ConfigDir = %q, want %q", cfg.Opencode.ConfigDir, want)
+		}
+	})
+
+	t.Run("environment overrides yaml and expands home", func(t *testing.T) {
+		t.Setenv("OPENCODE_CONFIG_DIR", "~/.local/brain/executor/opencode-from-env")
+		cfg, err := LoadConfigFrom(configPath)
+		if err != nil {
+			t.Fatalf("LoadConfigFrom: %v", err)
+		}
+		want := filepath.Join(homeDir, ".local", "brain", "executor", "opencode-from-env")
+		if cfg.Opencode.ConfigDir != want {
+			t.Fatalf("Opencode.ConfigDir = %q, want %q", cfg.Opencode.ConfigDir, want)
+		}
+	})
 }
 
 func TestLoadConfig_PassiveDispatchPushEnvOverrides(t *testing.T) {

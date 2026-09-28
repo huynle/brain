@@ -48,6 +48,7 @@
 //   - opencode.bin → Runner.Opencode.Bin
 //   - opencode.agent → Runner.Opencode.Agent
 //   - opencode.model → Runner.Opencode.Model
+//   - opencode.config_dir → Runner.Opencode.ConfigDir
 //   - exclude_projects[] → Runner.ExcludeProjects[]
 //
 // All other subsystems (Server, MCP, Plugins) use default values if not present in unified config.
@@ -219,9 +220,10 @@ type RunnerConfig struct {
 
 // OpencodeSettings holds OpenCode executor settings.
 type OpencodeSettings struct {
-	Bin   string `yaml:"bin"`
-	Agent string `yaml:"agent"`
-	Model string `yaml:"model"`
+	Bin       string `yaml:"bin"`
+	Agent     string `yaml:"agent"`
+	Model     string `yaml:"model"`
+	ConfigDir string `yaml:"config_dir,omitempty"`
 }
 
 // TaskDefaultsConfig holds default values for task execution settings.
@@ -714,6 +716,9 @@ func migrateConfig(legacyPath, unifiedPath string, cfg *UnifiedConfig) error {
 		}
 		if v, ok := opencodeData["model"].(string); ok {
 			cfg.Runner.Opencode.Model = v
+		}
+		if v, ok := opencodeData["config_dir"].(string); ok {
+			cfg.Runner.Opencode.ConfigDir = v
 		}
 	}
 

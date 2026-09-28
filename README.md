@@ -510,6 +510,26 @@ runner:
   api_token_env: "BRAIN_API_TOKEN"
 ```
 
+Give a runner an isolated OpenCode configuration without changing the runner's
+own Brain config location:
+
+```yaml
+runner:
+  opencode:
+    config_dir: "~/.local/brain/executor/opencode"
+```
+
+The directory is passed to OpenCode as `OPENCODE_CONFIG_DIR`, and the OpenCode
+child receives an isolated `XDG_CONFIG_HOME` so it does not merge the runner
+user's normal `~/.config/opencode` configuration. It should contain the usual
+`opencode.json` or `opencode.jsonc` plus any `agent/`, `command/`, `skill/`,
+`tool/`, and `plugin/` directories. `~` is expanded when the runner loads its
+configuration. `OPENCODE_CONFIG_DIR` in the runner process environment
+overrides the YAML value. Leave `config_dir` empty to retain OpenCode's normal
+configuration discovery. When isolation is enabled, inherited or task-provided
+`OPENCODE_CONFIG` and `OPENCODE_CONFIG_CONTENT` overrides are removed so they
+cannot bypass the selected directory.
+
 Set `OPENROUTER_API_KEY` in the environment before running semantic search or backfill.
 
 ### Search Strategies

@@ -967,7 +967,7 @@ func (e *OpenCodeExecutor) spawnHeadlessDirect(
 	args = append(args, string(promptContent))
 
 	cmd := e.CommandFactory(e.config.Opencode.Bin, args...)
-	cmd.Env = childEnvironment(task, e.config)
+	cmd.Env = opencodeChildEnvironment(task, e.config)
 	cmd.Dir = workdir
 
 	var output io.Writer = logFile
@@ -1009,7 +1009,7 @@ func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID string
 	}
 
 	cmd := e.CommandFactory(e.config.Opencode.Bin, "serve", "--port", "0")
-	cmd.Env = childEnvironment(nil, e.config)
+	cmd.Env = opencodeChildEnvironment(nil, e.config)
 	cmd.Dir = workdir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -1068,7 +1068,7 @@ echo ""
 echo "Task Complete (exit: $exit_code)"
 exit $exit_code
 `, shellEnvQuote(workdir), shellEnvQuote(e.config.Opencode.Bin), agentFlag, modelFlag, shellEnvQuote(promptFile))
-	script := childRunnerScript(body, task, e.config)
+	script := childRunnerScriptWithEnv(body, opencodeChildEnvironment(task, e.config))
 
 	// WriteFile's mode only applies to new files. Restrict existing launchers
 	// before writing the sanitized environment, which can contain provider secrets.

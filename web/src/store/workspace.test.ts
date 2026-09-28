@@ -21,6 +21,8 @@ import { test } from "node:test";
 import {
   useWorkspace,
   WORKSPACE_STORAGE_KEY,
+  DEFAULT_OVERVIEW_MODULES,
+  normalizeOverviewModules,
   clampDrawerWidth,
   clampSidebarWidth,
   persistedSlice,
@@ -60,6 +62,7 @@ function resetStore() {
     lastFocusLeafId: null,
     lastSidebarLeafId: null,
     sidebarSection: { ...INITIAL.sidebarSection },
+    overviewModules: { ...INITIAL.overviewModules },
     mobile: INITIAL.mobile,
     streaming: INITIAL.streaming,
     featureAssignments: { ...INITIAL.featureAssignments },
@@ -72,6 +75,55 @@ function resetStore() {
     sidebarWidth: 250,
   });
 }
+
+test("workspace: every optional Overview module defaults visible", () => {
+  resetStore();
+  assert.deepEqual(useWorkspace.getState().overviewModules, {
+    workflow: true,
+    attention: true,
+    active: true,
+    blocked: true,
+    finished: true,
+    readyToMerge: true,
+    validated: true,
+    brainMemory: true,
+  });
+});
+
+test("workspace: Overview modules can be hidden independently", () => {
+  resetStore();
+  const keys = Object.keys(DEFAULT_OVERVIEW_MODULES) as Array<
+    keyof typeof DEFAULT_OVERVIEW_MODULES
+  >;
+  for (const key of keys) {
+    resetStore();
+    useWorkspace.getState().setOverviewModule(key, false);
+    for (const candidate of keys) {
+      assert.equal(
+        useWorkspace.getState().overviewModules[candidate],
+        candidate !== key,
+        `${key} must not change ${candidate}`,
+      );
+    }
+  }
+});
+
+test("workspace: Overview module preferences are persisted", () => {
+  resetStore();
+  useWorkspace.getState().setOverviewModule("blocked", false);
+  assert.deepEqual(
+    persistedSlice(useWorkspace.getState()).overviewModules,
+    useWorkspace.getState().overviewModules,
+  );
+});
+
+test("workspace: partial saved Overview preferences receive new defaults", () => {
+  assert.deepEqual(normalizeOverviewModules({ workflow: false }), {
+    ...DEFAULT_OVERVIEW_MODULES,
+    workflow: false,
+  });
+  assert.deepEqual(normalizeOverviewModules(undefined), DEFAULT_OVERVIEW_MODULES);
+});
 
 // ─── storage key ──────────────────────────────────────────────────────
 

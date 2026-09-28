@@ -596,8 +596,22 @@ body.assistant-open.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .flow-board {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
+}
+
+.settings-note {
+  margin: -2px 0 10px; color: #6b757e; font-size: 10px; line-height: 1.5;
+}
+.settings-subhead {
+  margin: 12px 0 5px; color: #f4b23a; font-size: 9px;
+  font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+}
+.settings-checkbox-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 14px;
+}
+@media (max-width: 620px) {
+  .settings-checkbox-grid { grid-template-columns: 1fr; }
 }
 .flow-lane {
   min-width: 0;

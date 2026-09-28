@@ -79,6 +79,39 @@ export type WorkspaceView =
 
 export type SidebarSectionKey = "projects" | "sessions" | "runners";
 
+export type OverviewModuleKey =
+  | "workflow"
+  | "attention"
+  | "active"
+  | "blocked"
+  | "finished"
+  | "readyToMerge"
+  | "validated"
+  | "brainMemory";
+
+export type OverviewModules = Record<OverviewModuleKey, boolean>;
+
+export const DEFAULT_OVERVIEW_MODULES: OverviewModules = {
+  workflow: true,
+  attention: true,
+  active: true,
+  blocked: true,
+  finished: true,
+  readyToMerge: true,
+  validated: true,
+  brainMemory: true,
+};
+
+export function normalizeOverviewModules(raw: unknown): OverviewModules {
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_OVERVIEW_MODULES };
+  const saved = raw as Partial<Record<OverviewModuleKey, unknown>>;
+  const normalized = { ...DEFAULT_OVERVIEW_MODULES };
+  for (const key of Object.keys(normalized) as OverviewModuleKey[]) {
+    if (typeof saved[key] === "boolean") normalized[key] = saved[key];
+  }
+  return normalized;
+}
+
 /** Which dock a tree-mutating action targets. Not part of the public
  *  store surface — every action is exposed as a Focus/sidebar pair
  *  instead of taking this as a parameter, so existing call sites never
@@ -164,6 +197,8 @@ export interface WorkspaceState {
   /** Close the pane the user is currently working in. */
   closeCurrentLeaf(): void;
   sidebarSection: Record<SidebarSectionKey, boolean>;
+  /** Browser-local visibility for non-project modules on Overview. */
+  overviewModules: OverviewModules;
   /** Whole sidebar collapsed to a slim rail. Independent of the
    *  per-section collapse map. Driven by user toggle in the topbar. */
   sidebarCollapsed: boolean;
@@ -264,6 +299,7 @@ export interface WorkspaceState {
   steerIntent: boolean;
   setSteerIntent(v: boolean): void;
   toggleSidebarSection(k: SidebarSectionKey): void;
+  setOverviewModule(key: OverviewModuleKey, enabled: boolean): void;
   toggleSidebarCollapsed(): void;
   setAssistantOpen(open: boolean): void;
   toggleAssistant(): void;
@@ -456,6 +492,7 @@ export function persistedSlice(s: WorkspaceState) {
         focusSessionId: s.focusSessionId,
         focusSessionRef: s.focusSessionRef,
         sidebarSection: s.sidebarSection,
+        overviewModules: s.overviewModules,
         sidebarCollapsed: s.sidebarCollapsed,
         theme: s.theme,
         featureCollapsed: s.featureCollapsed,
@@ -760,6 +797,7 @@ export const useWorkspace = create<WorkspaceState>()(
         lastSidebarLeafId: null,
         lastActiveDock: null,
         sidebarSection: { projects: true, sessions: true, runners: true },
+        overviewModules: { ...DEFAULT_OVERVIEW_MODULES },
         sidebarCollapsed: false,
         assistantOpen: false,
         commandOpen: false,
@@ -839,6 +877,11 @@ export const useWorkspace = create<WorkspaceState>()(
         toggleSidebarSection: (k) =>
           set((s) => ({
             sidebarSection: { ...s.sidebarSection, [k]: !s.sidebarSection[k] },
+          })),
+
+        setOverviewModule: (key, enabled) =>
+          set((s) => ({
+            overviewModules: { ...s.overviewModules, [key]: enabled },
           })),
 
         toggleSidebarCollapsed: () =>
@@ -1231,6 +1274,7 @@ export const useWorkspace = create<WorkspaceState>()(
         return {
           ...currentState,
           ...p,
+          overviewModules: normalizeOverviewModules(p.overviewModules),
           docks: { focus: focusTree, sidebar: sidebarTree },
           lastFocusLeafId:
             focusTree &&

@@ -16,7 +16,10 @@ import { useRunners } from "../../hooks/useRunners";
 import { useMergeRequests } from "../../hooks/useMergeRequests";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useFeatureActionContextFactory } from "../../hooks/useFeatureActionContext";
-import { useWorkspace } from "../../store/workspace";
+import {
+  useWorkspace,
+  type OverviewModuleKey,
+} from "../../store/workspace";
 import { useFeatureAssignments } from "../../hooks/useFeatureAssignments";
 import { useModal } from "../../store/modal";
 import { useUI } from "../../store/ui";
@@ -38,6 +41,16 @@ import { EntriesPreview } from "./EntriesPreview";
 import { projectMatchesStatusFilter } from "../../lib/statusFilter";
 import type { Task } from "../../lib/types";
 
+const OVERVIEW_LANES: Array<
+  [FeatureLifecycle, string, OverviewModuleKey]
+> = [
+  ["in-progress", "active", "active"],
+  ["blocked", "blocked", "blocked"],
+  ["finished", "finished", "finished"],
+  ["ready-to-merge", "ready", "readyToMerge"],
+  ["validated", "validated", "validated"],
+];
+
 export function OverviewGrid(): JSX.Element {
   const { data: projects } = useProjects();
   const liveProjects = useLive((s) => s.projects);
@@ -49,6 +62,7 @@ export function OverviewGrid(): JSX.Element {
   const hiddenProjects = useWorkspace((s) => s.hiddenProjects);
   const hideAllEmpty = useWorkspace((s) => s.hideAllEmpty);
   const statusFilter = useWorkspace((s) => s.statusFilter);
+  const overviewModules = useWorkspace((s) => s.overviewModules);
   const openModal = useModal((s) => s.open);
   // openOrReuseInSidebar, not openInSidebar: the latter opens a NEW tab
   // every time, so clicking down a lane of features would leave one pane
@@ -201,11 +215,14 @@ export function OverviewGrid(): JSX.Element {
     (r) => r.status === "online" && !r.paused,
   ).length;
   const pausedRunners = runners.filter((r) => r.paused).length;
+  const visibleLanes = OVERVIEW_LANES.filter(
+    ([, , preference]) => overviewModules[preference],
+  );
 
   return (
     <div className="overview">
       {/* Workflow center */}
-      <div className="workflow-center">
+      {overviewModules.workflow && <div className="workflow-center">
         <div className="wc-head">
           <div>
             <div className="wc-title">
@@ -304,10 +321,10 @@ export function OverviewGrid(): JSX.Element {
             </div>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* Attention queue */}
-      {attention.length > 0 && (
+      {overviewModules.attention && attention.length > 0 && (
         <div className="review-queue">
           <div className="rq-head">
             <span>Needs attention</span>
@@ -354,16 +371,8 @@ export function OverviewGrid(): JSX.Element {
       )}
 
       {/* Lifecycle board */}
-      <div className="flow-board">
-        {(
-          [
-            ["in-progress", "active"],
-            ["blocked", "blocked"],
-            ["finished", "finished"],
-            ["ready-to-merge", "ready"],
-            ["validated", "validated"],
-          ] as Array<[FeatureLifecycle, string]>
-        ).map(([key, laneClass]) => {
+      {visibleLanes.length > 0 && <div className="flow-board">
+        {visibleLanes.map(([key, laneClass]) => {
           const items = byLifecycle[key];
           const tone = LIFECYCLE_TONE[key];
           const expanded = !!expandedLanes[key];
@@ -407,10 +416,10 @@ export function OverviewGrid(): JSX.Element {
             </div>
           );
         })}
-      </div>
+      </div>}
 
       {/* Brain memory carousel */}
-      <EntriesPreview />
+      {overviewModules.brainMemory && <EntriesPreview />}
 
       {/* Project cards (visible only), tiled — see ProjectTiles for why
           they are not just more children of this grid. */}

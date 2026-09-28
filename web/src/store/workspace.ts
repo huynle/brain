@@ -70,7 +70,12 @@ import { pushNav } from "../lib/navBridge";
 /** Versioned localStorage key. Bump the suffix on breaking schema changes. */
 export const WORKSPACE_STORAGE_KEY = "panes-v2:workspace:v1";
 
-export type WorkspaceView = "overview" | "focus" | "session" | "entries";
+export type WorkspaceView =
+  | "overview"
+  | "focus"
+  | "session"
+  | "entries"
+  | "reminders";
 
 export type SidebarSectionKey = "projects" | "sessions" | "runners";
 
@@ -773,8 +778,45 @@ export const useWorkspace = create<WorkspaceState>()(
         dedupeTabs: true,
 
         setView: (v) => {
-          if (get().view !== v) pushNav({ view: v });
-          set({ view: v });
+          const state = get();
+          if (state.view !== v) pushNav({ view: v });
+          if (v !== "reminders") {
+            set({ view: v });
+            return;
+          }
+
+          // Reminders used to be a Focus leaf. The top-level centre is now
+          // the one canonical destination, so remove any persisted legacy
+          // panes while preserving the rest of the user's layout.
+          const sweep = (tree: DockNode | null): DockNode | null => {
+            if (!tree) return null;
+            const doomed: string[] = [];
+            walkLeaves(tree, (leaf, id) => {
+              if (leaf.kind === "reminders") doomed.push(id);
+            });
+            let next = tree;
+            for (const id of doomed) {
+              const pruned = removeDockNode(next, id);
+              if (!pruned) return null;
+              next = pruned;
+            }
+            return next;
+          };
+          const focus = sweep(state.docks.focus);
+          const sidebar = sweep(state.docks.sidebar);
+          set({
+            view: v,
+            docks: { focus, sidebar },
+            lastFocusLeafId:
+              focus && state.lastFocusLeafId && leafIdExists(focus, state.lastFocusLeafId)
+                ? state.lastFocusLeafId
+                : null,
+            lastSidebarLeafId:
+              sidebar && state.lastSidebarLeafId && leafIdExists(sidebar, state.lastSidebarLeafId)
+                ? state.lastSidebarLeafId
+                : null,
+            sidebarDockOpen: sidebar ? state.sidebarDockOpen : false,
+          });
         },
 
         setFocusSession: (id) =>

@@ -109,6 +109,21 @@ test("workspace: setView updates the view", () => {
   assert.equal(useWorkspace.getState().view, "session");
   useWorkspace.getState().setView("overview");
   assert.equal(useWorkspace.getState().view, "overview");
+  useWorkspace.getState().setView("reminders");
+  assert.equal(useWorkspace.getState().view, "reminders");
+});
+
+test("workspace: entering Reminders removes legacy reminder Focus panes", () => {
+  const store = useWorkspace.getState();
+  store.openInFocus("reminders", {}, "Reminders");
+  store.openInFocus("entry", { path: "projects/canis/report/keep.md" }, "Keep");
+
+  useWorkspace.getState().setView("reminders");
+
+  const focus = useWorkspace.getState().docks.focus;
+  const kinds: string[] = [];
+  if (focus) walkLeaves(focus, (leaf) => kinds.push(leaf.kind));
+  assert.deepEqual(kinds, ["entry"]);
 });
 
 test("workspace: setFocusSession switches view to session and stores id", () => {
@@ -1398,11 +1413,12 @@ test("workspace: switching view records a navigation, staying put does not", () 
 
   w().setView("entries");
   w().setView("entries"); // no change — must not push
+  w().setView("reminders");
   w().setView("focus");
 
   assert.deepEqual(
     seen.map((e) => e.view),
-    ["entries", "focus"],
+    ["entries", "reminders", "focus"],
     "only real view changes are navigations",
   );
   installNavPush(null);

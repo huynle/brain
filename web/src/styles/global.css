@@ -4416,6 +4416,126 @@ body[data-theme="light"] .reminder-item__acts button.primary {
   border-color: #9ac9a2; color: #2f7d3c;
 }
 
+/* ─── Top-level reminder workspace ───────────────────────────────
+   The same compact rows as the Focus leaf, given room to read as a
+   lifecycle ledger. Amber keeps the existing shell's active-work accent;
+   blue is reserved for links into generated agent tasks. */
+.reminders-workspace {
+  height: 100%; min-height: 0; overflow: auto;
+  padding: 18px clamp(12px, 3vw, 34px) 28px;
+  background:
+    radial-gradient(circle at 86% -8%, #f4b23a10, transparent 28%),
+    linear-gradient(180deg, #101418 0, #0c0f12 100%);
+}
+.reminders-workspace__hero {
+  display: flex; justify-content: space-between; align-items: end; gap: 24px;
+  max-width: 1080px; margin: 0 auto 18px;
+  padding-bottom: 16px; border-bottom: 1px solid #2a2f35;
+}
+.reminders-workspace__eyebrow {
+  margin-bottom: 6px; color: #f4b23a; font-size: 9px; font-weight: 700;
+  letter-spacing: .16em; text-transform: uppercase;
+}
+.reminders-workspace__hero h1 {
+  margin: 0; max-width: 720px; color: #eaedef;
+  font-size: clamp(20px, 3vw, 34px); font-weight: 520; line-height: 1.12;
+  letter-spacing: -.025em;
+}
+.reminders-workspace__hero p {
+  max-width: 680px; margin: 8px 0 0; color: #7f8993;
+  font-size: 11.5px; line-height: 1.55;
+}
+.reminders-workspace__total {
+  flex: 0 0 auto; display: grid; justify-items: end;
+  color: #7f8993; text-transform: uppercase; letter-spacing: .08em;
+  font-size: 9px;
+}
+.reminders-workspace__total strong {
+  color: #f4b23a; font-size: 32px; line-height: 1; letter-spacing: -.04em;
+}
+.reminders-toolbar, .reminder-filters, .reminders-workspace__list {
+  max-width: 1080px; margin-left: auto; margin-right: auto;
+}
+.reminders-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+.reminders-toolbar input {
+  flex: 1; min-width: 150px; background: #0a0c0e;
+}
+.reminders-toolbar select { min-width: 170px; }
+.reminder-filters {
+  display: grid; grid-template-columns: repeat(7, minmax(88px, 1fr));
+  gap: 5px; margin-bottom: 12px;
+}
+.reminder-filters button {
+  display: flex; justify-content: space-between; align-items: center; gap: 6px;
+  min-width: 0; padding: 7px 9px; cursor: pointer;
+  border: 1px solid #262c33; border-radius: 5px;
+  background: #12161a; color: #87919b; font-size: 10px;
+}
+.reminder-item__acts button { min-width: 32px; min-height: 30px; }
+.reminder-item { display: block; }
+.reminder-item__row { display: flex; gap: 12px; align-items: flex-start; }
+.reminder-item--openable { transition: background .12s, border-color .12s; }
+.reminder-item--openable:hover { background: #14191e; border-color: #343b43; }
+.reminder-item__open {
+  flex: 1 1 auto; min-width: 0; padding: 0; border: 0; background: transparent;
+  color: inherit; cursor: pointer; text-align: left; font: inherit;
+}
+.reminder-item__open:focus-visible {
+  outline: 2px solid #d49a32; outline-offset: -2px; background: #14191e;
+}
+.reminder-filters button:hover { border-color: #3a424b; color: #d7dbe0; }
+.reminder-filters button.active {
+  border-color: #8a6529; background: #f4b23a12; color: #f4b23a;
+}
+.reminder-filters strong {
+  min-width: 20px; padding: 1px 5px; border-radius: 999px;
+  background: #0b0e10; color: inherit; font-size: 9px; text-align: center;
+}
+.reminders-workspace__list {
+  overflow: hidden; border: 1px solid #262c33; border-radius: 7px;
+  background: #0f1316; box-shadow: 0 16px 44px #0003;
+}
+.reminders-workspace__list-head {
+  display: flex; justify-content: space-between; padding: 8px 12px;
+  border-bottom: 1px solid #22272c; color: #8b949d;
+  font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase;
+}
+.reminders-workspace__list .reminder-items { padding: 4px 8px 8px; }
+.reminders-workspace__list .reminder-item {
+  margin: 0; padding: 10px 8px; border-left: 0; border-bottom: 1px solid #1d2227;
+}
+.reminders-workspace__list .reminder-item:last-child { border-bottom: 0; }
+.reminders-workspace__empty {
+  display: grid; justify-items: center; gap: 4px; padding: 48px 20px;
+  color: #68727c; font-size: 11px;
+}
+.reminders-workspace__empty strong { color: #aab1b8; font-size: 12px; }
+
+body[data-theme="light"] .reminders-workspace {
+  background:
+    radial-gradient(circle at 86% -8%, #d7962612, transparent 28%),
+    linear-gradient(180deg, #fbfcfd 0, #f5f7f9 100%);
+}
+body[data-theme="light"] .reminders-workspace__hero { border-bottom-color: #dce2e8; }
+body[data-theme="light"] .reminders-workspace__hero h1 { color: #1b232b; }
+body[data-theme="light"] .reminders-workspace__hero p { color: #64717e; }
+body[data-theme="light"] .reminder-filters button {
+  background: #fff; border-color: #dce2e8; color: #64717e;
+}
+body[data-theme="light"] .reminder-filters button.active {
+  background: #fff8e9; border-color: #d39a35; color: #946517;
+}
+body[data-theme="light"] .reminder-filters strong { background: #f2f4f6; }
+body[data-theme="light"] .reminders-workspace__list {
+  background: #fff; border-color: #dce2e8; box-shadow: 0 14px 36px #26354412;
+}
+body[data-theme="light"] .reminders-workspace__list-head,
+body[data-theme="light"] .reminders-workspace__list .reminder-item {
+  border-color: #e6ebf0;
+}
+body[data-theme="light"] .reminder-item--openable:hover,
+body[data-theme="light"] .reminder-item__open:focus-visible { background: #f5f7f9; }
+
 /* On a narrow screen the bell has no room to anchor a 380px panel, so the
    panel stops hanging off the button and spans the viewport instead. Fixed,
    not absolute, so it is measured against the viewport rather than against a

@@ -160,6 +160,27 @@
     flex: 1 1 120px;
     max-width: 100%;
   }
+  body.mobile .reminders-workspace {
+    padding: 12px 8px 24px;
+  }
+  body.mobile .reminders-workspace__hero {
+    align-items: start; gap: 12px; margin-bottom: 12px;
+  }
+  body.mobile .reminders-workspace__hero h1 { font-size: 21px; }
+  body.mobile .reminders-workspace__hero p { font-size: 11px; }
+  body.mobile .reminders-workspace__total strong { font-size: 25px; }
+  body.mobile .reminders-toolbar { flex-wrap: wrap; }
+  body.mobile .reminders-toolbar input,
+  body.mobile .reminders-toolbar select { flex: 1 1 100%; }
+  body.mobile .reminder-filters {
+    display: flex; overflow-x: auto; padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+  body.mobile .reminder-filters button { flex: 0 0 auto; min-width: 104px; }
+  body.mobile .reminders-workspace__list .reminder-item {
+    flex-wrap: wrap; min-height: 58px;
+  }
+  body.mobile .reminder-item__title { white-space: normal; overflow-wrap: anywhere; }
   body.mobile .trow .name {
     white-space: normal;
     overflow-wrap: anywhere;

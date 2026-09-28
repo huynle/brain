@@ -128,6 +128,12 @@ export function Topbar({
         >
           Entries
         </button>
+        <button
+          className={view === "reminders" ? "active" : ""}
+          onClick={() => setView("reminders")}
+        >
+          Reminders
+        </button>
       </div>
       <div className="search" onClick={() => setCommandOpen(true)}>
         <span style={{ color: "#6b757e" }}>⌕</span>

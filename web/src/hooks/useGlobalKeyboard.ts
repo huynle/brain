@@ -7,6 +7,7 @@
  * ⌘1 / Ctrl+1 — go to Overview
  * ⌘2 / Ctrl+2 — go to Focus
  * ⌘3 / Ctrl+3 — go to Entries
+ * ⌘4 / Ctrl+4 — go to Reminders
  * ⇧⌘X / Ctrl+⇧+X — close the current pane (portable)
  * Ctrl+W — close the current pane (macOS only, see isMacLike)
  * Esc — close open drawer/palette/modal (handled by respective components)
@@ -98,6 +99,10 @@ export function useGlobalKeyboard(): void {
         case "3":
           e.preventDefault();
           useWorkspace.getState().setView("entries");
+          break;
+        case "4":
+          e.preventDefault();
+          useWorkspace.getState().setView("reminders");
           break;
         // The portable close binding. Shift is checked EXPLICITLY: this
         // switch only gates on meta-or-ctrl, so a bare `case "x"` would

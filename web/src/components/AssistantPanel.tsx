@@ -92,6 +92,7 @@ export function AssistantPanel(): JSX.Element | null {
   const open = useWorkspace((s) => s.assistantOpen);
   const close = () => useWorkspace.getState().setAssistantOpen(false);
   const setCommandOpen = useWorkspace((s) => s.setCommandOpen);
+  const openInSidebar = useWorkspace((s) => s.openInSidebar);
   const assistantWidth = useWorkspace((s) => s.assistantWidth);
   const setAssistantWidth = useWorkspace((s) => s.setAssistantWidth);
   const { data: projects } = useProjects();

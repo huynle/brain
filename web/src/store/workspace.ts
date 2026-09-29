@@ -70,7 +70,7 @@ import { pushNav } from "../lib/navBridge";
 /** Versioned localStorage key. Bump the suffix on breaking schema changes. */
 export const WORKSPACE_STORAGE_KEY = "panes-v2:workspace:v1";
 
-export type WorkspaceView = "overview" | "focus" | "session" | "entries";
+export type WorkspaceView = "overview" | "focus" | "session" | "entries" | "timeline";
 
 export type SidebarSectionKey = "projects" | "sessions" | "runners";
 

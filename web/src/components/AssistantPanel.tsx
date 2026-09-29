@@ -2,7 +2,6 @@
  * AssistantPanel — wireframe-parity port of `renderAssistantPanel`.
  *
  * Right-side slide-in with:
- *   • Suggested next move (from live attention queue)
  *   • Multi-turn chat thread (streaming via assistantChatStream; prior turns
  *     are replayed to the stateless server through the `history` field)
  *   • Quick actions
@@ -88,7 +87,6 @@ export function AssistantPanel(): JSX.Element | null {
   const open = useWorkspace((s) => s.assistantOpen);
   const close = () => useWorkspace.getState().setAssistantOpen(false);
   const setCommandOpen = useWorkspace((s) => s.setCommandOpen);
-  const openInSidebar = useWorkspace((s) => s.openInSidebar);
   const assistantWidth = useWorkspace((s) => s.assistantWidth);
   const setAssistantWidth = useWorkspace((s) => s.setAssistantWidth);
   const { data: projects } = useProjects();
@@ -331,39 +329,6 @@ export function AssistantPanel(): JSX.Element | null {
         <button className="drawer-close" aria-label="Close assistant" onClick={close}>
           ×
         </button>
-      </div>
-
-      <div className="assistant-card primary">
-        <div className="assistant-title">Suggested next move</div>
-        {attention.length > 0 ? (
-          <>
-            <p>
-              Review <b>{attention[0].name}</b> — it's{" "}
-              {attention[0].lifecycle} and blocking clean execution.
-            </p>
-            <div className="assistant-actions">
-              <button
-                onClick={() =>
-                  openInSidebar(
-                    "feature-detail",
-                    {
-                      projectId: attention[0].projectId,
-                      featureId: attention[0].featureId,
-                    },
-                    attention[0].name,
-                  )
-                }
-              >
-                Open suggestion
-              </button>
-            </div>
-          </>
-        ) : (
-          <p>
-            No blockers right now. Queue the next ready feature and keep
-            Brain entries updated as work lands.
-          </p>
-        )}
       </div>
 
       <div className="assistant-card assistant-chat">

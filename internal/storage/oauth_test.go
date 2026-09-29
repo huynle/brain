@@ -711,7 +711,7 @@ func TestConsumeRefreshToken_Success(t *testing.T) {
 }
 
 func TestConsumeRefreshToken_NonExpiring(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 
@@ -734,7 +734,7 @@ func TestConsumeRefreshToken_NonExpiring(t *testing.T) {
 }
 
 func TestConsumeRefreshToken_RejectsUnknownNegativeExpiry(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 	client := createTestClient(t, s)
 	token := &OAuthRefreshToken{Token: "invalid-negative-refresh", ClientID: client.ClientID, ExpiresAt: -2}
@@ -864,7 +864,7 @@ func TestCleanupExpiredRefreshTokens(t *testing.T) {
 		t.Error("valid refresh token should still exist")
 	}
 
-	s.DB().QueryRowContext(ctx,
+	s.db.QueryRowContext(ctx,
 		"SELECT count(*) FROM oauth_refresh_tokens WHERE token = ?", "non-expiring-cleanup-refresh",
 	).Scan(&count)
 	if count != 1 {

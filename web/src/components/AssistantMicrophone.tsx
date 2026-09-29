@@ -1,5 +1,6 @@
 import { assistantVoiceDiagnostic } from "../lib/api";
 import { useEffect, useRef, useState } from "react";
+import { createUUID } from "../lib/uuid";
 
 type Recognition = {
   lang: string;
@@ -131,7 +132,7 @@ export function AssistantMicrophone({
     let transcript = "";
     let failed = false;
     const current = new Constructor();
-    const attempt = crypto.randomUUID();
+    const attempt = createUUID();
     const startedAt = performance.now();
     let resultCount = 0;
     const report = (event: string, error = "") => {

@@ -3,6 +3,7 @@ import { useScreenWakeLock } from './useScreenWakeLock';
 import { api, assistantVoiceDiagnostic } from '../lib/api';
 import type { createSpeechDetector } from '../lib/speechDetector';
 import { pcmWav, VoiceSegmenter } from '../lib/voiceCapture';
+import { createUUID } from '../lib/uuid';
 
 const processorCode=`class Capture extends AudioWorkletProcessor {
  constructor(){super();this.buffer=new Float32Array(2048);this.offset=0;}
@@ -19,7 +20,7 @@ export function usePersistentVoice(options: {sessionId:string; active:boolean; s
   const start=async()=>{
     stop();const run=++generation.current;setError('');setStatus('Connecting microphone…');setEnabled(true);latest.current.onEnabled(true);
     let stream:MediaStream|undefined, context:AudioContext|undefined, node:AudioWorkletNode|undefined, timer:ReturnType<typeof setInterval>|undefined;
-    const abort=new AbortController(), attempt=crypto.randomUUID(), began=performance.now();
+    const abort=new AbortController(), attempt=createUUID(), began=performance.now();
     let results=0,disposed=false;
     let startupError='Microphone could not start. Allow microphone access and try again.';
     let detector: Awaited<ReturnType<typeof createSpeechDetector>> | undefined;

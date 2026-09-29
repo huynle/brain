@@ -113,6 +113,11 @@ export function CommandPalette(): JSX.Element | null {
         action: () => setView("entries"),
       },
       {
+        id: "view-timeline",
+        label: "Open Timeline — cross-project activity chronology",
+        action: () => setView("timeline"),
+      },
+      {
         id: "toggle-sidebar",
         label: "Toggle sidebar",
         action: toggleSidebar,

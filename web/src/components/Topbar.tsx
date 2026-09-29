@@ -130,6 +130,12 @@ export function Topbar({
         >
           Entries
         </button>
+        <button
+          className={view === "timeline" ? "active" : ""}
+          onClick={() => setView("timeline")}
+        >
+          Timeline
+        </button>
       </div>
       <div className="search" onClick={() => setCommandOpen(true)}>
         <span style={{ color: "#6b757e" }}>⌕</span>

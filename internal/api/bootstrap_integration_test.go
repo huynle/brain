@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,12 +20,23 @@ import (
 
 func bootstrapStore(t *testing.T) *storage.StorageLayer {
 	t.Helper()
-	s, err := storage.New(filepath.Join(t.TempDir(), "brain.db"))
+	s, _ := bootstrapStoreWithDB(t)
+	return s
+}
+
+// The bootstrap fixture owns a new connection, including cleanup on init failure.
+func bootstrapStoreWithDB(t *testing.T) (*storage.StorageLayer, *sql.DB) {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "brain.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = s.Close() })
-	return s
+	t.Cleanup(func() { _ = db.Close() })
+	s, err := storage.NewWithDB(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, db
 }
 
 func TestBootstrapHTTP_InstallAndPeerPolicy(t *testing.T) {
@@ -54,23 +66,23 @@ func TestBootstrapHTTP_InstallAndPeerPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("BRAIN_ALLOW_REMOTE_BOOTSTRAP", tc.hatch)
 			t.Setenv(auth.EnvPasswordHash, tc.password)
-			s := bootstrapStore(t)
+			s, db := bootstrapStoreWithDB(t)
 			ctx := context.Background()
 			switch tc.credential {
 			case "oauth":
 				// Bypass modern credential writes to represent a legacy OAuth-only install.
-				if _, err := s.DB().Exec("INSERT INTO oauth_access_tokens(token, client_id, expires_at, created_at) VALUES ('legacy', 'client', ?, 1)", time.Now().Add(time.Hour).Unix()); err != nil {
+				if _, err := db.Exec("INSERT INTO oauth_access_tokens(token, client_id, expires_at, created_at) VALUES ('legacy', 'client', ?, 1)", time.Now().Add(time.Hour).Unix()); err != nil {
 					t.Fatal(err)
 				}
 			case "revoked", "deleted":
-				if err := s.CreateToken(ctx, "old", "old-secret", "admin:*"); err != nil {
+				if err := singleModeTokens(t, s).CreateToken(ctx, "old", "old-secret", "admin:*"); err != nil {
 					t.Fatal(err)
 				}
 				if tc.credential == "revoked" {
-					if err := s.RevokeToken(ctx, "old"); err != nil {
+					if err := singleModeTokens(t, s).RevokeToken(ctx, "old"); err != nil {
 						t.Fatal(err)
 					}
-				} else if err := s.DeleteTokenPermanent(ctx, "old"); err != nil {
+				} else if _, err := db.ExecContext(ctx, "DELETE FROM api_tokens WHERE name='old'"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -85,7 +97,7 @@ func TestBootstrapHTTP_InstallAndPeerPolicy(t *testing.T) {
 			if w.Code != tc.want {
 				t.Fatalf("status = %d, want %d: %s", w.Code, tc.want, w.Body.String())
 			}
-			got, err := s.GetTokenByName(ctx, "first")
+			got, err := singleModeTokens(t, s).GetTokenByName(ctx, "first")
 			if tc.want == 201 {
 				var body createTokenResponse
 				if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
@@ -155,7 +167,7 @@ func TestBootstrapHTTP_ConcurrentSingleWinner(t *testing.T) {
 	if counts[201] != 1 || counts[403] != requests-1 {
 		t.Fatalf("HTTP statuses = %v, want one 201 and %d 403", counts, requests-1)
 	}
-	tokens, err := s.ListTokens(context.Background(), true)
+	tokens, err := singleModeTokens(t, s).ListTokens(context.Background(), true)
 	if err != nil || len(tokens) != 1 {
 		t.Fatalf("stored tokens = %d, err = %v", len(tokens), err)
 	}

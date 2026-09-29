@@ -145,13 +145,13 @@ func TestClaimPlacementDenialPreservesOwnershipAndBoundsHistory(t *testing.T) {
 func TestClaimPlacementStorageFailuresFailClosed(t *testing.T) {
 	for _, table := range []string{"runners", "notes", "task_placement_reasons"} {
 		t.Run(table, func(t *testing.T) {
-			svc, store, _ := newTestTaskService(t)
+			svc, store, _, db := newTestTaskServiceWithDB(t)
 			ctx := context.Background()
 			insertTaskNote(t, store, "task0001", "Task", "pending", "high", "p", map[string]interface{}{"feature_id": "feature"})
 			if table != "task_placement_reasons" {
 				insertRunnerForTaskSelectionTest(t, store, "r", nil, nil)
 			}
-			if _, err := store.DB().ExecContext(ctx, "DROP TABLE "+table); err != nil {
+			if _, err := db.ExecContext(ctx, "DROP TABLE "+table); err != nil {
 				t.Fatal(err)
 			}
 			_, err := svc.DispatchTask(ctx, "p", "task0001", "r")

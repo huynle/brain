@@ -25,10 +25,10 @@ type Chunk struct {
 const (
 	// Target chunk size in characters
 	targetChunkSize = 4000
-	
+
 	// Overlap percentage (15% = 0.15)
 	overlapPercent = 0.15
-	
+
 	// Effective step size (85% of target)
 	effectiveStep = int(float64(targetChunkSize) * (1.0 - overlapPercent))
 )
@@ -40,10 +40,10 @@ const (
 var (
 	// Matches markdown headings (# Header)
 	headingPattern = regexp.MustCompile(`(?m)^#{1,6}\s+.+$`)
-	
+
 	// Matches fenced code blocks (```...```)
 	fencedCodePattern = regexp.MustCompile("(?s)```[^`]*```")
-	
+
 	// Matches blank lines
 	blankLinePattern = regexp.MustCompile(`(?m)^\s*$`)
 )
@@ -53,7 +53,7 @@ var (
 // ---------------------------------------------------------------------------
 
 // ChunkNote splits a note body into embedding-ready chunks.
-// 
+//
 // Chunking rules:
 // - Target ~4,000 characters per chunk
 // - Use ~15% overlap between chunks (effective step ≈ 3,400 chars)
@@ -75,11 +75,11 @@ func ChunkNote(noteID int64, body string) []Chunk {
 
 	// Find all code block boundaries to avoid splitting within them
 	codeBlocks := findCodeBlocks(body)
-	
+
 	var chunks []Chunk
 	chunkIndex := 0
 	pos := 0
-	
+
 	for pos < len(body) {
 		// Determine chunk end position (target size from current position)
 		chunkEnd := pos + targetChunkSize
@@ -92,10 +92,10 @@ func ChunkNote(noteID int64, body string) []Chunk {
 			})
 			break
 		}
-		
+
 		// Find the best split point near chunkEnd
 		splitPoint := findBestSplitPoint(body, pos, chunkEnd, codeBlocks)
-		
+
 		// Extract the chunk
 		chunkText := strings.TrimSpace(body[pos:splitPoint])
 		if chunkText != "" {
@@ -106,22 +106,22 @@ func ChunkNote(noteID int64, body string) []Chunk {
 			})
 			chunkIndex++
 		}
-		
+
 		// Move to next position with overlap
 		// Start next chunk at (current start + effective step)
 		pos = pos + effectiveStep
-		
+
 		// Ensure we make progress even if overlap calculation keeps us at same spot
 		if pos >= splitPoint {
 			pos = splitPoint
 		}
-		
+
 		// If we haven't moved forward, force progress to avoid infinite loop
 		if pos <= chunks[len(chunks)-1].ChunkIndex {
 			pos = splitPoint + 1
 		}
 	}
-	
+
 	// Ensure we always produce at least one chunk
 	if len(chunks) == 0 {
 		chunks = append(chunks, Chunk{
@@ -130,7 +130,7 @@ func ChunkNote(noteID int64, body string) []Chunk {
 			Text:       strings.TrimSpace(body),
 		})
 	}
-	
+
 	return chunks
 }
 
@@ -148,14 +148,14 @@ type codeBlockRange struct {
 func findCodeBlocks(text string) []codeBlockRange {
 	matches := fencedCodePattern.FindAllStringIndex(text, -1)
 	blocks := make([]codeBlockRange, 0, len(matches))
-	
+
 	for _, match := range matches {
 		blocks = append(blocks, codeBlockRange{
 			start: match[0],
 			end:   match[1],
 		})
 	}
-	
+
 	return blocks
 }
 
@@ -181,23 +181,23 @@ func findBestSplitPoint(text string, start, target int, codeBlocks []codeBlockRa
 	if target >= len(text) {
 		return len(text)
 	}
-	
+
 	// Search window: look backwards from target up to 500 chars
 	searchStart := target - 500
 	if searchStart < start {
 		searchStart = start
 	}
-	
+
 	// Search forward from target up to 200 chars for better split points
 	searchEnd := target + 200
 	if searchEnd > len(text) {
 		searchEnd = len(text)
 	}
-	
+
 	searchText := text[searchStart:searchEnd]
 	bestPos := target - searchStart // default to target position
-	bestPriority := 5                // lowest priority
-	
+	bestPriority := 5               // lowest priority
+
 	// 1. Look for markdown headings
 	headingMatches := headingPattern.FindAllStringIndex(searchText, -1)
 	for _, match := range headingMatches {
@@ -209,7 +209,7 @@ func findBestSplitPoint(text string, start, target int, codeBlocks []codeBlockRa
 			}
 		}
 	}
-	
+
 	// 2. Look for blank lines
 	if bestPriority > 1 {
 		blankMatches := blankLinePattern.FindAllStringIndex(searchText, -1)
@@ -223,7 +223,7 @@ func findBestSplitPoint(text string, start, target int, codeBlocks []codeBlockRa
 			}
 		}
 	}
-	
+
 	// 3. Look for sentence endings
 	if bestPriority > 2 {
 		for i := len(searchText) - 1; i >= 0; i-- {
@@ -231,7 +231,7 @@ func findBestSplitPoint(text string, start, target int, codeBlocks []codeBlockRa
 			if absPos > target+100 || absPos < searchStart {
 				continue
 			}
-			
+
 			ch := searchText[i]
 			if (ch == '.' || ch == '!' || ch == '?') && !isInsideCodeBlock(absPos, codeBlocks) {
 				// Check if followed by whitespace or end of text
@@ -243,7 +243,7 @@ func findBestSplitPoint(text string, start, target int, codeBlocks []codeBlockRa
 			}
 		}
 	}
-	
+
 	// 4. Look for any whitespace
 	if bestPriority > 3 {
 		for i := len(searchText) - 1; i >= 0; i-- {
@@ -251,7 +251,7 @@ func findBestSplitPoint(text string, start, target int, codeBlocks []codeBlockRa
 			if absPos > target || absPos < searchStart {
 				continue
 			}
-			
+
 			ch := searchText[i]
 			if (ch == ' ' || ch == '\n' || ch == '\t') && !isInsideCodeBlock(absPos, codeBlocks) {
 				// Lowest tier — nothing reads bestPriority past this point,
@@ -261,6 +261,6 @@ func findBestSplitPoint(text string, start, target int, codeBlocks []codeBlockRa
 			}
 		}
 	}
-	
+
 	return searchStart + bestPos
 }

@@ -21,7 +21,7 @@ func newTestProjectPlacementService(t *testing.T) *ProjectPlacementService {
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { db.Close() })
 	return NewProjectPlacementService(store)
 }
 

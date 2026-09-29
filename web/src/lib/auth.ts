@@ -438,6 +438,17 @@ export const useAuth = create<AuthState>((set, get) => ({
 
   logout() {
     ++authGeneration;
+    // Stop lock-screen delivery on shared devices when explicitly signing out.
+    const pushToken = get().token;
+    if ("serviceWorker" in navigator) {
+      void navigator.serviceWorker.getRegistration().then(async reg => {
+        const sub = await reg?.pushManager?.getSubscription();
+        if (!sub) return;
+        try {
+          await fetch("/api/v1/push/unsubscribe", {method: "POST", headers: {"Content-Type":"application/json", ...(pushToken ? {Authorization:`Bearer ${pushToken}`} : {})}, body:JSON.stringify({endpoint:sub.endpoint}), keepalive:true});
+        } finally { await sub.unsubscribe(); }
+      }).catch(() => {});
+    }
     // Best-effort revoke for password sessions; fire-and-forget.
     if (get().mode === "password") {
       const refresh = localStorage.getItem(LS.refreshToken);

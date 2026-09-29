@@ -14,7 +14,7 @@
  * `.p2-*` scoping. `body.mobile` and `body.sidebar-collapsed` classes
  * drive mobile / sidebar-collapsed layouts.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { withoutNav } from "../lib/navBridge";
 import { Modal } from "../components/common/Modal";
 import { useModal } from "../store/modal";
@@ -113,12 +113,24 @@ export function Dashboard(): JSX.Element {
   // the line above: the back stack outlives any one view.
   useDockNavHistory();
 
+  const mobileStart = useRef({
+    handled: false,
+    entryRequested: new URLSearchParams(window.location.search).has("entry"),
+  });
   // A shared entry URL must be visible even when a mobile overlay was saved
   // in the previous workspace. Preserve its panes; only dismiss the overlay.
   useEffect(() => {
-    if (isMobile && new URLSearchParams(window.location.search).has("entry")) {
+    if (mobileStart.current.handled) return;
+    mobileStart.current.handled = true;
+    if (!isMobile) return;
+    if (mobileStart.current.entryRequested) {
       const workspace = useWorkspace.getState();
       withoutNav(() => workspace.setView("entries"));
+      workspace.setSidebarDockOpen(false);
+      workspace.setAssistantOpen(false);
+    } else {
+      const workspace = useWorkspace.getState();
+      withoutNav(() => workspace.setView("overview"));
       workspace.setSidebarDockOpen(false);
       workspace.setAssistantOpen(false);
     }

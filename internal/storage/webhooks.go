@@ -46,7 +46,11 @@ func generateID() (string, error) {
 }
 
 // CreateWebhook inserts a new webhook into the database.
-func (s *StorageLayer) CreateWebhook(ctx context.Context, wh *Webhook) error {
+func (s *TenantStore) CreateWebhook(ctx context.Context, wh *Webhook) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	if wh.ID == "" {
 		id, err := generateID()
 		if err != nil {
@@ -78,12 +82,17 @@ func (s *StorageLayer) CreateWebhook(ctx context.Context, wh *Webhook) error {
 		enabled = 1
 	}
 
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO webhooks (id, name, url, events, filter, secret, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	columns, values := "id, name, url, events, filter, secret, enabled, created_at, updated_at", "?, ?, ?, ?, ?, ?, ?, ?, ?"
+	args := []interface{}{
 		wh.ID, wh.Name, wh.URL, string(eventsJSON), string(filterJSON),
 		wh.Secret, enabled, wh.CreatedAt, wh.UpdatedAt,
-	)
+	}
+	if scope.owner != "" {
+		columns += ", tenant_id"
+		values += ", ?"
+		args = append(args, scope.owner)
+	}
+	_, err = s.db.ExecContext(ctx, "INSERT INTO webhooks ("+columns+") VALUES ("+values+")", args...)
 	if err != nil {
 		return fmt.Errorf("insert webhook: %w", err)
 	}
@@ -100,14 +109,19 @@ func (s *StorageLayer) CreateWebhook(ctx context.Context, wh *Webhook) error {
 // match, it was unreachable and a missing webhook returned 500.
 var ErrWebhookNotFound = errors.New("webhook not found")
 
-func (s *StorageLayer) GetWebhook(ctx context.Context, id string) (*Webhook, error) {
+func (s *TenantStore) GetWebhook(ctx context.Context, id string) (*Webhook, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	where, args := scope.where("id = ?", id)
 	var wh Webhook
 	var eventsJSON, filterJSON string
 	var enabled int
 
-	err := s.db.QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		`SELECT id, name, url, events, filter, secret, enabled, created_at, updated_at
-		 FROM webhooks WHERE id = ?`, id,
+		 FROM webhooks WHERE `+where, args...,
 	).Scan(&wh.ID, &wh.Name, &wh.URL, &eventsJSON, &filterJSON,
 		&wh.Secret, &enabled, &wh.CreatedAt, &wh.UpdatedAt)
 	if err == sql.ErrNoRows {
@@ -130,14 +144,19 @@ func (s *StorageLayer) GetWebhook(ctx context.Context, id string) (*Webhook, err
 }
 
 // ListWebhooks returns all webhooks, optionally filtered by enabled status.
-func (s *StorageLayer) ListWebhooks(ctx context.Context, enabledOnly ...bool) ([]Webhook, error) {
-	query := `SELECT id, name, url, events, filter, secret, enabled, created_at, updated_at FROM webhooks`
+func (s *TenantStore) ListWebhooks(ctx context.Context, enabledOnly ...bool) ([]Webhook, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	where, args := scope.where("1=1")
+	query := `SELECT id, name, url, events, filter, secret, enabled, created_at, updated_at FROM webhooks WHERE ` + where
 	if len(enabledOnly) > 0 && enabledOnly[0] {
-		query += " WHERE enabled = 1"
+		query += " AND enabled = 1"
 	}
 	query += " ORDER BY created_at DESC"
 
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query webhooks: %w", err)
 	}
@@ -176,7 +195,11 @@ func (s *StorageLayer) ListWebhooks(ctx context.Context, enabledOnly ...bool) ([
 }
 
 // UpdateWebhook updates an existing webhook. Only non-zero fields are updated.
-func (s *StorageLayer) UpdateWebhook(ctx context.Context, wh *Webhook) error {
+func (s *TenantStore) UpdateWebhook(ctx context.Context, wh *Webhook) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	eventsJSON, err := json.Marshal(wh.Events)
 	if err != nil {
 		return fmt.Errorf("marshal events: %w", err)
@@ -194,11 +217,12 @@ func (s *StorageLayer) UpdateWebhook(ctx context.Context, wh *Webhook) error {
 
 	wh.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
+	where, keys := scope.where("id = ?", wh.ID)
+	args := []interface{}{wh.Name, wh.URL, string(eventsJSON), string(filterJSON), wh.Secret, enabled, wh.UpdatedAt}
+	args = append(args, keys...)
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE webhooks SET name = ?, url = ?, events = ?, filter = ?, secret = ?,
-		 enabled = ?, updated_at = ? WHERE id = ?`,
-		wh.Name, wh.URL, string(eventsJSON), string(filterJSON),
-		wh.Secret, enabled, wh.UpdatedAt, wh.ID,
+		 enabled = ?, updated_at = ? WHERE `+where, args...,
 	)
 	if err != nil {
 		return fmt.Errorf("update webhook: %w", err)
@@ -215,8 +239,13 @@ func (s *StorageLayer) UpdateWebhook(ctx context.Context, wh *Webhook) error {
 }
 
 // DeleteWebhook removes a webhook and its deliveries (via CASCADE) by ID.
-func (s *StorageLayer) DeleteWebhook(ctx context.Context, id string) error {
-	result, err := s.db.ExecContext(ctx, "DELETE FROM webhooks WHERE id = ?", id)
+func (s *TenantStore) DeleteWebhook(ctx context.Context, id string) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
+	where, args := scope.where("id = ?", id)
+	result, err := s.db.ExecContext(ctx, "DELETE FROM webhooks WHERE "+where, args...)
 	if err != nil {
 		return fmt.Errorf("delete webhook: %w", err)
 	}
@@ -232,7 +261,11 @@ func (s *StorageLayer) DeleteWebhook(ctx context.Context, id string) error {
 }
 
 // CreateDelivery logs a webhook delivery attempt.
-func (s *StorageLayer) CreateDelivery(ctx context.Context, d *WebhookDelivery) error {
+func (s *TenantStore) CreateDelivery(ctx context.Context, d *WebhookDelivery) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	if d.ID == "" {
 		id, err := generateID()
 		if err != nil {
@@ -250,11 +283,18 @@ func (s *StorageLayer) CreateDelivery(ctx context.Context, d *WebhookDelivery) e
 		success = 1
 	}
 
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO webhook_deliveries (id, webhook_id, event_type, status_code, success, latency_ms, error, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+	columns, values := "id, webhook_id, event_type, status_code, success, latency_ms, error, created_at", "?, ?, ?, ?, ?, ?, ?, ?"
+	args := []interface{}{
 		d.ID, d.WebhookID, d.EventType, d.StatusCode, success, d.LatencyMs, d.Error, d.CreatedAt,
-	)
+	}
+	if scope.owner != "" {
+		columns += ", tenant_id"
+		values += ", ?"
+		args = append(args, scope.owner)
+	}
+	// The composite foreign key enforces parent ownership atomically, including
+	// a concurrent parent deletion. Delivery IDs are unique only within a tenant.
+	_, err = s.db.ExecContext(ctx, "INSERT INTO webhook_deliveries ("+columns+") VALUES ("+values+")", args...)
 	if err != nil {
 		return fmt.Errorf("insert delivery: %w", err)
 	}
@@ -262,15 +302,20 @@ func (s *StorageLayer) CreateDelivery(ctx context.Context, d *WebhookDelivery) e
 }
 
 // ListDeliveries returns deliveries for a webhook, ordered by most recent first.
-func (s *StorageLayer) ListDeliveries(ctx context.Context, webhookID string, limit int) ([]WebhookDelivery, error) {
+func (s *TenantStore) ListDeliveries(ctx context.Context, webhookID string, limit int) ([]WebhookDelivery, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 50
 	}
 
+	where, args := scope.where("webhook_id = ?", webhookID)
+	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, webhook_id, event_type, status_code, success, latency_ms, COALESCE(error, ''), created_at
-		 FROM webhook_deliveries WHERE webhook_id = ? ORDER BY created_at DESC LIMIT ?`,
-		webhookID, limit,
+		 FROM webhook_deliveries WHERE `+where+` ORDER BY created_at DESC LIMIT ?`, args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query deliveries: %w", err)

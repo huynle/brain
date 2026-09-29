@@ -9,7 +9,7 @@ import (
 )
 
 func TestSyncDevicePersistenceAndCAS(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenant.Into(context.Background(), tenant.Local)
 	path := filepath.Join(t.TempDir(), "brain.db")
 	base, err := New(path)
 	if err != nil {

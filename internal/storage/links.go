@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 )
@@ -9,7 +10,11 @@ import (
 // SetLinks replaces all links for the note at notePath.
 // For each link, tries to resolve target_path to an existing note (sets target_id if found).
 // Returns an error if the source note is not found.
-func (s *StorageLayer) SetLinks(ctx context.Context, notePath string, links []LinkInput) error {
+func (s *TenantStore) SetLinks(ctx context.Context, notePath string, links []LinkInput) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	note, err := s.GetNoteByPath(ctx, notePath)
 	if err != nil {
 		return fmt.Errorf("set links: %w", err)
@@ -65,9 +70,13 @@ func (s *StorageLayer) SetLinks(ctx context.Context, notePath string, links []Li
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
+	if err := requireOwnedNote(ctx, tx, scope, note.ID); err != nil {
+		return err
+	}
 
 	// Delete all existing links for this note.
-	if _, err := tx.ExecContext(ctx, "DELETE FROM links WHERE source_id = ?", note.ID); err != nil {
+	where, args := scope.where("source_id = ?", note.ID)
+	if _, err := tx.ExecContext(ctx, "DELETE FROM links WHERE "+where, args...); err != nil {
 		return fmt.Errorf("delete links: %w", err)
 	}
 
@@ -79,10 +88,18 @@ func (s *StorageLayer) SetLinks(ctx context.Context, notePath string, links []Li
 			linkType = LinkTypeMarkdown
 		}
 
-		_, err = tx.ExecContext(ctx,
-			"INSERT INTO links (source_id, target_path, target_id, title, href, type, snippet) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			note.ID, rl.input.TargetPath, rl.targetID, rl.input.Title, rl.input.Href, linkType, rl.input.Snippet,
-		)
+		if rl.targetID != nil {
+			if err := requireOwnedNote(ctx, tx, scope, *rl.targetID); err != nil {
+				return err
+			}
+		}
+		query := "INSERT INTO links (source_id, target_path, target_id, title, href, type, snippet) VALUES (?, ?, ?, ?, ?, ?, ?)"
+		args := []interface{}{note.ID, rl.input.TargetPath, rl.targetID, rl.input.Title, rl.input.Href, linkType, rl.input.Snippet}
+		if scope.owner != "" {
+			query = "INSERT INTO links (source_id, target_path, target_id, title, href, type, snippet, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+			args = append(args, scope.owner)
+		}
+		_, err = tx.ExecContext(ctx, query, args...)
 		if err != nil {
 			return fmt.Errorf("insert link to %q: %w", rl.input.TargetPath, err)
 		}
@@ -97,7 +114,11 @@ func (s *StorageLayer) SetLinks(ctx context.Context, notePath string, links []Li
 // GetLinks returns all links from the note at notePath.
 // Returns an error if the note is not found.
 // Returns a non-nil empty slice if the note has no links.
-func (s *StorageLayer) GetLinks(ctx context.Context, notePath string) ([]*LinkRow, error) {
+func (s *TenantStore) GetLinks(ctx context.Context, notePath string) ([]*LinkRow, error) {
+	prefix, args, err := s.graphScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	note, err := s.GetNoteByPath(ctx, notePath)
 	if err != nil {
 		return nil, fmt.Errorf("get links: %w", err)
@@ -107,8 +128,8 @@ func (s *StorageLayer) GetLinks(ctx context.Context, notePath string) ([]*LinkRo
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, source_id, target_path, target_id, title, href, type, snippet FROM links WHERE source_id = ?",
-		note.ID,
+		prefix+"SELECT id, source_id, target_path, target_id, title, href, type, snippet FROM graph_links WHERE source_id = ?",
+		append(args, note.ID)...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query links: %w", err)
@@ -135,8 +156,8 @@ func (s *StorageLayer) GetLinks(ctx context.Context, notePath string) ([]*LinkRo
 // reindex, or an entry created after the entries that reference it) stays
 // dangling forever without this. Called from InsertNote so every path that
 // materializes a note repairs inbound links.
-func (s *StorageLayer) ResolveLinksTo(ctx context.Context, noteID int64, path, shortID string) error {
-	return s.ResolveLinksToNote(ctx, noteID, path, shortID, "", nil)
+func (s *TenantStore) ResolveLinksTo(ctx context.Context, noteID int64, path, shortID string) error {
+	return s.resolveLinksTo(ctx, noteID, path, shortID, "", nil, false)
 }
 
 // ResolveLinksToNote back-fills dangling links that name a note which has just
@@ -149,7 +170,31 @@ func (s *StorageLayer) ResolveLinksTo(ctx context.Context, noteID int64, path, s
 // project would silently capture every unresolved [[Summary]] in the brain.
 // Only links that nothing else resolved are touched, so a same-project match
 // found at write time by SetLinks always wins.
-func (s *StorageLayer) ResolveLinksToNote(ctx context.Context, noteID int64, path, shortID, title string, projectID *string) error {
+func (s *TenantStore) ResolveLinksToNote(ctx context.Context, noteID int64, path, shortID, title string, projectID *string) error {
+	return s.resolveLinksTo(ctx, noteID, path, shortID, title, projectID, true)
+}
+
+func (s *TenantStore) resolveLinksTo(ctx context.Context, noteID int64, path, shortID, title string, projectID *string, fullMetadata bool) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin repair: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	// Validate the ID AND all supplied metadata in the same transaction as the
+	// repair. A caller may not use an owned ID with another note's path/title.
+	where, args := scope.where("id = ? AND path = ? AND short_id = ?", noteID, path, shortID)
+	if fullMetadata {
+		where += " AND title = ? AND project_id IS ?"
+		args = append(args, title, projectID)
+	}
+	var ownedID int64
+	if err := tx.QueryRowContext(ctx, "SELECT id FROM notes WHERE "+where, args...).Scan(&ownedID); err != nil {
+		return fmt.Errorf("invalid repair target: %w", err)
+	}
 	targets := []interface{}{noteID, path}
 	placeholders := "?"
 	if shortID != "" {
@@ -162,18 +207,29 @@ func (s *StorageLayer) ResolveLinksToNote(ctx context.Context, noteID int64, pat
 		clause += ` OR (
 			type = ? AND target_path = ? AND (
 				? IS NULL
-				OR (SELECT n.project_id FROM notes n WHERE n.id = links.source_id) IS ?
+				OR (SELECT n.project_id FROM graph_notes n WHERE n.id = links.source_id) IS ?
 			)
 		)`
 		targets = append(targets, LinkTypeWiki, title, projectID, projectID)
 	}
 
-	_, err := s.db.ExecContext(ctx,
-		"UPDATE links SET target_id = ? WHERE target_id IS NULL AND ("+clause+")",
-		targets...,
+	prefix, scopeArgs := graphContentScope(scope)
+	_, err = tx.ExecContext(ctx,
+		prefix+"UPDATE links SET target_id = ? WHERE id IN (SELECT id FROM graph_links) AND target_id IS NULL AND ("+clause+")",
+		append(scopeArgs, targets...)...,
 	)
 	if err != nil {
 		return fmt.Errorf("resolve links to %q: %w", path, err)
+	}
+	return tx.Commit()
+}
+
+// Use the pinned transaction, never the pool: production allows one connection.
+func requireOwnedNote(ctx context.Context, tx *sql.Tx, scope contentScope, id int64) error {
+	where, args := scope.where("id = ?", id)
+	var owned int64
+	if err := tx.QueryRowContext(ctx, "SELECT id FROM notes WHERE "+where, args...).Scan(&owned); err != nil {
+		return fmt.Errorf("note endpoint not owned: %w", err)
 	}
 	return nil
 }

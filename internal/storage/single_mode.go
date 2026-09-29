@@ -38,35 +38,35 @@ func (s *SingleModeTokenStore) GenerateToken() (string, error) {
 	if err := s.allowed(); err != nil {
 		return "", err
 	}
-	return s.backing.GenerateToken()
+	return generateToken()
 }
 func (s *SingleModeTokenStore) CreateToken(ctx context.Context, name, token, scope string) error {
 	if err := s.allowed(); err != nil {
 		return err
 	}
-	return s.backing.CreateToken(ctx, name, token, scope)
+	return (identityStore{db: s.backing.db}).createToken(ctx, name, token, scope)
 }
 func (s *SingleModeTokenStore) ListTokens(ctx context.Context, revoked ...bool) ([]Token, error) {
 	if err := s.allowed(); err != nil {
 		return nil, err
 	}
-	return s.backing.ListTokens(ctx, revoked...)
+	return (identityStore{db: s.backing.db}).listTokens(ctx, revoked...)
 }
 func (s *SingleModeTokenStore) GetTokenByName(ctx context.Context, name string) (*Token, error) {
 	if err := s.allowed(); err != nil {
 		return nil, err
 	}
-	return s.backing.GetTokenByName(ctx, name)
+	return (identityStore{db: s.backing.db}).getTokenByName(ctx, name)
 }
 func (s *SingleModeTokenStore) RevokeToken(ctx context.Context, name string) error {
 	if err := s.allowed(); err != nil {
 		return err
 	}
-	return s.backing.RevokeToken(ctx, name)
+	return (identityStore{db: s.backing.db}).revokeToken(ctx, name)
 }
 func (s *SingleModeTokenStore) BootstrapToken(ctx context.Context, name, token string, passwordConfigured bool) error {
 	if err := s.allowed(); err != nil {
 		return err
 	}
-	return s.backing.BootstrapToken(ctx, name, token, passwordConfigured)
+	return (identityStore{db: s.backing.db}).bootstrapToken(ctx, name, token, passwordConfigured)
 }

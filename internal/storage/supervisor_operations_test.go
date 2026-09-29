@@ -62,25 +62,8 @@ func TestSupervisorOperationConcurrentAdmissionAndScope(t *testing.T) {
 
 func TestSupervisorSchemaUpgradeFrom29(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "brain.db")
+	runArchivedSchema(t, provenanceSources[1].revision, path)
 	owner, err := New(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, table := range []string{"budget_reservations", "execution_budgets", "supervisor_checkpoint_versions", "supervisor_checkpoints", "supervisor_operations"} {
-		if _, err := owner.db.Exec("DROP TABLE " + table); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := owner.db.Exec("DELETE FROM schema_version WHERE version > 29"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := owner.db.Exec("INSERT INTO schema_version(version) SELECT 29 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version=29)"); err != nil {
-		t.Fatal(err)
-	}
-	if err := owner.Close(); err != nil {
-		t.Fatal(err)
-	}
-	owner, err = New(path)
 	if err != nil {
 		t.Fatal(err)
 	}

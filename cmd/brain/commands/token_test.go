@@ -11,8 +11,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/huynle/brain-api/internal/auth"
 	"github.com/huynle/brain-api/internal/storage"
 )
+
+func tokenFixtureAdmin(t *testing.T, owner *storage.StorageLayer, brainDir string) *storage.TokenAdmin {
+	t.Helper()
+	cap, err := auth.AuthenticateLocalDatabaseOwner(filepath.Join(brainDir, ".brain-data", "brain.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := owner.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := control.TokenAdmin(cap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return admin
+}
 
 // setupTestDB creates a temporary database for testing
 func setupTestDB(t *testing.T) string {
@@ -75,7 +93,7 @@ func TestTokenCommand_CreateToken(t *testing.T) {
 	defer store.Close()
 
 	ctx := context.Background()
-	token, err := store.GetTokenByName(ctx, "test-token")
+	token, err := tokenFixtureAdmin(t, store, brainDir).GetTokenByName(ctx, "test-token")
 	if err != nil {
 		t.Fatalf("GetTokenByName failed: %v", err)
 	}
@@ -98,10 +116,11 @@ func TestTokenCommand_ListTokens(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	token1, _ := store.GenerateToken()
-	store.CreateToken(ctx, "token1", token1, "")
-	token2, _ := store.GenerateToken()
-	store.CreateToken(ctx, "token2", token2, "")
+	admin := tokenFixtureAdmin(t, store, brainDir)
+	token1, _ := admin.GenerateToken()
+	admin.CreateToken(ctx, "token1", token1, "")
+	token2, _ := admin.GenerateToken()
+	admin.CreateToken(ctx, "token2", token2, "")
 	store.Close()
 
 	// Now list them via command
@@ -127,8 +146,9 @@ func TestTokenCommand_RevokeToken(t *testing.T) {
 		t.Fatalf("open database: %v", err)
 	}
 	ctx := context.Background()
-	token, _ := store.GenerateToken()
-	store.CreateToken(ctx, "revoke-me", token, "")
+	admin := tokenFixtureAdmin(t, store, brainDir)
+	token, _ := admin.GenerateToken()
+	admin.CreateToken(ctx, "revoke-me", token, "")
 	store.Close()
 
 	// Revoke it via command
@@ -146,7 +166,8 @@ func TestTokenCommand_RevokeToken(t *testing.T) {
 	// Verify it's soft-revoked (still exists but has revoked_at set)
 	store, _ = storage.New(filepath.Join(brainDir, ".brain-data", "brain.db"))
 	defer store.Close()
-	retrieved, err := store.GetTokenByName(ctx, "revoke-me")
+	admin = tokenFixtureAdmin(t, store, brainDir)
+	retrieved, err := admin.GetTokenByName(ctx, "revoke-me")
 	if err != nil {
 		t.Fatalf("GetTokenByName after revoke should still find token: %v", err)
 	}
@@ -155,7 +176,7 @@ func TestTokenCommand_RevokeToken(t *testing.T) {
 	}
 
 	// Verify it's excluded from default list
-	tokens, err := store.ListTokens(ctx)
+	tokens, err := admin.ListTokens(ctx)
 	if err != nil {
 		t.Fatalf("ListTokens failed: %v", err)
 	}
@@ -529,7 +550,7 @@ func TestTokenCommand_FallbackToDirect(t *testing.T) {
 		defer store.Close()
 
 		ctx := context.Background()
-		tok, err := store.GetTokenByName(ctx, "fallback-token")
+		tok, err := tokenFixtureAdmin(t, store, brainDir).GetTokenByName(ctx, "fallback-token")
 		if err != nil {
 			t.Fatalf("GetTokenByName failed: %v", err)
 		}
@@ -674,7 +695,7 @@ func TestTokenCommand_CreateFallsBackToDirectDBWhenBootstrapForbidden(t *testing
 	defer store.Close()
 
 	ctx := context.Background()
-	tok, err := store.GetTokenByName(ctx, "direct-db-test")
+	tok, err := tokenFixtureAdmin(t, store, brainDir).GetTokenByName(ctx, "direct-db-test")
 	if err != nil {
 		t.Fatalf("GetTokenByName failed: %v", err)
 	}
@@ -693,8 +714,9 @@ func TestTokenCommand_ListFallsBackToDirectDBOn401(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
-	tok, _ := store.GenerateToken()
-	store.CreateToken(context.Background(), "list-test", tok, "")
+	admin := tokenFixtureAdmin(t, store, brainDir)
+	tok, _ := admin.GenerateToken()
+	admin.CreateToken(context.Background(), "list-test", tok, "")
 	store.Close()
 
 	cmd := &TokenCommand{
@@ -722,8 +744,9 @@ func TestTokenCommand_RevokeFallsBackToDirectDBOn401(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
-	tok, _ := store.GenerateToken()
-	store.CreateToken(context.Background(), "revoke-test", tok, "")
+	admin := tokenFixtureAdmin(t, store, brainDir)
+	tok, _ := admin.GenerateToken()
+	admin.CreateToken(context.Background(), "revoke-test", tok, "")
 	store.Close()
 
 	cmd := &TokenCommand{

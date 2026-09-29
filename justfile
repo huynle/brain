@@ -108,8 +108,27 @@ lint:
 vet:
     go vet ./...
 
-# Run all checks (vet + test + lint + web typecheck/tests)
-check: vet test lint web-check web-test
+# Dedicated P4.11 isolation gate; deliberately uncached and independent of test-short.
+# Full storage includes Tenant*, Phase6*, inventories, exact raw method/package
+# function/call-site/type/ownership guards AND both historical baseline tests.
+# Locally BRAIN_STORAGE_RATCHET_BASE is optional; PRs must supply the event base.
+tenant-isolation-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CI=1
+    export GOMAXPROCS="${GOMAXPROCS:-2}"
+    if [ "${GITHUB_EVENT_NAME:-}" = pull_request ]; then
+        : "${PR_BASE_SHA:?actual pull_request.base.sha is required}"
+        export BRAIN_STORAGE_RATCHET_BASE="$PR_BASE_SHA"
+    fi
+    go test -p 1 ./internal/storage -count=1 -timeout=15m
+    go test -p 1 ./internal/tenant -count=1
+    go test -v -p 1 ./internal/apiserver -run 'Tenant|Tenancy|GraphManager|RejectsMulti|TestRunServerRejectsOperationalMultiBeforeStorage' -count=1 -timeout=10m
+    go test -v -p 1 ./internal/indexer -run 'Tenant|NonlocalLegacy' -count=1 -timeout=10m
+    go test -v -race -p 1 ./internal/storage ./internal/apiserver ./internal/indexer -run 'TestTenantCollisionConcurrentWrites|TestTenantClaimAssignmentContention|TestTenantAttachmentsAttachDeleteAtomic|TestGraphManager|TestTenantAcceptanceConcurrentHTTP|TestTenantAcceptanceHeldHTTPAndSuspension|TestTenantPolicyScanAndWatcher' -count=1 -timeout=15m
+
+# Run all checks (isolation + vet + test + lint + web typecheck/tests)
+check: tenant-isolation-gate vet test lint web-check web-test
 
 # Format Go code
 fmt:

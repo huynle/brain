@@ -50,7 +50,6 @@ func assistantTokenFromContext(ctx context.Context) string {
 	return ""
 }
 
-
 // mcpToolset builds the assistant tool registry from the MCP tool set,
 // authenticated with the given bearer token (may be empty when auth is
 // disabled). Returns nil when MCP adaptation is not configured, letting the
@@ -162,20 +161,20 @@ func mcpSchemaToMap(in mcppkg.InputSchema) map[string]any {
 // heuristic below would miss or misjudge. Membership here forces
 // TierDestructive (UI confirmation) regardless of the name pattern.
 var destructiveMCPExact = map[string]struct{}{
-	"delete":                 {},
-	"move":                   {},
-	"bulk_update":            {},
-	"control_spawn_instance": {},
-	"control_kill_instance":  {},
-	"control_send_prompt":    {},
-	"control_abort_session":  {},
-	"control_permission":     {},
-	"webhook_delete":         {},
-	"reminder_delete":        {},
-	"goal_delete":            {},
-	"runner_pause_project":   {},
-	"runner_resume_project":  {},
-	"feature_checkout":       {},
+	"delete":                   {},
+	"move":                     {},
+	"bulk_update":              {},
+	"control_spawn_instance":   {},
+	"control_kill_instance":    {},
+	"control_send_prompt":      {},
+	"control_abort_session":    {},
+	"control_permission":       {},
+	"webhook_delete":           {},
+	"reminder_delete":          {},
+	"goal_delete":              {},
+	"runner_pause_project":     {},
+	"runner_resume_project":    {},
+	"feature_checkout":         {},
 	"resume_task_with_context": {},
 }
 

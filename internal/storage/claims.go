@@ -24,24 +24,36 @@ type TaskClaimRow struct {
 //   - (true, nil, nil) if the claim was successful (new or re-claimed expired/own)
 //   - (false, existingClaim, nil) if claimed by a different active runner
 //   - (false, nil, err) on database error
-func (s *StorageLayer) ClaimTask(ctx context.Context, projectID, taskID, runnerID string, leaseDuration time.Duration) (bool, *TaskClaimRow, error) {
+func (s *TenantStore) ClaimTask(ctx context.Context, projectID, taskID, runnerID string, leaseDuration time.Duration) (bool, *TaskClaimRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, nil, err
+	}
 	now := time.Now().UnixMilli()
 	expiresAt := now + leaseDuration.Milliseconds()
+	columns, values, conflict := "", "", "project_id, task_id"
+	args := []interface{}{}
+	if scope.owner != "" {
+		columns, values, conflict = "tenant_id,", "?,", "tenant_id, project_id, task_id"
+		args = append(args, scope.owner)
+	}
+	args = append(args, projectID, taskID, runnerID, now, expiresAt, now)
 
 	// Atomic upsert: insert the claim, or on conflict update ONLY if:
 	// - the existing claim is by the same runner, OR
 	// - the existing claim has expired
+	// The v29 composite FK requires an existing same-tenant durable runner key;
+	// claiming work must never manufacture reference ownership.
 	result, err := s.db.ExecContext(ctx, `
-		INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT (project_id, task_id) DO UPDATE SET
+		INSERT INTO task_claims (`+columns+`project_id, task_id, runner_id, claimed_at, expires_at)
+		VALUES (`+values+`?, ?, ?, ?, ?)
+		ON CONFLICT (`+conflict+`) DO UPDATE SET
 			runner_id  = excluded.runner_id,
 			claimed_at = excluded.claimed_at,
 			expires_at = excluded.expires_at
 		WHERE task_claims.runner_id = excluded.runner_id
 		   OR task_claims.expires_at < ?`,
-		projectID, taskID, runnerID, now, expiresAt,
-		now,
+		args...,
 	)
 	if err != nil {
 		return false, nil, fmt.Errorf("claim task: %w", err)
@@ -68,10 +80,15 @@ func (s *StorageLayer) ClaimTask(ctx context.Context, projectID, taskID, runnerI
 // ReleaseClaim deletes a claim only if the given runnerID matches the current
 // holder. Returns true if the claim was released, false if not found or not
 // owned by this runner.
-func (s *StorageLayer) ReleaseClaim(ctx context.Context, projectID, taskID, runnerID string) (bool, error) {
+func (s *TenantStore) ReleaseClaim(ctx context.Context, projectID, taskID, runnerID string) (bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, err
+	}
+	pred, args := scope.where("project_id = ? AND task_id = ? AND runner_id = ?", projectID, taskID, runnerID)
 	result, err := s.db.ExecContext(ctx,
-		"DELETE FROM task_claims WHERE project_id = ? AND task_id = ? AND runner_id = ?",
-		projectID, taskID, runnerID,
+		"DELETE FROM task_claims WHERE "+pred,
+		args...,
 	)
 	if err != nil {
 		return false, fmt.Errorf("release claim: %w", err)
@@ -85,11 +102,16 @@ func (s *StorageLayer) ReleaseClaim(ctx context.Context, projectID, taskID, runn
 }
 
 // GetClaim returns the current claim for a task, or nil if unclaimed.
-func (s *StorageLayer) GetClaim(ctx context.Context, projectID, taskID string) (*TaskClaimRow, error) {
+func (s *TenantStore) GetClaim(ctx context.Context, projectID, taskID string) (*TaskClaimRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pred, args := scope.where("project_id = ? AND task_id = ?", projectID, taskID)
 	var c TaskClaimRow
-	err := s.db.QueryRowContext(ctx,
-		"SELECT project_id, task_id, runner_id, claimed_at, expires_at FROM task_claims WHERE project_id = ? AND task_id = ?",
-		projectID, taskID,
+	err = s.db.QueryRowContext(ctx,
+		"SELECT project_id, task_id, runner_id, claimed_at, expires_at FROM task_claims WHERE "+pred,
+		args...,
 	).Scan(&c.ProjectID, &c.TaskID, &c.RunnerID, &c.ClaimedAt, &c.ExpiresAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -101,10 +123,15 @@ func (s *StorageLayer) GetClaim(ctx context.Context, projectID, taskID string) (
 }
 
 // GetClaimsByRunner returns all claims currently held by the given runner.
-func (s *StorageLayer) GetClaimsByRunner(ctx context.Context, runnerID string) ([]TaskClaimRow, error) {
+func (s *TenantStore) GetClaimsByRunner(ctx context.Context, runnerID string) ([]TaskClaimRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pred, args := scope.where("runner_id = ?", runnerID)
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT project_id, task_id, runner_id, claimed_at, expires_at FROM task_claims WHERE runner_id = ? ORDER BY claimed_at",
-		runnerID,
+		"SELECT project_id, task_id, runner_id, claimed_at, expires_at FROM task_claims WHERE "+pred+" ORDER BY claimed_at",
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get claims by runner: %w", err)
@@ -127,11 +154,16 @@ func (s *StorageLayer) GetClaimsByRunner(ctx context.Context, runnerID string) (
 
 // ExpireStaleClaims deletes all claims where expires_at < now.
 // Returns the number of expired claims removed.
-func (s *StorageLayer) ExpireStaleClaims(ctx context.Context) (int64, error) {
+func (s *TenantStore) ExpireStaleClaims(ctx context.Context) (int64, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return 0, err
+	}
 	now := time.Now().UnixMilli()
+	pred, args := scope.where("expires_at < ?", now)
 	result, err := s.db.ExecContext(ctx,
-		"DELETE FROM task_claims WHERE expires_at < ?",
-		now,
+		"DELETE FROM task_claims WHERE "+pred,
+		args...,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("expire stale claims: %w", err)
@@ -146,10 +178,15 @@ func (s *StorageLayer) ExpireStaleClaims(ctx context.Context) (int64, error) {
 
 // ReleaseAllByRunner deletes all claims held by the given runner.
 // Returns the number of claims released.
-func (s *StorageLayer) ReleaseAllByRunner(ctx context.Context, runnerID string) (int64, error) {
+func (s *TenantStore) ReleaseAllByRunner(ctx context.Context, runnerID string) (int64, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return 0, err
+	}
+	pred, args := scope.where("runner_id = ?", runnerID)
 	result, err := s.db.ExecContext(ctx,
-		"DELETE FROM task_claims WHERE runner_id = ?",
-		runnerID,
+		"DELETE FROM task_claims WHERE "+pred,
+		args...,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("release all by runner: %w", err)
@@ -164,10 +201,16 @@ func (s *StorageLayer) ReleaseAllByRunner(ctx context.Context, runnerID string) 
 
 // RenewClaim extends the expiry of a claim. Returns an error if the claim
 // does not exist or is not owned by the given runner.
-func (s *StorageLayer) RenewClaim(ctx context.Context, projectID, taskID, runnerID string, newExpiry time.Time) error {
+func (s *TenantStore) RenewClaim(ctx context.Context, projectID, taskID, runnerID string, newExpiry time.Time) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
+	pred, args := scope.where("project_id = ? AND task_id = ? AND runner_id = ?", projectID, taskID, runnerID)
+	args = append([]interface{}{newExpiry.UnixMilli()}, args...)
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE task_claims SET expires_at = ? WHERE project_id = ? AND task_id = ? AND runner_id = ?",
-		newExpiry.UnixMilli(), projectID, taskID, runnerID,
+		"UPDATE task_claims SET expires_at = ? WHERE "+pred,
+		args...,
 	)
 	if err != nil {
 		return fmt.Errorf("renew claim: %w", err)

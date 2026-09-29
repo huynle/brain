@@ -14,15 +14,19 @@ type ProjectPauseStateRow struct {
 	UpdatedAt         int64
 }
 
-func (s *StorageLayer) SetProjectTaskPaused(ctx context.Context, projectID string, paused bool) error {
+func (s *TenantStore) SetProjectTaskPaused(ctx context.Context, projectID string, paused bool) error {
 	return s.setProjectPauseColumn(ctx, projectID, "tasks_paused", paused)
 }
 
-func (s *StorageLayer) SetProjectAutomationsPaused(ctx context.Context, projectID string, paused bool) error {
+func (s *TenantStore) SetProjectAutomationsPaused(ctx context.Context, projectID string, paused bool) error {
 	return s.setProjectPauseColumn(ctx, projectID, "automations_paused", paused)
 }
 
-func (s *StorageLayer) setProjectPauseColumn(ctx context.Context, projectID, column string, paused bool) error {
+func (s *TenantStore) setProjectPauseColumn(ctx context.Context, projectID, column string, paused bool) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	if projectID == "" {
 		return fmt.Errorf("project id is required")
 	}
@@ -31,19 +35,27 @@ func (s *StorageLayer) setProjectPauseColumn(ctx context.Context, projectID, col
 	}
 	now := time.Now().UnixMilli()
 	value := boolToInt(paused)
-	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO project_pause_state (project_id, %s, updated_at)
-		VALUES (?, ?, ?)
-		ON CONFLICT(project_id) DO UPDATE SET
+	columns, values, conflict := "project_id, "+column+", updated_at", "?, ?, ?", "project_id"
+	args := []interface{}{projectID, value, now}
+	if scope.owner != "" {
+		columns += ", tenant_id"
+		values += ", ?"
+		conflict = "tenant_id, project_id"
+		args = append(args, scope.owner)
+	}
+	_, err = s.db.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO project_pause_state (%s)
+		VALUES (%s)
+		ON CONFLICT(%s) DO UPDATE SET
 		  %s = excluded.%s,
-		  updated_at = excluded.updated_at`, column, column, column), projectID, value, now)
+		  updated_at = excluded.updated_at`, columns, values, conflict, column, column), args...)
 	if err != nil {
 		return fmt.Errorf("set project pause state: %w", err)
 	}
 	return nil
 }
 
-func (s *StorageLayer) SetAllProjectTasksPaused(ctx context.Context, paused bool) error {
+func (s *TenantStore) SetAllProjectTasksPaused(ctx context.Context, paused bool) error {
 	projects, err := s.listKnownProjectIDs(ctx)
 	if err != nil {
 		return err
@@ -56,7 +68,7 @@ func (s *StorageLayer) SetAllProjectTasksPaused(ctx context.Context, paused bool
 	return nil
 }
 
-func (s *StorageLayer) SetAllProjectAutomationsPaused(ctx context.Context, paused bool) error {
+func (s *TenantStore) SetAllProjectAutomationsPaused(ctx context.Context, paused bool) error {
 	projects, err := s.listKnownProjectIDs(ctx)
 	if err != nil {
 		return err
@@ -69,17 +81,25 @@ func (s *StorageLayer) SetAllProjectAutomationsPaused(ctx context.Context, pause
 	return nil
 }
 
-func (s *StorageLayer) IsProjectTaskPaused(ctx context.Context, projectID string) (bool, error) {
+func (s *TenantStore) IsProjectTaskPaused(ctx context.Context, projectID string) (bool, error) {
 	return s.isProjectPauseColumn(ctx, projectID, "tasks_paused")
 }
 
-func (s *StorageLayer) IsProjectAutomationsPaused(ctx context.Context, projectID string) (bool, error) {
+func (s *TenantStore) IsProjectAutomationsPaused(ctx context.Context, projectID string) (bool, error) {
 	return s.isProjectPauseColumn(ctx, projectID, "automations_paused")
 }
 
-func (s *StorageLayer) isProjectPauseColumn(ctx context.Context, projectID, column string) (bool, error) {
+func (s *TenantStore) isProjectPauseColumn(ctx context.Context, projectID, column string) (bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, err
+	}
+	if column != "tasks_paused" && column != "automations_paused" {
+		return false, fmt.Errorf("invalid pause column %q", column)
+	}
+	where, args := scope.where("project_id = ?", projectID)
 	var value int
-	err := s.db.QueryRowContext(ctx, "SELECT "+column+" FROM project_pause_state WHERE project_id = ?", projectID).Scan(&value)
+	err = s.db.QueryRowContext(ctx, "SELECT "+column+" FROM project_pause_state WHERE "+where, args...).Scan(&value)
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return false, nil
@@ -89,12 +109,16 @@ func (s *StorageLayer) isProjectPauseColumn(ctx context.Context, projectID, colu
 	return value != 0, nil
 }
 
-func (s *StorageLayer) ListProjectPauseStates(ctx context.Context) ([]ProjectPauseStateRow, error) {
+func (s *TenantStore) ListProjectPauseStates(ctx context.Context) ([]ProjectPauseStateRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	where, args := scope.where("(tasks_paused != 0 OR automations_paused != 0)")
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT project_id, tasks_paused, automations_paused, updated_at
 		FROM project_pause_state
-		WHERE tasks_paused != 0 OR automations_paused != 0
-		ORDER BY project_id`)
+		WHERE `+where+` ORDER BY project_id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list project pause states: %w", err)
 	}
@@ -117,11 +141,18 @@ func (s *StorageLayer) ListProjectPauseStates(ctx context.Context) ([]ProjectPau
 	return result, nil
 }
 
-func (s *StorageLayer) listKnownProjectIDs(ctx context.Context) ([]string, error) {
+func (s *TenantStore) listKnownProjectIDs(ctx context.Context) ([]string, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	notesWhere, args := scope.where("project_id IS NOT NULL AND project_id != ''")
+	pauseWhere, pauseArgs := scope.where("project_id != ''")
+	args = append(args, pauseArgs...)
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT DISTINCT project_id FROM notes WHERE project_id IS NOT NULL AND project_id != ''
-		UNION SELECT DISTINCT project_id FROM project_pause_state WHERE project_id != ''
-		ORDER BY project_id`)
+		SELECT DISTINCT project_id FROM notes WHERE `+notesWhere+`
+		UNION SELECT DISTINCT project_id FROM project_pause_state WHERE `+pauseWhere+`
+		ORDER BY project_id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list known project ids: %w", err)
 	}

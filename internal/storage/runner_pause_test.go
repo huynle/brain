@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func seedPauseTestRunner(t *testing.T, s *StorageLayer, runnerID string) {
+func seedPauseTestRunner(t *testing.T, s *TenantStore, runnerID string) {
 	t.Helper()
 	row := &RunnerRow{
 		RunnerID:      runnerID,
@@ -25,7 +25,7 @@ func seedPauseTestRunner(t *testing.T, s *StorageLayer, runnerID string) {
 }
 
 func TestSetRunnerPaused_RoundTrips(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedPauseTestRunner(t, s, "runner-1")
 
@@ -66,7 +66,7 @@ func TestSetRunnerPaused_RoundTrips(t *testing.T) {
 }
 
 func TestSetRunnerPaused_UnknownRunner(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	found, err := s.SetRunnerPaused(context.Background(), "nobody", true)
 	if err != nil {
 		t.Fatalf("SetRunnerPaused failed: %v", err)
@@ -81,7 +81,7 @@ func TestSetRunnerPaused_UnknownRunner(t *testing.T) {
 // every start — if that cleared `paused`, restarting the runner would silently
 // undo an operator's pause.
 func TestUpsertRunner_DoesNotClearPause(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedPauseTestRunner(t, s, "runner-1")
 
@@ -105,7 +105,7 @@ func TestUpsertRunner_DoesNotClearPause(t *testing.T) {
 // which DELETEs that row — if the dial lived on it, a routine stop/start
 // would silently resume a runner an operator had paused.
 func TestRunnerPause_SurvivesDeregisterAndReregister(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedPauseTestRunner(t, s, "runner-1")
 
@@ -193,7 +193,9 @@ func TestRunnerPauseState_MigrationFromV22(t *testing.T) {
 	}
 
 	// Migration is re-runnable.
-	if err := migrateSchema(db); err != nil {
+	// Repeat the admitted migration body, not public admission of its partial,
+	// deliberately unversioned unit-test output.
+	if err := migrateAdmittedSchema(db, 22); err != nil {
 		t.Fatalf("second migrateSchema failed: %v", err)
 	}
 }

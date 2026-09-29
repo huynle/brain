@@ -7,7 +7,7 @@ import (
 )
 
 func TestAssignFeatureIfEmpty_AssignsAndPersists(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	ok, existing, err := s.AssignFeatureIfEmpty(ctx, "proj1", "feat1", "runner-a", "auto", "active")
@@ -35,7 +35,7 @@ func TestAssignFeatureIfEmpty_AssignsAndPersists(t *testing.T) {
 }
 
 func TestAssignFeatureIfEmpty_ExistingAssignmentBlocksDifferentRunner(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	ok, _, err := s.AssignFeatureIfEmpty(ctx, "proj1", "feat1", "runner-a", "auto", "active")
@@ -54,7 +54,7 @@ func TestAssignFeatureIfEmpty_ExistingAssignmentBlocksDifferentRunner(t *testing
 }
 
 func TestAssignFeatureIfEmpty_SameFeatureDifferentProjects(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	ok1, _, err := s.AssignFeatureIfEmpty(ctx, "proj1", "feat1", "runner-a", "auto", "active")
@@ -71,7 +71,7 @@ func TestAssignFeatureIfEmpty_SameFeatureDifferentProjects(t *testing.T) {
 }
 
 func TestAssignFeatureIfEmpty_CompetingRunnersOneWinner(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	type result struct {
@@ -129,7 +129,7 @@ func TestAssignFeatureIfEmpty_CompetingRunnersOneWinner(t *testing.T) {
 }
 
 func TestForceAssignFeature_ReassignsExistingAssignment(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	initial, err := s.ForceAssignFeature(ctx, "proj1", "feat1", "runner-a", "auto", "active")
@@ -151,7 +151,7 @@ func TestForceAssignFeature_ReassignsExistingAssignment(t *testing.T) {
 }
 
 func TestClearFeatureAssignment_RemovesAssignment(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	_, err := s.ForceAssignFeature(ctx, "proj1", "feat1", "runner-a", "manual", "active")
@@ -176,7 +176,7 @@ func TestClearFeatureAssignment_RemovesAssignment(t *testing.T) {
 }
 
 func TestClearFeatureAssignment_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	cleared, err := s.ClearFeatureAssignment(ctx, "proj1", "missing")
@@ -189,7 +189,7 @@ func TestClearFeatureAssignment_NotFound(t *testing.T) {
 }
 
 func TestListFeatureAssignmentsByRunner(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	seedFeatureAssignments(t, s, ctx)
@@ -209,7 +209,7 @@ func TestListFeatureAssignmentsByRunner(t *testing.T) {
 }
 
 func TestListFeatureAssignmentsByProject(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	seedFeatureAssignments(t, s, ctx)
@@ -229,7 +229,7 @@ func TestListFeatureAssignmentsByProject(t *testing.T) {
 }
 
 func TestGetFeatureAssignment_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	assignment, err := s.GetFeatureAssignment(ctx, "proj1", "missing")
@@ -241,7 +241,7 @@ func TestGetFeatureAssignment_NotFound(t *testing.T) {
 	}
 }
 
-func seedFeatureAssignments(t *testing.T, s *StorageLayer, ctx context.Context) {
+func seedFeatureAssignments(t *testing.T, s *TenantStore, ctx context.Context) {
 	t.Helper()
 	seeds := []struct {
 		projectID string

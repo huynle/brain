@@ -2,6 +2,7 @@ package apiserver
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"github.com/huynle/brain-api/internal/auth"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
+	"github.com/huynle/brain-api/internal/tenant"
 )
 
 func TestBootstrapStartup_PasswordClaimPersistsWithoutRequest(t *testing.T) {
@@ -32,7 +35,11 @@ func TestBootstrapStartup_PasswordClaimPersistsWithoutRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	err = s.BootstrapToken(context.Background(), "late", "secret", false)
+	tokens, err := s.SingleModeTokens(tenant.ModeSingle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = tokens.BootstrapToken(context.Background(), "late", "secret", false)
 	var closed *storage.BootstrapClosedError
 	if !errors.As(err, &closed) {
 		t.Fatalf("bootstrap after password removal = %v, want closed", err)
@@ -46,26 +53,31 @@ func TestBootstrapStartup_PasswordClaimFailureStopsStartup(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	s, err := storage.New(filepath.Join(dataDir, "brain.db"))
+	db, err := sql.Open("sqlite", filepath.Join(dataDir, "brain.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Backfill has no credentials to copy. Only the password startup write
-	// hits this trigger, so this tests that specific error path.
-	_, err = s.DB().Exec(`CREATE TRIGGER reject_install_claim BEFORE INSERT ON entry_meta
+	t.Cleanup(func() { db.Close() })
+	_, err = storagetest.NewWithDB(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exact runtime30 admission now refuses injected triggers before startup
+	// can write the claim. The unknown catalog must never reach a handler.
+	_, err = db.Exec(`CREATE TRIGGER reject_install_claim BEFORE INSERT ON entry_meta
 		WHEN NEW.path = 'brain:system/install_claimed'
 		BEGIN SELECT RAISE(ABORT, 'claim persistence unavailable'); END`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = s.Close()
+	_ = db.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	h, _, cleanup, err := buildHTTPHandler(ctx, ServerOptions{Host: "localhost", BrainDir: dir})
 	if cleanup != nil {
 		defer cleanup()
 	}
-	if err == nil || !strings.Contains(err.Error(), "claim persistence unavailable") || h != nil {
+	if err == nil || !strings.Contains(err.Error(), "unreviewed source catalog") || h != nil {
 		t.Fatalf("startup handler present = %v, error = %v; want persistence failure and no handler", h != nil, err)
 	}
 }

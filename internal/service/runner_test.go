@@ -11,11 +11,10 @@ import (
 
 func newStorageBackedRunnerService(t *testing.T) (*RunnerServiceImpl, *storage.TenantStore) {
 	t.Helper()
-	store, err := storagetest.New(t.TempDir() + "/brain.db")
+	store, err := storagetest.New(t, t.TempDir()+"/brain.db")
 	if err != nil {
 		t.Fatalf("new storage: %v", err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
 	return NewRunnerServiceWithStorage(store), store
 }
 

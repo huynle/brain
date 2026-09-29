@@ -214,3 +214,37 @@ test("consecutive presses each fire", () => {
 
   assert.equal(fired, 2);
 });
+
+test("scroll suppresses the trailing click but not a fresh tap", () => {
+  const timers = fakeTimers();
+  const h = createLongPressHandlers(() => assert.fail("selected during scroll"), timers);
+  h.onTouchStart(touch(20, 20)); h.onTouchMove(touch(20, 40)); h.onTouchEnd(); timers.advance();
+  const trailing = mouseEvent(); h.onClickCapture(trailing); assert.equal(trailing.prevented, true);
+  h.onTouchStart(touch(20, 20)); h.onTouchEnd();
+  const tap = mouseEvent(); h.onClickCapture(tap); assert.equal(tap.prevented, false);
+});
+
+test("scroll events cancel holds and a touch that stops momentum is ignored", () => {
+  const timers = fakeTimers(); let clock = 1000;
+  const h = createLongPressHandlers(() => assert.fail("selected during scroll"), { ...timers, now: () => clock });
+  h.onTouchStart(touch(10, 10)); h.onScroll(); timers.advance(); h.onTouchEnd(); clock += 40;
+  h.onTouchStart(touch(10, 10)); timers.advance(); h.onTouchEnd();
+  const stop = mouseEvent(); h.onClickCapture(stop); assert.equal(stop.prevented, true);
+  clock += 200; h.onTouchStart(touch(10, 10)); h.onTouchEnd();
+  const tap = mouseEvent(); h.onClickCapture(tap); assert.equal(tap.prevented, false);
+});
+
+test("a new row press replaces the old timer and disposal cancels it", () => {
+  const timers = fakeTimers(); let fired = 0;
+  const h = createLongPressHandlers(() => fired++, timers);
+  h.onTouchStart(touch(1, 1)); h.onTouchStart(touch(2, 2));
+  assert.equal(timers.pendingCount(), 1);
+  h.dispose(); timers.advance(); assert.equal(fired, 0);
+});
+
+test("keyboard activation is not swallowed after a cancelled touch", () => {
+  const h = createLongPressHandlers(() => {});
+  h.onTouchStart(touch(1, 1)); h.onTouchCancel();
+  const keyboard = mouseEvent(); keyboard.detail = 0;
+  h.onClickCapture(keyboard); assert.equal(keyboard.prevented, false);
+});

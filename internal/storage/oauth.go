@@ -102,7 +102,7 @@ func unmarshalJSON(s string, v interface{}) error {
 
 // CreateOAuthClient inserts a new OAuth client. If ClientID is empty, one is
 // generated with the "brain_" prefix + 32 hex chars.
-func (s *StorageLayer) CreateOAuthClient(ctx context.Context, client *OAuthClient) error {
+func (s identityStore) createOAuthClient(ctx context.Context, client *OAuthClient) error {
 	if client.ClientID == "" {
 		id, err := generateOAuthClientID()
 		if err != nil {
@@ -147,7 +147,7 @@ func (s *StorageLayer) CreateOAuthClient(ctx context.Context, client *OAuthClien
 }
 
 // GetOAuthClient retrieves an OAuth client by client ID.
-func (s *StorageLayer) GetOAuthClient(ctx context.Context, clientID string) (*OAuthClient, error) {
+func (s identityStore) getOAuthClient(ctx context.Context, clientID string) (*OAuthClient, error) {
 	var c OAuthClient
 	var redirectURIs, grantTypes, responseTypes string
 	var clientName, clientURI, logoURI, scope sql.NullString
@@ -185,7 +185,7 @@ func (s *StorageLayer) GetOAuthClient(ctx context.Context, clientID string) (*OA
 }
 
 // ListOAuthClients returns all registered OAuth clients.
-func (s *StorageLayer) ListOAuthClients(ctx context.Context) ([]OAuthClient, error) {
+func (s identityStore) listOAuthClients(ctx context.Context) ([]OAuthClient, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT client_id, client_secret, redirect_uris, client_name, client_uri,
 		       logo_uri, scope, grant_types, response_types, token_endpoint_auth_method, created_at
@@ -239,7 +239,7 @@ func (s *StorageLayer) ListOAuthClients(ctx context.Context) ([]OAuthClient, err
 // ---------------------------------------------------------------------------
 
 // CreateAuthCode inserts a new authorization code.
-func (s *StorageLayer) CreateAuthCode(ctx context.Context, code *OAuthAuthCode) error {
+func (s identityStore) createAuthCode(ctx context.Context, code *OAuthAuthCode) error {
 	if code.CreatedAt == 0 {
 		code.CreatedAt = time.Now().Unix()
 	}
@@ -267,7 +267,7 @@ func (s *StorageLayer) CreateAuthCode(ctx context.Context, code *OAuthAuthCode) 
 
 // ConsumeAuthCode retrieves and deletes an authorization code (single-use).
 // Returns an error if the code is expired or not found.
-func (s *StorageLayer) ConsumeAuthCode(ctx context.Context, codeValue string) (*OAuthAuthCode, error) {
+func (s identityStore) consumeAuthCode(ctx context.Context, codeValue string) (*OAuthAuthCode, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -319,7 +319,7 @@ func (s *StorageLayer) ConsumeAuthCode(ctx context.Context, codeValue string) (*
 }
 
 // CleanupExpiredCodes removes all authorization codes past their expires_at.
-func (s *StorageLayer) CleanupExpiredCodes(ctx context.Context) error {
+func (s identityStore) cleanupExpiredCodes(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx,
 		"DELETE FROM oauth_auth_codes WHERE expires_at < ?", time.Now().Unix())
 	if err != nil {
@@ -333,7 +333,7 @@ func (s *StorageLayer) CleanupExpiredCodes(ctx context.Context) error {
 // ---------------------------------------------------------------------------
 
 // CreateAccessToken inserts a new access token.
-func (s *StorageLayer) CreateAccessToken(ctx context.Context, token *OAuthAccessToken) error {
+func (s identityStore) createAccessToken(ctx context.Context, token *OAuthAccessToken) error {
 	now := time.Now()
 	if token.CreatedAt == 0 {
 		token.CreatedAt = now.Unix()
@@ -372,8 +372,8 @@ func (s *StorageLayer) CreateAccessToken(ctx context.Context, token *OAuthAccess
 
 // SaveAccessToken is a convenience method that persists an OAuth access token.
 // Satisfies the oauth.AccessTokenStore interface.
-func (s *StorageLayer) SaveAccessToken(ctx context.Context, token, clientID, scope string, expiresAt int64) error {
-	return s.CreateAccessToken(ctx, &OAuthAccessToken{
+func (s identityStore) saveAccessToken(ctx context.Context, token, clientID, scope string, expiresAt int64) error {
+	return s.createAccessToken(ctx, &OAuthAccessToken{
 		Token:     token,
 		ClientID:  clientID,
 		Scope:     scope,
@@ -383,7 +383,7 @@ func (s *StorageLayer) SaveAccessToken(ctx context.Context, token, clientID, sco
 
 // GetAccessToken retrieves an access token and checks expiry.
 // Returns an error if the token is expired or not found.
-func (s *StorageLayer) GetAccessToken(ctx context.Context, tokenValue string) (*OAuthAccessToken, error) {
+func (s identityStore) getAccessToken(ctx context.Context, tokenValue string) (*OAuthAccessToken, error) {
 	var t OAuthAccessToken
 	var scope, userID sql.NullString
 
@@ -411,7 +411,7 @@ func (s *StorageLayer) GetAccessToken(ctx context.Context, tokenValue string) (*
 }
 
 // RevokeAccessToken deletes a specific access token.
-func (s *StorageLayer) RevokeAccessToken(ctx context.Context, tokenValue string) error {
+func (s identityStore) revokeAccessToken(ctx context.Context, tokenValue string) error {
 	result, err := s.db.ExecContext(ctx,
 		"DELETE FROM oauth_access_tokens WHERE token = ?", tokenValue)
 	if err != nil {
@@ -429,7 +429,7 @@ func (s *StorageLayer) RevokeAccessToken(ctx context.Context, tokenValue string)
 }
 
 // RevokeAccessTokensByClient deletes all access tokens for a given client.
-func (s *StorageLayer) RevokeAccessTokensByClient(ctx context.Context, clientID string) error {
+func (s identityStore) revokeAccessTokensByClient(ctx context.Context, clientID string) error {
 	_, err := s.db.ExecContext(ctx,
 		"DELETE FROM oauth_access_tokens WHERE client_id = ?", clientID)
 	if err != nil {
@@ -439,7 +439,7 @@ func (s *StorageLayer) RevokeAccessTokensByClient(ctx context.Context, clientID 
 }
 
 // CleanupExpiredAccessTokens removes all access tokens past their expires_at.
-func (s *StorageLayer) CleanupExpiredAccessTokens(ctx context.Context) error {
+func (s identityStore) cleanupExpiredAccessTokens(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx,
 		"DELETE FROM oauth_access_tokens WHERE expires_at < ?", time.Now().Unix())
 	if err != nil {
@@ -453,7 +453,7 @@ func (s *StorageLayer) CleanupExpiredAccessTokens(ctx context.Context) error {
 // ---------------------------------------------------------------------------
 
 // CreateRefreshToken inserts a new refresh token.
-func (s *StorageLayer) CreateRefreshToken(ctx context.Context, token *OAuthRefreshToken) error {
+func (s identityStore) createRefreshToken(ctx context.Context, token *OAuthRefreshToken) error {
 	if token.CreatedAt == 0 {
 		token.CreatedAt = time.Now().Unix()
 	}
@@ -476,7 +476,7 @@ func (s *StorageLayer) CreateRefreshToken(ctx context.Context, token *OAuthRefre
 
 // ConsumeRefreshToken retrieves and deletes a refresh token (single-use rotation).
 // Returns an error if the token is expired or not found.
-func (s *StorageLayer) ConsumeRefreshToken(ctx context.Context, tokenValue string) (*OAuthRefreshToken, error) {
+func (s identityStore) consumeRefreshToken(ctx context.Context, tokenValue string) (*OAuthRefreshToken, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -524,7 +524,7 @@ func (s *StorageLayer) ConsumeRefreshToken(ctx context.Context, tokenValue strin
 }
 
 // RevokeRefreshTokensByClient deletes all refresh tokens for a given client.
-func (s *StorageLayer) RevokeRefreshTokensByClient(ctx context.Context, clientID string) error {
+func (s identityStore) revokeRefreshTokensByClient(ctx context.Context, clientID string) error {
 	_, err := s.db.ExecContext(ctx,
 		"DELETE FROM oauth_refresh_tokens WHERE client_id = ?", clientID)
 	if err != nil {
@@ -534,7 +534,7 @@ func (s *StorageLayer) RevokeRefreshTokensByClient(ctx context.Context, clientID
 }
 
 // CleanupExpiredRefreshTokens removes all refresh tokens past their expires_at.
-func (s *StorageLayer) CleanupExpiredRefreshTokens(ctx context.Context) error {
+func (s identityStore) cleanupExpiredRefreshTokens(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx,
 		"DELETE FROM oauth_refresh_tokens WHERE expires_at != -1 AND expires_at < ?", time.Now().Unix())
 	if err != nil {

@@ -32,7 +32,7 @@ func newTestRunnerRegistryService(t *testing.T) (*RunnerRegistryServiceImpl, *st
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { db.Close() })
 
 	svc := NewRunnerRegistryService(store)
 	return svc, store
@@ -1206,7 +1206,7 @@ func newTestRunnerRegistryServiceWithHub(t *testing.T) (*RunnerRegistryServiceIm
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { db.Close() })
 
 	hub := realtime.NewHub()
 	svc := NewRunnerRegistryService(store)

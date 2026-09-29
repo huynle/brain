@@ -390,8 +390,10 @@ const DefaultLifecycleInterval = 60 * time.Second
 // all runners and transitions their status based on heartbeat age. Stale runners
 // (heartbeat > 90s) get marked "stale". Offline runners (heartbeat > 5min) get
 // marked "offline" and have their runtime ownership released. Respects context cancellation.
-func (s *RunnerRegistryServiceImpl) StartLifecycleManager(ctx context.Context, interval time.Duration) {
+func (s *RunnerRegistryServiceImpl) StartLifecycleManager(ctx context.Context, interval time.Duration) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
@@ -405,6 +407,7 @@ func (s *RunnerRegistryServiceImpl) StartLifecycleManager(ctx context.Context, i
 			}
 		}
 	}()
+	return done
 }
 
 // RunLifecycleSweep performs a single lifecycle sweep across all runners.

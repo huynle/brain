@@ -116,6 +116,7 @@ try {
     for (const button of await p
       .locator(".topbar button:visible, .mobile-nav button:visible")
       .all()) {
+      await button.scrollIntoViewIfNeeded();
       await fits(button);
       const box = await button.boundingBox();
       assert.ok(box.height >= 44);
@@ -151,9 +152,7 @@ try {
   pass(
     "Workspace navigation exposes projects and settings without trapping a second dialog",
   );
-  await p.getByRole("button", { name: "More tools" }).click();
-  await expect(p.getByRole("dialog", { name: "Tools" })).toBeVisible();
-  await p.getByRole("button", { name: "Assistant", exact: true }).click();
+  await p.getByRole("navigation",{name:"Main navigation"}).getByRole("button", { name: "Assistant", exact: true }).click();
   await expect(p.locator(".assistant-panel")).toBeVisible();
   await fits(p.locator(".assistant-panel"));
   await shot("assistant");
@@ -304,7 +303,7 @@ try {
   await shot("desktop");
   pass("Desktop navigation survives switching from mobile");
   const sessionContext = await b.newContext({
-    viewport: { width: 390, height: 844 },
+    viewport: { width: 1280, height: 844 },
     isMobile: true,
     hasTouch: true,
     serviceWorkers: "block",
@@ -348,6 +347,8 @@ try {
       }),
   );
   await sessionPage.goto(origin);
+  await expect(sessionPage.locator(".statusbar")).toBeVisible({timeout:30000});
+  await sessionPage.setViewportSize({width:390,height:844});
   await expect(
     sessionPage.getByText("Mobile transcript fixture is readable.", {
       exact: true,

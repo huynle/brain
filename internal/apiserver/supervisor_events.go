@@ -18,7 +18,8 @@ type supervisorEventWriter interface {
 
 // Reuse always-on bridge control frames, without creating an executor poller.
 // A bounded queue protects the bridge. These hints are lossy; snapshots are authoritative.
-func wireSupervisorControlEvents(ctx context.Context, hub *bridge.Hub, instances supervisorInstanceReader, events supervisorEventWriter) {
+func wireSupervisorControlEvents(ctx context.Context, hub *bridge.Hub, instances supervisorInstanceReader, events supervisorEventWriter) <-chan struct{} {
+	done := make(chan struct{})
 	type observation struct {
 		runner, instance string
 		event            types.Event
@@ -62,6 +63,7 @@ func wireSupervisorControlEvents(ctx context.Context, hub *bridge.Hub, instances
 		}
 	})
 	go func() {
+		defer close(done)
 		for {
 			select {
 			case <-ctx.Done():
@@ -92,6 +94,7 @@ func wireSupervisorControlEvents(ctx context.Context, hub *bridge.Hub, instances
 			}
 		}
 	}()
+	return done
 }
 func projectSupervisorControl(raw json.RawMessage) (types.Event, bool) {
 	var frame struct {

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/huynle/brain-api/internal/auth"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/tenant"
@@ -37,7 +38,19 @@ func TestStartupPersistsLocalFilesystemBeforeScan(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	maps, err := store.ListTenantRoots(ctx)
+	control, err := store.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cap, err := auth.AuthenticateLocalDatabaseOwner(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := control.TenantRegistry(cap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maps, err := registry.ListTenantRoots(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,8 +61,12 @@ func TestStartupPersistsLocalFilesystemBeforeScan(t *testing.T) {
 		t.Fatalf("changed configured roots: %+v", maps[0])
 	}
 	deadline := time.Now().Add(5 * time.Second)
+	content, err := store.ForTenant(tenant.Local)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for {
-		row, err := store.GetNoteByPath(ctx, "projects/p/note/local001.md")
+		row, err := content.GetNoteByPath(ctx, "projects/p/note/local001.md")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -61,7 +78,7 @@ func TestStartupPersistsLocalFilesystemBeforeScan(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	row, err := store.GetNoteByPath(ctx, "tenants/foreign/note/foreign1.md")
+	row, err := content.GetNoteByPath(ctx, "tenants/foreign/note/foreign1.md")
 	if err != nil {
 		t.Fatal(err)
 	}

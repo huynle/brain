@@ -52,7 +52,7 @@ func sampleNote(path, shortID, title string) *NoteRow {
 // ---------------------------------------------------------------------------
 
 func TestNoteInsert_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/my-note.md", "abc12def", "My Note")
@@ -119,7 +119,7 @@ func TestNoteInsert_Success(t *testing.T) {
 }
 
 func TestNoteInsert_DuplicatePath(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/dup.md", "abc12def", "First")
@@ -144,7 +144,7 @@ func TestNoteInsert_DuplicatePath(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNoteGetByPath_Found(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/find-me.md", "abc12def", "Find Me")
@@ -169,7 +169,7 @@ func TestNoteGetByPath_Found(t *testing.T) {
 }
 
 func TestNoteGetByPath_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	got, err := s.GetNoteByPath(ctx, "nonexistent/path.md")
@@ -186,7 +186,7 @@ func TestNoteGetByPath_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNoteGetByShortID_Found(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/short.md", "uniq1234", "Short ID Note")
@@ -211,7 +211,7 @@ func TestNoteGetByShortID_Found(t *testing.T) {
 }
 
 func TestNoteGetByShortID_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	got, err := s.GetNoteByShortID(ctx, "nonexist")
@@ -228,7 +228,7 @@ func TestNoteGetByShortID_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNoteGetByTitle_Found(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/titled.md", "abc12def", "Exact Title Match")
@@ -250,7 +250,7 @@ func TestNoteGetByTitle_Found(t *testing.T) {
 }
 
 func TestNoteGetByTitle_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	got, err := s.GetNoteByTitle(ctx, "No Such Title")
@@ -267,7 +267,7 @@ func TestNoteGetByTitle_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNoteUpdate_PartialUpdate(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/update.md", "abc12def", "Before Update")
@@ -315,7 +315,7 @@ func TestNoteUpdate_PartialUpdate(t *testing.T) {
 }
 
 func TestNoteUpdate_FullUpdate(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/full-update.md", "abc12def", "Original")
@@ -366,7 +366,7 @@ func TestNoteUpdate_FullUpdate(t *testing.T) {
 }
 
 func TestNoteUpdate_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	updates := map[string]interface{}{"title": "Ghost"}
@@ -380,7 +380,7 @@ func TestNoteUpdate_NotFound(t *testing.T) {
 }
 
 func TestNoteUpdate_InvalidFieldRejected(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/inject.md", "abc12def", "Inject Test")
@@ -408,7 +408,7 @@ func TestNoteUpdate_InvalidFieldRejected(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNoteDelete_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/delete-me.md", "abc12def", "Delete Me")
@@ -436,7 +436,7 @@ func TestNoteDelete_Success(t *testing.T) {
 }
 
 func TestNoteDelete_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	deleted, err := s.DeleteNote(ctx, "nonexistent/path.md")
@@ -453,7 +453,7 @@ func TestNoteDelete_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNoteInsert_FTS5Populated(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/fts.md", "fts12345", "Searchable Title")
@@ -466,7 +466,7 @@ func TestNoteInsert_FTS5Populated(t *testing.T) {
 
 	// FTS5 should find by title
 	var count int
-	err = s.DB().QueryRow(
+	err = s.db.QueryRow(
 		"SELECT count(*) FROM notes_fts WHERE notes_fts MATCH 'Searchable'",
 	).Scan(&count)
 	if err != nil {
@@ -477,7 +477,7 @@ func TestNoteInsert_FTS5Populated(t *testing.T) {
 	}
 
 	// FTS5 should find by body
-	err = s.DB().QueryRow(
+	err = s.db.QueryRow(
 		"SELECT count(*) FROM notes_fts WHERE notes_fts MATCH 'xylophone'",
 	).Scan(&count)
 	if err != nil {
@@ -505,7 +505,7 @@ func TestNoteInsert_FTS5Populated(t *testing.T) {
 // The oracle is how many writes survived, which the implementation does not get
 // to define.
 func TestMergeMetadata_ConcurrentMergesDoNotLoseUpdates(t *testing.T) {
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 	ctx := context.Background()
 
 	typ, status := "note", "active"
@@ -561,7 +561,7 @@ func TestMergeMetadata_ConcurrentMergesDoNotLoseUpdates(t *testing.T) {
 // through the new transactional path: callers rely on (nil, nil) rather than an
 // error for a path that does not exist.
 func TestMergeMetadata_MissingPathStillReturnsNilNil(t *testing.T) {
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	row, err := store.MergeMetadata(context.Background(), "projects/p/note/nope.md", map[string]interface{}{"a": 1})
 	if err != nil {

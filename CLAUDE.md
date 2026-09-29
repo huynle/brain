@@ -8,6 +8,12 @@ Brain API is a REST service for AI agent memory and knowledge management, with a
 
 ## Key Commands
 
+**Current P4 status:** [phase5 source integration](docs/p4-phase5-integration.md)
+supersedes historical runtime28 statements below: public runtime30 is single-only;
+private29/tenant31 remain publicly refused. Preserve scoped receiver readiness and
+full global dormant-migration verification as separate boundaries. Do not widen
+storage guard allowances or enable tenant routes based on these fixtures.
+
 ```bash
 # Development
 just build           # Build all Go binaries
@@ -421,6 +427,25 @@ re-indexes it.
 - `search.go` - Full-text search indexing
 - `tasks.go` - Task persistence
 - `graph.go` - Graph relationship storage
+
+### Required tenant-isolation extension gate (P4.11)
+
+Run `just tenant-isolation-gate` (also required by `just check` and Go CI).
+Whenever adding a **table, query, route, or background loop**, extend the
+collision fixture/runtime tests and the surface-to-test matrix in
+[P4.11 tenant isolation gate](docs/p4-11-tenant-isolation-gate.md), or explicitly
+document the unimplemented boundary and keep it unavailable. Update the executable
+workload/table inventories for new storage surfaces; do not merely regenerate
+raw-method, package-function or call-site allowances to make checks pass.
+Cover reads, writes, foreign relationships and applicable bulk/rollback/cache/
+concurrency behavior. Private helpers need public-entry-point coverage too.
+
+PR historical checks use the actual event `pull_request.base.sha`, fail closed
+when absent, and retain both raw-method/call-site and package-function ratchets.
+Local runs may set `BRAIN_STORAGE_RATCHET_BASE` to a reviewed comparison commit;
+without it only the historical checks skip. This is a review gate, not protection
+against a PR changing its own workflow/checker. Runtime schema 28 remains
+single-only; private staged 29 tests do not authorize production multi-tenancy.
 
 ### Task Runner (`internal/runner/`)
 - `runner.go` - Main runner orchestration (poll loop, claim/spawn, completion)

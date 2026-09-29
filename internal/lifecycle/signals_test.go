@@ -234,7 +234,7 @@ func TestSignalHandler_CustomTimeouts(t *testing.T) {
 	defer cancel()
 
 	opts := SignalHandlerOptions{
-		Logger: discardLogger,
+		Logger:           discardLogger,
 		GracefulTimeout:  5 * time.Second,
 		ForceKillTimeout: 2 * time.Second,
 	}

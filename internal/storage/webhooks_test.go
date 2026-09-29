@@ -10,7 +10,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestCreateWebhook_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	wh := &Webhook{
@@ -40,7 +40,7 @@ func TestCreateWebhook_Success(t *testing.T) {
 }
 
 func TestCreateWebhook_CustomID(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	wh := &Webhook{
@@ -62,7 +62,7 @@ func TestCreateWebhook_CustomID(t *testing.T) {
 }
 
 func TestCreateWebhook_DuplicateID(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	wh1 := &Webhook{
@@ -96,7 +96,7 @@ func TestCreateWebhook_DuplicateID(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetWebhook_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	wh := &Webhook{
@@ -144,7 +144,7 @@ func TestGetWebhook_Success(t *testing.T) {
 }
 
 func TestGetWebhook_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	got, err := s.GetWebhook(ctx, "nonexistent")
@@ -161,7 +161,7 @@ func TestGetWebhook_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListWebhooks_All(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	for i, name := range []string{"hook1", "hook2", "hook3"} {
@@ -188,7 +188,7 @@ func TestListWebhooks_All(t *testing.T) {
 }
 
 func TestListWebhooks_EnabledOnly(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	wh1 := &Webhook{
@@ -219,7 +219,7 @@ func TestListWebhooks_EnabledOnly(t *testing.T) {
 }
 
 func TestListWebhooks_Empty(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	webhooks, err := s.ListWebhooks(ctx)
@@ -239,7 +239,7 @@ func TestListWebhooks_Empty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestUpdateWebhook_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	wh := &Webhook{
@@ -296,7 +296,7 @@ func TestUpdateWebhook_Success(t *testing.T) {
 }
 
 func TestUpdateWebhook_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	wh := &Webhook{
@@ -317,7 +317,7 @@ func TestUpdateWebhook_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDeleteWebhook_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	wh := &Webhook{
@@ -345,7 +345,7 @@ func TestDeleteWebhook_Success(t *testing.T) {
 }
 
 func TestDeleteWebhook_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	err := s.DeleteWebhook(ctx, "nonexistent")
@@ -355,7 +355,7 @@ func TestDeleteWebhook_NotFound(t *testing.T) {
 }
 
 func TestDeleteWebhook_CascadesDeliveries(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	wh := &Webhook{
@@ -404,7 +404,7 @@ func TestDeleteWebhook_CascadesDeliveries(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateDelivery_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Create parent webhook first
@@ -444,7 +444,7 @@ func TestCreateDelivery_Success(t *testing.T) {
 }
 
 func TestCreateDelivery_WithError(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	wh := &Webhook{
@@ -477,7 +477,7 @@ func TestCreateDelivery_WithError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListDeliveries_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	wh := &Webhook{
@@ -536,7 +536,7 @@ func TestListDeliveries_Success(t *testing.T) {
 }
 
 func TestListDeliveries_Empty(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	deliveries, err := s.ListDeliveries(ctx, "nonexistent", 10)
@@ -552,7 +552,7 @@ func TestListDeliveries_Empty(t *testing.T) {
 }
 
 func TestListDeliveries_RespectsLimit(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	wh := &Webhook{
@@ -590,7 +590,7 @@ func TestListDeliveries_RespectsLimit(t *testing.T) {
 }
 
 func TestListDeliveries_NullableFields(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	wh := &Webhook{
@@ -644,13 +644,13 @@ func TestListDeliveries_NullableFields(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSchemaCreation_WebhookTablesExist(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	tables := []string{"webhooks", "webhook_deliveries"}
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			var name string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='table' AND name=?", table,
 			).Scan(&name)
 			if err != nil {
@@ -661,7 +661,7 @@ func TestSchemaCreation_WebhookTablesExist(t *testing.T) {
 }
 
 func TestSchemaCreation_WebhookIndexesExist(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	indexes := []string{
 		"idx_webhooks_enabled",
@@ -671,7 +671,7 @@ func TestSchemaCreation_WebhookIndexesExist(t *testing.T) {
 	for _, idx := range indexes {
 		t.Run(idx, func(t *testing.T) {
 			var name string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='index' AND name=?", idx,
 			).Scan(&name)
 			if err != nil {
@@ -682,9 +682,9 @@ func TestSchemaCreation_WebhookIndexesExist(t *testing.T) {
 }
 
 func TestSchemaVersion_IsFive(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
-	ver, err := GetSchemaVersion(s.DB())
+	ver, err := GetSchemaVersion(s.db)
 	if err != nil {
 		t.Fatalf("GetSchemaVersion failed: %v", err)
 	}
@@ -698,7 +698,7 @@ func TestSchemaVersion_IsFive(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWebhook_JSONRoundTrip(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	wh := &Webhook{

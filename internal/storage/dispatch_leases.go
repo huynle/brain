@@ -41,7 +41,11 @@ type DispatchLeaseRow struct {
 	ExpiresAt         int64
 }
 
-func (s *StorageLayer) CreateDispatchLease(ctx context.Context, in DispatchLeaseCreate) (*DispatchLeaseRow, bool, error) {
+func (s *TenantStore) CreateDispatchLease(ctx context.Context, in DispatchLeaseCreate) (*DispatchLeaseRow, bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, false, err
+	}
 	if in.LeaseID == "" {
 		leaseID, err := generateDispatchLeaseID()
 		if err != nil {
@@ -49,11 +53,21 @@ func (s *StorageLayer) CreateDispatchLease(ctx context.Context, in DispatchLease
 		}
 		in.LeaseID = leaseID
 	}
+	columns, values, conflict := "", "", "project_id, task_id"
+	args := []interface{}{}
+	if scope.owner != "" {
+		columns, values, conflict = "tenant_id,", "?,", "tenant_id, project_id, task_id"
+		args = append(args, scope.owner)
+	}
+	args = append(args, in.ProjectID, in.TaskID, in.LeaseID, in.AssignedRunnerID, in.AssignedMachineID, DispatchLeaseStatePushed, in.PushedAt, in.ExpiresAt,
+		DispatchLeaseStateRejected, DispatchLeaseStateExpired, in.PushedAt)
+	// The v29 composite FK requires an existing same-tenant durable runner key.
+	// A dispatch must never manufacture reference ownership.
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO task_dispatch_leases
-		  (project_id, task_id, lease_id, assigned_runner_id, assigned_machine_id, state, pushed_at, acked_at, rejected_at, last_error, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, '', ?)
-		ON CONFLICT(project_id, task_id) DO UPDATE SET
+		  (`+columns+`project_id, task_id, lease_id, assigned_runner_id, assigned_machine_id, state, pushed_at, acked_at, rejected_at, last_error, expires_at)
+		VALUES (`+values+`?, ?, ?, ?, ?, ?, ?, 0, 0, '', ?)
+		ON CONFLICT(`+conflict+`) DO UPDATE SET
 		  lease_id = excluded.lease_id,
 		  assigned_runner_id = excluded.assigned_runner_id,
 		  assigned_machine_id = excluded.assigned_machine_id,
@@ -64,8 +78,7 @@ func (s *StorageLayer) CreateDispatchLease(ctx context.Context, in DispatchLease
 		  last_error = '',
 		  expires_at = excluded.expires_at
 		WHERE task_dispatch_leases.state IN (?, ?) OR task_dispatch_leases.expires_at < ?`,
-		in.ProjectID, in.TaskID, in.LeaseID, in.AssignedRunnerID, in.AssignedMachineID, DispatchLeaseStatePushed, in.PushedAt, in.ExpiresAt,
-		DispatchLeaseStateRejected, DispatchLeaseStateExpired, in.PushedAt,
+		args...,
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("create dispatch lease: %w", err)
@@ -81,12 +94,17 @@ func (s *StorageLayer) CreateDispatchLease(ctx context.Context, in DispatchLease
 	return lease, rows > 0, nil
 }
 
-func (s *StorageLayer) GetDispatchLeaseRow(ctx context.Context, projectID, taskID string) (*DispatchLeaseRow, error) {
+func (s *TenantStore) GetDispatchLeaseRow(ctx context.Context, projectID, taskID string) (*DispatchLeaseRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pred, args := scope.where("project_id = ? AND task_id = ?", projectID, taskID)
 	var row DispatchLeaseRow
-	err := s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, `
 		SELECT project_id, task_id, lease_id, assigned_runner_id, assigned_machine_id, state,
 		       pushed_at, acked_at, rejected_at, last_error, expires_at
-		FROM task_dispatch_leases WHERE project_id = ? AND task_id = ?`, projectID, taskID).Scan(
+		FROM task_dispatch_leases WHERE `+pred, args...).Scan(
 		&row.ProjectID, &row.TaskID, &row.LeaseID, &row.AssignedRunnerID, &row.AssignedMachineID, &row.State,
 		&row.PushedAt, &row.AckedAt, &row.RejectedAt, &row.LastError, &row.ExpiresAt,
 	)
@@ -107,12 +125,18 @@ func generateDispatchLeaseID() (string, error) {
 	return "dl_" + hex.EncodeToString(b[:]), nil
 }
 
-func (s *StorageLayer) AckDispatchLease(ctx context.Context, projectID, taskID, runnerID, leaseID string, ackedAt int64) (bool, error) {
+func (s *TenantStore) AckDispatchLease(ctx context.Context, projectID, taskID, runnerID, leaseID string, ackedAt int64) (bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, err
+	}
+	pred, args := scope.where("project_id = ? AND task_id = ? AND assigned_runner_id = ? AND lease_id = ? AND state = ? AND expires_at >= ?", projectID, taskID, runnerID, leaseID, DispatchLeaseStatePushed, ackedAt)
+	args = append([]interface{}{DispatchLeaseStateAcked, ackedAt}, args...)
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE task_dispatch_leases
 		SET state = ?, acked_at = ?, last_error = ''
-		WHERE project_id = ? AND task_id = ? AND assigned_runner_id = ? AND lease_id = ? AND state = ? AND expires_at >= ?`,
-		DispatchLeaseStateAcked, ackedAt, projectID, taskID, runnerID, leaseID, DispatchLeaseStatePushed, ackedAt,
+		WHERE `+pred,
+		args...,
 	)
 	if err != nil {
 		return false, fmt.Errorf("ack dispatch lease: %w", err)
@@ -124,12 +148,18 @@ func (s *StorageLayer) AckDispatchLease(ctx context.Context, projectID, taskID, 
 	return rows > 0, nil
 }
 
-func (s *StorageLayer) RejectDispatchLease(ctx context.Context, projectID, taskID, runnerID, leaseID string, rejectedAt int64, lastError string) (bool, error) {
+func (s *TenantStore) RejectDispatchLease(ctx context.Context, projectID, taskID, runnerID, leaseID string, rejectedAt int64, lastError string) (bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, err
+	}
+	pred, args := scope.where("project_id = ? AND task_id = ? AND assigned_runner_id = ? AND lease_id = ? AND state = ? AND expires_at >= ?", projectID, taskID, runnerID, leaseID, DispatchLeaseStatePushed, rejectedAt)
+	args = append([]interface{}{DispatchLeaseStateRejected, rejectedAt, lastError}, args...)
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE task_dispatch_leases
 		SET state = ?, rejected_at = ?, last_error = ?
-		WHERE project_id = ? AND task_id = ? AND assigned_runner_id = ? AND lease_id = ? AND state = ? AND expires_at >= ?`,
-		DispatchLeaseStateRejected, rejectedAt, lastError, projectID, taskID, runnerID, leaseID, DispatchLeaseStatePushed, rejectedAt,
+		WHERE `+pred,
+		args...,
 	)
 	if err != nil {
 		return false, fmt.Errorf("reject dispatch lease: %w", err)
@@ -141,10 +171,15 @@ func (s *StorageLayer) RejectDispatchLease(ctx context.Context, projectID, taskI
 	return rows > 0, nil
 }
 
-func (s *StorageLayer) ReleaseDispatchLease(ctx context.Context, projectID, taskID, runnerID string) (bool, error) {
+func (s *TenantStore) ReleaseDispatchLease(ctx context.Context, projectID, taskID, runnerID string) (bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, err
+	}
+	pred, args := scope.where("project_id = ? AND task_id = ? AND assigned_runner_id = ?", projectID, taskID, runnerID)
 	result, err := s.db.ExecContext(ctx,
-		"DELETE FROM task_dispatch_leases WHERE project_id = ? AND task_id = ? AND assigned_runner_id = ?",
-		projectID, taskID, runnerID,
+		"DELETE FROM task_dispatch_leases WHERE "+pred,
+		args...,
 	)
 	if err != nil {
 		return false, fmt.Errorf("release dispatch lease: %w", err)
@@ -163,10 +198,15 @@ func (s *StorageLayer) ReleaseDispatchLease(ctx context.Context, projectID, task
 // diagnostics enrichment). Distinct from ReleaseDispatchLease which requires a
 // runner_id and is intended for the happy path where a specific runner
 // completes / abandons a task it owned.
-func (s *StorageLayer) ClearDispatchLease(ctx context.Context, projectID, taskID string) (bool, error) {
+func (s *TenantStore) ClearDispatchLease(ctx context.Context, projectID, taskID string) (bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, err
+	}
+	pred, args := scope.where("project_id = ? AND task_id = ?", projectID, taskID)
 	result, err := s.db.ExecContext(ctx,
-		"DELETE FROM task_dispatch_leases WHERE project_id = ? AND task_id = ?",
-		projectID, taskID,
+		"DELETE FROM task_dispatch_leases WHERE "+pred,
+		args...,
 	)
 	if err != nil {
 		return false, fmt.Errorf("clear dispatch lease: %w", err)
@@ -189,12 +229,18 @@ func (s *StorageLayer) ClearDispatchLease(ctx context.Context, projectID, taskID
 // owned by claim renewal (runner.renewClaims); if the runner dies, the
 // task returns to ready and CreateDispatchLease's expires_at<now overwrite
 // clause lets the scheduler re-lease it regardless of the stale acked row.
-func (s *StorageLayer) ExpireDispatchLeases(ctx context.Context, now int64) (int64, error) {
+func (s *TenantStore) ExpireDispatchLeases(ctx context.Context, now int64) (int64, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return 0, err
+	}
+	pred, args := scope.where("expires_at < ? AND state = ?", now, DispatchLeaseStatePushed)
+	args = append([]interface{}{DispatchLeaseStateExpired}, args...)
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE task_dispatch_leases
 		SET state = ?, last_error = CASE WHEN last_error = '' THEN 'dispatch lease expired' ELSE last_error END
-		WHERE expires_at < ? AND state = ?`,
-		DispatchLeaseStateExpired, now, DispatchLeaseStatePushed,
+		WHERE `+pred,
+		args...,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("expire dispatch leases: %w", err)
@@ -220,16 +266,29 @@ type PlacementReasonRow struct {
 	CreatedAt      int64
 }
 
-func (s *StorageLayer) RecordPlacementReason(ctx context.Context, row *PlacementReasonRow) error {
+func (s *TenantStore) RecordPlacementReason(ctx context.Context, row *PlacementReasonRow) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	if row == nil {
 		return fmt.Errorf("placement reason row is nil")
 	}
-	_, err := s.db.ExecContext(ctx, `
+	columns, values := "", ""
+	args := []interface{}{}
+	if scope.owner != "" {
+		columns, values = "tenant_id,", "?,"
+		args = append(args, scope.owner)
+	}
+	args = append(args, row.ProjectID, row.TaskID, row.RunnerID, row.MachineID, row.Decision, row.Reason,
+		row.RequiredLabels, row.RunnerLabels, row.MissingLabels, row.CreatedAt)
+	// v29's generated runner_reference preserves the empty no-candidate sentinel
+	// while enforcing same-tenant durable references for non-empty runner IDs.
+	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO task_placement_reasons
-		  (project_id, task_id, runner_id, machine_id, decision, reason, required_labels, runner_labels, missing_labels, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		row.ProjectID, row.TaskID, row.RunnerID, row.MachineID, row.Decision, row.Reason,
-		row.RequiredLabels, row.RunnerLabels, row.MissingLabels, row.CreatedAt,
+		  (`+columns+`project_id, task_id, runner_id, machine_id, decision, reason, required_labels, runner_labels, missing_labels, created_at)
+		VALUES (`+values+`?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		args...,
 	)
 	if err != nil {
 		return fmt.Errorf("record placement reason: %w", err)
@@ -255,7 +314,7 @@ func (s *StorageLayer) RecordPlacementReason(ctx context.Context, row *Placement
 // See PrunePlacementReasonsForTask.
 const PlacementReasonRetention = 20
 
-func (s *StorageLayer) ListPlacementReasonRows(ctx context.Context, projectID, taskID string) ([]PlacementReasonRow, error) {
+func (s *TenantStore) ListPlacementReasonRows(ctx context.Context, projectID, taskID string) ([]PlacementReasonRow, error) {
 	return s.ListPlacementReasonRowsLimit(ctx, projectID, taskID, 0)
 }
 
@@ -270,26 +329,32 @@ func (s *StorageLayer) ListPlacementReasonRows(ctx context.Context, projectID, t
 // for the limited case then reverses in-memory, which keeps the query
 // planner on the idx_task_placement_reasons_task index and avoids a
 // full sort of the matching rows.
-func (s *StorageLayer) ListPlacementReasonRowsLimit(ctx context.Context, projectID, taskID string, limit int) ([]PlacementReasonRow, error) {
+func (s *TenantStore) ListPlacementReasonRowsLimit(ctx context.Context, projectID, taskID string, limit int) ([]PlacementReasonRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pred, args := scope.where("project_id = ? AND task_id = ?", projectID, taskID)
 	if limit <= 0 {
 		rows, err := s.db.QueryContext(ctx, `
 			SELECT id, project_id, task_id, runner_id, machine_id, decision, reason,
 			       required_labels, runner_labels, missing_labels, created_at
 			FROM task_placement_reasons
-			WHERE project_id = ? AND task_id = ?
-			ORDER BY created_at, id`, projectID, taskID)
+			WHERE `+pred+`
+			ORDER BY created_at, id`, args...)
 		if err != nil {
 			return nil, fmt.Errorf("list placement reasons: %w", err)
 		}
 		return scanPlacementReasonRows(rows)
 	}
+	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, project_id, task_id, runner_id, machine_id, decision, reason,
 		       required_labels, runner_labels, missing_labels, created_at
 		FROM task_placement_reasons
-		WHERE project_id = ? AND task_id = ?
+		WHERE `+pred+`
 		ORDER BY created_at DESC, id DESC
-		LIMIT ?`, projectID, taskID, limit)
+		LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list placement reasons (limited): %w", err)
 	}
@@ -333,22 +398,29 @@ func scanPlacementReasonRows(rows *sql.Rows) ([]PlacementReasonRow, error) {
 //
 // When keep <= 0 nothing is deleted. When the task has fewer than
 // `keep` rows the query is a no-op (returns 0).
-func (s *StorageLayer) PrunePlacementReasonsForTask(ctx context.Context, projectID, taskID string, keep int) (int64, error) {
+func (s *TenantStore) PrunePlacementReasonsForTask(ctx context.Context, projectID, taskID string, keep int) (int64, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return 0, err
+	}
 	if keep <= 0 {
 		return 0, nil
 	}
 	// Delete rows whose id is NOT among the newest `keep` for this
 	// (project_id, task_id). Using id as the secondary key means the
 	// deletion is stable under ties on created_at.
+	pred, args := scope.where("project_id = ? AND task_id = ?", projectID, taskID)
+	args = append(args, args...)
+	args = append(args, keep)
 	result, err := s.db.ExecContext(ctx, `
 		DELETE FROM task_placement_reasons
-		WHERE project_id = ? AND task_id = ?
+		WHERE `+pred+`
 		  AND id NOT IN (
 		    SELECT id FROM task_placement_reasons
-		    WHERE project_id = ? AND task_id = ?
+		    WHERE `+pred+`
 		    ORDER BY created_at DESC, id DESC
 		    LIMIT ?
-		  )`, projectID, taskID, projectID, taskID, keep)
+		  )`, args...)
 	if err != nil {
 		return 0, fmt.Errorf("prune placement reasons: %w", err)
 	}
@@ -359,7 +431,7 @@ func (s *StorageLayer) PrunePlacementReasonsForTask(ctx context.Context, project
 	return deleted, nil
 }
 
-func (s *StorageLayer) GetDispatchLease(ctx context.Context, projectID, taskID string) (*types.DispatchLease, error) {
+func (s *TenantStore) GetDispatchLease(ctx context.Context, projectID, taskID string) (*types.DispatchLease, error) {
 	row, err := s.GetDispatchLeaseRow(ctx, projectID, taskID)
 	if err != nil || row == nil {
 		return nil, err
@@ -367,7 +439,7 @@ func (s *StorageLayer) GetDispatchLease(ctx context.Context, projectID, taskID s
 	return dispatchLeaseFromRow(row), nil
 }
 
-func (s *StorageLayer) ListPlacementReasons(ctx context.Context, projectID, taskID string) ([]types.PlacementReason, error) {
+func (s *TenantStore) ListPlacementReasons(ctx context.Context, projectID, taskID string) ([]types.PlacementReason, error) {
 	rows, err := s.ListPlacementReasonRows(ctx, projectID, taskID)
 	if err != nil {
 		return nil, err
@@ -384,7 +456,7 @@ func (s *StorageLayer) ListPlacementReasons(ctx context.Context, projectID, task
 // runaway task_placement_reasons table can't slow every task list
 // response to 5+ seconds (production wedge: 894k rows total, 75k+ per
 // task before pruning was introduced). Pass limit=0 for full history.
-func (s *StorageLayer) ListPlacementReasonsLimit(ctx context.Context, projectID, taskID string, limit int) ([]types.PlacementReason, error) {
+func (s *TenantStore) ListPlacementReasonsLimit(ctx context.Context, projectID, taskID string, limit int) ([]types.PlacementReason, error) {
 	rows, err := s.ListPlacementReasonRowsLimit(ctx, projectID, taskID, limit)
 	if err != nil {
 		return nil, err
@@ -429,17 +501,23 @@ func placementReasonFromRow(row *PlacementReasonRow) types.PlacementReason {
 	}
 }
 
-func (s *StorageLayer) ListExpiredDispatchLeases(ctx context.Context, projectID string, now int64, limit int) ([]DispatchLeaseRow, error) {
+func (s *TenantStore) ListExpiredDispatchLeases(ctx context.Context, projectID string, now int64, limit int) ([]DispatchLeaseRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 100
 	}
+	pred, args := scope.where("project_id = ? AND expires_at < ? AND state IN (?, ?)", projectID, now, DispatchLeaseStatePushed, DispatchLeaseStateAcked)
+	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT project_id, task_id, lease_id, assigned_runner_id, assigned_machine_id, state,
 		       pushed_at, acked_at, rejected_at, last_error, expires_at
 		FROM task_dispatch_leases
-		WHERE project_id = ? AND expires_at < ? AND state IN (?, ?)
+		WHERE `+pred+`
 		ORDER BY expires_at, pushed_at
-		LIMIT ?`, projectID, now, DispatchLeaseStatePushed, DispatchLeaseStateAcked, limit)
+		LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list expired dispatch leases: %w", err)
 	}

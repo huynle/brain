@@ -62,8 +62,10 @@ const DefaultClaimCleanupInterval = 60 * time.Second
 // StartClaimCleanup launches a background goroutine that periodically expires stale claims.
 // The goroutine calls storage.ExpireStaleClaims on each tick and logs the count of removed claims.
 // It respects context cancellation for clean shutdown.
-func (s *TaskServiceImpl) StartClaimCleanup(ctx context.Context, interval time.Duration) {
+func (s *TaskServiceImpl) StartClaimCleanup(ctx context.Context, interval time.Duration) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
@@ -84,6 +86,7 @@ func (s *TaskServiceImpl) StartClaimCleanup(ctx context.Context, interval time.D
 			}
 		}
 	}()
+	return done
 }
 
 // isExpired returns true if the claim's lease has expired (expires_at < now).

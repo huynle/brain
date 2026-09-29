@@ -8,7 +8,11 @@ import (
 // ListTriggeredTasks returns all note rows that have a trigger configuration
 // in their metadata JSON. This queries for notes where the metadata contains
 // a "trigger" key with an "event" field, indicating the note has a trigger.
-func (s *StorageLayer) ListTriggeredTasks(ctx context.Context) ([]*NoteRow, error) {
+func (s *TenantStore) ListTriggeredTasks(ctx context.Context) ([]*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	// Use SQLite's json_extract to find notes with a non-null trigger.event.
 	// The trigger config is stored in the metadata JSON column.
 	query := `SELECT ` + noteColumns + ` FROM notes
@@ -16,7 +20,8 @@ func (s *StorageLayer) ListTriggeredTasks(ctx context.Context) ([]*NoteRow, erro
 		AND json_extract(metadata, '$.trigger.event') IS NOT NULL
 		AND json_extract(metadata, '$.trigger.event') != ''`
 
-	rows, err := s.db.QueryContext(ctx, query)
+	query, args := scope.where(query)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list triggered tasks: %w", err)
 	}
@@ -33,15 +38,20 @@ func (s *StorageLayer) ListTriggeredTasks(ctx context.Context) ([]*NoteRow, erro
 }
 
 // CountInProgressByTrigger counts task notes that are currently in_progress
-// and have a trigger event matching the given pattern within a project.
+// and have a non-null trigger event within a project. For compatibility,
+// triggerEvent is ignored (including empty events in the count).
 // This is used for max_concurrent enforcement.
-func (s *StorageLayer) CountInProgressByTrigger(ctx context.Context, triggerEvent, projectID string) (int, error) {
+func (s *TenantStore) CountInProgressByTrigger(ctx context.Context, triggerEvent, projectID string) (int, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return 0, err
+	}
 	query := `SELECT COUNT(*) FROM notes
 		WHERE type = 'task'
 		AND status = 'in_progress'
 		AND json_extract(metadata, '$.trigger.event') IS NOT NULL`
 
-	args := make([]interface{}, 0, 2)
+	query, args := scope.where(query)
 
 	if projectID != "" {
 		query += ` AND project_id = ?`
@@ -49,7 +59,7 @@ func (s *StorageLayer) CountInProgressByTrigger(ctx context.Context, triggerEven
 	}
 
 	var count int
-	err := s.db.QueryRowContext(ctx, query, args...).Scan(&count)
+	err = s.db.QueryRowContext(ctx, query, args...).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count in-progress by trigger: %w", err)
 	}
@@ -59,7 +69,7 @@ func (s *StorageLayer) CountInProgressByTrigger(ctx context.Context, triggerEven
 // ActivateTask sets a task to the specified status by merging the given fields
 // into its metadata. This delegates to MergeMetadata which handles the
 // metadata merge and status column sync.
-func (s *StorageLayer) ActivateTask(ctx context.Context, path string, fields map[string]interface{}) error {
+func (s *TenantStore) ActivateTask(ctx context.Context, path string, fields map[string]interface{}) error {
 	_, err := s.MergeMetadata(ctx, path, fields)
 	if err != nil {
 		return fmt.Errorf("activate task %s: %w", path, err)

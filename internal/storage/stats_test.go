@@ -10,7 +10,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestGetStats_BasicCounts(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert 3 notes.
@@ -41,7 +41,7 @@ func TestGetStats_BasicCounts(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetStats_ByType(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert notes with different types.
@@ -97,7 +97,7 @@ func TestGetStats_ByType(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetStats_OrphanCount(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Create 3 notes: A → B (link), C is orphan.
@@ -138,7 +138,7 @@ func TestGetStats_OrphanCount(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetStats_TrackedCount(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert 3 notes, track 2 of them.
@@ -177,7 +177,7 @@ func TestGetStats_TrackedCount(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetStats_StaleCount(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert 3 notes: one never verified, one verified long ago, one recently verified.
@@ -224,7 +224,7 @@ func TestGetStats_StaleCount(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetStats_PathPrefixFilter(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert notes in different paths.
@@ -264,7 +264,7 @@ func TestGetStats_PathPrefixFilter(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetStats_EmptyDB(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	stats, err := s.GetStats(ctx, nil)
@@ -293,7 +293,7 @@ func TestGetStats_EmptyDB(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetStats_NilOptions(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	_, err := s.InsertNote(ctx, sampleNote("projects/test/stats/nil-opt.md", "stno0001", "Nil Opt"))

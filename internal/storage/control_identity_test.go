@@ -46,11 +46,11 @@ func TestControlIdentityFlowSharesPersistenceAndConsumption(t *testing.T) {
 		if err != nil || got.Token != value {
 			t.Fatalf("access=%v err=%v", got, err)
 		}
-		if _, err := owner.GetAccessToken(ctx, value); err != nil {
+		if _, err := controlHandle(t, owner).GetAccessToken(ctx, value); err != nil {
 			t.Fatal("identity has a different backing:", err)
 		}
 	}
-	if err := owner.BootstrapToken(ctx, "late", "late-token", false); err == nil {
+	if err := adminHandle(t, owner).BootstrapToken(ctx, "late", "late-token", false); err == nil {
 		t.Fatal("identity issuance did not permanently close bootstrap")
 	}
 }

@@ -52,10 +52,9 @@ func TestCreateTokenDirect(t *testing.T) {
 	assert.Len(t, token.Token, 43) // base64 URL-encoded 32 bytes = 43 chars
 
 	// Verify token exists in database
-	dbPath := filepath.Join(brainDir, ".brain-data", "brain.db")
-	store, err := storage.New(dbPath)
+	store, closeStore, err := openDatabase(brainDir)
 	require.NoError(t, err)
-	defer store.Close()
+	defer closeStore()
 
 	ctx := context.Background()
 	stored, err := store.GetTokenByName(ctx, "test-token")
@@ -121,10 +120,9 @@ func TestRevokeTokenDirect(t *testing.T) {
 	assert.Empty(t, tokens, "revoked tokens should be excluded from default list")
 
 	// Verify the token still exists in the database (soft revocation)
-	dbPath := filepath.Join(brainDir, ".brain-data", "brain.db")
-	store, err := storage.New(dbPath)
+	store, closeStore, err := openDatabase(brainDir)
 	require.NoError(t, err)
-	defer store.Close()
+	defer closeStore()
 
 	retrieved, err := store.GetTokenByName(context.Background(), "revoke-me")
 	require.NoError(t, err)

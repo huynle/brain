@@ -368,6 +368,7 @@ test("background selected refresh does not extend entry recency and unchanged ba
   assert.equal(s.state().cachedCount, 0);
 });
 test("query pages are bounded and cannot make unopened entries sync targets", (t) => {
+  t.mock.method(Date, "now", () => 1_000);
   const s = setup(t);
   s.prepareSelective();
   for (let i = 0; i < 50; i++) s.queryPut(`page:${i}`, { entries: [seed] });
@@ -375,4 +376,22 @@ test("query pages are bounded and cannot make unopened entries sync targets", (t
   assert.deepEqual(s.selection(), {});
   assert.equal(s.queryPut("page:49", { entries: [seed] }), false);
   assert.equal(s.queryPut("page:49", { entries: [] }), true);
+});
+
+test("query cache hits and replacements retain recency within one clock tick", (t) => {
+  t.mock.method(Date, "now", () => 1_000);
+  const s = setup(t);
+  for (let i = 0; i < 40; i++) s.queryPut(`page:${i}`, i);
+  assert.equal(s.queryGet("page:0"), 0);
+  assert.equal(s.queryPut("page:1", "updated"), true);
+  s.queryPut("page:40", 40);
+  s.prepareSelective();
+  assert.equal(s.queryGet("page:2"), null);
+  assert.equal(s.queryGet("page:0"), 0);
+  assert.equal(s.queryGet("page:1"), "updated");
+  assert.equal(s.queryGet("page:40"), 40);
+  let retained = 0;
+  for (let i = 0; i <= 40; i++)
+    if (s.queryGet(`page:${i}`) !== null) retained++;
+  assert.equal(retained, 40);
 });

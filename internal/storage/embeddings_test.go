@@ -41,7 +41,7 @@ func sampleEmbeddingRecord(noteID int64, chunkIndex int, dims int) EmbeddingReco
 
 func TestUpsertNoteEmbeddings_SingleRecord(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert a note first
 	note := sampleNote("projects/test/note.md", "abc123", "Test Note")
@@ -100,7 +100,7 @@ func TestUpsertNoteEmbeddings_SingleRecord(t *testing.T) {
 
 func TestUpsertNoteEmbeddings_BatchUpsert(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert a note
 	note := sampleNote("projects/test/batch.md", "xyz789", "Batch Note")
@@ -139,7 +139,7 @@ func TestUpsertNoteEmbeddings_BatchUpsert(t *testing.T) {
 
 func TestUpsertNoteEmbeddings_Idempotency(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert a note
 	note := sampleNote("projects/test/idempotent.md", "idem01", "Idempotent Note")
@@ -208,7 +208,7 @@ func TestUpsertNoteEmbeddings_Idempotency(t *testing.T) {
 
 func TestUpsertNoteEmbeddings_ForeignKeyConstraint(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Try to upsert embedding for non-existent note
 	rec := sampleEmbeddingRecord(99999, 0, 384)
@@ -220,7 +220,7 @@ func TestUpsertNoteEmbeddings_ForeignKeyConstraint(t *testing.T) {
 
 func TestUpsertNoteEmbeddings_EmptyVector(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert a note
 	note := sampleNote("projects/test/empty.md", "empty1", "Empty Vector Note")
@@ -241,7 +241,7 @@ func TestUpsertNoteEmbeddings_EmptyVector(t *testing.T) {
 
 func TestUpsertNoteEmbeddings_EmptyBatch(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Upsert empty batch should be no-op
 	err := store.UpsertNoteEmbeddings(ctx, []EmbeddingRecord{})
@@ -252,21 +252,21 @@ func TestUpsertNoteEmbeddings_EmptyBatch(t *testing.T) {
 
 func TestEmbeddingStatus_StaleWhenReadyAttachmentDerivedTextIsNewerThanEmbedding(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	note := sampleNote("projects/test/attachment-stale.md", "attstale", "Attachment Stale")
 	inserted, err := store.InsertNote(ctx, note)
 	if err != nil {
 		t.Fatalf("failed to insert note: %v", err)
 	}
-	if _, err := store.DB().ExecContext(ctx, `UPDATE notes SET indexed_at = '2025-01-01 00:00:00' WHERE id = ?`, inserted.ID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE notes SET indexed_at = '2025-01-01 00:00:00' WHERE id = ?`, inserted.ID); err != nil {
 		t.Fatalf("set note indexed_at failed: %v", err)
 	}
 
 	if err := store.UpsertNoteEmbeddings(ctx, []EmbeddingRecord{sampleEmbeddingRecord(inserted.ID, 0, 384)}); err != nil {
 		t.Fatalf("UpsertNoteEmbeddings failed: %v", err)
 	}
-	if _, err := store.DB().ExecContext(ctx, `UPDATE note_embeddings_meta SET embedding_indexed_at = '2025-01-02 00:00:00' WHERE note_id = ?`, inserted.ID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE note_embeddings_meta SET embedding_indexed_at = '2025-01-02 00:00:00' WHERE note_id = ?`, inserted.ID); err != nil {
 		t.Fatalf("set embedding_indexed_at failed: %v", err)
 	}
 
@@ -290,7 +290,7 @@ func TestEmbeddingStatus_StaleWhenReadyAttachmentDerivedTextIsNewerThanEmbedding
 	}); err != nil {
 		t.Fatalf("UpsertAttachmentDerived failed: %v", err)
 	}
-	if _, err := store.DB().ExecContext(ctx, `UPDATE attachment_derived SET updated_at = '2025-01-03 00:00:00' WHERE attachment_id = ?`, attachment.ID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE attachment_derived SET updated_at = '2025-01-03 00:00:00' WHERE attachment_id = ?`, attachment.ID); err != nil {
 		t.Fatalf("set attachment derived updated_at failed: %v", err)
 	}
 
@@ -309,7 +309,7 @@ func TestEmbeddingStatus_StaleWhenReadyAttachmentDerivedTextIsNewerThanEmbedding
 
 func TestUpsertNoteEmbeddings_TransactionRollback(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert a note
 	note := sampleNote("projects/test/rollback.md", "roll01", "Rollback Note")
@@ -345,7 +345,7 @@ func TestUpsertNoteEmbeddings_TransactionRollback(t *testing.T) {
 
 func TestGetNoteEmbedding_NotFound(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Query non-existent embedding
 	retrieved, err := store.GetNoteEmbedding(ctx, 99999, 0)
@@ -363,7 +363,7 @@ func TestGetNoteEmbedding_NotFound(t *testing.T) {
 
 func TestDeleteNoteEmbeddings_CascadeDelete(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert a note
 	note := sampleNote("projects/test/cascade.md", "casc01", "Cascade Note")
@@ -413,7 +413,7 @@ func TestDeleteNoteEmbeddings_CascadeDelete(t *testing.T) {
 
 func TestDeleteNoteEmbeddings_NoteDelete(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert a note
 	note := sampleNote("projects/test/notedel.md", "notd01", "Note Delete")
@@ -467,7 +467,7 @@ func TestDeleteNoteEmbeddings_NoteDelete(t *testing.T) {
 
 func TestSyncNoteEmbeddingMetadata_UpdatesColumnsWithoutTouchingVectors(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	note := sampleNote("projects/test/sync.md", "sync01", "Sync Note")
 	inserted, err := store.InsertNote(ctx, note)
@@ -548,7 +548,7 @@ func TestSyncNoteEmbeddingMetadata_UpdatesColumnsWithoutTouchingVectors(t *testi
 
 func TestSyncNoteEmbeddingMetadata_NoEmbeddingsIsNoop(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	note := sampleNote("projects/test/sync-none.md", "sync02", "No Embeddings")
 	inserted, err := store.InsertNote(ctx, note)
@@ -599,7 +599,7 @@ func TestPackFloat32s_RoundTrip(t *testing.T) {
 
 func TestSearchByEmbedding_BasicRetrieval(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert test notes
 	note1 := sampleNote("projects/test/note1.md", "abc001", "Note 1")
@@ -662,7 +662,7 @@ func TestSearchByEmbedding_BasicRetrieval(t *testing.T) {
 
 func TestSearchByEmbedding_ProjectFilter(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert notes with different projects
 	note1 := sampleNote("projects/proj-a/note1.md", "abc001", "Note 1")
@@ -706,7 +706,7 @@ func TestSearchByEmbedding_ProjectFilter(t *testing.T) {
 
 func TestSearchByEmbedding_TypeFilter(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert notes
 	note1 := sampleNote("projects/test/note1.md", "abc001", "Note 1")
@@ -750,7 +750,7 @@ func TestSearchByEmbedding_TypeFilter(t *testing.T) {
 
 func TestSearchByEmbedding_StatusFilter(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert notes
 	note1 := sampleNote("projects/test/note1.md", "abc001", "Note 1")
@@ -794,7 +794,7 @@ func TestSearchByEmbedding_StatusFilter(t *testing.T) {
 
 func TestSearchByEmbedding_MultipleFilters(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert notes
 	note1 := sampleNote("projects/test/note1.md", "abc001", "Note 1")
@@ -861,7 +861,7 @@ func TestSearchByEmbedding_MultipleFilters(t *testing.T) {
 
 func TestSearchByEmbedding_Deduplication(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert a note
 	note1 := sampleNote("projects/test/note1.md", "abc001", "Note 1")
@@ -903,7 +903,7 @@ func TestSearchByEmbedding_Deduplication(t *testing.T) {
 
 func TestSearchByEmbedding_EmptyQuery(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Empty query vector
 	results, err := store.SearchByEmbedding(ctx, []float32{}, &EmbeddingSearchOptions{Limit: 10})
@@ -918,7 +918,7 @@ func TestSearchByEmbedding_EmptyQuery(t *testing.T) {
 
 func TestSearchByEmbedding_NoMatches(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// No embeddings in database
 	queryVec := make([]float32, 384)
@@ -936,7 +936,7 @@ func TestSearchByEmbedding_NoMatches(t *testing.T) {
 
 func TestSearchByEmbedding_LimitRespected(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert 10 notes with unique paths
 	for i := 0; i < 10; i++ {
@@ -970,7 +970,7 @@ func TestSearchByEmbedding_LimitRespected(t *testing.T) {
 
 func TestSearchByEmbedding_DefaultLimit(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store := newTestContentStorage(t)
 
 	// Insert 1 note
 	note := sampleNote("projects/test/note.md", "abc001", "Note")

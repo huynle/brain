@@ -30,7 +30,7 @@ func testInstance(id, runnerID string) *InstanceRow {
 }
 
 func TestInstances_UpsertAndGet(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	inst := testInstance("inst_01", "runner_a")
@@ -79,7 +79,7 @@ func TestInstances_UpsertAndGet(t *testing.T) {
 }
 
 func TestInstances_GetMissing(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	got, err := s.GetInstance(context.Background(), "inst_missing")
 	if err != nil {
@@ -91,7 +91,7 @@ func TestInstances_GetMissing(t *testing.T) {
 }
 
 func TestInstances_ListByRunnerAndDelete(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	s.UpsertInstance(ctx, testInstance("inst_01", "runner_a"))
@@ -130,7 +130,7 @@ func TestInstances_ListByRunnerAndDelete(t *testing.T) {
 }
 
 func TestInstances_DeleteByRunner(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	s.UpsertInstance(ctx, testInstance("inst_01", "runner_a"))
@@ -152,7 +152,7 @@ func TestInstances_DeleteByRunner(t *testing.T) {
 }
 
 func TestInstances_ReplaceForRunner(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	s.UpsertInstance(ctx, testInstance("inst_01", "runner_a"))

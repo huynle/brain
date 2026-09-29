@@ -126,7 +126,7 @@ export class EntryDatabase {
     const row = this.rows("SELECT data FROM query_cache WHERE key=?", [key])[0];
     if (!row) return null;
     this.db.exec({
-      sql: "UPDATE query_cache SET accessed=? WHERE key=?",
+      sql: "UPDATE query_cache SET accessed=MAX(?, (SELECT COALESCE(MAX(accessed),0)+1 FROM query_cache)) WHERE key=?",
       bind: [Date.now(), key],
     });
     return JSON.parse(String(row.data));
@@ -136,8 +136,10 @@ export class EntryDatabase {
     const prior = this.rows("SELECT data FROM query_cache WHERE key=?", [
       key,
     ])[0];
+    // Use a persisted monotonic recency on both puts and hits: wall-clock
+    // milliseconds can tie, leaving LIMIT free to evict the newest page.
     this.db.exec({
-      sql: "INSERT OR REPLACE INTO query_cache VALUES (?,?,?)",
+      sql: "INSERT OR REPLACE INTO query_cache SELECT ?,?,MAX(?, COALESCE(MAX(accessed),0)+1) FROM query_cache",
       bind: [key, value, Date.now()],
     });
     this.db.exec(

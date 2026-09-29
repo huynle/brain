@@ -95,7 +95,7 @@ func TestReminder_DatedFiresAndBecomesTheNotification(t *testing.T) {
 // buys. A reminder that re-notified every minute would be worse than useless.
 func TestReminder_FiresExactlyOnceAcrossManySweeps(t *testing.T) {
 	now := time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC)
-	svc, _, _ := newTestReminderService(t, now)
+	svc, brain, store := newTestReminderService(t, now)
 	ctx := context.Background()
 
 	if _, err := svc.CreateReminder(ctx, types.CreateReminderRequest{
@@ -107,6 +107,8 @@ func TestReminder_FiresExactlyOnceAcrossManySweeps(t *testing.T) {
 
 	total := 0
 	for i := 0; i < 5; i++ {
+		// Fresh service/locks, same durable store: no in-memory dedup credit.
+		svc = NewReminderService(brain, store)
 		n, err := svc.SweepDue(ctx, now.Add(time.Duration(i+1)*time.Minute))
 		if err != nil {
 			t.Fatalf("sweep %d: %v", i, err)
@@ -603,8 +605,15 @@ func TestReminder_HealRunsATaskActionTheClaimOutlived(t *testing.T) {
 		t.Fatalf("seed claim: %v", err)
 	}
 
+	svc = NewReminderService(brain, store)
 	if _, err := svc.SweepDue(ctx, now.Add(time.Minute)); err != nil {
 		t.Fatalf("sweep: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		svc = NewReminderService(brain, store)
+		if n, err := svc.SweepDue(ctx, now.Add(time.Duration(i+2)*time.Minute)); err != nil || n != 0 {
+			t.Fatalf("repeat after healing: n=%d err=%v", n, err)
+		}
 	}
 
 	resp, err := brain.List(ctx, types.ListEntriesRequest{
@@ -613,14 +622,14 @@ func TestReminder_HealRunsATaskActionTheClaimOutlived(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var found bool
+	var found int
 	for _, e := range resp.Entries {
 		if strings.HasPrefix(e.GeneratedBy, "reminder:") {
-			found = true
+			found++
 		}
 	}
-	if !found {
-		t.Error("the task action was lost: a claim row outlived a crash and suppressed it forever")
+	if found != 1 {
+		t.Errorf("healed task count = %d, want 1", found)
 	}
 }
 

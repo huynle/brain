@@ -48,16 +48,11 @@ internal/events/cron_source.go:StorageScheduleSource.ListScheduledEntries ListNo
 internal/events/dedup.go:DedupBus.Publish InsertEvent#1
 internal/events/dedup.go:DedupBus.ReplayUnprocessed GetUnprocessed#1
 internal/events/matcher.go:AutomationMatcher.markEventProcessed MarkProcessed#1
-internal/indexer/indexer.go:Indexer.DB DB#1 DB#2 db-return#1
-internal/indexer/indexer.go:Indexer.GetEmbeddingHealth DB#1 DB#2 DB#3
-internal/indexer/indexer.go:Indexer.GetHealth DB#1 DB#2
-internal/indexer/indexer.go:Indexer.IndexChanged DB#1 DeleteNote#1 InsertNote#1 SetLinks#1 SetLinks#2 SetTags#1 SetTags#2 UpdateNote#1
-internal/indexer/indexer.go:Indexer.IndexEmbeddingsWithOptions DB#1 DeleteNoteEmbeddings#1 UpsertNoteEmbeddings#1
+internal/indexer/indexer.go:Indexer.IndexChanged DeleteNote#1 InsertNote#1 SetLinks#1 SetLinks#2 SetTags#1 SetTags#2 UpdateNote#1
+internal/indexer/indexer.go:Indexer.IndexEmbeddingsWithOptions DeleteNoteEmbeddings#1 UpsertNoteEmbeddings#1
 internal/indexer/indexer.go:Indexer.IndexFile GetNoteByPath#1 InsertNote#1 SetLinks#1 SetTags#1 UpdateNote#1
-internal/indexer/indexer.go:Indexer.ListEmbeddingBackfillCandidates DB#1
-internal/indexer/indexer.go:Indexer.RebuildAll DB#1 DB#2 InsertNote#1 SetLinks#1 SetTags#1
+internal/indexer/indexer.go:Indexer.RebuildAll InsertNote#1 SetLinks#1 SetTags#1
 internal/indexer/indexer.go:Indexer.RemoveFile DeleteNote#1
-internal/indexer/indexer.go:Indexer.embeddingSourceForNote DB#1
 internal/oauth/middleware.go:BearerAuth GetAccessToken#1
 internal/oauth/middleware.go:OptionalBearerAuth GetAccessToken#1
 internal/oauth/routes.go:Handler.handleAuthCodeGrant ConsumeAuthCode#1 SaveAccessToken#1

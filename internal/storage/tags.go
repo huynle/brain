@@ -8,7 +8,11 @@ import (
 // SetTags replaces all tags for the note at notePath.
 // In a transaction: deletes existing tags, inserts new ones.
 // Returns an error if the note is not found.
-func (s *StorageLayer) SetTags(ctx context.Context, notePath string, tags []string) error {
+func (s *TenantStore) SetTags(ctx context.Context, notePath string, tags []string) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	note, err := s.GetNoteByPath(ctx, notePath)
 	if err != nil {
 		return fmt.Errorf("set tags: %w", err)
@@ -22,15 +26,25 @@ func (s *StorageLayer) SetTags(ctx context.Context, notePath string, tags []stri
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
+	if err := requireOwnedNote(ctx, tx, scope, note.ID); err != nil {
+		return err
+	}
 
 	// Delete all existing tags for this note.
-	if _, err := tx.ExecContext(ctx, "DELETE FROM tags WHERE note_id = ?", note.ID); err != nil {
+	where, args := scope.where("note_id = ?", note.ID)
+	if _, err := tx.ExecContext(ctx, "DELETE FROM tags WHERE "+where, args...); err != nil {
 		return fmt.Errorf("delete tags: %w", err)
 	}
 
 	// Insert new tags.
 	for _, tag := range tags {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO tags (note_id, tag) VALUES (?, ?)", note.ID, tag); err != nil {
+		query := "INSERT INTO tags (note_id, tag) VALUES (?, ?)"
+		args := []interface{}{note.ID, tag}
+		if scope.owner != "" {
+			query = "INSERT INTO tags (note_id, tag, tenant_id) VALUES (?, ?, ?)"
+			args = append(args, scope.owner)
+		}
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 			return fmt.Errorf("insert tag %q: %w", tag, err)
 		}
 	}
@@ -44,7 +58,11 @@ func (s *StorageLayer) SetTags(ctx context.Context, notePath string, tags []stri
 // GetTags returns all tags for the note at notePath.
 // Returns an error if the note is not found.
 // Returns a non-nil empty slice if the note has no tags.
-func (s *StorageLayer) GetTags(ctx context.Context, notePath string) ([]string, error) {
+func (s *TenantStore) GetTags(ctx context.Context, notePath string) ([]string, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	note, err := s.GetNoteByPath(ctx, notePath)
 	if err != nil {
 		return nil, fmt.Errorf("get tags: %w", err)
@@ -53,7 +71,10 @@ func (s *StorageLayer) GetTags(ctx context.Context, notePath string) ([]string, 
 		return nil, fmt.Errorf("note not found: %s", notePath)
 	}
 
-	rows, err := s.db.QueryContext(ctx, "SELECT tag FROM tags WHERE note_id = ?", note.ID)
+	where, args := scope.where("note_id = ?", note.ID)
+	noteWhere, noteArgs := scope.where("id = ?", note.ID)
+	where += " AND EXISTS (SELECT 1 FROM notes WHERE " + noteWhere + ")"
+	rows, err := s.db.QueryContext(ctx, "SELECT tag FROM tags WHERE "+where, append(args, noteArgs...)...)
 	if err != nil {
 		return nil, fmt.Errorf("query tags: %w", err)
 	}

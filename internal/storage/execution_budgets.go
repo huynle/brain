@@ -1,5 +1,6 @@
 package storage
 
+// Adapted from main cd22b4bd without changing window, parent or settlement rules.
 import (
 	"context"
 	"database/sql"
@@ -11,11 +12,8 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-const createExecutionBudgets = `CREATE TABLE IF NOT EXISTS execution_budgets (tenant_id TEXT NOT NULL,project TEXT NOT NULL,id TEXT NOT NULL,timezone TEXT NOT NULL,unit TEXT NOT NULL,limit_units INTEGER NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(tenant_id,project,id))`
-const createBudgetReservations = `CREATE TABLE IF NOT EXISTS budget_reservations (tenant_id TEXT NOT NULL,project TEXT NOT NULL,budget_id TEXT NOT NULL,id TEXT NOT NULL,parent_id TEXT NOT NULL,window TEXT NOT NULL,units INTEGER NOT NULL,state TEXT NOT NULL,PRIMARY KEY(tenant_id,project,budget_id,id),FOREIGN KEY(tenant_id,project,budget_id) REFERENCES execution_budgets(tenant_id,project,id))`
-
 func (s *TenantStore) ConfigureExecutionBudget(ctx context.Context, b types.ExecutionBudget, expected int) (bool, error) {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "budget")
 	if err != nil {
 		return false, err
 	}
@@ -39,7 +37,7 @@ func (s *TenantStore) ConfigureExecutionBudget(ctx context.Context, b types.Exec
 	return n == 1, err
 }
 func (s *TenantStore) ExecutionBudget(ctx context.Context, project, id string, now time.Time) (*types.ExecutionBudget, int64, string, error) {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "budget")
 	if err != nil {
 		return nil, 0, "", err
 	}
@@ -61,7 +59,7 @@ func (s *TenantStore) ExecutionBudget(ctx context.Context, project, id string, n
 	return &b, used, window, err
 }
 func (s *TenantStore) ReserveBudget(ctx context.Context, project, budgetID, id, parent string, units int64, now time.Time) (*types.BudgetReservation, bool, error) {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "budget")
 	if err != nil {
 		return nil, false, err
 	}
@@ -72,13 +70,16 @@ func (s *TenantStore) ReserveBudget(ctx context.Context, project, budgetID, id, 
 	if err != nil {
 		return nil, false, err
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer func() { _ = tx.Rollback() }()
 	// Acquire the writer reservation before reading consumption.
 	result, err := tx.ExecContext(ctx, `UPDATE execution_budgets SET revision=revision WHERE tenant_id=? AND project=? AND id=?`, scope, project, budgetID)
 	if err != nil {
 		return nil, false, err
 	}
-	n, _ := result.RowsAffected()
+	n, err := result.RowsAffected()
+	if err != nil {
+		return nil, false, err
+	}
 	if n == 0 {
 		return nil, false, fmt.Errorf("budget not found")
 	}
@@ -132,7 +133,7 @@ func (s *TenantStore) ReserveBudget(ctx context.Context, project, budgetID, id, 
 // Settlement never erases usage after work has been committed. Interrupted work
 // stays charged; cancellation is allowed only while the reservation is unused.
 func (s *TenantStore) SettleBudget(ctx context.Context, project, budgetID, id, state string) error {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "budget")
 	if err != nil {
 		return err
 	}

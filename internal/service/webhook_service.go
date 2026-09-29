@@ -30,6 +30,7 @@ const maxRetries = 3
 type WebhookServiceImpl struct {
 	store  *storage.TenantStore
 	client *http.Client
+	work   asyncWork
 }
 
 // NewWebhookService creates a new WebhookServiceImpl.
@@ -229,11 +230,15 @@ func (s *WebhookServiceImpl) Deliver(ctx context.Context, event types.Event) err
 			continue
 		}
 		// Deliver asynchronously to not block the caller
-		go s.deliverToWebhook(context.Background(), &wh, event)
+		s.work.goRun(func(ctx context.Context) { s.deliverToWebhook(ctx, &wh, event) })
 	}
 
 	return nil
 }
+
+// Close fences, cancels and joins detached deliveries, without closing storage
+// or the borrowed HTTP transport. Synchronous callers must already be drained.
+func (s *WebhookServiceImpl) Close() { s.work.close() }
 
 // ListDeliveries returns recent delivery attempts for a webhook.
 func (s *WebhookServiceImpl) ListDeliveries(ctx context.Context, webhookID string, limit int) ([]types.WebhookDeliveryResponse, error) {
@@ -345,14 +350,9 @@ retry:
 				// cancelled context fell through into the next delivery
 				// attempt instead of ending the loop.
 				//
-				// No test covers this, deliberately: the only caller of
-				// deliverToWebhook detaches into context.Background() on
-				// purpose (so an HTTP handler returning cannot kill an
-				// in-flight delivery), which leaves this path dormant, and
-				// the fall-through attempts were unobservable anyway — they
-				// die inside the HTTP client without reaching the endpoint,
-				// and logDelivery's write uses the same dead context so
-				// nothing reaches the delivery log either.
+				// Deliver detaches from the request, but Close cancels the
+				// service-owned context and joins this retry loop. A canceled
+				// result is not persisted using a fresh background context.
 				lastErr = ctx.Err()
 				break retry
 			case <-time.After(delay):

@@ -28,9 +28,9 @@ func TestAllowedRequest(t *testing.T) {
 		{"DELETE", "/session/ses_123", false},
 		{"POST", "/session/status", false},
 		{"GET", "/session/ses_123/shell", false},
-		{"POST", "/session/ses_123/permissions", false},      // missing permission id
-		{"POST", "/session//prompt_async", false},            // empty wildcard segment
-		{"GET", "/session/ses_123/message/extra", false},     // extra segment
+		{"POST", "/session/ses_123/permissions", false},  // missing permission id
+		{"POST", "/session//prompt_async", false},        // empty wildcard segment
+		{"GET", "/session/ses_123/message/extra", false}, // extra segment
 		{"POST", "/tui/append-prompt", false},
 		{"GET", "", false},
 	}

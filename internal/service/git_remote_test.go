@@ -142,8 +142,8 @@ func TestGitRemoteCheckoutRejectsBeforeSuperseding(t *testing.T) {
 }
 
 func TestGitRemoteRegistryFailureRemainsInternal(t *testing.T) {
-	_, store, _ := newTestBrainService(t)
-	if err := store.Close(); err != nil {
+	_, store, _, db := newTestBrainServiceWithDB(t)
+	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 	err := validateConfiguredGitRemote(context.Background(), store, "https://supported.invalid/o/r")

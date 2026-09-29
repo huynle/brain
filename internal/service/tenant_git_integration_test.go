@@ -13,6 +13,7 @@ import (
 	"github.com/huynle/brain-api/internal/brainpath"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/tenant"
 	"github.com/huynle/brain-api/internal/tenantfs"
 	"github.com/huynle/brain-api/internal/types"
@@ -30,8 +31,8 @@ func TestBoundTenantGitAdmissionBeforeMutation(t *testing.T) {
 			}
 			t.Run(op+"/"+mode, func(t *testing.T) {
 				ctx := context.Background()
-				svc, store, root := newTestBrainService(t)
-				roots, err := tenantfs.New(store, root)
+				svc, store, root, db := newTestBrainServiceWithDB(t)
+				roots, err := tenantfs.New(storagetest.RegistryWithDB(t, db), root)
 				if err != nil {
 					t.Fatal(err)
 				}

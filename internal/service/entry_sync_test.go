@@ -15,12 +15,13 @@ import (
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/tenant"
 	"github.com/huynle/brain-api/internal/types"
 )
 
 func TestEntrySyncPaginationWritesDeletesMovesAndFiles(t *testing.T) {
 	s, store, dir := newTestBrainService(t)
-	ctx := context.Background()
+	ctx := tenant.Into(context.Background(), tenant.Local)
 	saved := []*types.CreateEntryResponse{}
 	for i := 0; i < 7; i++ {
 		e, err := s.Save(ctx, types.CreateEntryRequest{Type: "note", Project: "sync", Title: fmt.Sprintf("Seed %d", i), Content: "body"})

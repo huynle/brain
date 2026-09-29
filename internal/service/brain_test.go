@@ -29,24 +29,31 @@ import (
 // newTestBrainService creates a BrainServiceImpl with in-memory DB and temp brainDir.
 func newTestBrainService(t *testing.T) (*BrainServiceImpl, *storage.TenantStore, string) {
 	t.Helper()
+	svc, store, dir, _ := newTestBrainServiceWithDB(t)
+	return svc, store, dir
+}
+
+// newTestBrainServiceWithDB owns a new fixture connection and its cleanup.
+func newTestBrainServiceWithDB(t *testing.T) (*BrainServiceImpl, *storage.TenantStore, string, *sql.DB) {
+	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
+	t.Cleanup(func() { db.Close() })
 
 	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
 
 	brainDir := t.TempDir()
 	cfg := &config.Config{BrainDir: brainDir}
 	idx := indexer.NewIndexer(brainDir, store)
 
 	svc := NewBrainService(cfg, store, idx, nil, nil)
-	return svc, store, brainDir
+	return svc, store, brainDir, db
 }
 
 // newTestBrainServiceWithBus creates a BrainServiceImpl with an event bus for testing event publishing.
@@ -62,7 +69,7 @@ func newTestBrainServiceWithBus(t *testing.T) (*BrainServiceImpl, *storage.Tenan
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { db.Close() })
 
 	brainDir := t.TempDir()
 	cfg := &config.Config{BrainDir: brainDir}
@@ -1744,7 +1751,7 @@ func TestRecallFull_FallbackReconstruction(t *testing.T) {
 	}
 
 	// Clear the raw_content in DB to force fallback reconstruction
-	_, err = store.DB().ExecContext(ctx, `UPDATE notes SET raw_content = NULL WHERE short_id = ?`, resp.ID)
+	_, err = store.UpdateNote(ctx, resp.Path, map[string]interface{}{"raw_content": nil})
 	if err != nil {
 		t.Fatalf("failed to clear raw_content: %v", err)
 	}

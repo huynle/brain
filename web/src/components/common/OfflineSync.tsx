@@ -1,4 +1,3 @@
-import { useIsMobile } from "../../hooks/useIsMobile";
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../lib/auth";
@@ -20,14 +19,22 @@ import { database } from "../../lib/offline/client";
 import type { CachedEntry } from "../../lib/offline/model";
 
 export function OfflineSync() {
-  const mobile = useIsMobile();
   const auth = useAuth((s) => s.status);
   const token = useAuth((s) => s.token);
   const previousScope = useRef(localStorage.getItem("brain.offline.scope"));
   const state = useOffline();
   const query = useQueryClient();
   const dialog = useRef<HTMLDialogElement>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const editorOpen = state.panelOpen;
+  const setEditorOpen = (panelOpen: boolean) =>
+    useOffline.setState({ panelOpen });
+  useEffect(() => {
+    if (editorOpen && ["authenticated", "anonymous"].includes(auth)) {
+      dialog.current?.showModal();
+    } else {
+      dialog.current?.close();
+    }
+  }, [editorOpen, auth]);
   const [entries, setEntries] = useState<CachedEntry[]>([]);
   const [path, setPath] = useState("");
   const [raw, setRaw] = useState("");
@@ -46,6 +53,7 @@ export function OfflineSync() {
       setRaw("");
       setServer("");
       useOffline.setState({
+        panelOpen: false,
         ready: false,
         pending: [],
         syncing: false,
@@ -191,27 +199,6 @@ export function OfflineSync() {
   };
   return (
     <>
-      <button
-        className="btn sm offline-sync-toggle"
-        onClick={() => {
-          setEditorOpen(true);
-          dialog.current?.showModal();
-        }}
-      >
-        {mobile ? "Sync · " : "Offline sync · "}
-        {!offlineAvailable()
-          ? "Online only"
-          : state.syncing
-            ? state.ready
-              ? "Syncing recent entries"
-              : "Preparing cache"
-            : !state.online
-              ? "Offline"
-              : state.ready
-                ? `Ready · ${state.cachedCount} cached`
-                : "Downloading"}
-        {state.pending.length ? ` · ${state.pending.length} pending` : ""}
-      </button>
       <dialog
         ref={dialog}
         className="offline-sync-dialog"
@@ -488,5 +475,33 @@ function CreateOffline({ onSaved }: { onSaved: (s: string) => void }) {
         Create locally
       </button>
     </form>
+  );
+}
+
+export function OfflineSyncStatus() {
+  const state = useOffline();
+  return (
+    <button
+      className="offline-sync-toggle"
+      aria-haspopup="dialog"
+      title="View sync status and manage cached entries"
+      onClick={() => {
+        useOffline.setState({ panelOpen: true });
+      }}
+    >
+      {"Sync · "}
+      {!offlineAvailable()
+        ? "Online only"
+        : state.syncing
+          ? state.ready
+            ? "Syncing recent entries"
+            : "Preparing cache"
+          : !state.online
+            ? "Offline"
+            : state.ready
+              ? `Ready · ${state.cachedCount} cached`
+              : "Downloading"}
+      {state.pending.length ? ` · ${state.pending.length} pending` : ""}
+    </button>
   );
 }

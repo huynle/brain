@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"testing"
-	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -11,7 +10,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestGenerateToken_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 
 	token, err := s.GenerateToken()
 	if err != nil {
@@ -30,7 +29,7 @@ func TestGenerateToken_Success(t *testing.T) {
 }
 
 func TestGenerateToken_Unique(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 
 	token1, err := s.GenerateToken()
 	if err != nil {
@@ -53,7 +52,7 @@ func TestGenerateToken_Unique(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateToken_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	token, err := s.GenerateToken()
@@ -70,7 +69,7 @@ func TestCreateToken_Success(t *testing.T) {
 	var storedToken string
 	var createdAt string
 	var scope string
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT token, scope, created_at FROM api_tokens WHERE name = ?", "test-token",
 	).Scan(&storedToken, &scope, &createdAt)
 	if err != nil {
@@ -89,7 +88,7 @@ func TestCreateToken_Success(t *testing.T) {
 }
 
 func TestCreateToken_DuplicateName(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	token1, _ := s.GenerateToken()
@@ -109,7 +108,7 @@ func TestCreateToken_DuplicateName(t *testing.T) {
 }
 
 func TestCreateToken_DuplicateToken(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	token, _ := s.GenerateToken()
@@ -132,7 +131,7 @@ func TestCreateToken_DuplicateToken(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestValidateToken_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	tokenValue, _ := s.GenerateToken()
@@ -155,7 +154,7 @@ func TestValidateToken_Success(t *testing.T) {
 }
 
 func TestValidateToken_RevokedToken(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	tokenValue, _ := s.GenerateToken()
@@ -178,7 +177,7 @@ func TestValidateToken_RevokedToken(t *testing.T) {
 }
 
 func TestValidateToken_UnknownToken(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	// ValidateToken should fail for unknown token
@@ -192,7 +191,7 @@ func TestValidateToken_UnknownToken(t *testing.T) {
 }
 
 func TestValidateToken_UpdatesLastUsed(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	tokenValue, _ := s.GenerateToken()
@@ -204,12 +203,9 @@ func TestValidateToken_UpdatesLastUsed(t *testing.T) {
 		t.Fatalf("ValidateToken failed: %v", err)
 	}
 
-	// Give the async goroutine time to complete
-	time.Sleep(100 * time.Millisecond)
-
-	// Check that last_used was updated
+	// Validation owns and finishes best-effort telemetry before returning.
 	var lastUsed string
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT COALESCE(last_used, '') FROM api_tokens WHERE name = ?", "last-used-test",
 	).Scan(&lastUsed)
 	if err != nil {
@@ -225,7 +221,7 @@ func TestValidateToken_UpdatesLastUsed(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListTokens_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	// Create some tokens
@@ -259,7 +255,7 @@ func TestListTokens_Success(t *testing.T) {
 }
 
 func TestListTokens_ReturnsPrefix(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	tokenValue, _ := s.GenerateToken()
@@ -283,7 +279,7 @@ func TestListTokens_ReturnsPrefix(t *testing.T) {
 }
 
 func TestListTokens_ExcludesRevokedByDefault(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	token1, _ := s.GenerateToken()
@@ -307,7 +303,7 @@ func TestListTokens_ExcludesRevokedByDefault(t *testing.T) {
 }
 
 func TestListTokens_IncludeRevoked(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	token1, _ := s.GenerateToken()
@@ -328,7 +324,7 @@ func TestListTokens_IncludeRevoked(t *testing.T) {
 }
 
 func TestListTokens_Empty(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	tokens, err := s.ListTokens(ctx)
@@ -349,7 +345,7 @@ func TestListTokens_Empty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetTokenByName_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	token, _ := s.GenerateToken()
@@ -372,7 +368,7 @@ func TestGetTokenByName_Success(t *testing.T) {
 }
 
 func TestGetTokenByName_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	retrieved, err := s.GetTokenByName(ctx, "nonexistent")
@@ -389,7 +385,7 @@ func TestGetTokenByName_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRevokeToken_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	tokenValue, _ := s.GenerateToken()
@@ -402,7 +398,7 @@ func TestRevokeToken_Success(t *testing.T) {
 
 	// Token should still exist in DB but have revoked_at set
 	var revokedAt string
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT COALESCE(revoked_at, '') FROM api_tokens WHERE name = ?", "revoke-me",
 	).Scan(&revokedAt)
 	if err != nil {
@@ -423,7 +419,7 @@ func TestRevokeToken_Success(t *testing.T) {
 }
 
 func TestRevokeToken_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	err := s.RevokeToken(ctx, "nonexistent")
@@ -433,7 +429,7 @@ func TestRevokeToken_NotFound(t *testing.T) {
 }
 
 func TestRevokeToken_AlreadyRevoked(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	tokenValue, _ := s.GenerateToken()
@@ -457,7 +453,7 @@ func TestRevokeToken_AlreadyRevoked(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDeleteTokenPermanent_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	token, _ := s.GenerateToken()
@@ -476,7 +472,7 @@ func TestDeleteTokenPermanent_Success(t *testing.T) {
 }
 
 func TestDeleteTokenPermanent_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	err := s.DeleteTokenPermanent(ctx, "nonexistent")
@@ -490,21 +486,21 @@ func TestDeleteTokenPermanent_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestUpdateTokenLastUsed_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	token, _ := s.GenerateToken()
 	_ = s.CreateToken(ctx, "use-me", token, "")
 
 	// Update last_used
-	err := s.UpdateTokenLastUsed(ctx, "use-me")
+	err := (identityStore{db: s.db}).updateTokenLastUsed(ctx, "use-me")
 	if err != nil {
 		t.Fatalf("UpdateTokenLastUsed failed: %v", err)
 	}
 
 	// Verify last_used is set
 	var lastUsed string
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT last_used FROM api_tokens WHERE name = ?", "use-me",
 	).Scan(&lastUsed)
 	if err != nil {
@@ -520,7 +516,7 @@ func TestUpdateTokenLastUsed_Success(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCountActiveTokens_Empty(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	count, err := s.CountActiveTokens(ctx)
@@ -533,7 +529,7 @@ func TestCountActiveTokens_Empty(t *testing.T) {
 }
 
 func TestCountActiveTokens_WithTokens(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	token1, _ := s.GenerateToken()
@@ -551,7 +547,7 @@ func TestCountActiveTokens_WithTokens(t *testing.T) {
 }
 
 func TestCountActiveTokens_ExcludesRevoked(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	token1, _ := s.GenerateToken()
@@ -572,10 +568,10 @@ func TestCountActiveTokens_ExcludesRevoked(t *testing.T) {
 }
 
 func TestUpdateTokenLastUsed_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
-	err := s.UpdateTokenLastUsed(ctx, "nonexistent")
+	err := (identityStore{db: s.db}).updateTokenLastUsed(ctx, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent token, got nil")
 	}
@@ -586,7 +582,7 @@ func TestUpdateTokenLastUsed_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateToken_WithScope(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	token, _ := s.GenerateToken()
@@ -597,7 +593,7 @@ func TestCreateToken_WithScope(t *testing.T) {
 
 	// Verify scope stored correctly
 	var scope string
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT scope FROM api_tokens WHERE name = ?", "runner-token",
 	).Scan(&scope)
 	if err != nil {
@@ -609,7 +605,7 @@ func TestCreateToken_WithScope(t *testing.T) {
 }
 
 func TestCreateToken_DefaultScope(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	token, _ := s.GenerateToken()
@@ -620,7 +616,7 @@ func TestCreateToken_DefaultScope(t *testing.T) {
 
 	// Verify default scope is admin:*
 	var scope string
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT scope FROM api_tokens WHERE name = ?", "default-scope",
 	).Scan(&scope)
 	if err != nil {
@@ -632,7 +628,7 @@ func TestCreateToken_DefaultScope(t *testing.T) {
 }
 
 func TestValidateToken_ReturnsScope(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	tokenValue, _ := s.GenerateToken()
@@ -648,7 +644,7 @@ func TestValidateToken_ReturnsScope(t *testing.T) {
 }
 
 func TestListTokens_IncludesScope(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	token1, _ := s.GenerateToken()
@@ -678,7 +674,7 @@ func TestListTokens_IncludesScope(t *testing.T) {
 }
 
 func TestGetTokenByName_ReturnsScope(t *testing.T) {
-	s := newTestStorage(t)
+	s := newIdentityTestStorage(t)
 	ctx := context.Background()
 
 	tokenValue, _ := s.GenerateToken()

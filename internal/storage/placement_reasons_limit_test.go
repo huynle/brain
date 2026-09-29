@@ -12,7 +12,7 @@ import (
 // Uses insertPlacementReasonRaw to bypass RecordPlacementReason's
 // auto-prune so the test can exercise `limit` against >20 rows.
 func TestListPlacementReasonRows_LimitCapsResults(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert 30 placement decisions for the same task, ascending created_at.
@@ -47,7 +47,7 @@ func TestListPlacementReasonRows_LimitCapsResults(t *testing.T) {
 // want the full history (e.g. task_placement_reasons() diagnostic tool)
 // aren't broken.
 func TestListPlacementReasonRows_ZeroLimitReturnsAll(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	for i := 1; i <= 5; i++ {
@@ -78,7 +78,7 @@ func TestListPlacementReasonRows_ZeroLimitReturnsAll(t *testing.T) {
 // larger row set, we insert directly via test-only helper
 // insertPlacementReasonRaw to bypass the opportunistic prune.
 func TestPrunePlacementReasonsForTask(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// 50 rows for task-1, 3 rows for task-2 (should be untouched).
@@ -135,7 +135,7 @@ func TestPrunePlacementReasonsForTask(t *testing.T) {
 // pruner is a no-op when a task has fewer rows than the retention
 // cap. Prevents extra writes on the common path.
 func TestPrunePlacementReasonsForTask_NoOpWhenBelowLimit(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	for i := 1; i <= 5; i++ {
@@ -160,7 +160,7 @@ func TestPrunePlacementReasonsForTask_NoOpWhenBelowLimit(t *testing.T) {
 // opportunistic prune that RecordPlacementReason does. Test-only helper
 // so we can build up row sets larger than PlacementReasonRetention to
 // exercise the pruner directly.
-func insertPlacementReasonRaw(ctx context.Context, s *StorageLayer, row *PlacementReasonRow) error {
+func insertPlacementReasonRaw(ctx context.Context, s *TenantStore, row *PlacementReasonRow) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO task_placement_reasons
 		  (project_id, task_id, runner_id, machine_id, decision, reason, required_labels, runner_labels, missing_labels, created_at)

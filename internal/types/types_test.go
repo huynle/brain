@@ -220,8 +220,8 @@ func TestIsValidCheckoutMode(t *testing.T) {
 		{"", true}, // empty is allowed (defaults to "ai" downstream)
 		{"ai", true},
 		{"simple", true},
-		{"AI", false},      // case-sensitive
-		{"Simple", false},  // case-sensitive
+		{"AI", false},     // case-sensitive
+		{"Simple", false}, // case-sensitive
 		{"garbage", false},
 		{"auto_pr", false}, // valid merge_policy but not a checkout_mode
 	}

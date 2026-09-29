@@ -40,7 +40,11 @@ func packFloat32s(vec []float32) []byte {
 //   - Inserts or replaces metadata in note_embeddings_meta with embedding_indexed_at = now()
 //
 // Returns an error if any operation fails (transaction is rolled back automatically).
-func (s *StorageLayer) UpsertNoteEmbeddings(ctx context.Context, records []EmbeddingRecord) error {
+func (s *TenantStore) UpsertNoteEmbeddings(ctx context.Context, records []EmbeddingRecord) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	if len(records) == 0 {
 		return nil
 	}
@@ -55,18 +59,23 @@ func (s *StorageLayer) UpsertNoteEmbeddings(ctx context.Context, records []Embed
 	defer func() { _ = tx.Rollback() }()
 
 	// Prepare statements for efficiency
-	embeddingStmt, err := tx.PrepareContext(ctx, `
+	embeddingSQL := `
 		INSERT INTO note_embeddings (note_id, chunk_index, embedding)
 		VALUES (?, ?, ?)
 		ON CONFLICT(note_id, chunk_index) DO UPDATE SET
 			embedding = excluded.embedding
-	`)
+	`
+	if scope.owner != "" {
+		embeddingSQL = `INSERT INTO note_embeddings (tenant_id, note_id, chunk_index, embedding)
+		VALUES (?, ?, ?, ?) ON CONFLICT(tenant_id, note_id, chunk_index) DO UPDATE SET embedding = excluded.embedding`
+	}
+	embeddingStmt, err := tx.PrepareContext(ctx, embeddingSQL)
 	if err != nil {
 		return fmt.Errorf("prepare embedding statement: %w", err)
 	}
 	defer embeddingStmt.Close()
 
-	metaStmt, err := tx.PrepareContext(ctx, `
+	metaSQL := `
 		INSERT INTO note_embeddings_meta (note_id, chunk_index, project_id, type, status, feature_id, priority, embedding_indexed_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT(note_id, chunk_index) DO UPDATE SET
@@ -76,7 +85,15 @@ func (s *StorageLayer) UpsertNoteEmbeddings(ctx context.Context, records []Embed
 			feature_id = excluded.feature_id,
 			priority = excluded.priority,
 			embedding_indexed_at = datetime('now')
-	`)
+	`
+	if scope.owner != "" {
+		metaSQL = `INSERT INTO note_embeddings_meta (tenant_id, note_id, chunk_index, project_id, type, status, feature_id, priority, embedding_indexed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT(tenant_id, note_id, chunk_index) DO UPDATE SET
+		project_id=excluded.project_id, type=excluded.type, status=excluded.status,
+		feature_id=excluded.feature_id, priority=excluded.priority, embedding_indexed_at=datetime('now')`
+	}
+	metaStmt, err := tx.PrepareContext(ctx, metaSQL)
 	if err != nil {
 		return fmt.Errorf("prepare meta statement: %w", err)
 	}
@@ -84,6 +101,9 @@ func (s *StorageLayer) UpsertNoteEmbeddings(ctx context.Context, records []Embed
 
 	// Execute all upserts
 	for _, rec := range records {
+		if err := requireOwnedNote(ctx, tx, scope, rec.NoteID); err != nil {
+			return err
+		}
 		// Validate vector is not empty
 		if len(rec.Vector) == 0 {
 			return fmt.Errorf("embedding vector for note_id=%d chunk_index=%d is empty", rec.NoteID, rec.ChunkIndex)
@@ -93,15 +113,18 @@ func (s *StorageLayer) UpsertNoteEmbeddings(ctx context.Context, records []Embed
 		blob := packFloat32s(rec.Vector)
 
 		// Upsert embedding
-		if _, err := embeddingStmt.ExecContext(ctx, rec.NoteID, rec.ChunkIndex, blob); err != nil {
+		embeddingArgs := []interface{}{rec.NoteID, rec.ChunkIndex, blob}
+		metaArgs := []interface{}{rec.NoteID, rec.ChunkIndex, rec.ProjectID, rec.Type, rec.Status, rec.FeatureID, rec.Priority}
+		if scope.owner != "" {
+			embeddingArgs = append([]interface{}{scope.owner}, embeddingArgs...)
+			metaArgs = append([]interface{}{scope.owner}, metaArgs...)
+		}
+		if _, err := embeddingStmt.ExecContext(ctx, embeddingArgs...); err != nil {
 			return fmt.Errorf("upsert embedding for note_id=%d chunk_index=%d: %w", rec.NoteID, rec.ChunkIndex, err)
 		}
 
 		// Upsert metadata
-		if _, err := metaStmt.ExecContext(ctx,
-			rec.NoteID, rec.ChunkIndex,
-			rec.ProjectID, rec.Type, rec.Status, rec.FeatureID, rec.Priority,
-		); err != nil {
+		if _, err := metaStmt.ExecContext(ctx, metaArgs...); err != nil {
 			return fmt.Errorf("upsert metadata for note_id=%d chunk_index=%d: %w", rec.NoteID, rec.ChunkIndex, err)
 		}
 	}
@@ -116,11 +139,16 @@ func (s *StorageLayer) UpsertNoteEmbeddings(ctx context.Context, records []Embed
 
 // GetNoteEmbedding retrieves a specific embedding by note_id and chunk_index.
 // Returns nil, nil if not found.
-func (s *StorageLayer) GetNoteEmbedding(ctx context.Context, noteID int64, chunkIndex int) ([]float32, error) {
+func (s *TenantStore) GetNoteEmbedding(ctx context.Context, noteID int64, chunkIndex int) ([]float32, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	where, args := scope.where("note_id = ? AND chunk_index = ?", noteID, chunkIndex)
 	var blob []byte
-	err := s.db.QueryRowContext(ctx,
-		"SELECT embedding FROM note_embeddings WHERE note_id = ? AND chunk_index = ?",
-		noteID, chunkIndex,
+	err = s.db.QueryRowContext(ctx,
+		"SELECT embedding FROM note_embeddings WHERE "+where,
+		args...,
 	).Scan(&blob)
 
 	if err == sql.ErrNoRows {
@@ -145,27 +173,36 @@ func (s *StorageLayer) GetNoteEmbedding(ctx context.Context, noteID int64, chunk
 }
 
 // EmbeddingStatus reports whether a note has current embeddings.
-func (s *StorageLayer) EmbeddingStatus(ctx context.Context, note *NoteRow) (string, error) {
+func (s *TenantStore) EmbeddingStatus(ctx context.Context, note *NoteRow) (string, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return "", err
+	}
 	if note == nil {
 		return "unknown", nil
 	}
+	noteWhere, noteArgs := scope.where("id = ?", note.ID)
+	var indexedAt string
+	if err := s.db.QueryRowContext(ctx, "SELECT indexed_at FROM notes WHERE "+noteWhere, noteArgs...).Scan(&indexedAt); err != nil {
+		return "", fmt.Errorf("note endpoint not owned: %w", err)
+	}
+	where, args := scope.where("note_id = ?", note.ID)
 	var latest string
-	err := s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(MAX(embedding_indexed_at), '')
 		FROM note_embeddings_meta
-		WHERE note_id = ?
-	`, note.ID).Scan(&latest)
+		WHERE `+where, args...).Scan(&latest)
 	if err != nil {
 		return "", fmt.Errorf("query embedding status: %w", err)
 	}
 	if latest == "" {
 		return "missing", nil
 	}
-	if note.IndexedAt != "" && note.IndexedAt > latest {
+	if indexedAt != "" && indexedAt > latest {
 		return "stale", nil
 	}
 	var latestReadyAttachmentDerived string
-	err = s.db.QueryRowContext(ctx, `
+	attachmentQuery := `
 		SELECT COALESCE(MAX(ad.updated_at), '')
 		FROM entry_attachments ea
 		JOIN attachment_derived ad ON ad.attachment_id = ea.attachment_id
@@ -173,7 +210,13 @@ func (s *StorageLayer) EmbeddingStatus(ctx context.Context, note *NoteRow) (stri
 		  AND ad.kind = 'text'
 		  AND ad.status = 'ready'
 		  AND TRIM(ad.text) <> ''
-	`, note.ID).Scan(&latestReadyAttachmentDerived)
+	`
+	attachmentArgs := []interface{}{note.ID}
+	if scope.owner != "" {
+		attachmentQuery += " AND ea.tenant_id = ? AND ad.tenant_id = ea.tenant_id"
+		attachmentArgs = append(attachmentArgs, scope.owner)
+	}
+	err = s.db.QueryRowContext(ctx, attachmentQuery, attachmentArgs...).Scan(&latestReadyAttachmentDerived)
 	if err != nil {
 		return "", fmt.Errorf("query attachment derived embedding status: %w", err)
 	}
@@ -190,25 +233,43 @@ func (s *StorageLayer) EmbeddingStatus(ctx context.Context, note *NoteRow) (stri
 // unchanged, so regenerating vectors would be a wasted round-trip to the
 // embedding API, but semantic search pre-filters on these columns and must
 // see the new values. No-op for notes that have no embeddings.
-func (s *StorageLayer) SyncNoteEmbeddingMetadata(ctx context.Context, note *NoteRow) error {
+func (s *TenantStore) SyncNoteEmbeddingMetadata(ctx context.Context, note *NoteRow) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	if note == nil {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := requireOwnedNote(ctx, tx, scope, note.ID); err != nil {
+		return err
+	}
+	where, args := scope.where("note_id = ?", note.ID)
+	args = append([]interface{}{note.ProjectID, note.Type, note.Status, note.FeatureID, note.Priority}, args...)
+	_, err = tx.ExecContext(ctx, `
 		UPDATE note_embeddings_meta
 		SET project_id = ?, type = ?, status = ?, feature_id = ?, priority = ?,
 			embedding_indexed_at = datetime('now')
-		WHERE note_id = ?
-	`, note.ProjectID, note.Type, note.Status, note.FeatureID, note.Priority, note.ID)
+		WHERE `+where, args...)
 	if err != nil {
 		return fmt.Errorf("sync note embedding metadata: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // DeleteNoteEmbeddings deletes all embeddings and metadata for a given note_id.
-// Both tables must be explicitly deleted since they reference notes, not each other.
-func (s *StorageLayer) DeleteNoteEmbeddings(ctx context.Context, noteID int64) error {
+// Metadata is deleted first for the v29 exact-chunk FK; v28 requires both deletes.
+func (s *TenantStore) DeleteNoteEmbeddings(ctx context.Context, noteID int64) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
+	where, args := scope.where("note_id = ?", noteID)
 	// Begin transaction to ensure both deletes succeed or fail together
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -218,16 +279,16 @@ func (s *StorageLayer) DeleteNoteEmbeddings(ctx context.Context, noteID int64) e
 	// commit result above is what callers act on.
 	defer func() { _ = tx.Rollback() }()
 
-	// Delete embeddings
-	_, err = tx.ExecContext(ctx, "DELETE FROM note_embeddings WHERE note_id = ?", noteID)
-	if err != nil {
-		return fmt.Errorf("delete note embeddings: %w", err)
-	}
-
-	// Delete metadata
-	_, err = tx.ExecContext(ctx, "DELETE FROM note_embeddings_meta WHERE note_id = ?", noteID)
+	// Delete metadata first: v29 references the exact vector chunk.
+	_, err = tx.ExecContext(ctx, "DELETE FROM note_embeddings_meta WHERE "+where, args...)
 	if err != nil {
 		return fmt.Errorf("delete note embeddings metadata: %w", err)
+	}
+
+	// Delete vectors
+	_, err = tx.ExecContext(ctx, "DELETE FROM note_embeddings WHERE "+where, args...)
+	if err != nil {
+		return fmt.Errorf("delete note embeddings: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -282,7 +343,11 @@ type embeddingMatch struct {
 // SearchByEmbedding finds similar notes using cosine similarity over stored embeddings.
 // It pre-filters candidates using note_embeddings_meta, loads candidate embeddings,
 // computes cosine similarity, and returns the top-K matches deduplicated by note_id.
-func (s *StorageLayer) SearchByEmbedding(ctx context.Context, queryVec []float32, opts *EmbeddingSearchOptions) ([]*NoteRow, error) {
+func (s *TenantStore) SearchByEmbedding(ctx context.Context, queryVec []float32, opts *EmbeddingSearchOptions) ([]*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if len(queryVec) == 0 {
 		return []*NoteRow{}, nil
 	}
@@ -294,9 +359,13 @@ func (s *StorageLayer) SearchByEmbedding(ctx context.Context, queryVec []float32
 	}
 
 	// Build query to get candidate note_ids from note_embeddings_meta with filters
-	sql := "SELECT DISTINCT m.note_id FROM note_embeddings_meta m"
+	sql := "SELECT DISTINCT m.note_id FROM note_embeddings_meta m JOIN notes n ON n.id = m.note_id"
 	var params []interface{}
 	var whereClauses []string
+	if scope.owner != "" {
+		whereClauses = append(whereClauses, "m.tenant_id = ? AND n.tenant_id = m.tenant_id")
+		params = append(params, scope.owner)
+	}
 
 	if opts != nil {
 		if opts.ProjectID != "" {
@@ -304,9 +373,8 @@ func (s *StorageLayer) SearchByEmbedding(ctx context.Context, queryVec []float32
 			params = append(params, opts.ProjectID)
 		} else if clause, scopeParams := projectScopeClause(
 			"m.project_id",
-			// note_embeddings_meta has no path column, and global entries
-			// carry no project_id — reach their path through notes.
-			"(SELECT n.path FROM notes n WHERE n.id = m.note_id)",
+			// Global paths come from the same-owner notes join.
+			"n.path",
 			opts.ProjectIDs, opts.IncludeGlobalPath,
 		); clause != "" {
 			whereClauses = append(whereClauses, clause)
@@ -330,7 +398,10 @@ func (s *StorageLayer) SearchByEmbedding(ctx context.Context, queryVec []float32
 		}
 		if len(opts.Tags) > 0 {
 			// Join with tags table to filter by tags
-			sql = "SELECT DISTINCT m.note_id FROM note_embeddings_meta m INNER JOIN tags t ON m.note_id = t.note_id"
+			sql += " INNER JOIN tags t ON m.note_id = t.note_id"
+			if scope.owner != "" {
+				sql += " AND t.tenant_id = m.tenant_id"
+			}
 			placeholders := make([]string, len(opts.Tags))
 			for i, tag := range opts.Tags {
 				placeholders[i] = "?"
@@ -373,10 +444,11 @@ func (s *StorageLayer) SearchByEmbedding(ctx context.Context, queryVec []float32
 	var matches []embeddingMatch
 
 	for _, noteID := range candidateNoteIDs {
+		where, args := scope.where("note_id = ?", noteID)
 		// Get all chunks for this note
 		chunkRows, err := s.db.QueryContext(ctx,
-			"SELECT chunk_index, embedding FROM note_embeddings WHERE note_id = ?",
-			noteID,
+			"SELECT chunk_index, embedding FROM note_embeddings WHERE "+where,
+			args...,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("query embeddings for note_id=%d: %w", noteID, err)
@@ -458,6 +530,10 @@ func (s *StorageLayer) SearchByEmbedding(ctx context.Context, queryVec []float32
 	}
 
 	noteSQL := fmt.Sprintf("SELECT %s FROM notes WHERE id IN (%s)", noteColumns, joinStrings(placeholders, ","))
+	if scope.owner != "" {
+		noteSQL += " AND tenant_id = ?"
+		noteIDParams = append(noteIDParams, scope.owner)
+	}
 	noteRows, err := s.db.QueryContext(ctx, noteSQL, noteIDParams...)
 	if err != nil {
 		return nil, fmt.Errorf("query notes: %w", err)

@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -59,22 +60,29 @@ func (c *gatedEmbeddingClient) Embed(ctx context.Context, inputs []string) ([][]
 	return result, nil
 }
 
-func embeddingMetaStatus(t *testing.T, svc *BrainServiceImpl, path string) string {
+func requireEmbeddingMetaStatus(t *testing.T, svc *BrainServiceImpl, path, status string) {
 	t.Helper()
 	ctx := context.Background()
 	row, err := svc.storage.GetNoteByPath(ctx, path)
 	if err != nil || row == nil {
 		t.Fatalf("GetNoteByPath(%q) = %#v, err=%v", path, row, err)
 	}
-	var status string
-	err = svc.storage.DB().QueryRowContext(ctx,
-		"SELECT status FROM note_embeddings_meta WHERE note_id = ? AND chunk_index = 0",
-		row.ID,
-	).Scan(&status)
+	// Semantic search filters on embedding metadata, not the note's status.
+	// Prove the updated metadata is usable through the tenant API.
+	vector, err := svc.storage.GetNoteEmbedding(ctx, row.ID, 0)
 	if err != nil {
-		t.Fatalf("query embedding meta status: %v", err)
+		t.Fatal(err)
 	}
-	return status
+	matches, err := svc.storage.SearchByEmbedding(ctx, vector, &storage.EmbeddingSearchOptions{Status: status})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, match := range matches {
+		if match.ID == row.ID {
+			return
+		}
+	}
+	t.Fatalf("embedding metadata for %q does not match status %q", path, status)
 }
 
 func TestUpdate_MetadataOnlyDoesNotCallEmbeddingAPI(t *testing.T) {
@@ -108,9 +116,7 @@ func TestUpdate_MetadataOnlyDoesNotCallEmbeddingAPI(t *testing.T) {
 	}
 
 	// The new status is mirrored onto the embedding rows for filtered search…
-	if got := embeddingMetaStatus(t, svc, entry.Path); got != newStatus {
-		t.Errorf("embedding meta status = %q, want %q", got, newStatus)
-	}
+	requireEmbeddingMetaStatus(t, svc, entry.Path, newStatus)
 	// …and the embeddings still count as current.
 	row, err := store.GetNoteByPath(ctx, entry.Path)
 	if err != nil || row == nil {
@@ -153,9 +159,7 @@ func TestUpdateMetadata_DurableFieldsDoNotCallEmbeddingAPI(t *testing.T) {
 	if n := client.gatedCalls.Load(); n != 0 {
 		t.Errorf("durable metadata update triggered %d Embed call(s), want 0", n)
 	}
-	if got := embeddingMetaStatus(t, svc, entry.Path); got != "completed" {
-		t.Errorf("embedding meta status = %q, want %q", got, "completed")
-	}
+	requireEmbeddingMetaStatus(t, svc, entry.Path, "completed")
 }
 
 func TestUpdate_ContentChangeReembedsInBackground(t *testing.T) {
@@ -267,9 +271,7 @@ func TestUpdate_MetadataSyncConvergesDuringBackgroundRefresh(t *testing.T) {
 	close(client.release)
 	svc.WaitForPendingEmbeddings()
 
-	if got := embeddingMetaStatus(t, svc, entry.Path); got != done {
-		t.Errorf("embedding meta status = %q, want %q (must converge to latest committed entry status)", got, done)
-	}
+	requireEmbeddingMetaStatus(t, svc, entry.Path, done)
 
 	// Sanity: the persisted entry itself is 'completed'.
 	row, err := svc.storage.GetNoteByPath(ctx, entry.Path)
@@ -349,7 +351,5 @@ func TestPatchEntry_MetadataOnly_Returns200Fast(t *testing.T) {
 	if row.Status == nil || *row.Status != "in_progress" {
 		t.Errorf("persisted status = %v, want in_progress", row.Status)
 	}
-	if got := embeddingMetaStatus(t, svc, entry.Path); got != "in_progress" {
-		t.Errorf("embedding meta status = %q, want in_progress", got)
-	}
+	requireEmbeddingMetaStatus(t, svc, entry.Path, "in_progress")
 }

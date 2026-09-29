@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/events"
@@ -185,20 +186,14 @@ func TestDeleteProject_PurgesProjectScopedState(t *testing.T) {
 
 	// A claim and a pause dial: rows keyed by project_id that no
 	// entry-level delete can reach.
-	if _, err := store.DB().ExecContext(ctx,
-		`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
-		 VALUES ('stateful', 't1', 'r1', 1, 9999999999)`); err != nil {
+	if ok, _, err := store.ClaimTask(ctx, "stateful", "t1", "r1", time.Hour); err != nil || !ok {
 		t.Fatalf("seed claim: %v", err)
 	}
-	if _, err := store.DB().ExecContext(ctx,
-		`INSERT INTO project_pause_state (project_id, tasks_paused, automations_paused, updated_at)
-		 VALUES ('stateful', 1, 0, 1)`); err != nil {
+	if err := store.SetProjectTaskPaused(ctx, "stateful", true); err != nil {
 		t.Fatalf("seed pause state: %v", err)
 	}
 	// A neighbour's claim, to pin that the purge is scoped.
-	if _, err := store.DB().ExecContext(ctx,
-		`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
-		 VALUES ('other', 't1', 'r1', 1, 9999999999)`); err != nil {
+	if ok, _, err := store.ClaimTask(ctx, "other", "t1", "r1", time.Hour); err != nil || !ok {
 		t.Fatalf("seed neighbour claim: %v", err)
 	}
 
@@ -214,13 +209,8 @@ func TestDeleteProject_PurgesProjectScopedState(t *testing.T) {
 			resp.StateRowsRemoved["project_pause_state"])
 	}
 
-	var others int
-	if err := store.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM task_claims WHERE project_id = 'other'`).Scan(&others); err != nil {
-		t.Fatalf("count neighbour claims: %v", err)
-	}
-	if others != 1 {
-		t.Errorf("neighbour project's claim count = %d, want 1", others)
+	if claim, err := store.GetClaim(ctx, "other", "t1"); err != nil || claim == nil || claim.RunnerID != "r1" {
+		t.Errorf("neighbour project's claim changed: %+v, %v", claim, err)
 	}
 }
 

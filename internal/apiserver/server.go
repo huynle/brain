@@ -19,17 +19,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/auth"
-	"github.com/huynle/brain-api/internal/blobstore"
-	"github.com/huynle/brain-api/internal/bridge"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
-	"github.com/huynle/brain-api/internal/logbuffer"
 	mcppkg "github.com/huynle/brain-api/internal/mcp"
 	"github.com/huynle/brain-api/internal/oauth"
-	"github.com/huynle/brain-api/internal/realtime"
+	"github.com/huynle/brain-api/internal/phonepush"
 	"github.com/huynle/brain-api/internal/service"
 	"github.com/huynle/brain-api/internal/tenant"
-	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/internal/webui"
 	"github.com/huynle/brain-api/pkg/pathutil"
 )
@@ -324,8 +320,27 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	opts.BrainDir = mapping.BrainAbsolute
 	attachments.StorageRoot = mapping.BlobAbsolute
 
-	// ─── Indexer ────────────────────────────────────────────────────
-	idx := indexer.NewIndexer(opts.BrainDir, store, roots.Brain(tenant.Local))
+	// Graph assembly is separate from single-mode boot effects. No worker,
+	// built-in install or content scan is started by newTenantGraph.
+	passwordRefreshTTL := 30 * 24 * time.Hour
+	if opts.PasswordRefreshTokenTTL != nil {
+		passwordRefreshTTL = *opts.PasswordRefreshTokenTTL
+	}
+	graph, err := newTenantGraph(ctx, store, roots, config.Config{
+		BrainDir: opts.BrainDir, Host: opts.Host, Port: opts.Port,
+		EnableAuth: opts.EnableAuth, CORSOrigin: opts.CORSOrigin,
+		OAuthPIN: opts.OAuthPIN, JWTSecret: opts.JWTSecret,
+		TaskDefaults: opts.TaskDefaults, FeatureCheckout: opts.FeatureCheckout, FeatureDelivery: opts.FeatureDelivery,
+		Tenancy: opts.Tenancy, Embedding: opts.Embedding, Attachments: attachments,
+		AttachmentExtraction: opts.AttachmentExtraction, Assistant: opts.Assistant,
+	}, graphIdentity{tokens: views.tokens, verifier: credVerifier, passwords: control, passwordTTL: passwordRefreshTTL, passwordTTLSet: true, assistantMCPURL: assistantMCPBaseURL(opts)})
+	if err != nil {
+		cleanup()
+		return nil, "", nil, err
+	}
+	ownerCleanup := cleanup
+	cleanup = func() { graph.Close(); ownerCleanup() }
+	cfg, idx, brainSvc := graph.config, graph.indexer, graph.brain
 
 	// The boot index is a one-shot pass. Writes that reach BrainDir without
 	// going through the API — a git pull into the brain dir, a manual edit,
@@ -368,9 +383,19 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// /health with a bounded deadline (see cmd/brain/commands/lifecycle.go).
 	// The previous SQLite index remains valid for reads while the re-scan
 	// runs; new/changed/deleted files just show up a few seconds late.
-	indexReady := make(chan struct{})
+	scanDone := make(chan struct{})
+	scanCleanup := cleanup
+	cleanup = func() {
+		watchMu.Lock()
+		watchStopped = true
+		watchMu.Unlock()
+		// IndexChanged currently has no cancellation API. Join the one-shot
+		// scan before stopping the watcher, detached work or shared DB owner.
+		<-scanDone
+		scanCleanup()
+	}
 	go func() {
-		defer close(indexReady)
+		defer close(scanDone)
 		slog.Info("indexing brain directory", "dir", opts.BrainDir)
 		result, err := idx.IndexChanged()
 		if err != nil {
@@ -406,39 +431,6 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		slog.Info("watching brain directory for out-of-band writes", "dir", opts.BrainDir)
 	}()
 
-	// ─── Build Config ───────────────────────────────────────────────
-	cfg := config.Config{
-		BrainDir:        opts.BrainDir,
-		Host:            opts.Host,
-		Port:            opts.Port,
-		EnableAuth:      opts.EnableAuth,
-		CORSOrigin:      opts.CORSOrigin,
-		OAuthPIN:        opts.OAuthPIN,
-		JWTSecret:       opts.JWTSecret,
-		TaskDefaults:    opts.TaskDefaults,
-		FeatureCheckout: opts.FeatureCheckout,
-		Tenancy:         opts.Tenancy,
-		FeatureDelivery: opts.FeatureDelivery,
-		Embedding:       opts.Embedding,
-		Attachments:     attachments,
-
-		AttachmentExtraction: opts.AttachmentExtraction,
-		Assistant:            opts.Assistant,
-	}
-
-	// ─── Services ───────────────────────────────────────────────────
-	// Create embedding client if enabled
-	var embeddingClient service.EmbeddingClient
-	if cfg.Embedding.Enabled {
-		var err error
-		embeddingClient, err = service.NewAiFactoryEmbeddingClient(cfg.Embedding)
-		if err != nil {
-			slog.Warn("Failed to create embedding client, semantic search disabled", "error", err)
-			embeddingClient = nil
-		}
-	}
-
-	brainSvc := service.NewBrainService(&cfg, store, idx, nil, embeddingClient)
 	if err := service.EnsureBuiltInFeatureCheckoutAutomation(ctx, brainSvc, service.BuiltInFeatureCheckoutConfig{
 		Enabled:            cfg.FeatureCheckout.Enabled,
 		Agent:              cfg.TaskDefaults.Agent,
@@ -485,194 +477,36 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		cleanup()
 		return nil, "", nil, fmt.Errorf("failed to ensure built-in feature delivery automation: %w", err)
 	}
-	blobStore, err := blobstore.NewTenantFilesystemStore(roots, tenant.Local, cfg.Attachments.MaxUploadSizeBytes)
-	if err != nil {
-		cleanup()
-		return nil, "", nil, fmt.Errorf("failed to initialize attachment blob store: %w", err)
+	// Workers remain boot-owned and joined before the graph/shared owner.
+	stopWorkers := startSingleGraphWorkers(ctx, graph)
+	graphCleanup := cleanup
+	var cleanupOnce sync.Once
+	cleanup = func() { cleanupOnce.Do(func() { stopWorkers(); graphCleanup() }) }
+	if cfg.Assistant.Enabled && os.Getenv("BRAIN_ASSISTANT_JOBS") == "true" {
+		stopJobs, err := graph.assistant.StartConversationJobs(tenant.Into(ctx, tenant.Local), filepath.Join(dataDir, "assistant-jobs", "jobs.db"))
+		if err != nil {
+			cleanup()
+			return nil, "", nil, fmt.Errorf("start conversation worker: %w", err)
+		}
+		previousCleanup := cleanup
+		cleanup = func() { stopJobs(); previousCleanup() }
 	}
-	attachmentExtractor := service.NewOpenRouterAttachmentExtractor(cfg.AttachmentExtraction)
-	attachmentSvc := service.NewAttachmentService(
-		store,
-		blobStore,
-		brainSvc,
-		cfg.Attachments.MaxUploadSizeBytes,
-		service.WithAttachmentMIMEPolicy(cfg.Attachments.AllowedMIMETypes, cfg.Attachments.BlockedMIMETypes),
-		service.WithAttachmentExtractor(attachmentExtractor),
-		service.WithAttachmentDerivedChangeHook(brainSvc),
-	)
-	taskSvc := service.NewTaskService(&cfg, store, idx)
-	runnerSvc := service.NewRunnerServiceWithStorage(store)
-	runnerRegistrySvc := service.NewRunnerRegistryService(store)
-	clientContextSvc := service.NewClientContextService(store)
-	placementSvc := service.NewProjectPlacementService(store)
-	monitorSvc := service.NewMonitorService(brainSvc)
-	webhookSvc := service.NewWebhookService(store)
-
-	// ─── Realtime Hub ───────────────────────────────────────────────
-	hub := realtime.NewHub()
-
-	// ─── Background Claim Cleanup ──────────────────────────────────
-	taskSvc.StartClaimCleanup(ctx, service.DefaultClaimCleanupInterval)
-
-	// ─── Runner Lifecycle Management ───────────────────────────────
-	runnerRegistrySvc.SetHub(hub)
-	runnerRegistrySvc.StartLifecycleManager(ctx, service.DefaultLifecycleInterval)
-
-	// ─── Scheduler Lifecycle ────────────────────────────────────────
-	schedulerSvc := service.NewSchedulerService(taskSvc, runnerSvc, runnerRegistrySvc, placementSvc, store, hub)
-	schedulerSvc.Start(ctx, service.DefaultSchedulerInterval)
-
-	// ─── Event Hub & Services ──────────────────────────────────────
-	eventHub := realtime.NewEventHub()
-	eventSvc := service.NewEventService(eventHub)
-	eventSvc.SetFeatureTaskLister(taskSvc)
-	eventSvc.SetFeatureAssignmentCleaner(store)
-
-	// ─── Feature Cascade ───────────────────────────────────────────
-	// Manual "Run feature now" workflow needs the cascade to drain queued
-	// tasks as in-flight ones complete — even while the project is paused.
-	// Wire here so SchedulerService can register cascades from RunFeatureNow
-	// and the cascade can call back via the FeatureRunner interface.
-	featureCascade := service.NewFeatureCascadeService(eventHub, schedulerSvc)
-	schedulerSvc.SetFeatureCascade(featureCascade)
-	featureCascade.Start(ctx)
-	automationSvc := service.NewAutomationService(brainSvc)
-	automationSvc.SetPauseChecker(runnerSvc)
-	// Without a project lister an automation scoped to all projects
-	// (filter.project: "*") cannot fan out and falls back to a single
-	// unscoped run — which is how the built-in Dream Consolidation spent
-	// months writing one empty-project task a night into `default`.
-	automationSvc.SetProjectLister(taskSvc)
-	go automationSvc.Start(ctx, eventHub)
-
-	// ─── Runner Bridge Hub (remote control) ────────────────────────
-	// Created before the goal service so the goal steerer can reuse the same
-	// in-process control plumbing (instance registry + bridge proxy).
-	bridgeHub := bridge.NewHub(hub)
-	wireSupervisorControlEvents(ctx, bridgeHub, runnerRegistrySvc, eventSvc)
-
-	// ─── Live context injector (resume-with-context) ───────────────
-	// Wire the task service's LiveInjector to the same instance-registry +
-	// bridge plumbing the goal steerer uses, so ResumeTaskWithContext can
-	// inject into a still-live session instead of relaunching. Nil-safe:
-	// if this is never set the service always relaunches.
-	taskSvc.SetLiveInjector(newBridgeLiveInjector(runnerRegistrySvc, bridgeHub))
-
-	// ─── Goal Reconcile Handler ────────────────────────────────────
-	// GoalService subscribes to the EventHub and drives the deterministic
-	// in-process reconcile for goal automations when their linked task/feature
-	// lifecycle events fire (plus a periodic re-check ticker). The steerer
-	// nudges live agent sessions toward the goal while work is in progress;
-	// the pause checker suppresses generation/steering while automations are
-	// paused, mirroring AutomationService.
-	goalSvc := service.NewGoalService(brainSvc, taskSvc, store,
-		service.WithGoalSteerer(newBridgeGoalSteerer(runnerRegistrySvc, bridgeHub)),
-		service.WithGoalPauseChecker(runnerSvc),
-	)
-	assistantSvc := api.NewAssistantService(api.AssistantServiceOptions{
-		Enabled:   cfg.Assistant.Enabled,
-		Provider:  cfg.Assistant.Provider,
-		BaseURL:   cfg.Assistant.BaseURL,
-		APIKeyEnv: cfg.Assistant.APIKeyEnv,
-		Model:     cfg.Assistant.Model,
-		Timeout:   time.Duration(cfg.Assistant.TimeoutMs) * time.Millisecond,
-		Brain:     brainSvc,
-		Goals:     goalSvc,
-		Tasks:     taskSvc,
-		Runner:    runnerSvc,
-		Runners:   runnerRegistrySvc,
-		Events:    eventSvc,
-		// Give the UI assistant the FULL Brain MCP tool set by pointing it at
-		// this same server's loopback address. Its tool calls are made over
-		// HTTP with the caller's own bearer token forwarded, mirroring the MCP
-		// HTTP transport. Scheme must match the listener (TLS ⇒ https) so the
-		// callback doesn't hit the TLS listener as plain HTTP; the self-signed
-		// cert is trusted for loopback earlier in RunServer.
-		MCPBaseURL: assistantMCPBaseURL(opts),
-	})
-	go goalSvc.Start(ctx, eventHub)
-
-	// ─── Reminders ─────────────────────────────────────────────────
-	// The sweeper runs HERE, in the API process, not in the runner. A
-	// notify-action reminder has nothing to do with runners and must not go
-	// undelivered because none happens to be polling; the runner's existing
-	// run_once_at path is additionally gated by the project and feature pause
-	// dials, which have no business suppressing a notification.
-	reminderSvc := service.NewReminderService(brainSvc, store,
-		service.WithReminderEventIngester(eventSvc),
-		service.WithReminderPauseChecker(runnerSvc),
-	)
-	go reminderSvc.Start(ctx)
-
-	// ─── Webhook Dispatcher ────────────────────────────────────────
-	// Subscribe to all EventHub events and deliver to matching webhooks.
-	webhookDispatcher := realtime.NewWebhookDispatcher(eventHub, webhookSvc)
-	go webhookDispatcher.Start(ctx)
-
-	// ─── Trigger Dispatcher ────────────────────────────────────────
-	// Subscribe to all EventHub events and evaluate task triggers.
-	// When events match a task's trigger config, the task is activated (set to pending).
-	triggerStore := service.NewTriggerTaskStoreAdapter(store)
-	triggerSvc := service.NewTriggerService(triggerStore)
-	triggerDispatcher := realtime.NewTriggerDispatcher(eventHub, triggerSvc)
-	go triggerDispatcher.Start(ctx)
-
-	// ─── Log Buffer ─────────────────────────────────────────────────
-	logBuf := logbuffer.New(logbuffer.DefaultMaxLines)
 
 	// ─── API Handler & Router ───────────────────────────────────────
-	bulkSvc := service.NewBulkJobService(brainSvc, store, taskSvc, func(project string) {
-		hub.PublishProjectDirty(project)
-		resp, err := taskSvc.GetTasks(ctx, project)
-		if err == nil {
-			hub.PublishTaskSnapshot(project, types.SSETasksSnapshotData{
-				SSEEventData: types.SSEEventData{Type: types.SSEEventTasksSnapshot, Transport: "sse", Timestamp: types.TimeNowUTC().Format("2006-01-02T15:04:05Z"), ProjectID: project},
-				Tasks:        resp.Tasks, Count: resp.Count, Stats: resp.Stats, Cycles: resp.Cycles,
-			})
-		}
-	})
-	bulkSvc.SetEventService(eventSvc)
-	bulkSvc.Start(ctx, indexReady)
-	previousCleanup := cleanup
-	cleanup = func() { bulkSvc.Stop(); previousCleanup() }
-	passwordRefreshTTL := 30 * 24 * time.Hour
-	if opts.PasswordRefreshTokenTTL != nil {
-		passwordRefreshTTL = *opts.PasswordRefreshTokenTTL
+	pushSvc, err := phonepush.OpenPhonePush(filepath.Join(dataDir, "push", "notifications.db"))
+	if err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("open phone notifications: %w", err)
 	}
-	handler := api.NewHandler(
-		brainSvc,
-		api.WithAttachmentService(attachmentSvc),
-		api.WithTaskService(taskSvc),
-		api.WithBulkJobService(bulkSvc),
-		api.WithSupervisorOperations(store),
-		api.WithExecutionBudgets(store),
-		api.WithSupervisorCheckpoints(store),
-		api.WithRunnerService(runnerSvc),
-		api.WithRunnerRegistryService(runnerRegistrySvc),
-		api.WithClientContextService(clientContextSvc),
-		api.WithProjectPlacementService(placementSvc),
-		api.WithSchedulerService(schedulerSvc),
-		api.WithSchedulerVisibilityService(store),
-		api.WithRunTaskService(schedulerSvc),
-		api.WithRunFeatureService(schedulerSvc),
-		api.WithDependentChainService(schedulerSvc),
-		api.WithRunProjectService(schedulerSvc),
-		api.WithMonitorService(monitorSvc),
-		api.WithTokenService(views.tokens),
-		api.WithHub(hub),
-		api.WithEventService(eventSvc),
-		api.WithWebhookService(webhookSvc),
-		api.WithGoalService(goalSvc),
-		api.WithReminderService(reminderSvc),
-		api.WithAutomationRunService(automationSvc),
-		api.WithAssistantService(assistantSvc),
-		api.WithBridgeService(bridgeHub),
-		api.WithLogBuffer(logBuf),
-		api.WithTaskDefaults(cfg.TaskDefaults),
-		api.WithCredentialVerifier(credVerifier),
-		api.WithPasswordTokenStore(control),
-		api.WithPasswordRefreshTokenTTL(passwordRefreshTTL),
-	)
+	pushCleanup := cleanup
+	cleanup = func() { _ = pushSvc.Close(); pushCleanup() }
+	graph.bulk.Start(tenant.Into(ctx, tenant.Local), scanDone)
+	previousCleanup := cleanup
+	cleanup = func() { graph.bulk.Stop(); previousCleanup() }
+	api.WithPushService(pushSvc)(graph.handler)
+	stopPush := graph.handler.StartPush(ctx)
+	beforePushStop := cleanup
+	cleanup = func() { stopPush(); beforePushStop() }
 
 	// ─── Rate Limiting ─────────────────────────────────────────────
 	var rateLimiter *api.RateLimiter
@@ -694,9 +528,9 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	}
 
 	routerOpts := []api.RouterOption{
-		api.WithHandler(handler),
+		api.WithHandler(graph.handler),
 		api.WithDualAuth(control, control),
-		api.WithEmbeddingReady(!cfg.Embedding.Enabled || embeddingClient != nil),
+		api.WithEmbeddingReady(graph.embeddingReady),
 		api.WithConfigHandler(api.NewConfigHandler("", newHotReloader())),
 	}
 	if rateLimiter != nil {

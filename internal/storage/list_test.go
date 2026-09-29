@@ -12,7 +12,7 @@ import (
 
 // seedListNotes inserts a diverse set of notes for list/filter testing.
 // Returns the inserted notes keyed by a short label.
-func seedListNotes(t *testing.T, s *StorageLayer) map[string]*NoteRow {
+func seedListNotes(t *testing.T, s *TenantStore) map[string]*NoteRow {
 	t.Helper()
 	ctx := context.Background()
 
@@ -118,7 +118,7 @@ func seedListNotes(t *testing.T, s *StorageLayer) map[string]*NoteRow {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_NilOptions(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -136,7 +136,7 @@ func TestListNotes_NilOptions(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_NoFilters(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -159,7 +159,7 @@ func TestListNotes_NoFilters(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_FilterByType(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -198,7 +198,7 @@ func TestListNotes_FilterByType(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_FilterByStatus(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -235,7 +235,7 @@ func TestListNotes_FilterByStatus(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_FilterByProjectID(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -271,7 +271,7 @@ func TestListNotes_FilterByProjectID(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_FilterByFeatureID(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -308,7 +308,7 @@ func TestListNotes_FilterByFeatureID(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_FilterByPathPrefix(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -341,7 +341,7 @@ func TestListNotes_FilterByPathPrefix(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_FilterBySingleTag(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -376,7 +376,7 @@ func TestListNotes_FilterBySingleTag(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_FilterByMultipleTags(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -410,7 +410,7 @@ func TestListNotes_FilterByMultipleTags(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_CombinedFilters(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -463,7 +463,7 @@ func TestListNotes_CombinedFilters(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_SortByModified(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -486,7 +486,7 @@ func TestListNotes_SortByModified(t *testing.T) {
 }
 
 func TestListNotes_SortByCreated(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -509,7 +509,7 @@ func TestListNotes_SortByCreated(t *testing.T) {
 }
 
 func TestListNotes_SortByPriority(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -528,7 +528,7 @@ func TestListNotes_SortByPriority(t *testing.T) {
 }
 
 func TestListNotes_SortByTitle(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -551,7 +551,7 @@ func TestListNotes_SortByTitle(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_SortOrderAscDesc(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -592,7 +592,7 @@ func TestListNotes_SortOrderAscDesc(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_InvalidSortColumnDefaultsToModified(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -623,7 +623,7 @@ func TestListNotes_InvalidSortColumnDefaultsToModified(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_Limit(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -637,7 +637,7 @@ func TestListNotes_Limit(t *testing.T) {
 }
 
 func TestListNotes_LimitAndOffset(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -697,7 +697,7 @@ func TestListNotes_LimitAndOffset(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_DefaultLimit(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert 105 notes
@@ -728,7 +728,7 @@ func TestListNotes_DefaultLimit(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_EmptyResult(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// No notes inserted
@@ -749,7 +749,7 @@ func TestListNotes_EmptyResult(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListNotes_FilterByPriority(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 
@@ -794,7 +794,7 @@ func TestListNotes_FilterByPriority(t *testing.T) {
 // seedGlobalNote adds one project-less global entry to the seedListNotes set,
 // so the global half of a scope has something to find. Global entries carry
 // no project_id at all — that is exactly why the scope needs a path arm.
-func seedGlobalNote(t *testing.T, s *StorageLayer) {
+func seedGlobalNote(t *testing.T, s *TenantStore) {
 	t.Helper()
 	strPtr := func(s string) *string { return &s }
 	_, err := s.InsertNote(context.Background(), &NoteRow{
@@ -809,7 +809,7 @@ func seedGlobalNote(t *testing.T, s *StorageLayer) {
 }
 
 func TestListNotes_FilterByProjectIDs(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedListNotes(t, s)
 	seedGlobalNote(t, s)

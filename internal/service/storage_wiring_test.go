@@ -11,11 +11,10 @@ import (
 )
 
 func TestWorkloadConstructorsRetainTenantView(t *testing.T) {
-	view, err := storagetest.New(t.TempDir() + "/brain.db")
+	view, err := storagetest.New(t, t.TempDir()+"/brain.db")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer view.Close()
 	cfg := &config.Config{BrainDir: t.TempDir()}
 	idx := indexer.NewIndexer(cfg.BrainDir, view)
 	brain := NewBrainService(cfg, view, idx, nil, nil)

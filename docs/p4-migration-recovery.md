@@ -1,0 +1,617 @@
+# P4 migration and recovery runbook — dormant component
+
+Assignment `jr1xs3a3`, phase 3, 2026-09-07. **Pending v29 NOT ENABLED.**
+`CurrentSchemaVersion = 28`. No CLI migration command, runtime call, version bump,
+public activation, or production operation is introduced. This is a preparation
+and isolated rehearsal procedure, not authorization to migrate a deployment.
+See [approved contracts](multi-tenant-security-contracts.md) D07/D08/D11 and the
+[refreshed inventory](multi-tenant-ownership-inventory.md).
+
+## Stop/go prerequisites
+
+**Latest repair update — `j9amjg42` phase 4, 2026-09-12:** the dormant successor
+owner and its verification are described in the next section. Public runtime is
+still **28**, single-only; neither private29 nor successor31 is publicly admitted.
+All older private29 measurements and procedures below remain historical evidence
+for that distinct lineage, not instructions to migrate newer main through 29.
+
+### Phase 4: dormant atomic successor31
+
+Entry point: `migrateSuccessorSchema(ctx context.Context, db *sql.DB,
+checkpoint func(string) error) error`, in
+`internal/storage/schema_successor_migration.go`. It has no public initializer,
+CLI, service or worker caller. It is an offline/fenced composition seam, not a
+production migration command. Keep the coordinated-copy and writer-fencing
+requirements in this runbook, including the independent filesystem fence.
+
+#### Exact source and provenance contract
+
+`selectSuccessorSchema` uses `classifySchemaSource` before snapshots, staging or
+connection PRAGMA changes, then repeats classification under the SQLite writer
+reservation on the same reserved connection. Main catalogs are admitted by the
+existing byte-exact complete-catalog SHA-256 pins, not version numbers alone.
+Tests execute archived `InitSchema`, including its real historical initialization
+logic, rather than synthesizing main by adding tables to the current initializer.
+
+| Source profile | Source family/version | Archived fixture revision(s) |
+|---|---|---|
+| `main28` | `main` / 28 | `c0b28634355a91b24ab9e9415978f12866d3b5cd` |
+| `main29` | `main` / 29 | `44f963bbb0c5102390a06f6548088eda6d0f9832` |
+| `main30-pre-sync` | `main` / 30 | `3d2baaf450b1b93f981f6e03eb3ab07766237c21` |
+| `main30-initial-sync` | `main` / 30 | `d21ba2d948738bed6456c66f4453fc96a593d1b4` |
+| `main30-devices` | `main` / 30 | `7132bf0ce97cb961b3d233c915c1a99ef63708c2`, pinned main `cd22b4bdc3b5229621169fe5b214d7ffd12a6015` |
+| `private29` | `private-tenant` / 29 | Existing strict private relational/control/FTS catalog validators; generated FTS IDs and multiple owners are retained |
+
+The target is **`tenant` / 31**. A STRICT singleton `schema_provenance` records
+`singleton=1`, `source_profile`, `source_family`, `source_version`,
+`target_family='tenant'`, and `target_version=31`; exact guard triggers refuse
+update/delete/replacement. Original `schema_version` rows remain. The source
+version must agree with the recorded profile/family and preserved version history.
+Neither a numeric relabel nor a provenance record alone establishes readiness.
+Unknown/hybrid catalogs and TEMP objects are refused; main29 is never interpreted
+as private29. Existing source pins and old private29 manifests are unchanged.
+Profile recognition is necessary, not sufficient: populated rows, ownership,
+relationships and durable roots/CAS must also validate. These pins do not grant
+blanket support to every historical ALTER-derived or ANALYZE catalog at the same
+version. Unknown variants require separate review, not an allowance or repair.
+
+#### Atomic transformation and validation
+
+- The 26 unowned main relational tables receive `local`; already-owned private29
+  rows, durable keys, FTS mappings and permanent claim retain their original owners
+  and values. Main's permanent claim moves intact to `operator_install_claim`.
+- The seven execution-ledger tables copy existing owner columns and all original
+  payloads, revisions, history and receipt states. Nonlocal owners in a genuinely
+  single-mode main source are refused, not reassigned or provisioned as tenants.
+- The four existing unowned sync tables receive `local`: `entry_sync_devices`,
+  `entry_sync_identity`, `entry_sync_changes`, `entry_sync_operations`. Existing
+  history is copied, **never reconstructed from live notes**. Tombstones, epoch,
+  exact change sequences, allocated/absent sequence state, status0 reservations,
+  response bodies and device JSON bytes are preserved. Initial-sync sources gain
+  the previously absent devices table without reseeding their existing history.
+- Only sources with no sync history (`main28`, `main29`, `main30-pre-sync`,
+  `private29`) explicitly initialize per-owner epochs and current-note positions.
+  A shared physical AUTOINCREMENT sequence remains globally allocated; receiver
+  predicates scope positions and payloads to the selected tenant.
+- TEMP multiset snapshots compare original columns/ownership and control data;
+  sequence snapshots retain high-water values beyond live MAX IDs. The main path
+  composes relational rebuilding and tenant FTS in this same transaction. Private29
+  does not rebuild its existing relational/FTS state. Roots/CAS are validated, never
+  provisioned, moved or repaired by this owner.
+- `validateSuccessorSchema(ctx, tx, published)` checks the complete target:
+  exact new definitions/triggers/indexes, existing relational/control/FTS contracts,
+  owners, FKs, SQLite integrity, tenant sync identities, sequence consistency,
+  FTS row content **and inverted-index integrity**, and durable roots/CAS. The
+  precommit call uses `published=false`; published validation additionally checks
+  the immutable provenance record and version history. No broad catalog allowance
+  is added to the old private29 validator.
+- After snapshot comparison/removal and final validation, the **last database
+  writes** insert provenance and version31, followed by one commit. Checkpoints are
+  exactly `reserved`, `snapshot`, `relational`, `fts`, `sync`, `validated`,
+  `published`; `published` is still **before Commit**, not a postcommit checkpoint.
+  FK enforcement is restored/verified after commit or rollback, including caller
+  cancellation; restoration failure discards the connection and returns an error.
+- A repeat at31 validates and rolls back its inspection transaction: no reseeding,
+  repair or replay. FTS5 `integrity-check` uses INSERT command syntax despite being
+  validation, so complete validation does **not** work under `PRAGMA query_only=ON`.
+  A corruption test demonstrates why row comparison alone is insufficient. The
+  unknown-source refusal test separately verifies no FK PRAGMA change or data change.
+
+#### Receiver routing, evidence and remaining limits
+
+`executionScope` no longer admits the unpublished seven-ledger partial fixture;
+it requires complete successor validation at31. Ledger A/B fixtures now include
+full relational/FTS/root/provenance composition. `contentScope`, tenant search and
+private bootstrap claim routing recognize validated31; public `New`, `NewWithDB`
+and `InitSchema` still refuse it. Seven sync receivers plus `syncScope` preserve
+tenant-qualified snapshots, reservations and main's serialized-JSON CAS behavior.
+The old partial ledger DDL remains only as independent test material/refusal input.
+
+Note triggers cover insert/update/delete and explicit-row-ID REPLACE. A
+same-owner before-insert collision observation advances the old path even when
+SQLite suppresses implicit delete triggers (`recursive_triggers=0`). An ignored
+insert or implicit `NEW.id=-1` collision can create an extra change notification;
+readers return the still-live payload, not a false tombstone. Existing FTS guards
+abort foreign-row-ID replacements atomically, including their sync changes.
+
+Phase4 tests/results and exact parent verification commands are in
+[the phase4 isolation-gate addendum](p4-11-tenant-isolation-gate.md#p4-repair-phase-4--complete-dormant-successor-and-sync).
+Final implementation verification on uncommitted changes over `4f629a28`:
+`CI=1 go test ./... -count=1` passed all **37 packages**, storage **145.531s**;
+the named focused race slice passed **6 top-level tests plus 2 subtests** in
+**40.909s**. Build, repository-wide vet and whitespace checks exited 0;
+storage/types golangci-lint reported **0 issues**. These are the implementation
+run's measurements, not a fresh test run caused by this documentation update.
+
+Tests cover populated archived profiles, all 26 private A/B workload rows, eleven
+new-table ownership/FKs, exact history/JSON/high-water preservation, injected
+precommit rollback, and a main-devices WAL subprocess exiting after Commit without
+Close followed by unchanged reopen/repeat. They do not establish power-loss safety,
+post-new-write restore, actual Amos/coordinated-sidecar recovery, or load acceptance.
+Full successor validation on receiver entry scans data, FTS and roots/CAS and may
+incur substantial I/O/writer contention; no throughput guarantee is claimed.
+
+**Phase5 integration concerns:** public main29/30 admission and newer API/service/
+worker closure are still unimplemented here. Sync/ledger calls require matching
+tenant context and immutable receiver binding; naming a tenant is not authority.
+Retain all newer single-mode features and Assistant/push sidecars while reconciling
+their callers, preserve lifecycle/fencing and unknown-outcome semantics, and do not
+enable unsupported tenant routes/effects. Root readiness and FTS provisioning must
+precede successor admission; no receiver may repair missing state on access. Main's
+byte-JSON CAS was retained, not redesigned to accept differently serialized JSON.
+Independent review, aggregate `just check`, real recovery/load evidence and separate
+operator activation remain outstanding; no commit or Brain status change occurred.
+
+### Historical private29 preparation and evidence
+
+**Current status — `jr1xs3a3` phase 2 preparation, 2026-09-12:** see
+[final acceptance handoff](p4-final-acceptance-handoff.md) for pinned main/P4
+schema conflicts, eleven additional shared tables, Assistant/push sidecars,
+bounded repair ownership and the remaining acceptance ledger. Runtime 28 and
+private 29 are unchanged. Historical sections below describe their named phases,
+not current-main migration compatibility or release approval.
+
+Phase 1's preserved `schema_recovery_regression_test.go` adds
+`TestTenantMigrationPostcommitExitReopen`: a synthetic WAL subprocess exits via
+`os.Exit(0)` **after Commit returns**, without DB Close/cleanups. Reopen checks
+committed catalog/rows, legacy projections, controls/claim, sequences, local
+ownership, integrity/FKs and unchanged root/file identities/bytes; two repeated
+private validations must be no-ops. Public `New` still refuses private29. This is
+new postcommit evidence, distinct from the older `published` precommit SIGKILL
+checkpoint. It is not power-loss, post-new-write rollback, sidecar recovery or
+real Amos acceptance. The same file tests no-mutation refusal of synthetic main
+29/30 additions and v28 sync catalog refusal, **not their migration support**.
+
+**P4.3 Phase 2 update (2026-09-07):** the private outer owner described below
+now exists as `migrateTenantSchema(ctx, db, checkpoint)` in
+`internal/storage/schema_tenant_migration.go`. It is dormant and has **no runtime
+caller**. The older component measurements below remain historical evidence;
+the complete-composition evidence and exact handoff are recorded at the end.
+
+**STOP for deployment today.** Finalized P0 and complete P3 are required; so are
+the downstream tenant FTS map/rank isolation, tenant CAS metadata/root handling,
+all scoped receivers (including raw-handle removal), and operator install-claim
+reader/writer routing. One future outer owner must validate and atomically commit
+the relational changes, FTS mapping, CAS metadata, receiver-routing selection,
+root validation and claim cutover, then publish the schema version last in that
+same transaction. Tenant FTS is **P4.3**, not P4.2. There must be no externally
+visible intermediate state. Filesystem publication is not a SQLite transaction: retain legacy bytes in
+place and reconcile any future durable blob intents before serving. No global FTS
+fallback. This component alone must **never be committed in a deployment**.
+
+`stageTenantRelationalSchema(*sql.Tx)` requires v28 and FK OFF before the outer
+transaction. It owns only a savepoint; no pool, commit, flag or version stamp.
+It rebuilds 26 workload tables, adds four registry/reference/claim tables,
+validates counts, ownership, definitions, integrity and FKs, and leaves old FTS
+for replacement in that SAME transaction. Repetition validates staged structure;
+it is not a supported restart of a partially committed migration.
+
+P4.2 `ly1dgyw8` Phase 2/2 adds independent acceptance evidence, not activation.
+P4.1 already covered all seven project-bearing PKs: `task_claims`,
+`task_dispatch_leases`, `feature_assignments`, `feature_pause_state`,
+`feature_cascade_roots`, `project_pause_state`, `project_placement`. There are 13
+literal `project_id` workload tables versus 26 total workload tables; see the
+inventory for the ordered keys and complete distinction. Catalog/PRAGMA tests
+verify their two-tenant `brain` coexistence and same-tenant duplicate rejection,
+full named-index uniqueness/ordered columns/predicates and implicit unique keys.
+
+Unknown tenant indexes fail closed, including simple lookup/unique/partial indexes,
+until their definitions are reviewed into the manifest; do not drop them to force
+an operator copy through validation. The composite chunk FK from
+`note_embeddings_meta(tenant_id,note_id,chunk_index)` to
+`note_embeddings(tenant_id,note_id,chunk_index)` uses `ON DELETE CASCADE` in addition
+to the note FK. Legacy orphan chunk metadata is a validation failure, not data to
+silently discard. Actual composite note/attachment/webhook FKs and durable
+runner/client reference-key FKs do not establish active enrollment or authorization.
+Derived/history project/task/feature/path references still require later scoped
+receiver validation; no fictional parent rows are introduced to satisfy them.
+
+## Prepare a coordinated recovery set (operator checklist, not executed here)
+
+1. Keep public ingress/signup disabled. Fence **all writers**, not only runner
+   pause dials: stop API/HTTP MCP and stdio/direct DB clients, runners/agents,
+   schedulers, automations, goals/reminders, webhook/trigger dispatch, claim/lifecycle
+   cleanup, extraction/embedding workers, boot indexers and watchers; drain in-flight
+   writes. Stop git sync, filesystem editors, backup jobs that mutate source state,
+   and offline token/doctor utilities. Verify process/service inventory and no
+   remaining DB/file writers. Pausing dispatch does not stop these actors.
+2. Record binary revision/hash, effective configuration and working directory.
+   Record database location and each original **lexical, absolute and canonical**
+   BrainDir/CAS root, symlink targets, layout, ownership and permissions. Preserve
+   the independent blob root and `tenant_roots` values, including relative lexical
+   strings; do not reinterpret them from the rehearsal cwd. Capture a checksummed
+   markdown/blob manifest with counts/bytes, including authoritative non-content
+   metadata. Legacy local paths/bytes must not move. A root_override string is
+   not a substitute for the durable mapping.
+3. While fenced, create an encrypted **SQLite online-backup API / sqlite3 .backup**
+   snapshot and coordinated markdown/blob filesystem snapshot. Do not copy only
+   the main .db of a WAL database or use immutable=1 to ignore committed WAL.
+   If taking a raw filesystem DB snapshot instead, snapshot DB/WAL/SHM consistently
+   with all handles closed or using a proven atomic volume snapshot. Never mix
+   sidecars from different generations. Record snapshot ID/time/checksums.
+4. Include protected credential metadata (API token revocations, OAuth clients,
+   codes/access/refresh records, install claim, configured-password metadata),
+   root registry, and any available current revocation/deletion journal in the
+   same recovery record. Include Assistant jobs/conversations, push keys/devices/
+   deliveries, bulk/budget/supervisor ledgers, and offline sync devices, tombstones,
+   operation receipts and epoch (see the handoff). Unknown execution/delivery
+   outcomes must not be replayed automatically. Do not put secrets into logs or this runbook. Validate
+   encryption-key recovery and restrict snapshot access. A DB is partly derived;
+   reindexing markdown cannot reconstruct authoritative credentials/roots/claim.
+5. Plan disk for source + backup + isolated copy + old/new relational tables and
+   indexes + downstream FTS rebuild + retained WAL + SQLite temp spills + blob
+   staging, with operating-system headroom. Measure free space on **each** involved
+   volume. Long readers pin WAL; rollback does not necessarily shrink it. Sample
+   DB/WAL/SHM/temp and total allocation throughout a full rehearsal. No fixed
+   multiplier inferred from the small synthetic run is a capacity guarantee.
+
+## Isolated copy only
+
+Use a disposable host/VM with no live source mounts, network egress, runners,
+credentials usable against production, or background services. Restore copies of
+the original filesystem namespace there when testing persisted absolute/canonical
+roots; retain original mapping evidence separately. Do not rewrite roots merely
+to make a startup test pass or launch the normal server against a copied DB whose
+absolute roots still point to live directories. Root relocation needs its own
+reviewed procedure. Never point the tests below at Amos; they accept no data path.
+
+On the isolated v28 copy, record baseline per-table counts/catalog/sequences,
+credential/claim/root equality and file hashes. SQLite checks (offline copy only):
+
+```sql
+SELECT max(version) FROM schema_version; -- 28
+PRAGMA integrity_check;                 -- exactly ok
+PRAGMA foreign_key_check;               -- zero rows
+SELECT * FROM tenant_roots;             -- protected operator record, not public log
+```
+
+The future migration owner must reserve one connection, disable FK enforcement
+before BEGIN, verify it is off, and keep all components in that outer transaction.
+Before commit check every classified table, zero null/empty owners, preserved IDs
+and sequences, composite FK correctness, relocated permanent claim equality,
+tenant FTS counts/content/ranking, CAS references/hashes/layout and control routing.
+After commit or rollback restore FK ON on that connection and verify `PRAGMA
+foreign_keys` returns 1; check integrity and foreign_key_check again after reopen.
+Do not release the traffic fence until restart and complete local compatibility
+and equal-ID tenant denial fixtures pass with the exact candidate binary.
+
+## Interruption, restart, rollback boundary
+
+- Before outer commit: terminate only the rehearsal process, retain its complete
+  DB/sidecar set, reopen with SQLite recovery, and verify the entire old catalog,
+  rows, version, roots and claim. Retry the whole outer migration from validated
+  v28; do not manually promote `p4_new_*` tables or stamp v29. A failure to validate
+  keeps the copy sealed. Save forensic artifacts before discarding it.
+- After future atomic commit: restart only a binary implementing the complete
+  cutover. Test interruptions at **every** downstream stage and the commit boundary;
+  this phase tests only after relational staging, before commit, including a
+  simulated downstream SQL failure and full outer rollback. Unexpected mixed
+  version/catalog state is a blocker, not permission to repair by version editing.
+- Returning to an old binary after commit requires a coordinated pre-cutover
+  DB/files/blob/config recovery set in quarantine, not just deleting the version
+  row or restoring the main DB. Once new writes occur, rollback loses them; agree
+  the boundary/RPO before the window. Replay current security revocations/deletion
+  tombstones, suppress stale jobs and reconcile paid effects before exposure.
+  Missing trustworthy journal means stay sealed and controlled credential recovery;
+  never reactivate snapshot credentials. The full D11 restore tooling is not here.
+- **Old binaries cannot retroactively refuse a newer schema.** Only binaries with
+  the phase 1 checks refuse future/malformed versions at storage entry points.
+  Pin/disable old services and executables operationally. This guard is not a
+  concurrent migration lock. `buildHTTPHandler` calls `config.MigrateDataDir` and
+  mkdir before storage.New: earlier server directory migration is explicitly
+  **outside phase 1's no-mutation scope**. Never probe recovery with normal server
+  startup and assume it is read-only.
+
+## Reproducible component evidence
+
+Commands from this worktree (no services or external datasets):
+
+```sh
+CI=1 go test ./internal/storage -run '^TestTenantRelationalInterruptedRestart$' -count=1 -v
+CI=1 go test ./internal/storage -run '^TestTenantRelationalInterruptedRestart$' -count=3 -v
+CI=1 go test ./internal/storage -run '^TestTenantRelational(ProjectKeys|ForeignKeyInventory|EveryOwnershipAndIndex|DownstreamFailureRollsBackOuter)$' -count=1 -v
+BRAIN_P4_SYNTHETIC_SCALE=1 CI=1 go test ./internal/storage -run '^$' -bench '^BenchmarkTenantRelational78952$' -benchtime=1x -count=1 -timeout=10m
+CI=1 go test ./... -count=1
+go vet ./...
+go build ./...
+just lint
+```
+
+Measured on Darwin/arm64, Apple M4 Max, Go 1.25.0, integrated HEAD
+`b04952c51bc13c53689a73469066b4d7f8da882b` plus phase 1/2/3 worktree edits:
+
+| Rehearsal | Observation |
+|---|---|
+| File-backed subprocess | Readiness after 50.692375 ms, then parent SIGKILL; tiny cache forces uncommitted WAL spill. DB 544,768 B; WAL 733,392 B; SHM 32,768 B. Test passed in 0.15 s. |
+| Reopen/retry | Every baseline ordinary-table row, catalog and sequence matched; component staging twice and rollback succeeded; version remained 28, FK restored. Post-retry DB/WAL/SHM sizes unchanged. No committed component or server route tested. |
+| Repetition | Three further SIGKILL/restart runs passed (0.16/0.14/0.16 s); readiness 51.008375/50.594750/71.585083 ms, identical boundary file sizes. |
+| Opt-in 78,952-note synthetic fixture | 100 projects, ~1.3 KB repetitive bodies, JSON metadata, 78,952 tags, 7,895 links and 1,536-byte embedding rows plus metadata, 789 attachment/reference/derived rows, permanent claim. No actual markdown/blob files or real vectors/providers. |
+| Baseline sizes | DB 221,925,376 B; WAL 0 B; SHM 0 B after seed connection closes. |
+| Staging + internal validation | 2.195033167 s (benchmark 2,195,053,959 ns/op); DB 221,925,376 B; WAL 204,096,592 B; SHM 425,984 B at staged boundary and after rollback. Total observed files 426,447,952 B. |
+
+Sizes are logical file lengths at named boundaries, **not continuously sampled
+peak allocation**, temp-space peaks, or a committed/checkpointed final schema.
+Benchmark excludes fixture construction, commit, FTS rebuild, CAS, receiver routing
+and restart. It is not the 1.2 GB Amos database and provides no extrapolated Amos
+timing/capacity guarantee or 100/500-tenant ranking/load evidence. Full Go suite:
+36 packages passed, one package had no tests; vet/build exited 0;
+`just lint` reported `0 issues.` The historical
+ratchet requires its separately supplied trusted base; no base was supplied here.
+
+**Final post-P4.11 gate: authorized Amos-copy and coordinated recovery evidence.**
+That gate is not performed or required to be executed in P4.2 Phase 2/2. No live
+Amos access was attempted and no authorized coordinated snapshot was used here.
+The new downstream-failure test stages the component, writes a disposable probe
+table and mutates a note (including legacy FTS maintenance), forces a CHECK failure,
+then rolls back the outer transaction. It compares every workload/control table,
+catalog, sequences and FTS shadows, verifies version 28, restores FK enforcement
+and checks integrity/FKs. This is simulated downstream evidence, not execution of
+the future FTS/CAS/runtime/root/claim cutover or a post-commit restore rehearsal.
+Full V01/V03/V10/V15 remain pending: relational
+constraints and one precommit crash point are component evidence only, not local
+workflow parity, complete tenant isolation, every-stage cutover recovery, or
+revocation-safe restore/RPO/RTO proof. Public activation remains separately gated.
+
+## P4.3 Phase 2 — dormant complete transaction and handoff
+
+The private owner reserves **one `sql.Conn`**, disables and verifies foreign keys
+before beginning its transaction, then obtains SQLite's writer reservation before
+reading source version/catalog/rows. No pool-backed service or root-repository
+method is called while the transaction holds the only connection. The sequence is:
+
+1. Audit the exact reviewed v28 workload and control catalog, refusing partial
+   tenant schema under v28. Control audit explicitly accepts the existing v4
+   no-FK OAuth rebuild definitions as well as their bootstrap definitions, not
+   arbitrary historical DDL. Unknown tables/indexes/triggers/views fail closed.
+2. Read durable roots through a transaction-bound, read-only `tenantfs.Repository`;
+   use `Resolver.Lookup` and `BlobPath` for drift, exclusion and layout policy.
+   Require existing directory roots and verify every referenced CAS object's
+   regular-file status, length and SHA-256. Never provision/create directories,
+   relocate roots, repair metadata or move local bytes. Source root configurations
+   that cannot map to the resulting tenant registry fail closed rather than
+   inventing tenants or silently dropping registrations.
+   Regularity is checked **before opening** each resolved CAS path, then checked
+   again on the opened descriptor with `os.SameFile` identity comparison. This
+   rejects existing FIFOs/devices without a potentially blocking open. It is not
+   atomic: the external writer fence must cover CAS files and every ancestor
+   throughout validation. A concurrent regular-file-to-FIFO swap between stat
+   and open can still block; Go context cancellation cannot interrupt that open.
+   Neither descriptor checks nor SQLite's writer reservation replace the
+   filesystem fence. Hash/length checks still validate the bytes actually read.
+3. Capture transaction-local TEMP multiset snapshots of every workload table's
+   original columns, sequences, all credential/control rows, root mappings and
+   every column of the permanent installation claim. TEMP snapshots may spill;
+   include their disk needs in rehearsal capacity planning.
+4. Run `stageTenantRelationalSchema(tx)`, then `stageTenantFTS(tx)` in this same
+   transaction. Retain all IDs and high-water marks. For an originally absent
+   sequence only, remove rebuild-created zero rows for still-empty reviewed
+   tables; do not synthesize/reset an allocated sequence.
+5. Revalidate roots/CAS, the complete final relational/search catalog, FKs,
+   SQLite/FTS integrity and exact FTS rowids/content. Compare original values as
+   multisets, including duplicates/NULLs/bytes; require every legacy workload row
+   to remain explicitly `local`. The installation claim is compared against
+   `operator_install_claim`, not recreated as a boolean. All other control data
+   and exact lexical/absolute/canonical roots remain unchanged.
+6. Remove TEMP snapshots; **only then** insert private pending version **29** and
+   commit. Failure at publication rolls back the entire transaction. Version 29
+   never masquerades as 28. `CurrentSchemaVersion` and `InitSchema` are unchanged;
+   current bootstrap must reject the future schema.
+7. After commit/rollback, restore and verify FK ON on that same connection with
+   an independent cleanup context, even after caller cancellation. If restoration
+   fails, discard the connection and return the error; keep traffic fenced. A
+   cleanup error after commit does not imply rollback—inspect the durable version
+   in quarantine. Repetition at 29 validates complete catalog/content/root/CAS
+   state and rolls back its validation transaction; it does not rebuild or repair.
+
+**Wiring prerequisite, not implemented here:** P4.4 onward must finish all tenant
+receivers, tenant-only lexical/semantic/hybrid queries and error propagation,
+attachment metadata/reference/GC writers, control install-claim readers/writers,
+and bootstrap/backfill/new-database behavior. The candidate binary must select the
+matching future receiver routing from this final version, not a separately
+committed flag. Only after that complete cutover and acceptance may trusted shared
+bootstrap invoke this owner and advance its supported version. Do not call legacy
+`InitSchema` against a committed 29 DB, wire only this migration, enable a global
+search fallback, or start any old query/background writer after commit. This phase
+does not implement the receiver switch or authorize deployment.
+
+### INSERT rowid ownership guard
+
+SQLite documents `NEW.rowid` as undefined for implicit allocation in a BEFORE
+INSERT trigger ([trigger cautions](https://sqlite.org/lang_createtrigger.html#cautions_on_the_use_of_before_triggers)).
+The observed value `-1` is also a valid legacy ID and must not be exempted or
+reassigned. The finalized search catalog therefore includes the private,
+single-slot `tenant_fts_insert_guard` scratch table and paired triggers:
+
+- BEFORE INSERT clears scratch and captures any existing foreign ID matching
+  the provisional `NEW.id`, **without rejecting it yet**.
+- AFTER INSERT compares that candidate with the actual inserted ID and raises
+  **ABORT** on equality, rolling back the entire statement, REPLACE deletes,
+  FK cascades and FTS changes. Implicit allocation cannot reuse an existing ID;
+  explicit cross-owner REPLACE (including `-1`) does match and is refused.
+- Every attempted row resets scratch. DO NOTHING and UPSERT-update may skip
+  AFTER INSERT and retain one candidate; it is harmless, not durable ownership,
+  and must not be interpreted as a pending operation on restart. UPDATE retains
+  its direct BEFORE guard because its new ID is already defined.
+
+This relies on SQLite's serialized writers and per-row execution, **not** on
+AFTER-trigger ordering or `recursive_triggers`. The exact audited catalog has no
+nested INSERT into `notes`; adding one requires redesign/review of scratch
+lifetime. Scratch and schema are server-owned, not public SQL write surfaces.
+As with the mapping, these guards are not protection against arbitrary raw SQL.
+No extra rowid allocation occurs, and legacy IDs/sequences remain unchanged.
+
+### Fresh synthetic evidence (not Amos / not the load gate)
+
+`schema_tenant_migration_test.go` uses real temporary roots, real hashed CAS bytes,
+and the populated relational fixture's IDs, relationships, credentials and claim.
+It covers composition/idempotent validation, updated-title search and permanent
+claim guards, exact-value/owner/sequence checks, malformed source/final state,
+cancellation cleanup, and injected rollback at `reserved`, `snapshot`,
+`relational`, `fts`, `files`, `validated`, and `published`. An independent WAL
+connection tests writer reservation and old-state visibility through publication.
+Subprocess SIGKILL rehearsals at relational/FTS/files/final-version-publication
+boundaries reopen spilled WAL, compare every baseline row/catalog/sequence/FTS
+shadow and retry the whole migration. No normal server is launched.
+
+```sh
+CI=1 go test ./internal/storage -run '^TestTenant(FTS|Relational|Migration)' -count=1
+CI=1 go test -race ./internal/storage -run '^TestTenantMigration' -count=1 -timeout=5m
+CI=1 go test ./... -count=1
+go vet ./...
+go build ./...
+just lint
+BRAIN_P4_SYNTHETIC_SCALE=1 CI=1 go test ./internal/storage -run '^$' -bench '^BenchmarkTenantMigrationComplete78952$' -benchtime=1x -count=1 -timeout=10m
+```
+
+Opt-in benchmark observed on **Darwin/arm64, Apple M4 Max, 36 GiB RAM,
+Go 1.25.0**, this Phase 2 working tree: **16.409604416 seconds** for one complete
+migration including snapshots, relational/FTS composition, root/CAS validation,
+final commit and FK restoration (fixture construction excluded). The fixture has
+78,952 repetitive ~1.3 KB notes across 100 **projects in one local tenant**, 78,952
+tags, 7,895 links and synthetic 1,536-byte embedding rows plus metadata, and one
+real synthetic CAS object with a reference/derivation and permanent claim. It has
+no production markdown corpus, real provider vectors, or receiver traffic.
+Postcommit boundary lengths before close/checkpoint: DB **544,768 B**, WAL
+**621,543,232 B**, SHM **1,212,416 B**. WAL includes fixture construction; these are
+not migration-only growth or continuously sampled peak allocation/temp-space
+measurements. No Amos capacity/timing extrapolation or p95 claim is made. The
+initial benchmark correctly failed closed on newly created zero sequence rows;
+`TestTenantMigrationPreservesAbsentSequence` reproduces and guards the correction.
+
+Final Phase 2 verification: targeted relational/FTS/migration tests passed in
+9.962 s; full Go suite passed all **36 tested packages** (one additional package
+has no test files), storage 14.567 s; migration race tests passed in 86.445 s with
+the explicit 5-minute test budget. Vet/build and `git diff --check` exited 0;
+`just lint` reported **0 issues**. The first race invocation exceeded the tool's
+120-second execution budget; the explicit longer-budget rerun passed, and the
+writer-reservation test now disables observer busy-waiting so it checks lock
+ownership without paying seven configured wait intervals. Historical ratchet
+comparison was not requested with a trusted base; ordinary current-tree ownership
+and shrinking-ratchet checks ran in the full suite. No Brain status changes,
+commits, receiver cutover, production access or deployment were performed.
+
+### Remaining mandatory final gates
+
+- **`jr1xs3a3` coordinated Amos-copy rehearsal remains unavailable:** requested
+  authorized backup location has not been supplied. Still require the real
+  78,952-note/~1.2 GB copy, current titles, firing triggers, exact IDs/relationships/
+  credentials/claim/roots/local bytes, integrity, idempotence, measured timing,
+  capacity and coordinated restore evidence. Synthetic data is not a substitute.
+- **Full V10/V11 remains pending:** complete candidate receiver/routing crash
+  boundaries, no partial public routing/global fallback, same-name tenant
+  reference/reindex behavior, and fixed A scores/order/counts/snippets invariant
+  under radically changed B frequencies/lengths in **both lexical and hybrid**
+  search. Component lexical tests and dormant migration crashes do not complete it.
+- Benchmark **100 and 500 tenants**: catalog and per-tenant index costs, rebuilds,
+  deletes, hot-tenant interference, shared WAL/disk/temp peaks and writer-lock
+  waits. Required **p95 search <500 ms at 100 aggregate requests/second**, with
+  documented hardware and fixture sizes. Measure Phase 1 catalog validation and
+  REPLACE cleanup scans too. The single-tenant migration timer is not this gate.
+- Finalized P0/complete P3, receiver/acceptance cutover, local compatibility and
+  remaining security/recovery gates retain their dependencies. Production,
+  credential cutover/rotation and public activation need separate approvals;
+  hosted execution remains blocked pending separately approved VM isolation.
+
+## P4.6 Phase 2/2 — attachment SQL/service boundary, not full D08 acceptance
+
+Assignment **P4.6 `9pj29gtz`**, 2026-09-08. Preserves Phase 1's 13 attachment
+receivers on `TenantStore`: metadata CRUD/digest lookup/list, entry references,
+reference counts/conditional deletion, and derived-data writes/reads/lists.
+**Runtime remains v28.** No migration activation, deployment, root relocation,
+physical CAS redesign or async authorization redesign is part of this phase.
+
+### Same-tenant project visibility (D08 rationale)
+
+The approved [D08 contract](multi-tenant-security-contracts.md#62-tenant-qualified-cas-and-derived-ownership)
+uses `UNIQUE(tenant_id,digest)` and permits deletion only when no reference remains
+**within that tenant**. Projects are organization within that trust boundary,
+not separate attachment owners. Accordingly every project sees the tenant's
+attachment catalog, including blobs uploaded from another project and old rows
+without project provenance. Entry attach/detach still validates the requested
+entry's project and uses same-tenant SQL parent checks. This does not grant
+cross-tenant access or make a parsed tenant ID an authorization capability.
+
+Previously an equal-byte upload from project B reused project A's row, then
+returned a bogus 404 because service code treated the first upload's
+`metadata.project_id` as an ACL. Create/Get/Open/text/extraction now use the bound
+tenant row; List uses `TenantStore.ListAttachments`' SQL tenant predicate, with no
+Go metadata ownership scan. **No project filter or new storage API is needed for
+this explicitly tenant-wide policy.** Filename and `metadata.project_id` retain
+first-upload provenance on dedup; they are not rewritten by a later project.
+The project-bearing backfill route consequently selects tenant-wide candidates.
+Clients must not interpret its project parameter as a privacy or billing boundary.
+
+Deletion's conditional SQL checks references across **all tenant projects**, not
+the upload project. It serializes the metadata delete against SQL attach. The
+subsequent filesystem delete is still separate: concurrent re-upload/cleanup,
+crash recovery and durable GC intents are not solved by that SQL statement.
+Create now performs a bound digest lookup before any CAS I/O, so invalid handles,
+nonlocal v28 bindings, unsupported schemas and unavailable SQL fail without
+probing, publishing or cleaning up legacy bytes. There is no unscoped fallback.
+This preflight is not lifecycle admission and does not serialize against a
+concurrent schema cutover; the final migration still requires fenced writers.
+
+### Proven component behavior versus NOT proven
+
+- Phase 1 storage fixtures exercise privately prepared v29 ownership, tenant-local
+  digest dedup, cross-owner parent refusal, refcounts, derivations and conditional
+  deletion. Their SQL results do **not** prove physical object independence.
+- Phase 2 service regressions reproduce the former second-project 404, verify
+  same-tenant ID reuse and unchanged provenance, tenant-wide list/get/open, and
+  list inclusion independent of missing/different project metadata.
+- `TestAttachmentServiceLocalCrossProjectLifecycle` uses real BrainService,
+  indexer, SQLite and mapped filesystem CAS: two projects upload equal bytes,
+  attach/list references, share derived text, detach A, refuse deletion while B
+  remains linked, and delete bytes/derived rows only after the final detach.
+  The independently configured local root and exact two-level legacy shards
+  remain unchanged; runtime version is asserted as 28. This is a local fixture,
+  not the full restart/promotion or HTTP/range isolation gate.
+- `TestAttachmentServiceCompatibilityRejectsBeforeBlobIO` verifies zero CAS
+  operations for invalid/nonlocal-v28/unsupported/closed storage. Existing cleanup
+  coverage now injects an INSERT failure, rather than a closed database, so it
+  still reaches the actual post-publication metadata-failure cleanup path.
+- **NOT proven:** exclusive A/B physical CAS and durable-root restart composition;
+  crash-safe upload/GC intents; existing-object digest corruption quarantine;
+  quotas; in-flight suspension/deletion generation/epoch fencing; late extraction
+  callback and downstream index suppression; authenticated download/range isolation.
+  Refusing a derived write after an already-deleted source is only parent-existence
+  protection, not full async suppression. `TenantStore` still embeds the raw store
+  until P4.10, and `blobstore.Store` injection does not itself verify matching
+  tenant ownership. Multi-mode remains disabled; V01/V03/V12 are not complete.
+
+### Exact existing handoffs (no new tasks or status changes)
+
+Stable Brain wiki-links below are taken from the linked canonical plan
+[[9fguh2pr]], especially its approved P0 handoff and phase requirements; they are
+not invented implementation-child IDs. P5–P10 still require their recorded
+breakdown/feature gates. The plan alone was recalled read-only to obtain these
+links; no unrelated Brain work was searched or mutated.
+
+| Remaining requirement | Existing phase/task and acceptance gate |
+|---|---|
+| Tenant-exclusive physical CAS, durable registered root/layout mapping on restart, legacy root/shard preservation | P5 `mt-p5-filesystem` [[sf93wsp4]], building on P3.4 [[w4597j7v]]; final composition/recovery [[jr1xs3a3]] |
+| Tenant-private upload staging, durable intent publication/reconciliation and partial-upload crash recovery; serialize physical cleanup with re-upload | P5 [[sf93wsp4]]; quota/reservation and adversarial V12/V14 verification P10 [[3pljs5ry]]; coordinated recovery [[jr1xs3a3]] |
+| Forced digest mismatch/collision and corrupt existing-object rejection/quarantine without overwrite | P5 [[sf93wsp4]] implementation; P10 [[3pljs5ry]] V12 verification (declared-hash validation alone is insufficient) |
+| Async suspension/deletion while extraction runs, authority/source-generation recheck and late result/index suppression | P6 identity/lifecycle [[6d6ngpiq]], P8 scoped work/loops [[kimljzt0]], P9 erasure [[oquakmh2]]; P10 [[3pljs5ry]] V06/V12/V15 |
+| Authenticated metadata/raw/text/download/range ownership and no equal-digest cross-tenant leak | P5 [[sf93wsp4]] plus P6 [[6d6ngpiq]] transport admission; consolidated P4.11 [[wg6bl8tk]] and P10 [[3pljs5ry]] V03/V12 |
+| Complete candidate migration/local compatibility/recovery, then separately authorized public readiness | [[jr1xs3a3]] after P4.11 [[wg6bl8tk]]; release [[ewavusmp]] (evidence is not activation) |
+
+Focused reproducible verification (temporary fixtures only):
+
+```sh
+CI=1 go test ./internal/service ./internal/storage -count=1
+CI=1 go test -race ./internal/service ./internal/storage -run 'Attachment' -count=1 -timeout=5m
+go vet ./internal/service ./internal/storage
+go build ./internal/service ./internal/storage
+golangci-lint run ./internal/service/... ./internal/storage/...
+git diff --check
+```
+
+Phase 2 observed verification: full service/storage suites passed (11.730 s /
+24.184 s); focused attachment race suites passed (11.095 s / 15.009 s).
+Scoped vet/build and whitespace/Go-format checks exited 0; scoped golangci-lint
+reported **0 issues**. The second-project upload, project-metadata list and
+same-tenant get regressions failed before the visibility fix. Invalid/nonlocal
+upload tests failed with one CAS put/get/delete before the preflight fix, then
+passed with zero blob operations. Repository-wide tests, full V12 and deployment
+rehearsals were not run by this phase; these numbers cover only the named commands.

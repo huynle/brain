@@ -6,9 +6,13 @@
  * per live session.
  */
 import { useWorkspace } from "../store/workspace";
+import { useDraggableShortcut } from "../hooks/useDraggableShortcut";
 import { useSessions } from "../hooks/useSessions";
 
 export function MobileNav(): JSX.Element {
+  const assistantOpen = useWorkspace((s) => s.assistantOpen);
+  const openAssistant = () => useWorkspace.getState().setAssistantOpen(true);
+  const shortcut = useDraggableShortcut(openAssistant);
   const view = useWorkspace((s) => s.view);
   const setView = useWorkspace((s) => s.setView);
   const setFocusSession = useWorkspace((s) => s.setFocusSession);
@@ -17,6 +21,27 @@ export function MobileNav(): JSX.Element {
 
   return (
     <nav className="mobile-nav" aria-label="Main navigation">
+      <button
+        type="button"
+        className="assistant-shortcut"
+        aria-label="Assistant"
+        title="Open Assistant (drag to move)"
+        aria-pressed={assistantOpen}
+        {...shortcut}
+      >
+        <svg
+          width="28"
+          height="28"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          aria-hidden="true"
+        >
+          <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5a9.5 9.5 0 0 1 19 0Z" />
+          <path d="M7 10h10M7 14h6" />
+        </svg>
+      </button>
       <button
         type="button"
         aria-pressed={view === "overview"}

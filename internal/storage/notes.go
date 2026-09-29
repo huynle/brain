@@ -72,18 +72,31 @@ func scanNoteRows(rows *sql.Rows) ([]*NoteRow, error) {
 
 // InsertNote inserts a new note and returns the inserted row with ID and IndexedAt populated.
 // Returns a descriptive error if the path already exists (UNIQUE constraint).
-func (s *StorageLayer) InsertNote(ctx context.Context, note *NoteRow) (*NoteRow, error) {
+func (s *TenantStore) InsertNote(ctx context.Context, note *NoteRow) (*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if note == nil {
+		return nil, errors.New("nil note")
+	}
 	query := `
 		INSERT INTO notes (path, short_id, title, lead, body, raw_content, word_count, checksum, metadata, type, status, priority, project_id, feature_id, created, modified)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	res, err := s.db.ExecContext(ctx, query,
+	args := []interface{}{
 		note.Path, note.ShortID, note.Title,
 		note.Lead, note.Body, note.RawContent, note.WordCount,
 		note.Checksum, note.Metadata, note.Type, note.Status,
 		note.Priority, note.ProjectID, note.FeatureID,
 		note.Created, note.Modified,
-	)
+	}
+	if scope.owner != "" {
+		query = `INSERT INTO notes (path, short_id, title, lead, body, raw_content, word_count, checksum, metadata, type, status, priority, project_id, feature_id, created, modified, tenant_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		args = append(args, scope.owner)
+	}
+	res, err := s.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return nil, fmt.Errorf("duplicate path %q: %w", note.Path, err)
@@ -97,9 +110,8 @@ func (s *StorageLayer) InsertNote(ctx context.Context, note *NoteRow) (*NoteRow,
 	}
 
 	// Query back the full row to get ID and IndexedAt (set by SQLite DEFAULT).
-	row := s.db.QueryRowContext(ctx,
-		"SELECT "+noteColumns+" FROM notes WHERE id = ?", id,
-	)
+	where, readArgs := scope.where("id = ?", id)
+	row := s.db.QueryRowContext(ctx, "SELECT "+noteColumns+" FROM notes WHERE "+where, readArgs...)
 	inserted, err := scanNoteRow(row)
 	if err != nil {
 		return nil, fmt.Errorf("read back inserted note: %w", err)
@@ -114,10 +126,13 @@ func (s *StorageLayer) InsertNote(ctx context.Context, note *NoteRow) (*NoteRow,
 }
 
 // GetNoteByPath retrieves a note by exact path. Returns nil, nil if not found.
-func (s *StorageLayer) GetNoteByPath(ctx context.Context, path string) (*NoteRow, error) {
-	row := s.db.QueryRowContext(ctx,
-		"SELECT "+noteColumns+" FROM notes WHERE path = ?", path,
-	)
+func (s *TenantStore) GetNoteByPath(ctx context.Context, path string) (*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	where, args := scope.where("path = ?", path)
+	row := s.db.QueryRowContext(ctx, "SELECT "+noteColumns+" FROM notes WHERE "+where, args...)
 	n, err := scanNoteRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -132,10 +147,13 @@ func (s *StorageLayer) GetNoteByPath(ctx context.Context, path string) (*NoteRow
 // short_id is not unique, so the lowest row id wins — an arbitrary choice, but
 // a stable one. Without the ORDER BY, a collision resolved to whichever row
 // SQLite happened to visit first, which could change between queries.
-func (s *StorageLayer) GetNoteByShortID(ctx context.Context, shortID string) (*NoteRow, error) {
-	row := s.db.QueryRowContext(ctx,
-		"SELECT "+noteColumns+" FROM notes WHERE short_id = ? ORDER BY id LIMIT 1", shortID,
-	)
+func (s *TenantStore) GetNoteByShortID(ctx context.Context, shortID string) (*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	where, args := scope.where("short_id = ?", shortID)
+	row := s.db.QueryRowContext(ctx, "SELECT "+noteColumns+" FROM notes WHERE "+where+" ORDER BY id LIMIT 1", args...)
 	n, err := scanNoteRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -148,7 +166,7 @@ func (s *StorageLayer) GetNoteByShortID(ctx context.Context, shortID string) (*N
 
 // GetNoteByTitle retrieves a note by exact title match. Returns nil, nil if not
 // found. Titles are not unique either; the lowest row id wins.
-func (s *StorageLayer) GetNoteByTitle(ctx context.Context, title string) (*NoteRow, error) {
+func (s *TenantStore) GetNoteByTitle(ctx context.Context, title string) (*NoteRow, error) {
 	return s.GetNoteByTitleScoped(ctx, title, nil)
 }
 
@@ -161,8 +179,13 @@ func (s *StorageLayer) GetNoteByTitle(ctx context.Context, title string) (*NoteR
 // same-titled note in project B. Ranking by scope keeps a link pointing at the
 // entry the author could actually see from where they wrote it, and the
 // trailing id keeps the answer stable when the rank ties.
-func (s *StorageLayer) GetNoteByTitleScoped(ctx context.Context, title string, projectID *string) (*NoteRow, error) {
-	query := "SELECT " + noteColumns + ` FROM notes WHERE title = ?
+func (s *TenantStore) GetNoteByTitleScoped(ctx context.Context, title string, projectID *string) (*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	where, args := scope.where("title = ?", title)
+	query := "SELECT " + noteColumns + " FROM notes WHERE " + where + `
 		ORDER BY
 			CASE
 				WHEN ? IS NOT NULL AND project_id = ? THEN 0
@@ -171,7 +194,8 @@ func (s *StorageLayer) GetNoteByTitleScoped(ctx context.Context, title string, p
 			END,
 			id
 		LIMIT 1`
-	row := s.db.QueryRowContext(ctx, query, title, projectID, projectID)
+	args = append(args, projectID, projectID)
+	row := s.db.QueryRowContext(ctx, query, args...)
 	n, err := scanNoteRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -185,7 +209,12 @@ func (s *StorageLayer) GetNoteByTitleScoped(ctx context.Context, title string, p
 // MergeMetadata performs a shallow JSON merge on the metadata column for a note.
 // It reads the current metadata, merges the provided fields, and writes back.
 // This operates entirely in SQLite without touching the filesystem.
-func (s *StorageLayer) MergeMetadata(ctx context.Context, path string, fields map[string]interface{}) (*NoteRow, error) {
+func (s *TenantStore) MergeMetadata(ctx context.Context, path string, fields map[string]interface{}) (*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	where, readArgs := scope.where("path = ?", path)
 	// Read and write inside ONE transaction.
 	//
 	// This is a read-modify-write: the merge happens in Go between a SELECT and
@@ -211,7 +240,7 @@ func (s *StorageLayer) MergeMetadata(ctx context.Context, path string, fields ma
 	defer tx.Rollback() //nolint:errcheck
 
 	var currentMetadata string
-	err = tx.QueryRowContext(ctx, "SELECT metadata FROM notes WHERE path = ?", path).Scan(&currentMetadata)
+	err = tx.QueryRowContext(ctx, "SELECT metadata FROM notes WHERE "+where, readArgs...).Scan(&currentMetadata)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -265,9 +294,9 @@ func (s *StorageLayer) MergeMetadata(ctx context.Context, path string, fields ma
 	if err != nil {
 		return nil, err
 	}
-	args = append(args, path)
+	args = append(args, readArgs...)
 
-	rowsAffected, err := execNoteUpdate(ctx, tx, path, setClauses, args)
+	rowsAffected, err := execNoteUpdate(ctx, tx, where, setClauses, args)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +314,11 @@ func (s *StorageLayer) MergeMetadata(ctx context.Context, path string, fields ma
 // Only fields in the allowlist are accepted to prevent SQL injection.
 // Auto-updates indexed_at to datetime('now').
 // Returns nil, nil if the path is not found.
-func (s *StorageLayer) UpdateNote(ctx context.Context, path string, updates map[string]interface{}) (*NoteRow, error) {
+func (s *TenantStore) UpdateNote(ctx context.Context, path string, updates map[string]interface{}) (*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if len(updates) == 0 {
 		return s.GetNoteByPath(ctx, path)
 	}
@@ -295,9 +328,10 @@ func (s *StorageLayer) UpdateNote(ctx context.Context, path string, updates map[
 		return nil, err
 	}
 	// Path is the WHERE condition.
-	args = append(args, path)
+	where, whereArgs := scope.where("path = ?", path)
+	args = append(args, whereArgs...)
 
-	rowsAffected, err := execNoteUpdate(ctx, s.db, path, setClauses, args)
+	rowsAffected, err := execNoteUpdate(ctx, s.db, where, setClauses, args)
 	if err != nil {
 		return nil, err
 	}
@@ -316,8 +350,8 @@ type noteExecer interface {
 
 // execNoteUpdate runs the dynamic UPDATE shared by UpdateNote and
 // MergeMetadata and reports how many rows it touched.
-func execNoteUpdate(ctx context.Context, ex noteExecer, path string, setClauses []string, args []interface{}) (int64, error) {
-	query := "UPDATE notes SET " + strings.Join(setClauses, ", ") + " WHERE path = ?"
+func execNoteUpdate(ctx context.Context, ex noteExecer, where string, setClauses []string, args []interface{}) (int64, error) {
+	query := "UPDATE notes SET " + strings.Join(setClauses, ", ") + " WHERE " + where
 	res, err := ex.ExecContext(ctx, query, args...)
 	if err != nil {
 		return 0, fmt.Errorf("update note: %w", err)
@@ -356,8 +390,13 @@ func buildNoteUpdate(updates map[string]interface{}) ([]string, []interface{}, e
 
 // DeleteNote deletes a note by path. Returns true if deleted, false if not found.
 // CASCADE handles cleanup of associated links and tags.
-func (s *StorageLayer) DeleteNote(ctx context.Context, path string) (bool, error) {
-	res, err := s.db.ExecContext(ctx, "DELETE FROM notes WHERE path = ?", path)
+func (s *TenantStore) DeleteNote(ctx context.Context, path string) (bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, err
+	}
+	where, args := scope.where("path = ?", path)
+	res, err := s.db.ExecContext(ctx, "DELETE FROM notes WHERE "+where, args...)
 	if err != nil {
 		return false, fmt.Errorf("delete note: %w", err)
 	}

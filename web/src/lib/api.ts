@@ -1277,6 +1277,7 @@ export function summarizeTriggerResults(results: TriggerResponse[]): {
 // ─── Built-in Assistant ──────────────────────────────────────────
 
 export interface AssistantStatusResponse {
+  speech_available?: boolean;
   available: boolean;
   mode: "agentic" | "direct_llm" | "manual" | string;
   provider?: string;
@@ -1380,8 +1381,11 @@ export interface AssistantStreamEvent {
 
 export async function assistantChatStream(
   body: {
+	conversation_id?: string;
+	inbox?: boolean;
     project?: string;
     message: string;
+    voice?: boolean;
     model?: string;
     attachments?: string[];
     images?: string[];
@@ -2323,3 +2327,8 @@ export const updateServerConfig = (cfg: ServerConfig) =>
     method: "PUT",
     body: { config: cfg },
   });
+
+
+/** Metadata only: never transmit the transcript or raw audio to diagnostics. */
+export const assistantVoiceDiagnostic = (body: {attempt: string; event: string; error: string; elapsed_ms: number; results: number; android: boolean; hands_free: boolean}) =>
+  api<void>("/api/v1/assistant/voice-diagnostics", {method: "POST", body});

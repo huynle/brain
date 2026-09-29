@@ -34,7 +34,7 @@ func newTestWebhookService(t *testing.T) *WebhookServiceImpl {
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { db.Close() })
 	return NewWebhookService(store)
 }
 
@@ -49,7 +49,7 @@ func newTestWebhookServiceWithServer(t *testing.T, handler http.HandlerFunc) (*W
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { db.Close() })
 
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)

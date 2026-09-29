@@ -20,13 +20,16 @@ func ProjectPathPrefix(projectID string) string {
 //
 // Ordered by path so a caller reporting per-entry outcomes produces a stable
 // list, and so directory contents delete in a predictable order.
-func (s *StorageLayer) ListProjectNotePaths(ctx context.Context, projectID string) ([]string, error) {
+func (s *TenantStore) ListProjectNotePaths(ctx context.Context, projectID string) ([]string, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if projectID == "" {
 		return nil, fmt.Errorf("project id required")
 	}
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT path FROM notes WHERE path LIKE ? ESCAPE '\' OR project_id = ? ORDER BY path`,
-		escapeLikePrefix(ProjectPathPrefix(projectID))+"%", projectID)
+	where, args := scope.where(`(path LIKE ? ESCAPE '\' OR project_id = ?)`, escapeLikePrefix(ProjectPathPrefix(projectID))+"%", projectID)
+	rows, err := s.db.QueryContext(ctx, `SELECT path FROM notes WHERE `+where+` ORDER BY path`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query project note paths: %w", err)
 	}
@@ -79,7 +82,11 @@ var projectScopedTables = []string{
 // Runs as one transaction: a half-purged project (claims gone, leases held)
 // is worse than an untouched one, because the scheduler reads the two
 // together.
-func (s *StorageLayer) PurgeProjectState(ctx context.Context, projectID string) (map[string]int64, error) {
+func (s *TenantStore) PurgeProjectState(ctx context.Context, projectID string) (map[string]int64, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if projectID == "" {
 		return nil, fmt.Errorf("project id required")
 	}
@@ -91,10 +98,11 @@ func (s *StorageLayer) PurgeProjectState(ctx context.Context, projectID string) 
 	defer func() { _ = tx.Rollback() }()
 
 	removed := make(map[string]int64, len(projectScopedTables))
+	where, args := scope.where("project_id = ?", projectID)
 	for _, table := range projectScopedTables {
 		// Table names come from the constant list above, never from input.
 		res, err := tx.ExecContext(ctx,
-			fmt.Sprintf("DELETE FROM %s WHERE project_id = ?", table), projectID)
+			fmt.Sprintf("DELETE FROM %s WHERE %s", table, where), args...)
 		if err != nil {
 			return nil, fmt.Errorf("purge %s: %w", table, err)
 		}
@@ -111,7 +119,7 @@ func (s *StorageLayer) PurgeProjectState(ctx context.Context, projectID string) 
 	// defaults to '', so it is filtered separately rather than folded into
 	// the loop above.
 	res, err := tx.ExecContext(ctx,
-		"DELETE FROM opencode_instances WHERE project_id = ?", projectID)
+		"DELETE FROM opencode_instances WHERE "+where, args...)
 	if err != nil {
 		return nil, fmt.Errorf("purge opencode_instances: %w", err)
 	}
@@ -126,18 +134,22 @@ func (s *StorageLayer) PurgeProjectState(ctx context.Context, projectID string) 
 }
 
 // DeleteProjectNotes removes every notes row for a project by path prefix or
-// project_id. CASCADE clears links, tags, entry_meta and embeddings.
+// project_id. CASCADE clears links, tags, entry attachments and embeddings.
+// entry_meta has no notes foreign key and is retained by this sweep.
 //
 // The per-entry Delete path is still the primary one — it also removes the
 // file from disk and publishes an event. This is the sweep afterwards, for
 // index rows whose file was already gone.
-func (s *StorageLayer) DeleteProjectNotes(ctx context.Context, projectID string) (int64, error) {
+func (s *TenantStore) DeleteProjectNotes(ctx context.Context, projectID string) (int64, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return 0, err
+	}
 	if projectID == "" {
 		return 0, fmt.Errorf("project id required")
 	}
-	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM notes WHERE path LIKE ? ESCAPE '\' OR project_id = ?`,
-		escapeLikePrefix(ProjectPathPrefix(projectID))+"%", projectID)
+	where, args := scope.where(`(path LIKE ? ESCAPE '\' OR project_id = ?)`, escapeLikePrefix(ProjectPathPrefix(projectID))+"%", projectID)
+	res, err := s.db.ExecContext(ctx, `DELETE FROM notes WHERE `+where, args...)
 	if err != nil {
 		return 0, fmt.Errorf("delete project notes: %w", err)
 	}

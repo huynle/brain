@@ -20,16 +20,24 @@ import (
 // newTestStorage creates a local tenant view over an in-memory shared store.
 func newTestStorage(t *testing.T) *storage.TenantStore {
 	t.Helper()
+	s, _ := newTestStorageWithDB(t)
+	return s
+}
+
+// newTestStorageWithDB creates its own connection for timestamp/corruption fixtures.
+// Cleanup owns that connection; this never extracts a database from a handle.
+func newTestStorageWithDB(t *testing.T) (*storage.TenantStore, *sql.DB) {
+	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
+	t.Cleanup(func() { db.Close() })
 	s, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
-	return s
+	return s, db
 }
 
 // createBrainDir creates a temp directory with markdown files for testing.
@@ -70,12 +78,11 @@ func noteWithLink(title, linkTarget, linkText string) string {
 // countNotes returns the number of notes in the DB.
 func countNotes(t *testing.T, s *storage.TenantStore) int {
 	t.Helper()
-	var count int
-	err := s.DB().QueryRow("SELECT COUNT(*) FROM notes").Scan(&count)
+	rows, err := s.ListIndexedNoteStates(context.Background())
 	if err != nil {
 		t.Fatalf("count notes: %v", err)
 	}
-	return count
+	return len(rows)
 }
 
 type recordingEmbeddingClient struct {
@@ -637,7 +644,7 @@ func TestIndexEmbeddingsWithOptions_IncludesReadyTextAttachmentDerivedContent(t 
 
 func TestEmbeddingBackfillCandidatesAndHealth_UseReadyAttachmentDerivedUpdatedAtForStaleness(t *testing.T) {
 	ctx := context.Background()
-	store := newTestStorage(t)
+	store, db := newTestStorageWithDB(t)
 	brainDir := createBrainDir(t, map[string]string{
 		"ready.md":   "---\ntitle: Ready Attachment\n---\n\nReady body.\n",
 		"pending.md": "---\ntitle: Pending Attachment\n---\n\nPending body.\n",
@@ -659,7 +666,7 @@ func TestEmbeddingBackfillCandidatesAndHealth_UseReadyAttachmentDerivedUpdatedAt
 	if err != nil || pendingNote == nil {
 		t.Fatalf("expected pending note, got %#v err=%v", pendingNote, err)
 	}
-	if _, err := store.DB().ExecContext(ctx, `UPDATE notes SET indexed_at = '2025-01-01 00:00:00'`); err != nil {
+	if _, err := db.ExecContext(ctx, `UPDATE notes SET indexed_at = '2025-01-01 00:00:00'`); err != nil {
 		t.Fatalf("set note indexed_at failed: %v", err)
 	}
 	if err := store.UpsertNoteEmbeddings(ctx, []storage.EmbeddingRecord{
@@ -668,7 +675,7 @@ func TestEmbeddingBackfillCandidatesAndHealth_UseReadyAttachmentDerivedUpdatedAt
 	}); err != nil {
 		t.Fatalf("UpsertNoteEmbeddings failed: %v", err)
 	}
-	if _, err := store.DB().ExecContext(ctx, `UPDATE note_embeddings_meta SET embedding_indexed_at = '2025-01-02 00:00:00'`); err != nil {
+	if _, err := db.ExecContext(ctx, `UPDATE note_embeddings_meta SET embedding_indexed_at = '2025-01-02 00:00:00'`); err != nil {
 		t.Fatalf("set embedding_indexed_at failed: %v", err)
 	}
 
@@ -688,7 +695,7 @@ func TestEmbeddingBackfillCandidatesAndHealth_UseReadyAttachmentDerivedUpdatedAt
 	}); err != nil {
 		t.Fatalf("UpsertAttachmentDerived ready failed: %v", err)
 	}
-	if _, err := store.DB().ExecContext(ctx, `UPDATE attachment_derived SET updated_at = '2025-01-03 00:00:00' WHERE attachment_id = ?`, readyAttachment.ID); err != nil {
+	if _, err := db.ExecContext(ctx, `UPDATE attachment_derived SET updated_at = '2025-01-03 00:00:00' WHERE attachment_id = ?`, readyAttachment.ID); err != nil {
 		t.Fatalf("set ready derived updated_at failed: %v", err)
 	}
 
@@ -708,7 +715,7 @@ func TestEmbeddingBackfillCandidatesAndHealth_UseReadyAttachmentDerivedUpdatedAt
 	}); err != nil {
 		t.Fatalf("UpsertAttachmentDerived pending failed: %v", err)
 	}
-	if _, err := store.DB().ExecContext(ctx, `UPDATE attachment_derived SET updated_at = '2025-01-04 00:00:00' WHERE attachment_id = ?`, pendingAttachment.ID); err != nil {
+	if _, err := db.ExecContext(ctx, `UPDATE attachment_derived SET updated_at = '2025-01-04 00:00:00' WHERE attachment_id = ?`, pendingAttachment.ID); err != nil {
 		t.Fatalf("set pending derived updated_at failed: %v", err)
 	}
 

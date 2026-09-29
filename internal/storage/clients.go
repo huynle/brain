@@ -42,7 +42,11 @@ type BrainClientWorkspaceRow struct {
 	LastSeen         int64  `json:"last_seen"`
 }
 
-func (s *StorageLayer) UpsertBrainClient(ctx context.Context, client *BrainClientRow) error {
+func (s *TenantStore) UpsertBrainClient(ctx context.Context, client *BrainClientRow) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	labelsJSON, err := json.Marshal(client.Labels)
 	if err != nil {
 		return fmt.Errorf("marshal labels: %w", err)
@@ -62,12 +66,33 @@ func (s *StorageLayer) UpsertBrainClient(ctx context.Context, client *BrainClien
 		client.Status = "online"
 	}
 
-	_, err = s.db.ExecContext(ctx, `
+	columns, values, conflict := "", "", "client_id"
+	args := []interface{}{}
+	if scope.owner != "" {
+		columns, values, conflict = "tenant_id,", "?,", "tenant_id,client_id"
+		args = append(args, scope.owner)
+	}
+	args = append(args, client.ClientID, client.Kind, client.HostID, client.Hostname, client.OS, client.Arch,
+		client.Username, client.HomeDir, string(labelsJSON), string(capabilitiesJSON),
+		client.RegisteredAt, client.LastSeen, client.Status)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Only the trusted client writer creates durable ownership, atomically.
+	// This key does not authenticate a client or prove active enrollment.
+	if scope.owner != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_client_keys(tenant_id,client_id) VALUES(?,?) ON CONFLICT(tenant_id,client_id) DO NOTHING`, scope.owner, client.ClientID); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO brain_clients
-			(client_id, kind, host_id, hostname, os, arch, username, home_dir,
+			(`+columns+`client_id, kind, host_id, hostname, os, arch, username, home_dir,
 			 labels, capabilities, registered_at, last_seen, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (client_id) DO UPDATE SET
+		VALUES (`+values+`?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (`+conflict+`) DO UPDATE SET
 			kind         = excluded.kind,
 			host_id      = excluded.host_id,
 			hostname     = excluded.hostname,
@@ -79,23 +104,26 @@ func (s *StorageLayer) UpsertBrainClient(ctx context.Context, client *BrainClien
 			capabilities = excluded.capabilities,
 			last_seen    = excluded.last_seen,
 			status       = excluded.status`,
-		client.ClientID, client.Kind, client.HostID, client.Hostname, client.OS, client.Arch,
-		client.Username, client.HomeDir, string(labelsJSON), string(capabilitiesJSON),
-		client.RegisteredAt, client.LastSeen, client.Status,
+		args...,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert brain client: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
-func (s *StorageLayer) GetBrainClient(ctx context.Context, clientID string) (*BrainClientRow, error) {
+func (s *TenantStore) GetBrainClient(ctx context.Context, clientID string) (*BrainClientRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pred, args := scope.where("client_id = ?", clientID)
 	var r BrainClientRow
 	var labelsJSON, capabilitiesJSON string
-	err := s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, `
 		SELECT client_id, kind, host_id, hostname, os, arch, username, home_dir,
 		       labels, capabilities, registered_at, last_seen, status
-		FROM brain_clients WHERE client_id = ?`, clientID,
+		FROM brain_clients WHERE `+pred, args...,
 	).Scan(&r.ClientID, &r.Kind, &r.HostID, &r.Hostname, &r.OS, &r.Arch, &r.Username, &r.HomeDir,
 		&labelsJSON, &capabilitiesJSON, &r.RegisteredAt, &r.LastSeen, &r.Status)
 	if err == sql.ErrNoRows {
@@ -113,7 +141,11 @@ func (s *StorageLayer) GetBrainClient(ctx context.Context, clientID string) (*Br
 	return &r, nil
 }
 
-func (s *StorageLayer) UpsertBrainClientWorkspace(ctx context.Context, workspace *BrainClientWorkspaceRow) error {
+func (s *TenantStore) UpsertBrainClientWorkspace(ctx context.Context, workspace *BrainClientWorkspaceRow) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	now := time.Now().UnixMilli()
 	if workspace.FirstSeen == 0 {
 		workspace.FirstSeen = now
@@ -122,12 +154,23 @@ func (s *StorageLayer) UpsertBrainClientWorkspace(ctx context.Context, workspace
 		workspace.LastSeen = now
 	}
 
-	_, err := s.db.ExecContext(ctx, `
+	columns, values, conflict := "", "", "client_id,path"
+	args := []interface{}{}
+	if scope.owner != "" {
+		columns, values, conflict = "tenant_id,", "?,", "tenant_id,client_id,path"
+		args = append(args, scope.owner)
+	}
+	args = append(args, workspace.ClientID, workspace.HostID, workspace.ProjectID, workspace.Path, workspace.GitRoot,
+		workspace.GitCommonDir, workspace.GitWorktreeMain, workspace.GitBranch, workspace.GitRemote,
+		workspace.FolderName, workspace.Confidence, workspace.ResolutionSource,
+		workspace.FirstSeen, workspace.LastSeen)
+	// Composite FK rejects unknown/foreign clients; observations create no keys.
+	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO brain_client_workspaces
-			(client_id, host_id, project_id, path, git_root, git_common_dir, git_worktree_main,
+			(`+columns+`client_id, host_id, project_id, path, git_root, git_common_dir, git_worktree_main,
 			 git_branch, git_remote, folder_name, confidence, resolution_source, first_seen, last_seen)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (client_id, path) DO UPDATE SET
+		VALUES (`+values+`?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (`+conflict+`) DO UPDATE SET
 			host_id           = excluded.host_id,
 			project_id        = excluded.project_id,
 			git_root          = excluded.git_root,
@@ -139,10 +182,7 @@ func (s *StorageLayer) UpsertBrainClientWorkspace(ctx context.Context, workspace
 			confidence        = excluded.confidence,
 			resolution_source = excluded.resolution_source,
 			last_seen         = excluded.last_seen`,
-		workspace.ClientID, workspace.HostID, workspace.ProjectID, workspace.Path, workspace.GitRoot,
-		workspace.GitCommonDir, workspace.GitWorktreeMain, workspace.GitBranch, workspace.GitRemote,
-		workspace.FolderName, workspace.Confidence, workspace.ResolutionSource,
-		workspace.FirstSeen, workspace.LastSeen,
+		args...,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert brain client workspace: %w", err)
@@ -150,12 +190,17 @@ func (s *StorageLayer) UpsertBrainClientWorkspace(ctx context.Context, workspace
 	return nil
 }
 
-func (s *StorageLayer) ListBrainClientWorkspaces(ctx context.Context, projectID string) ([]BrainClientWorkspaceRow, error) {
+func (s *TenantStore) ListBrainClientWorkspaces(ctx context.Context, projectID string) ([]BrainClientWorkspaceRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pred, args := scope.where("project_id = ?", projectID)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, client_id, host_id, project_id, path, git_root, git_common_dir,
 		       git_worktree_main, git_branch, git_remote, folder_name, confidence,
 		       resolution_source, first_seen, last_seen
-		FROM brain_client_workspaces WHERE project_id = ? ORDER BY last_seen DESC`, projectID)
+		FROM brain_client_workspaces WHERE `+pred+` ORDER BY last_seen DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list brain client workspaces: %w", err)
 	}

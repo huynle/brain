@@ -57,6 +57,7 @@ type FeatureCascadeService struct {
 
 	// running indicates Start() is active. Guards against double-start.
 	running bool
+	done    <-chan struct{}
 }
 
 // NewFeatureCascadeService constructs a cascade service. The hub may be nil
@@ -112,16 +113,21 @@ func (s *FeatureCascadeService) IsActive(projectID, featureID string) bool {
 
 // Start subscribes to the event hub and runs the cascade loop until ctx
 // is canceled. Safe to call once; subsequent calls are no-ops.
-func (s *FeatureCascadeService) Start(ctx context.Context) {
+func (s *FeatureCascadeService) Start(ctx context.Context) <-chan struct{} {
 	if s.hub == nil || s.runner == nil {
 		slog.Info("feature cascade not started: hub or runner missing")
-		return
+		done := make(chan struct{})
+		close(done)
+		return done
 	}
 	s.mu.Lock()
 	if s.running {
+		done := s.done
 		s.mu.Unlock()
-		return
+		return done
 	}
+	done := make(chan struct{})
+	s.done = done
 	s.running = true
 	s.mu.Unlock()
 
@@ -138,6 +144,7 @@ func (s *FeatureCascadeService) Start(ctx context.Context) {
 	})
 
 	go func() {
+		defer close(done)
 		defer func() {
 			unsub()
 			s.mu.Lock()
@@ -165,6 +172,7 @@ func (s *FeatureCascadeService) Start(ctx context.Context) {
 			}
 		}
 	}()
+	return done
 }
 
 // handleEvent fires the next dispatch pass for a feature when one of its

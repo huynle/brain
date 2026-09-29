@@ -30,8 +30,6 @@ type StorageLayer struct {
 //	               conn 1..3 -> foreign_keys=0 synchronous=2
 //	DSN form:      conn 0..3 -> foreign_keys=1 synchronous=1
 //
-// Only journal_mode survived, because WAL is persisted in the database file.
-//
 // So SetMaxOpenConns(1) below was load-bearing for correctness, not just for
 // write serialisation: it was the only reason foreign key enforcement was
 // active at all. Raising the pool without this change would have silently
@@ -41,8 +39,22 @@ type StorageLayer struct {
 // busy_timeout is included because it is the setting that makes a pool larger
 // than one survivable at all — without it a second writer fails immediately
 // with SQLITE_BUSY instead of waiting.
+//
+// journal_mode is TRUNCATE, NOT WAL. WAL's only benefit is concurrent readers
+// alongside one writer, which cannot occur here because SetMaxOpenConns(1)
+// pins the pool to a single connection. Under the pure-Go driver
+// (github.com/glebarez/go-sqlite -> modernc.org/sqlite) WAL was actively
+// harmful in the containerized (read-only rootfs, bind-mounted volume)
+// deployment: reads that traversed the WAL -shm shared-memory index on a large
+// database threw SQLITE_IOERR_READ (disk I/O error 6410) — e.g. list-notes
+// queries selecting the body/raw_content overflow columns returned HTTP 500.
+// TRUNCATE removes the -wal/-shm/mmap path entirely with no loss of
+// concurrency, and was verified to fix the 6410 failures against the live
+// database. If the single-connection cap is ever lifted, revisit this: WAL
+// would become worthwhile again, but only once the driver's -shm handling is
+// confirmed safe in the target runtime.
 var connectionPragmas = []string{
-	"journal_mode(WAL)",
+	"journal_mode(TRUNCATE)",
 	"foreign_keys(1)",
 	"synchronous(NORMAL)",
 	"busy_timeout(5000)",
@@ -141,8 +153,10 @@ func newFromDB(db *sql.DB) (*StorageLayer, error) {
 	// own: startup runs a synchronous reindex (~33s for ~70k entries) holding
 	// this single connection, so every request in that window queues behind it
 	// and callers that time out surface as 500s (see the Logger middleware in
-	// internal/api). WAL supports concurrent readers alongside one writer, so
-	// serialising reads is self-inflicted.
+	// internal/api). Serialising reads behind one connection is self-inflicted;
+	// note that lifting the cap also means revisiting journal_mode (see
+	// connectionPragmas — TRUNCATE was chosen precisely because the pool is
+	// single-connection and WAL's -shm path was unsafe in the container).
 	//
 	// What blocked raising it was that the pragmas below only ever bound to one
 	// connection. That blocker is now cleared for the New path by
@@ -160,7 +174,7 @@ func newFromDB(db *sql.DB) (*StorageLayer, error) {
 	// precisely because of the cap above. New() additionally sets them in the
 	// DSN so they hold for every connection.
 	pragmas := []string{
-		"PRAGMA journal_mode = WAL",
+		"PRAGMA journal_mode = TRUNCATE",
 		"PRAGMA foreign_keys = ON",
 		"PRAGMA synchronous = NORMAL",
 	}

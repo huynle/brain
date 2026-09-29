@@ -171,9 +171,9 @@ func TestPragmas_InMemory(t *testing.T) {
 	}
 }
 
-func TestPragmas_WALMode(t *testing.T) {
-	// WAL mode requires a file-based database.
-	dbPath := t.TempDir() + "/wal-test.db"
+func TestPragmas_JournalMode(t *testing.T) {
+	// journal_mode is persisted in the file, so use a file-based database.
+	dbPath := t.TempDir() + "/journal-test.db"
 	s, err := New(dbPath)
 	if err != nil {
 		t.Fatalf("New(%q) failed: %v", dbPath, err)
@@ -184,8 +184,12 @@ func TestPragmas_WALMode(t *testing.T) {
 	if err := s.db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
 		t.Fatalf("PRAGMA journal_mode failed: %v", err)
 	}
-	if journalMode != "wal" {
-		t.Errorf("PRAGMA journal_mode = %q, want %q", journalMode, "wal")
+	// TRUNCATE, not WAL: see connectionPragmas in storage.go. WAL's -shm mmap
+	// path throws SQLITE_IOERR_READ (6410) under the pure-Go driver in the
+	// containerized deployment, and WAL's concurrency benefit is moot because
+	// SetMaxOpenConns(1) pins the pool to one connection.
+	if journalMode != "truncate" {
+		t.Errorf("PRAGMA journal_mode = %q, want %q", journalMode, "truncate")
 	}
 }
 
@@ -1230,10 +1234,11 @@ func TestRunnersTable_MigrationFromV5(t *testing.T) {
 //	conn 0    -> foreign_keys=1 synchronous=1
 //	conn 1..3 -> foreign_keys=0 synchronous=2
 //
-// Only journal_mode survived, because WAL is persisted in the database file.
-// So the connection cap was load-bearing for CORRECTNESS, and anyone raising it
-// for the obvious performance reason would have quietly turned off foreign key
-// enforcement.
+// Only journal_mode survives per-connection drift, because it is persisted in
+// the database file (now TRUNCATE, not WAL — see connectionPragmas in
+// storage.go). So the connection cap was load-bearing for CORRECTNESS, and
+// anyone raising it for the obvious performance reason would have quietly
+// turned off foreign key enforcement.
 //
 // The oracle here is SQLite's own PRAGMA readback on each live connection, not
 // a restatement of what the code intends to do.
@@ -1287,8 +1292,8 @@ func TestNew_PragmasHoldOnEveryConnection(t *testing.T) {
 		if synchronous != 1 {
 			t.Errorf("conn %d: synchronous=%d, want 1 (NORMAL)", i, synchronous)
 		}
-		if journalMode != "wal" {
-			t.Errorf("conn %d: journal_mode=%q, want wal", i, journalMode)
+		if journalMode != "truncate" {
+			t.Errorf("conn %d: journal_mode=%q, want truncate", i, journalMode)
 		}
 		// Without a busy timeout, a pool larger than one fails immediately on
 		// write contention instead of waiting.

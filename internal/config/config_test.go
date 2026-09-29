@@ -10,7 +10,7 @@ func TestLoadDefaults_NoConfigFile(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// Clear env vars that might affect config
-	envVars := []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN", "JWT_SECRET", "BRAIN_JWT_SECRET"}
+	envVars := []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN", "JWT_SECRET", "BRAIN_JWT_SECRET", "BRAIN_PASSWORD_SESSION_TTL_DAYS"}
 	for _, key := range envVars {
 		t.Setenv(key, "")
 		os.Unsetenv(key)
@@ -53,6 +53,9 @@ func TestLoadDefaults_NoConfigFile(t *testing.T) {
 	if cfg.EnableAuth != false {
 		t.Errorf("EnableAuth = %v, want false", cfg.EnableAuth)
 	}
+	if cfg.PasswordSessionTTLDays != 30 {
+		t.Errorf("PasswordSessionTTLDays = %d, want 30", cfg.PasswordSessionTTLDays)
+	}
 	if cfg.CORSOrigin != "" {
 		t.Errorf("CORSOrigin = %q, want empty (no cross-origin grants)", cfg.CORSOrigin)
 	}
@@ -74,6 +77,7 @@ func TestLoadEnvVarsOverrideAll(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("OAUTH_PIN", "test-pin-123")
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("BRAIN_PASSWORD_SESSION_TTL_DAYS", "0")
 
 	cfg := Load()
 
@@ -100,6 +104,9 @@ func TestLoadEnvVarsOverrideAll(t *testing.T) {
 	}
 	if cfg.JWTSecret != "test-jwt-secret" {
 		t.Errorf("JWTSecret = %q, want %q", cfg.JWTSecret, "test-jwt-secret")
+	}
+	if cfg.PasswordSessionTTLDays != 0 {
+		t.Errorf("PasswordSessionTTLDays = %d, want 0", cfg.PasswordSessionTTLDays)
 	}
 }
 

@@ -964,6 +964,14 @@ restarts, production configuration edits, or public multi-tenant activation.
 ## Architecture
 
 ```
+
+Password UI sessions use one-hour access tokens and a sliding refresh-token
+lifetime configured in Settings as `server.password_session_ttl_days` (default
+`30`). Set it to `0` for a non-expiring password session. The setting requires
+a server restart and affects newly issued or rotated password sessions; an
+existing session keeps its stored expiry until its next refresh. The
+`BRAIN_PASSWORD_SESSION_TTL_DAYS` environment variable overrides the YAML
+value. OAuth/PIN token lifetimes are unchanged.
                            ┌─────────────────────────┐
                            │     MCP Clients          │
                            │  (Claude Code, OpenCode) │

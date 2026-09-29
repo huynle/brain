@@ -44,14 +44,15 @@ type ServerOptions struct {
 	// LogWriter, when set, receives all slog output instead of os.Stderr.
 	// Callers use it to direct server logs to the configured log_file so
 	// `brain api logs` works regardless of how the server was started.
-	LogWriter       io.Writer
-	CORSOrigin      string
-	OAuthPIN        string
-	JWTSecret       string
-	TaskDefaults    config.TaskDefaultsConfig
-	FeatureCheckout config.FeatureCheckoutConfig
-	Tenancy         config.TenancyConfig
-	FeatureDelivery config.FeatureDeliveryConfig
+	LogWriter               io.Writer
+	CORSOrigin              string
+	OAuthPIN                string
+	JWTSecret               string
+	PasswordRefreshTokenTTL *time.Duration
+	TaskDefaults            config.TaskDefaultsConfig
+	FeatureCheckout         config.FeatureCheckoutConfig
+	Tenancy                 config.TenancyConfig
+	FeatureDelivery         config.FeatureDeliveryConfig
 	// IndexWatch, when enabled, runs a filesystem watcher that re-indexes
 	// out-of-band writes to BrainDir. Off by default; see
 	// config.IndexWatchConfig for why.
@@ -634,6 +635,10 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	bulkSvc.Start(ctx, indexReady)
 	previousCleanup := cleanup
 	cleanup = func() { bulkSvc.Stop(); previousCleanup() }
+	passwordRefreshTTL := 30 * 24 * time.Hour
+	if opts.PasswordRefreshTokenTTL != nil {
+		passwordRefreshTTL = *opts.PasswordRefreshTokenTTL
+	}
 	handler := api.NewHandler(
 		brainSvc,
 		api.WithAttachmentService(attachmentSvc),
@@ -666,6 +671,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithTaskDefaults(cfg.TaskDefaults),
 		api.WithCredentialVerifier(credVerifier),
 		api.WithPasswordTokenStore(control),
+		api.WithPasswordRefreshTokenTTL(passwordRefreshTTL),
 	)
 
 	// ─── Rate Limiting ─────────────────────────────────────────────

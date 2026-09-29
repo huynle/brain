@@ -177,6 +177,10 @@ func (h *Handler) issuePasswordTokens(w http.ResponseWriter) {
 
 	ctx := context.Background()
 	now := time.Now()
+	refreshExpiresAt := int64(-1)
+	if h.passwordRefreshTTL > 0 {
+		refreshExpiresAt = now.Add(h.passwordRefreshTTL).Unix()
+	}
 	if err := h.passwordTokens.CreateAccessToken(ctx, &storage.OAuthAccessToken{
 		Token:     access,
 		ClientID:  passwordClientID,
@@ -190,7 +194,7 @@ func (h *Handler) issuePasswordTokens(w http.ResponseWriter) {
 		Token:     refresh,
 		ClientID:  passwordClientID,
 		Scope:     passwordScope,
-		ExpiresAt: now.Add(pwRefreshTokenTTL).Unix(),
+		ExpiresAt: refreshExpiresAt,
 	}); err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", "failed to persist token")
 		return

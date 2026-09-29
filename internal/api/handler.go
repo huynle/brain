@@ -5,6 +5,7 @@ import (
 	"github.com/huynle/brain-api/internal/logbuffer"
 	"github.com/huynle/brain-api/internal/realtime"
 	"sync"
+	"time"
 )
 
 // Handler holds service dependencies for HTTP handlers.
@@ -41,6 +42,7 @@ type Handler struct {
 	taskDefaults          config.TaskDefaultsConfig
 	credentials           CredentialVerifier
 	passwordTokens        PasswordTokenStore
+	passwordRefreshTTL    time.Duration
 	loginThrottle         *loginThrottle
 }
 
@@ -49,7 +51,7 @@ type HandlerOption func(*Handler)
 
 // NewHandler creates a Handler with the given BrainService and optional services.
 func NewHandler(brain BrainService, opts ...HandlerOption) *Handler {
-	h := &Handler{brain: brain, loginThrottle: newLoginThrottle()}
+	h := &Handler{brain: brain, passwordRefreshTTL: pwRefreshTokenTTL, loginThrottle: newLoginThrottle()}
 	for _, opt := range opts {
 		opt(h)
 	}
@@ -67,6 +69,14 @@ func WithCredentialVerifier(v CredentialVerifier) HandlerOption {
 func WithPasswordTokenStore(s PasswordTokenStore) HandlerOption {
 	return func(h *Handler) {
 		h.passwordTokens = s
+	}
+}
+
+// WithPasswordRefreshTokenTTL configures password refresh-token lifetime.
+// Zero selects explicitly non-expiring refresh tokens.
+func WithPasswordRefreshTokenTTL(ttl time.Duration) HandlerOption {
+	return func(h *Handler) {
+		h.passwordRefreshTTL = ttl
 	}
 }
 

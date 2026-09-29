@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/huynle/brain-api/internal/apiserver"
 	"github.com/huynle/brain-api/internal/config"
@@ -20,15 +21,16 @@ import (
 // without lossy field-by-field copying.
 type UnifiedConfig struct {
 	Server struct {
-		Port       int
-		Host       string
-		BrainDir   string
-		EnableAuth bool
-		LogLevel   string
-		CORSOrigin string
-		OAuthPIN   string
-		JWTSecret  string
-		TLS        struct {
+		Port                   int
+		Host                   string
+		BrainDir               string
+		EnableAuth             bool
+		LogLevel               string
+		CORSOrigin             string
+		OAuthPIN               string
+		JWTSecret              string
+		PasswordSessionTTLDays int
+		TLS                    struct {
 			Enabled  bool
 			CertPath string
 			KeyPath  string
@@ -84,22 +86,24 @@ func (c *APICommand) Type() string {
 
 // Execute starts the Brain API server.
 func (c *APICommand) Execute() error {
+	passwordRefreshTTL := time.Duration(c.Config.Server.PasswordSessionTTLDays) * 24 * time.Hour
 	// Build options from config + flags
 	opts := apiserver.ServerOptions{
-		Port:            c.Config.Server.Port,
-		Host:            c.Config.Server.Host,
-		BrainDir:        c.Config.Server.BrainDir,
-		EnableAuth:      c.Config.Server.EnableAuth,
-		LogLevel:        c.Config.Server.LogLevel,
-		CORSOrigin:      c.Config.Server.CORSOrigin,
-		OAuthPIN:        c.Config.Server.OAuthPIN,
-		JWTSecret:       c.Config.Server.JWTSecret,
-		TaskDefaults:    c.Config.Server.TaskDefaults,
-		FeatureCheckout: c.Config.Server.FeatureCheckout,
-		FeatureDelivery: c.Config.Server.FeatureDelivery,
-		IndexWatch:      c.Config.Server.IndexWatch,
-		Embedding:       c.Config.Server.Embedding,
-		Attachments:     c.Config.Server.Attachments,
+		Port:                    c.Config.Server.Port,
+		Host:                    c.Config.Server.Host,
+		BrainDir:                c.Config.Server.BrainDir,
+		EnableAuth:              c.Config.Server.EnableAuth,
+		LogLevel:                c.Config.Server.LogLevel,
+		CORSOrigin:              c.Config.Server.CORSOrigin,
+		OAuthPIN:                c.Config.Server.OAuthPIN,
+		JWTSecret:               c.Config.Server.JWTSecret,
+		PasswordRefreshTokenTTL: &passwordRefreshTTL,
+		TaskDefaults:            c.Config.Server.TaskDefaults,
+		FeatureCheckout:         c.Config.Server.FeatureCheckout,
+		FeatureDelivery:         c.Config.Server.FeatureDelivery,
+		IndexWatch:              c.Config.Server.IndexWatch,
+		Embedding:               c.Config.Server.Embedding,
+		Attachments:             c.Config.Server.Attachments,
 
 		AttachmentExtraction: c.Config.Server.AttachmentExtraction,
 		Assistant:            c.Config.Server.Assistant,

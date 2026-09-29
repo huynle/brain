@@ -325,6 +325,16 @@ func TestConfigHandler_GetSchemaEnumeratesFields(t *testing.T) {
 			t.Error("server.port should require restart")
 		}
 	}
+	if f, ok := byPath["server.password_session_ttl_days"]; !ok {
+		t.Error("server.password_session_ttl_days missing")
+	} else {
+		if f.Kind != "int" {
+			t.Errorf("password session TTL kind = %q, want int", f.Kind)
+		}
+		if !f.RequiresRestart {
+			t.Error("password session TTL should require restart")
+		}
+	}
 	if f, ok := byPath["runner.api_token"]; !ok {
 		t.Error("runner.api_token missing")
 	} else if !f.Secret {

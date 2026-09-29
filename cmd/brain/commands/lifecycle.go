@@ -382,21 +382,23 @@ func (c *StartCommand) startDaemon(pidFile, logFile string) error {
 
 // startForeground runs the API server in the current process.
 func (c *StartCommand) startForeground(pidFile, logFile string) error {
+	passwordRefreshTTL := time.Duration(c.Config.Server.PasswordSessionTTLDays) * 24 * time.Hour
 	opts := apiserver.ServerOptions{
-		Port:            c.Config.Server.Port,
-		Host:            c.Config.Server.Host,
-		BrainDir:        c.Config.Server.BrainDir,
-		EnableAuth:      c.Config.Server.EnableAuth,
-		LogLevel:        c.Config.Server.LogLevel,
-		CORSOrigin:      c.Config.Server.CORSOrigin,
-		OAuthPIN:        c.Config.Server.OAuthPIN,
-		JWTSecret:       c.Config.Server.JWTSecret,
-		TaskDefaults:    c.Config.Server.TaskDefaults,
-		FeatureCheckout: c.Config.Server.FeatureCheckout,
-		FeatureDelivery: c.Config.Server.FeatureDelivery,
-		IndexWatch:      c.Config.Server.IndexWatch,
-		Embedding:       c.Config.Server.Embedding,
-		Attachments:     c.Config.Server.Attachments,
+		Port:                    c.Config.Server.Port,
+		Host:                    c.Config.Server.Host,
+		BrainDir:                c.Config.Server.BrainDir,
+		EnableAuth:              c.Config.Server.EnableAuth,
+		LogLevel:                c.Config.Server.LogLevel,
+		CORSOrigin:              c.Config.Server.CORSOrigin,
+		OAuthPIN:                c.Config.Server.OAuthPIN,
+		JWTSecret:               c.Config.Server.JWTSecret,
+		PasswordRefreshTokenTTL: &passwordRefreshTTL,
+		TaskDefaults:            c.Config.Server.TaskDefaults,
+		FeatureCheckout:         c.Config.Server.FeatureCheckout,
+		FeatureDelivery:         c.Config.Server.FeatureDelivery,
+		IndexWatch:              c.Config.Server.IndexWatch,
+		Embedding:               c.Config.Server.Embedding,
+		Attachments:             c.Config.Server.Attachments,
 
 		AttachmentExtraction: c.Config.Server.AttachmentExtraction,
 		Assistant:            c.Config.Server.Assistant,

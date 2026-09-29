@@ -123,31 +123,34 @@ type AttachmentConfig struct {
 }
 
 type ServerConfig struct {
-	Port            int                   `yaml:"port"`
-	Host            string                `yaml:"host"`
-	BrainDir        string                `yaml:"brain_dir"`
-	EnableAuth      bool                  `yaml:"enable_auth"`
-	CORSOrigin      string                `yaml:"cors_origin"`
-	LogLevel        string                `yaml:"log_level"`
-	OAuthPIN        string                `yaml:"oauth_pin"`
-	JWTSecret       string                `yaml:"jwt_secret"`
-	TLSCert         string                `yaml:"tls_cert"`
-	TLSKey          string                `yaml:"tls_key"`
-	PIDFile         string                `yaml:"pid_file"`
-	LogFile         string                `yaml:"log_file"`
-	LogMaxSizeMB    int                   `yaml:"log_max_size_mb"` // rotate log_file above this size (default 100)
-	LogMaxBackups   int                   `yaml:"log_max_backups"` // rotated backups to keep (default 5)
-	TaskDefaults    TaskDefaultsConfig    `yaml:"task_defaults"`
-	FeatureCheckout FeatureCheckoutConfig `yaml:"feature_checkout"`
-	FeatureDelivery FeatureDeliveryConfig `yaml:"feature_delivery"`
-	IndexWatch      IndexWatchConfig      `yaml:"index_watch"`
-	Tenancy         TenancyConfig         `yaml:"tenancy"`
-	Embedding       EmbeddingConfig       `yaml:"embedding"`
-	Attachments     AttachmentConfig      `yaml:"attachments"`
+	PasswordSessionTTLDays int                   `yaml:"password_session_ttl_days"`
+	Port                   int                   `yaml:"port"`
+	Host                   string                `yaml:"host"`
+	BrainDir               string                `yaml:"brain_dir"`
+	EnableAuth             bool                  `yaml:"enable_auth"`
+	CORSOrigin             string                `yaml:"cors_origin"`
+	LogLevel               string                `yaml:"log_level"`
+	OAuthPIN               string                `yaml:"oauth_pin"`
+	JWTSecret              string                `yaml:"jwt_secret"`
+	TLSCert                string                `yaml:"tls_cert"`
+	TLSKey                 string                `yaml:"tls_key"`
+	PIDFile                string                `yaml:"pid_file"`
+	LogFile                string                `yaml:"log_file"`
+	LogMaxSizeMB           int                   `yaml:"log_max_size_mb"` // rotate log_file above this size (default 100)
+	LogMaxBackups          int                   `yaml:"log_max_backups"` // rotated backups to keep (default 5)
+	TaskDefaults           TaskDefaultsConfig    `yaml:"task_defaults"`
+	FeatureCheckout        FeatureCheckoutConfig `yaml:"feature_checkout"`
+	FeatureDelivery        FeatureDeliveryConfig `yaml:"feature_delivery"`
+	IndexWatch             IndexWatchConfig      `yaml:"index_watch"`
+	Tenancy                TenancyConfig         `yaml:"tenancy"`
+	Embedding              EmbeddingConfig       `yaml:"embedding"`
+	Attachments            AttachmentConfig      `yaml:"attachments"`
 
 	AttachmentExtraction AttachmentExtractionConfig `yaml:"attachment_extraction"`
 	Assistant            AssistantConfig            `yaml:"assistant"`
 }
+
+const MaxPasswordSessionTTLDays = 36500
 
 // FeatureCheckoutConfig controls built-in feature completion checkout automation.
 type FeatureCheckoutConfig struct {
@@ -298,6 +301,9 @@ func (c *UnifiedConfig) Validate() error {
 	if c.Server.LogMaxBackups < 0 {
 		errs = append(errs, "server.log_max_backups must be >= 0")
 	}
+	if c.Server.PasswordSessionTTLDays < 0 || c.Server.PasswordSessionTTLDays > MaxPasswordSessionTTLDays {
+		errs = append(errs, fmt.Sprintf("server.password_session_ttl_days must be 0..%d (0 means never)", MaxPasswordSessionTTLDays))
+	}
 	// TLS pair — either both or neither.
 	if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
 		errs = append(errs, "server.tls_cert and server.tls_key must both be set or both empty")
@@ -403,16 +409,17 @@ func defaultConfig() UnifiedConfig {
 
 	return UnifiedConfig{
 		Server: ServerConfig{
-			Port:            3333,
-			Host:            "localhost",
-			BrainDir:        brainDir,
-			LogLevel:        "info",
-			PIDFile:         filepath.Join(stateHome, "brain-api", "brain-api.pid"),
-			LogFile:         filepath.Join(stateHome, "brain-api", "brain-api.log"),
-			EnableAuth:      false,
-			CORSOrigin:      "", // Same-origin only; cross-origin access is opt-in.
-			FeatureCheckout: FeatureCheckoutConfig{Enabled: true},
-			FeatureDelivery: FeatureDeliveryConfig{Enabled: false},
+			Port:                   3333,
+			PasswordSessionTTLDays: 30,
+			Host:                   "localhost",
+			BrainDir:               brainDir,
+			LogLevel:               "info",
+			PIDFile:                filepath.Join(stateHome, "brain-api", "brain-api.pid"),
+			LogFile:                filepath.Join(stateHome, "brain-api", "brain-api.log"),
+			EnableAuth:             false,
+			CORSOrigin:             "", // Same-origin only; cross-origin access is opt-in.
+			FeatureCheckout:        FeatureCheckoutConfig{Enabled: true},
+			FeatureDelivery:        FeatureDeliveryConfig{Enabled: false},
 			TaskDefaults: TaskDefaultsConfig{
 				ExecutionMode:      "worktree",
 				MergePolicy:        "auto_merge",
@@ -587,6 +594,9 @@ func LoadConfig() (UnifiedConfig, error) {
 		if err := loadConfigFile(unifiedPath, &cfg); err != nil {
 			return UnifiedConfig{}, err
 		}
+		if err := cfg.Validate(); err != nil {
+			return UnifiedConfig{}, err
+		}
 		return cfg, nil
 	}
 
@@ -596,6 +606,9 @@ func LoadConfig() (UnifiedConfig, error) {
 		log.Printf("Migrating config from %s to %s", legacyPath, unifiedPath)
 		// Migrate legacy config to unified format
 		if err := migrateConfig(legacyPath, unifiedPath, &cfg); err != nil {
+			return UnifiedConfig{}, err
+		}
+		if err := cfg.Validate(); err != nil {
 			return UnifiedConfig{}, err
 		}
 		log.Printf("Migration complete. Backup saved: %s.backup", legacyPath)

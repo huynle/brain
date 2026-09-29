@@ -504,7 +504,7 @@ func (s *StorageLayer) ConsumeRefreshToken(ctx context.Context, tokenValue strin
 	t.UserID = userID.String
 
 	// Check expiry
-	if time.Now().Unix() > t.ExpiresAt {
+	if t.ExpiresAt != -1 && time.Now().Unix() > t.ExpiresAt {
 		_, _ = tx.ExecContext(ctx, "DELETE FROM oauth_refresh_tokens WHERE token = ?", tokenValue)
 		_ = tx.Commit()
 		return nil, fmt.Errorf("refresh token expired: %s", tokenValue)
@@ -536,7 +536,7 @@ func (s *StorageLayer) RevokeRefreshTokensByClient(ctx context.Context, clientID
 // CleanupExpiredRefreshTokens removes all refresh tokens past their expires_at.
 func (s *StorageLayer) CleanupExpiredRefreshTokens(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx,
-		"DELETE FROM oauth_refresh_tokens WHERE expires_at < ?", time.Now().Unix())
+		"DELETE FROM oauth_refresh_tokens WHERE expires_at != -1 AND expires_at < ?", time.Now().Unix())
 	if err != nil {
 		return fmt.Errorf("cleanup expired refresh tokens: %w", err)
 	}

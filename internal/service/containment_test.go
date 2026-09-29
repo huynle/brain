@@ -164,7 +164,7 @@ func TestContainmentDestinations(t *testing.T) {
 
 func TestContainmentDirectoryScans(t *testing.T) {
 	for _, kind := range []string{"directory", "child"} {
-		for _, op := range []string{"projects", "checkout", "enumerate", "ensure", "inject", "project-delete"} {
+		for _, op := range []string{"projects", "all-projects", "checkout", "enumerate", "ensure", "inject", "project-delete"} {
 			t.Run(kind+"/"+op, func(t *testing.T) {
 				svc, store, sandbox := nestedValidationBrain(t)
 				tasks := NewTaskService(svc.config, store, svc.indexer)
@@ -185,6 +185,11 @@ func TestContainmentDirectoryScans(t *testing.T) {
 						t.Skip("ListProjects does not read task files")
 					}
 					_, err = tasks.ListProjects(ctx)
+				case "all-projects":
+					if kind == "child" {
+						t.Skip("ListAllProjects does not read content files")
+					}
+					_, err = tasks.ListAllProjects(ctx)
 				case "checkout":
 					_, err = tasks.CheckoutFeature(ctx, "safe", "feature", nil)
 				case "enumerate":

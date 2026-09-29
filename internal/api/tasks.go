@@ -103,9 +103,11 @@ func parseExecutors(r *http.Request) []string {
 	return executors
 }
 
-// HandleListProjects handles GET /tasks — list all projects.
+// HandleListProjects handles GET /tasks — list all owner-visible projects.
+// Queue clients may harmlessly poll an empty task list for content-only projects;
+// scheduler and wildcard-automation fan-out use the separate task-only inventory.
 func (h *Handler) HandleListProjects(w http.ResponseWriter, r *http.Request) {
-	projects, err := h.tasks.ListProjects(r.Context())
+	projects, err := h.tasks.ListAllProjects(r.Context())
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return

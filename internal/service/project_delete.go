@@ -27,8 +27,8 @@ const maxDeleteProjectErrors = 25
 //   - BulkDelete caps at 100 entries per call and scans at most 500
 //     candidates. A project with 400 entries would need five round trips and
 //     would silently report `truncated` rather than finishing the job.
-//   - Deleting every entry still leaves projects/<id>/task/ on disk, and
-//     TaskServiceImpl.ListProjects lists a project by exactly that directory.
+//   - Deleting every entry can still leave projects/<id>/<type>/ on disk, and
+//     TaskServiceImpl.ListAllProjects lists a project by those content directories.
 //     The project would come back empty in the sidebar forever.
 //   - Claims, dispatch leases and pause state are keyed by project_id, not by
 //     entry path, so no entry-level operation reaches them.

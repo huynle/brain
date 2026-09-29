@@ -397,11 +397,11 @@ func TestNoteRowToBrainEntry_NullableFields(t *testing.T) {
 // ListProjects
 // ---------------------------------------------------------------------------
 
-func TestListProjects_Empty(t *testing.T) {
+func TestListAllProjects_Empty(t *testing.T) {
 	svc, _, _ := newTestTaskService(t)
 	ctx := context.Background()
 
-	projects, err := svc.ListProjects(ctx)
+	projects, err := svc.ListAllProjects(ctx)
 	if err != nil {
 		t.Fatalf("ListProjects failed: %v", err)
 	}
@@ -410,23 +410,43 @@ func TestListProjects_Empty(t *testing.T) {
 	}
 }
 
-func TestListProjects_WithProjects(t *testing.T) {
+func TestListAllProjects_WithProjects(t *testing.T) {
 	svc, _, brainDir := newTestTaskService(t)
 	ctx := context.Background()
 
-	// Create project directories with task/ subfolder
+	// Task-bearing projects remain visible.
 	createProjectDir(t, brainDir, "project-a")
 	createProjectDir(t, brainDir, "project-b")
 
-	// Create a directory WITHOUT task/ subfolder (should be excluded)
-	os.MkdirAll(filepath.Join(brainDir, "projects", "no-tasks"), 0o755)
+	// Saving a first note creates a project without a task/ folder. It must be
+	// discoverable immediately in the same inventory used by the PWA and agents.
+	os.MkdirAll(filepath.Join(brainDir, "projects", "notes-only", "scratch"), 0o755)
+	if err := os.WriteFile(
+		filepath.Join(brainDir, "projects", "notes-only", "scratch", "first-note.md"),
+		[]byte("---\ntitle: First note\ntype: scratch\n---\nbody\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	// A stray empty namespace has no Brain content and stays out of the inventory.
+	os.MkdirAll(filepath.Join(brainDir, "projects", "empty"), 0o755)
+	// Unrecognized directories are not Brain entry namespaces.
+	os.MkdirAll(filepath.Join(brainDir, "projects", "not-content", "cache"), 0o755)
+	// Safe in-root aliases retain the compatibility of the old task-only scan.
+	os.MkdirAll(filepath.Join(brainDir, "projects", "alias", "target"), 0o755)
+	if err := os.Symlink(
+		filepath.Join(brainDir, "projects", "alias", "target"),
+		filepath.Join(brainDir, "projects", "alias", "scratch"),
+	); err != nil {
+		t.Fatal(err)
+	}
 
-	projects, err := svc.ListProjects(ctx)
+	projects, err := svc.ListAllProjects(ctx)
 	if err != nil {
 		t.Fatalf("ListProjects failed: %v", err)
 	}
-	if len(projects) != 2 {
-		t.Fatalf("expected 2 projects, got %d: %v", len(projects), projects)
+	if len(projects) != 4 {
+		t.Fatalf("expected 4 projects, got %d: %v", len(projects), projects)
 	}
 
 	// Check both projects are present (order may vary)
@@ -440,14 +460,28 @@ func TestListProjects_WithProjects(t *testing.T) {
 	if !found["project-b"] {
 		t.Error("expected project-b in results")
 	}
+	if !found["notes-only"] {
+		t.Error("expected notes-only project in results")
+	}
+	if !found["alias"] {
+		t.Error("expected project with safe in-root content alias in results")
+	}
+
+	taskProjects, err := svc.ListProjects(ctx)
+	if err != nil {
+		t.Fatalf("ListProjects failed: %v", err)
+	}
+	if len(taskProjects) != 2 {
+		t.Fatalf("task/scheduler inventory widened: %v", taskProjects)
+	}
 }
 
-func TestListProjects_NoProjectsDir(t *testing.T) {
+func TestListAllProjects_NoProjectsDir(t *testing.T) {
 	// brainDir exists but has no projects/ subdirectory
 	svc, _, _ := newTestTaskService(t)
 	ctx := context.Background()
 
-	projects, err := svc.ListProjects(ctx)
+	projects, err := svc.ListAllProjects(ctx)
 	if err != nil {
 		t.Fatalf("ListProjects failed: %v", err)
 	}

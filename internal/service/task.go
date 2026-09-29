@@ -119,7 +119,8 @@ const OrphanReaperMarker = "*Marked blocked by runner orphan reaper"
 // text changes, the runner-side writer changes with it.
 const StalledMarker = "*Stalled: runner detected a silent OpenCode session"
 
-// ListProjects scans <brainDir>/projects/ for subdirectories containing a task/ subfolder.
+// ListProjects scans <brainDir>/projects/ for task-bearing namespaces. In-process
+// scheduler and wildcard-automation callers deliberately retain this narrow view.
 func (s *TaskServiceImpl) ListProjects(ctx context.Context) ([]string, error) {
 	guard := absoluteFilesystemGuard(ctx, s.indexer, s.config.BrainDir)
 	projectsDir, err := resolveFilesystemPath(ctx, s.indexer, s.config.BrainDir, "projects", true)
@@ -152,6 +153,78 @@ func (s *TaskServiceImpl) ListProjects(ctx context.Context) ([]string, error) {
 		}
 		info, err := os.Stat(taskDir)
 		if err != nil || !info.IsDir() {
+			continue
+		}
+		projects = append(projects, entry.Name())
+	}
+
+	if projects == nil {
+		projects = []string{}
+	}
+	return projects, nil
+}
+
+// ListAllProjects scans every admitted project namespace containing at least
+// one Brain content-type directory. It is owner-facing discovery only; keeping
+// it separate prevents note-only projects from changing automation fan-out.
+func (s *TaskServiceImpl) ListAllProjects(ctx context.Context) ([]string, error) {
+	guard := absoluteFilesystemGuard(ctx, s.indexer, s.config.BrainDir)
+	projectsDir, err := resolveFilesystemPath(ctx, s.indexer, s.config.BrainDir, "projects", true)
+	if err != nil {
+		return nil, err
+	}
+	if err := guard(projectsDir); err != nil {
+		return nil, err
+	}
+
+	_, entries, err := readBrainDirectory(s.config.BrainDir, "projects")
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
+		return nil, fmt.Errorf("read projects dir: %w", err)
+	}
+
+	var projects []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		projectDir := filepath.Join(projectsDir, entry.Name())
+		if err := guard(projectDir); err != nil {
+			if !errors.Is(err, tenantfs.ErrDenied) {
+				return nil, err
+			}
+			continue
+		}
+		children, err := os.ReadDir(projectDir)
+		if err != nil {
+			return nil, err
+		}
+		admittedContentDir := false
+		for _, child := range children {
+			childPath := filepath.Join(projectDir, child.Name())
+			if err := guard(childPath); err != nil {
+				if errors.Is(err, tenantfs.ErrDenied) {
+					continue
+				}
+				return nil, err
+			}
+			if !types.IsValidEntryType(child.Name()) {
+				continue
+			}
+			info, err := os.Stat(childPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, err
+			}
+			if info.IsDir() {
+				admittedContentDir = true
+			}
+		}
+		if !admittedContentDir {
 			continue
 		}
 		projects = append(projects, entry.Name())

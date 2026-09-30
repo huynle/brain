@@ -33,7 +33,7 @@ func TestListenerScopeProcess(t *testing.T) {
 		if err := os.WriteFile(os.Getenv("BRAIN_LISTENER_SCOPE_HITS"), []byte(r.URL.Path), 0o600); err != nil {
 			panic(err)
 		}
-		_, _ = w.Write([]byte(`[{"id":"real-message"}]`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"real-message","type":"user","time":{"created":1}}],"cursor":{"previous":null,"next":null}}`))
 	}))
 	os.Exit(0)
 }
@@ -126,7 +126,7 @@ func TestListenerScope_RealDiscovery(t *testing.T) {
 	if got := bc.portForExternalSession("ses_real"); got != owned.Port {
 		t.Fatalf("selected %d, want owned %d", got, owned.Port)
 	}
-	if data, err := os.ReadFile(ownedHits); err != nil || string(data) != "/session/ses_real/message" {
+	if data, err := os.ReadFile(ownedHits); err != nil || string(data) != "/api/session/ses_real/message" {
 		t.Fatalf("owned endpoint evidence: %q %v", data, err)
 	}
 	if _, err := os.Stat(unrelatedHits); !os.IsNotExist(err) {
@@ -143,7 +143,7 @@ func scopeListener(t *testing.T) (int, *atomic.Int32) {
 	hits := new(atomic.Int32)
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
-		_, _ = w.Write([]byte(`[{"id":"message"}]`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"message","type":"user","time":{"created":1}}],"cursor":{"previous":null,"next":null}}`))
 	}))
 	t.Cleanup(s.Close)
 	return s.Listener.Addr().(*net.TCPAddr).Port, hits

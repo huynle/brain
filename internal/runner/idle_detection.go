@@ -271,7 +271,7 @@ func (tr *TaskRunner) checkOpencodeIdleStatus(ctx context.Context, task RunningT
 		// still reported busy. Probe the transcript to distinguish a
 		// genuinely-working agent from a wedged-busy question turn.
 		if task.SessionID != "" {
-			ended, lastActivity, ok := checkOpencodeTurnEnded(port, task.SessionID)
+			ended, lastActivity, ok := checkOpencodeTurnEnded(port, task.SessionID, task.OpencodePassword)
 			if ok && !lastActivity.IsZero() {
 				// Phase 4 consumes LastActivity for the stall timer; harmless now.
 				tr.processMgr.UpdateLastActivity(task.ID, lastActivity)

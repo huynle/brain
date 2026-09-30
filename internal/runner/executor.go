@@ -918,7 +918,7 @@ func (e *OpenCodeExecutor) spawnHeadless(
 				// transcript confirms the turn completed. Without a session
 				// id we can't probe, so fall back to busy-only waiting.
 				if sessionID != "" {
-					if ended, _, ok := checkOpencodeTurnEnded(port, sessionID); ok && ended {
+					if ended, _, ok := checkOpencodeTurnEnded(port, sessionID, servePassword); ok && ended {
 						break
 					}
 				}

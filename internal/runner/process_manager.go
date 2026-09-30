@@ -535,7 +535,7 @@ func (pm *ProcessManager) CheckCompletion(taskID string, checkTaskFile bool) Com
 			// (conservative: preserve the old hold).
 			turnEnded := false
 			if info.Task.SessionID != "" {
-				if ended, _, ok := checkOpencodeTurnEnded(info.Task.OpencodePort, info.Task.SessionID); ok && ended {
+				if ended, _, ok := checkOpencodeTurnEnded(info.Task.OpencodePort, info.Task.SessionID, info.Task.OpencodePassword); ok && ended {
 					turnEnded = true
 				}
 			}

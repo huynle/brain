@@ -51,7 +51,7 @@ func TestRegressionGuard_PiTask_StallMachineryNeverInvoked(t *testing.T) {
 	// regression. The history stub also fails the test if called.
 	histRec := &struct{ called bool }{}
 	prevHist := sessionHistoryForPort
-	sessionHistoryForPort = func(int, string) ([]byte, error) {
+	sessionHistoryForPort = func(int, string, string) ([]byte, error) {
 		histRec.called = true
 		// not-turn-ended, so a wrongly-routed task would proceed to the stall path
 		return transcriptJSON(t, msgJSON(t, "assistant", 2000, 0)), nil
@@ -145,7 +145,7 @@ func TestRegressionGuard_MixedWorkload_OnlyOpencodeStalls(t *testing.T) {
 	// the stall path. Record which sessionIDs were probed.
 	var probedSessions []string
 	prevHist := sessionHistoryForPort
-	sessionHistoryForPort = func(_ int, sid string) ([]byte, error) {
+	sessionHistoryForPort = func(_ int, sid string, _ string) ([]byte, error) {
 		probedSessions = append(probedSessions, sid)
 		return transcriptJSON(t, msgJSON(t, "assistant", 2000, 0)), nil
 	}

@@ -916,8 +916,7 @@ func (bc *BridgeClient) fetchSessionHistory(sessionID string) ([]byte, error) {
 		return nil, errors.New("missing session id")
 	}
 	if port := bc.portForSession(sessionID); port > 0 {
-		path := "/session/" + sessionID + "/message"
-		if status, body, err := bc.httpGet(port, path); err == nil && status == http.StatusOK {
+		if body, err := bc.fetchLiveMessagesV2(port, sessionID); err == nil {
 			return body, nil
 		}
 		// Fall through to on-disk read if the live server can't answer.
@@ -930,13 +929,34 @@ func (bc *BridgeClient) fetchSessionHistory(sessionID string) ([]byte, error) {
 	}
 	// Last resort: a runner-owned server may still hold the messages in memory.
 	if port := bc.portForExternalSession(sessionID); port > 0 {
-		path := "/session/" + sessionID + "/message"
-		if status, body, err := bc.httpGet(port, path); err == nil && status == http.StatusOK {
+		if body, err := bc.fetchLiveMessagesV2(port, sessionID); err == nil {
 			return body, nil
 		}
 	}
 	// Re-run readSessionHistory so the caller gets its (well-shaped) error.
 	return readSessionHistory(sessionID)
+}
+
+// fetchLiveMessagesV2 reads a session's messages from a live v2 server on the
+// given port (Basic auth via the per-serve password paired with that port),
+// following cursor pagination and normalizing into the internal {info,parts}
+// JSON shape. The password is resolved from the tracked task / ad-hoc instance
+// that owns the port; an empty password (unknown owner) sends no auth header
+// and the v2 server will reject it, correctly falling through to on-disk.
+func (bc *BridgeClient) fetchLiveMessagesV2(port int, sessionID string) ([]byte, error) {
+	return fetchLiveSessionMessagesV2(port, sessionID, bc.passwordForPort(port))
+}
+
+// passwordForPort returns the per-serve OPENCODE_PASSWORD for the opencode
+// instance listening on port, resolved from the tracked task that owns it, or
+// "" when unknown. Ports/passwords never come from the wire.
+func (bc *BridgeClient) passwordForPort(port int) string {
+	for _, info := range bc.runner.processMgr.GetAll() {
+		if info.Task.OpencodePort == port && info.Task.OpencodePassword != "" {
+			return info.Task.OpencodePassword
+		}
+	}
+	return ""
 }
 
 // portForSession returns the localhost port of a live instance whose session
@@ -977,21 +997,35 @@ func (bc *BridgeClient) portForExternalSession(sessionID string) int {
 	if len(listeners) == 0 {
 		return 0
 	}
-	path := "/session/" + sessionID + "/message"
+	path := "/api/session/" + sessionID + "/message"
 	for _, l := range listeners {
 		status, body, err := bc.httpGetFast(l.Port, path, externalProbeTimeout)
 		if err != nil || status != http.StatusOK {
 			continue
 		}
-		// Empty array means the server replied but doesn't actually have
-		// any messages for this session — keep looking.
-		trimmed := strings.TrimSpace(string(body))
-		if trimmed == "" || trimmed == "[]" {
+		// v2 wraps messages under {"data":[…]}. An empty (or absent) data
+		// array means the server replied but doesn't actually have any
+		// messages for this session — keep looking. (An external instance we
+		// didn't spawn requires its own Basic auth we can't know, so it 401s
+		// here and is correctly skipped.)
+		if !v2MessagesNonEmpty(body) {
 			continue
 		}
 		return l.Port
 	}
 	return 0
+}
+
+// v2MessagesNonEmpty reports whether a v2 GET /api/session/{id}/message body
+// carries at least one message under "data".
+func v2MessagesNonEmpty(body []byte) bool {
+	var env struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return false
+	}
+	return len(env.Data) > 0
 }
 
 // externalProbeTimeout bounds each per-listener probe. OpenCode's

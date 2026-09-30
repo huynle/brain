@@ -2022,6 +2022,7 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 		// Headless serve+attach reports its attachable port up front; TUI/
 		// dashboard discover it from the tmux child via discoverAndSaveSession.
 		runningTask.OpencodePort = spawnResult.OpencodePort
+		runningTask.OpencodePassword = spawnResult.OpencodePassword
 	}
 
 	// Track in process manager

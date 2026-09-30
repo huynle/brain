@@ -376,6 +376,7 @@ type RunningTask struct {
 	Model           string    `json:"model,omitempty"`
 	InstanceID      string    `json:"instanceId,omitempty"`
 	OpencodePort    int       `json:"opencodePort,omitempty"`
+	OpencodePassword string   `json:"-"` // v2 serve Basic-auth secret; never persisted
 	SessionID       string    `json:"sessionId,omitempty"`
 	IdleSince       string    `json:"idleSince,omitempty"` // ISO timestamp
 	CompleteOnIdle  bool      `json:"completeOnIdle,omitempty"`

@@ -910,7 +910,7 @@ func (e *OpenCodeExecutor) spawnHeadless(
 		if driver.ExitCode() == 0 {
 			deadline := time.Now().Add(steerHoldMax)
 			for time.Now().Before(deadline) {
-				if sessionStatusForPort(port) != "busy" {
+				if sessionStatusForPort(port, servePassword) != "busy" {
 					break
 				}
 				// A question-tool turn leaves the session reporting busy

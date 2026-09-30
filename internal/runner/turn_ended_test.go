@@ -182,7 +182,9 @@ func TestCheckIdleStatus_BusyButTurnEnded_SetsIdleSince(t *testing.T) {
 	// Busy status server (non-empty map).
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"ses_abc": map[string]interface{}{"type": "busy"},
+			"data": map[string]interface{}{
+				"ses_abc": map[string]interface{}{"type": "running"},
+			},
 		})
 	}))
 	defer server.Close()
@@ -246,7 +248,9 @@ func TestCheckIdleStatus_BusyButTurnEnded_SetsIdleSince(t *testing.T) {
 func TestCheckIdleStatus_BusyButTurnEnded_ThresholdExceeded_Completes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"ses_abc": map[string]interface{}{"type": "busy"},
+			"data": map[string]interface{}{
+				"ses_abc": map[string]interface{}{"type": "running"},
+			},
 		})
 	}))
 	defer server.Close()
@@ -307,7 +311,9 @@ func TestCheckIdleStatus_BusyButTurnEnded_ThresholdExceeded_Completes(t *testing
 func TestCheckIdleStatus_BusyAndTurnNotEnded_ClearsIdleSince(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"ses_abc": map[string]interface{}{"type": "busy"},
+			"data": map[string]interface{}{
+				"ses_abc": map[string]interface{}{"type": "running"},
+			},
 		})
 	}))
 	defer server.Close()

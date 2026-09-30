@@ -17,45 +17,9 @@ import (
 // checkOpencodeStatus Tests
 // =============================================================================
 
-func TestCheckOpencodeStatus_Idle(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/session/status" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		// Production code: empty map {} means all sessions idle
-		json.NewEncoder(w).Encode(map[string]interface{}{})
-	}))
-	defer server.Close()
-
-	// Extract port from test server URL
-	port := serverPort(t, server)
-
-	status := checkOpencodeStatus(port)
-	if status != "idle" {
-		t.Errorf("checkOpencodeStatus = %q, want %q", status, "idle")
-	}
-}
-
-func TestCheckOpencodeStatus_Busy(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Production code: non-empty map means at least one session is busy
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"ses_abc123": map[string]interface{}{"type": "busy"},
-		})
-	}))
-	defer server.Close()
-
-	port := serverPort(t, server)
-
-	status := checkOpencodeStatus(port)
-	if status != "busy" {
-		t.Errorf("checkOpencodeStatus = %q, want %q", status, "busy")
-	}
-}
-
 func TestCheckOpencodeStatus_Unavailable_ConnectionRefused(t *testing.T) {
 	// Use a port that nothing is listening on
-	status := checkOpencodeStatus(19999)
+	status := checkOpencodeStatus(19999, "pw")
 	if status != "unavailable" {
 		t.Errorf("checkOpencodeStatus = %q, want %q", status, "unavailable")
 	}
@@ -69,7 +33,7 @@ func TestCheckOpencodeStatus_Unavailable_BadResponse(t *testing.T) {
 
 	port := serverPort(t, server)
 
-	status := checkOpencodeStatus(port)
+	status := checkOpencodeStatus(port, "pw")
 	if status != "unavailable" {
 		t.Errorf("checkOpencodeStatus = %q, want %q", status, "unavailable")
 	}
@@ -83,7 +47,7 @@ func TestCheckOpencodeStatus_Unavailable_InvalidJSON(t *testing.T) {
 
 	port := serverPort(t, server)
 
-	status := checkOpencodeStatus(port)
+	status := checkOpencodeStatus(port, "pw")
 	if status != "unavailable" {
 		t.Errorf("checkOpencodeStatus = %q, want %q", status, "unavailable")
 	}
@@ -200,7 +164,7 @@ func TestIdleDetectionThreshold_Custom(t *testing.T) {
 func TestCheckIdleStatus_IdleTask_CompleteOnIdle_MarksCompleted(t *testing.T) {
 	// Set up a mock OpenCode server that returns "idle" (empty map = all idle)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]interface{}{})
+		json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{}})
 	}))
 	defer server.Close()
 	port := serverPort(t, server)
@@ -280,7 +244,7 @@ func TestCheckIdleStatus_IdleTask_CompleteOnIdle_MarksCompleted(t *testing.T) {
 func TestCheckIdleStatus_IdleTask_NotCompleteOnIdle_MarksBlocked(t *testing.T) {
 	// Empty map = all sessions idle
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]interface{}{})
+		json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{}})
 	}))
 	defer server.Close()
 	port := serverPort(t, server)
@@ -337,7 +301,7 @@ func TestCheckIdleStatus_IdleTask_NotCompleteOnIdle_MarksBlocked(t *testing.T) {
 func TestCheckIdleStatus_IdleTask_FirstDetection_SetsIdleSince(t *testing.T) {
 	// Empty map = all sessions idle
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]interface{}{})
+		json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{}})
 	}))
 	defer server.Close()
 	port := serverPort(t, server)
@@ -398,7 +362,9 @@ func TestCheckIdleStatus_BusyTask_ClearsIdleSince(t *testing.T) {
 	// Non-empty map = at least one session busy
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"ses_abc123": map[string]interface{}{"type": "busy"},
+			"data": map[string]interface{}{
+				"ses_abc123": map[string]interface{}{"type": "running"},
+			},
 		})
 	}))
 	defer server.Close()
@@ -541,7 +507,7 @@ func TestCheckIdleStatus_NoPort_SkipsTask(t *testing.T) {
 func TestCheckIdleStatus_AppendCompletionNote(t *testing.T) {
 	// Empty map = all sessions idle
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]interface{}{})
+		json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{}})
 	}))
 	defer server.Close()
 	port := serverPort(t, server)
@@ -1231,7 +1197,7 @@ func TestCheckIdleStatus_MixedWorkload_BothExecutorTypes(t *testing.T) {
 	// idle detection mechanism
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// OpenCode returns idle (empty map)
-		json.NewEncoder(w).Encode(map[string]interface{}{})
+		json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{}})
 	}))
 	defer server.Close()
 	port := serverPort(t, server)

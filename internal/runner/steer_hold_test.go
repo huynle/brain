@@ -11,7 +11,7 @@ import (
 func stubSessionStatus(t *testing.T, status string) {
 	t.Helper()
 	prev := sessionStatusForPort
-	sessionStatusForPort = func(int) string { return status }
+	sessionStatusForPort = func(int, string) string { return status }
 	t.Cleanup(func() { sessionStatusForPort = prev })
 }
 
@@ -94,7 +94,7 @@ func TestCheckCompletion_NoHoldOnCrashedDriver(t *testing.T) {
 func TestCheckCompletion_NoPortNoHold(t *testing.T) {
 	pm := newTestProcessManager()
 	prev := sessionStatusForPort
-	sessionStatusForPort = func(int) string {
+	sessionStatusForPort = func(int, string) string {
 		t.Error("session status probed for a task with no attach port")
 		return "busy"
 	}

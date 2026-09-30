@@ -28,7 +28,7 @@ func stubSteerFlusher(t *testing.T, err error) *struct {
 		sessionID string
 	}{}
 	prev := steerFlusher
-	steerFlusher = func(port int, sessionID string) error {
+	steerFlusher = func(port int, sessionID string, password string) error {
 		rec.called = true
 		rec.port = port
 		rec.sessionID = sessionID
@@ -153,7 +153,9 @@ func TestFlushQueuedSteer_NoSession_SkipsFlusher(t *testing.T) {
 func TestCheckIdleStatus_TurnEnded_PendingSteer_Flushes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"ses_abc": map[string]interface{}{"type": "busy"},
+			"data": map[string]interface{}{
+				"ses_abc": map[string]interface{}{"type": "running"},
+			},
 		})
 	}))
 	defer server.Close()
@@ -211,7 +213,9 @@ func TestCheckIdleStatus_TurnEnded_PendingSteer_Flushes(t *testing.T) {
 func TestCheckIdleStatus_TurnEnded_NoPendingSteer_AdvancesIdle(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"ses_abc": map[string]interface{}{"type": "busy"},
+			"data": map[string]interface{}{
+				"ses_abc": map[string]interface{}{"type": "running"},
+			},
 		})
 	}))
 	defer server.Close()

@@ -30,6 +30,9 @@ import (
 type adhocInstance struct {
 	Instance types.OpencodeInstance `json:"instance"`
 	proc     Process
+	// password is the per-serve OPENCODE_PASSWORD for this adhoc instance's
+	// v2 server. Held in memory only — never persisted or sent over the wire.
+	password string
 }
 
 // adhocStateFileName persists ad-hoc instances across runner restarts so
@@ -297,8 +300,12 @@ func (bc *BridgeClient) proxyRequest(f bridge.Frame) (int, []byte, error) {
 	if len(f.Body) > 0 {
 		bodyReader = bytes.NewReader(f.Body)
 	}
-	url := fmt.Sprintf("http://127.0.0.1:%d%s", port, f.Path)
-	req, err := http.NewRequestWithContext(ctx, f.Method, url, bodyReader)
+	// v2 serves every API route under /api and requires Basic auth. Frames
+	// carry bare v1-style paths (e.g. /session/{id}/message); prefix /api when
+	// absent and attach the owning instance's per-serve credential. The
+	// localOpenCodeClient centralizes both.
+	client := newLocalOpenCodeClient(port, bc.passwordForInstance(f.InstanceID))
+	req, err := client.newRequest(ctx, f.Method, f.Path, bodyReader)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -326,13 +333,16 @@ func (bc *BridgeClient) proxyRequest(f bridge.Frame) (int, []byte, error) {
 }
 
 // markSteerIfPromptAsync marks the owning task's PendingSteer flag when the
-// proxied frame is a steer/control prompt (POST .../prompt_async). It maps the
-// frame's InstanceID to a tracked task via the process manager; ad-hoc
-// instances (no RunningTask) and unmatched/empty IDs are skipped silently. It
-// must never fail the proxy — callers invoke it only on the 2xx path and
-// ignore its effect on the returned status/body.
+// proxied frame is a steer/control prompt (POST .../prompt or the legacy
+// .../prompt_async). It maps the frame's InstanceID to a tracked task via the
+// process manager; ad-hoc instances (no RunningTask) and unmatched/empty IDs
+// are skipped silently. It must never fail the proxy — callers invoke it only
+// on the 2xx path and ignore its effect on the returned status/body.
 func (bc *BridgeClient) markSteerIfPromptAsync(f bridge.Frame) {
-	if f.Method != http.MethodPost || !strings.Contains(f.Path, "/prompt_async") {
+	if f.Method != http.MethodPost {
+		return
+	}
+	if !strings.Contains(f.Path, "/prompt_async") && !strings.HasSuffix(trimQuery(f.Path), "/prompt") {
 		return
 	}
 	if f.InstanceID == "" {
@@ -356,6 +366,14 @@ func (bc *BridgeClient) baseContext() context.Context {
 		return bc.ctx
 	}
 	return context.Background()
+}
+
+// trimQuery strips a "?..." query string from a path.
+func trimQuery(path string) string {
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		return path[:i]
+	}
+	return path
 }
 
 // ---------------------------------------------------------------------------
@@ -454,24 +472,29 @@ func isControlEvent(eventType string) bool {
 		strings.HasPrefix(eventType, "session.")
 }
 
-// tailEvents tails GET /event on a local instance and forwards events.
+// tailEvents tails GET /api/event on a local v2 instance and forwards events.
+// v2 requires Basic auth; the credential is the owning instance's per-serve
+// password. The SSE payload format is unchanged in the way that matters here:
+// each event arrives on a `data:` line as a JSON object whose own `type` field
+// is the event type (v2 does NOT use a separate `event:` line), which is
+// exactly what handleEventLine already parses.
 func (bc *BridgeClient) tailEvents(ctx context.Context, instanceID string, port int) error {
-	url := fmt.Sprintf("http://127.0.0.1:%d/event", port)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	client := newLocalOpenCodeClient(port, bc.passwordForInstance(instanceID))
+	req, err := client.newRequest(ctx, http.MethodGet, "/event", nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Accept", "text/event-stream")
 
 	// No timeout: this is a long-lived stream bounded by ctx.
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	httpClient := &http.Client{}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET /event: status %d", resp.StatusCode)
+		return fmt.Errorf("GET %s: status %d", client.url("/event"), resp.StatusCode)
 	}
 
 	// Read line by line with a bound on how much of one line is kept, not on
@@ -708,6 +731,11 @@ func (bc *BridgeClient) spawnAdhoc(spec *types.SpawnInstanceSpec) (*types.Openco
 	instanceID := generateInstanceID()
 	args := []string{"serve", "--port", "0"}
 
+	// Mint a per-serve password for this adhoc v2 instance and export it so
+	// the server requires (and we can satisfy) Basic auth. Held in memory on
+	// the adhocInstance; never persisted or sent over the wire.
+	servePassword := generateOpenCodePassword()
+
 	logPath := filepath.Join(bc.runner.config.StateDir, fmt.Sprintf("adhoc_%s.log", instanceID))
 	logFile, err := os.Create(logPath)
 	if err != nil {
@@ -715,7 +743,7 @@ func (bc *BridgeClient) spawnAdhoc(spec *types.SpawnInstanceSpec) (*types.Openco
 	}
 
 	cmd := exec.Command(bc.opencodeBin(), args...)
-	cmd.Env = bc.opencodeEnv()
+	cmd.Env = bc.opencodeEnvWithPassword(servePassword)
 	cmd.Dir = spec.Workdir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -768,7 +796,7 @@ func (bc *BridgeClient) spawnAdhoc(spec *types.SpawnInstanceSpec) (*types.Openco
 	}
 
 	bc.mu.Lock()
-	bc.adhoc[instanceID] = &adhocInstance{Instance: inst, proc: proc}
+	bc.adhoc[instanceID] = &adhocInstance{Instance: inst, proc: proc, password: servePassword}
 	bc.mu.Unlock()
 	bc.persistAdhocState()
 
@@ -948,11 +976,38 @@ func (bc *BridgeClient) fetchLiveMessagesV2(port int, sessionID string) ([]byte,
 }
 
 // passwordForPort returns the per-serve OPENCODE_PASSWORD for the opencode
-// instance listening on port, resolved from the tracked task that owns it, or
-// "" when unknown. Ports/passwords never come from the wire.
+// instance listening on port, resolved from the tracked task or ad-hoc
+// instance that owns it, or "" when unknown. Ports/passwords never come from
+// the wire.
 func (bc *BridgeClient) passwordForPort(port int) string {
+	bc.mu.Lock()
+	for _, ad := range bc.adhoc {
+		if ad.Instance.Port == port && ad.password != "" {
+			bc.mu.Unlock()
+			return ad.password
+		}
+	}
+	bc.mu.Unlock()
 	for _, info := range bc.runner.processMgr.GetAll() {
 		if info.Task.OpencodePort == port && info.Task.OpencodePassword != "" {
+			return info.Task.OpencodePassword
+		}
+	}
+	return ""
+}
+
+// passwordForInstance returns the per-serve OPENCODE_PASSWORD for an instance
+// id (ad-hoc first, then tracked task), or "" when unknown.
+func (bc *BridgeClient) passwordForInstance(instanceID string) string {
+	bc.mu.Lock()
+	if ad := bc.adhoc[instanceID]; ad != nil {
+		pw := ad.password
+		bc.mu.Unlock()
+		return pw
+	}
+	bc.mu.Unlock()
+	for _, info := range bc.runner.processMgr.GetAll() {
+		if info.Task.InstanceID == instanceID {
 			return info.Task.OpencodePassword
 		}
 	}
@@ -1556,6 +1611,16 @@ func (bc *BridgeClient) opencodeEnv() []string {
 	return opencodeChildEnvironment(nil, bc.runner.config)
 }
 
+// opencodeEnvWithPassword is opencodeEnv plus OPENCODE_PASSWORD for the v2
+// serve instance's Basic auth.
+func (bc *BridgeClient) opencodeEnvWithPassword(password string) []string {
+	cfg := RunnerConfig{}
+	if bc.runner != nil {
+		cfg = bc.runner.config
+	}
+	return opencodeChildEnvironmentWithPassword(nil, cfg, password)
+}
+
 // execTimeout normalises a requested command budget into a duration.
 func execTimeout(requestedMs int) time.Duration {
 	ms := requestedMs
@@ -1688,7 +1753,13 @@ func (bc *BridgeClient) readoptAdhocInstances() {
 
 	adopted := 0
 	for _, inst := range state.Instances {
-		if inst.PID <= 0 || !IsPidAlive(inst.PID) || !instanceHealthy(inst.Port) {
+		// v2 requires Basic auth for the health probe, but the per-serve
+		// password was in-memory only in the prior runner process and is not
+		// persisted (a secret must not live in a state file). So a re-adopted
+		// adhoc instance cannot be authenticated and its health probe 401s —
+		// it is correctly dropped here. Re-adoption across a runner restart is
+		// therefore not supported for v2 adhoc instances.
+		if inst.PID <= 0 || !IsPidAlive(inst.PID) || !instanceHealthy(inst.Port, bc.passwordForPort(inst.Port)) {
 			continue
 		}
 		inst.RunnerID = bc.runner.runnerID
@@ -1709,13 +1780,20 @@ func (bc *BridgeClient) readoptAdhocInstances() {
 	}
 }
 
-// instanceHealthy probes an instance's health endpoint on localhost.
-func instanceHealthy(port int) bool {
+// instanceHealthy probes an instance's v2 info endpoint on localhost. v2
+// requires Basic auth, so a missing/wrong password yields 401 and the instance
+// is reported unhealthy.
+func instanceHealthy(port int, password string) bool {
 	if port <= 0 {
 		return false
 	}
+	c := newLocalOpenCodeClient(port, password)
+	req, err := c.newRequest(context.Background(), http.MethodGet, "/info", nil)
+	if err != nil {
+		return false
+	}
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/global/health", port))
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}

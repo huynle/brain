@@ -1043,7 +1043,7 @@ func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID, serve
 			e.killServeGeneration(taskID, proc)
 			return 0, nil, nil, fmt.Errorf("opencode serve exited during startup (code %d)", proc.ExitCode())
 		}
-		if port, derr := DiscoverPort(proc.Pid()); derr == nil && port > 0 && instanceHealthy(port) {
+		if port, derr := DiscoverPort(proc.Pid()); derr == nil && port > 0 && instanceHealthy(port, servePassword) {
 			baseline, _ := listSessionIDs(port, servePassword)
 			return port, baseline, proc, nil
 		}

@@ -52,10 +52,15 @@ func newLocalOpenCodeClient(port int, password string) localOpenCodeClient {
 }
 
 // url turns a bare v2 path (e.g. "/session" or "session") into the full
-// "/api"-prefixed URL on this instance.
+// "/api"-prefixed URL on this instance. A path that already begins with
+// "/api/" (or is "/api") is left as-is, so callers forwarding an
+// already-prefixed path are not double-prefixed.
 func (c localOpenCodeClient) url(path string) string {
-	path = strings.TrimPrefix(path, "/")
-	return fmt.Sprintf("http://127.0.0.1:%d/api/%s", c.port, path)
+	trimmed := strings.TrimPrefix(path, "/")
+	if trimmed == "api" || strings.HasPrefix(trimmed, "api/") {
+		return fmt.Sprintf("http://127.0.0.1:%d/%s", c.port, trimmed)
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d/api/%s", c.port, trimmed)
 }
 
 // authHeader returns the Basic auth header value, or "" when no password is

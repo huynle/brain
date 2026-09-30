@@ -35,7 +35,8 @@ type SessionChild struct {
 }
 
 // readSessionChildrenSQLite lists a session's child sessions from OpenCode's
-// SQLite database. A parent with zero children returns an empty slice (not an
+// SQLite database, unioning the v2 (session_v2) and legacy (session) tables and
+// deduping by id. A parent with zero children returns an empty slice (not an
 // error); only validation, DB-open, and query failures produce an error.
 func readSessionChildrenSQLite(sessionID string) ([]SessionChild, error) {
 	if strings.ContainsAny(sessionID, "/\\") || sessionID == "" {
@@ -56,42 +57,84 @@ func readSessionChildrenSQLite(sessionID string) ([]SessionChild, error) {
 	}
 	defer func() { _ = db.Close() }()
 
-	rows, err := db.Query(
-		`SELECT id, parent_id, title, time_created, agent FROM session WHERE parent_id = ? ORDER BY time_created, id`,
-		sessionID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query session children: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
+	// OpenCode v2 writes sessions to session_v2; v1 used session. Both tables
+	// can coexist (v2 keeps the legacy table populated), so union across
+	// whichever exist and dedup by id (a session present in both is one child).
+	// v2 rows win on conflict since they carry the current shape.
+	seen := make(map[string]struct{})
 	children := []SessionChild{}
-	for rows.Next() {
-		var (
-			id       string
-			parentID sql.NullString
-			title    sql.NullString
-			created  sql.NullInt64
-			agent    sql.NullString
-		)
-		// title/agent may be NULL on some rows or older schemas, and
-		// time_created is defensively scanned as nullable too; coalesce so a
-		// NULL never breaks the scan.
-		if err := rows.Scan(&id, &parentID, &title, &created, &agent); err != nil {
-			return nil, fmt.Errorf("scan session children: %w", err)
+	for _, table := range []string{"session_v2", "session"} {
+		exists, err := sqliteTableExists(db, table)
+		if err != nil {
+			return nil, err
 		}
-		children = append(children, SessionChild{
-			SessionID: id,
-			ParentID:  parentID.String,
-			Title:     title.String,
-			Created:   created.Int64,
-			Agent:     agent.String,
-		})
+		if !exists {
+			continue
+		}
+		rows, err := db.Query(
+			`SELECT id, parent_id, title, time_created, agent FROM `+table+` WHERE parent_id = ? ORDER BY time_created, id`,
+			sessionID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("query session children (%s): %w", table, err)
+		}
+		for rows.Next() {
+			var (
+				id       string
+				parentID sql.NullString
+				title    sql.NullString
+				created  sql.NullInt64
+				agent    sql.NullString
+			)
+			// title/agent may be NULL on some rows or older schemas, and
+			// time_created is defensively scanned as nullable too; coalesce so
+			// a NULL never breaks the scan.
+			if err := rows.Scan(&id, &parentID, &title, &created, &agent); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan session children (%s): %w", table, err)
+			}
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			seen[id] = struct{}{}
+			children = append(children, SessionChild{
+				SessionID: id,
+				ParentID:  parentID.String,
+				Title:     title.String,
+				Created:   created.Int64,
+				Agent:     agent.String,
+			})
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("read session children (%s): %w", table, err)
+		}
+		_ = rows.Close()
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read session children: %w", err)
-	}
+	// A union across two tables is not globally ordered; re-sort by created
+	// then id so the result is deterministic regardless of table order.
+	sort.SliceStable(children, func(i, j int) bool {
+		if children[i].Created != children[j].Created {
+			return children[i].Created < children[j].Created
+		}
+		return children[i].SessionID < children[j].SessionID
+	})
 	return children, nil
+}
+
+// sqliteTableExists reports whether a table is present in the opened DB.
+func sqliteTableExists(db sqlQuerier, name string) (bool, error) {
+	var got string
+	err := db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='table' AND name = ?`, name,
+	).Scan(&got)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("probe table %s: %w", name, err)
+	}
+	return true, nil
 }
 
 // readSessionChildren lists a session's child sessions from OpenCode's on-disk

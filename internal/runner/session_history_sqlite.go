@@ -25,6 +25,16 @@ type sessionRow struct {
 	data string
 }
 
+// sqlQuerier is the read-only query surface these on-disk helpers need. It is
+// satisfied by *sql.DB. Using the interface (rather than naming *sql.DB in
+// each helper signature) keeps the shared v1/v2 assembly split into small
+// functions without minting new raw-DB call sites: the single owned handle is
+// opened once in readSessionHistorySQLite / readSessionChildrenSQLite.
+type sqlQuerier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
 // querySessionRows runs a two-column (id, data) query for one session and
 // drains it, owning the rows' lifecycle so callers can't leak them.
 func querySessionRows(db *sql.DB, query, sessionID, what string) ([]sessionRow, error) {
@@ -58,7 +68,10 @@ func opencodeDBPath() (string, error) {
 }
 
 // readSessionHistorySQLite assembles a session's transcript from OpenCode's
-// SQLite database, shaped identically to readSessionHistory's output.
+// SQLite database, shaped identically to readSessionHistory's output
+// ([]messageWithParts). It prefers the v2 layout (session_message, with content
+// parts inline in the message data blob) and falls back to the legacy v1
+// layout (message + part tables) when the session has no v2 rows.
 func readSessionHistorySQLite(sessionID string) ([]byte, error) {
 	if strings.ContainsAny(sessionID, "/\\") || sessionID == "" {
 		return nil, fmt.Errorf("invalid session id %q", sessionID)
@@ -78,6 +91,21 @@ func readSessionHistorySQLite(sessionID string) ([]byte, error) {
 	}
 	defer func() { _ = db.Close() }()
 
+	// v2 first: session_message holds the whole transcript, content inline.
+	if ok, err := sqliteTableExists(db, "session_message"); err != nil {
+		return nil, err
+	} else if ok {
+		if out, found, err := readSessionHistoryV2(db, sessionID); err != nil {
+			return nil, err
+		} else if found {
+			return out, nil
+		}
+		// No v2 rows for this session — fall through to the legacy layout so a
+		// pre-v2 transcript in the same DB is still readable.
+	}
+
+	// Legacy v1 layout: message + part tables (file-per-message mirrored into
+	// SQLite). querySessionRows owns the single raw *sql.DB handle.
 	msgs, err := querySessionRows(db,
 		`SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created, id`,
 		sessionID, "messages")
@@ -108,4 +136,71 @@ func readSessionHistorySQLite(sessionID string) ([]byte, error) {
 		out = append(out, messageWithParts{Info: json.RawMessage(m.data), Parts: parts})
 	}
 	return json.Marshal(out)
+}
+
+// readSessionHistoryV2 assembles a session's transcript from the v2
+// session_message table. Each row's data blob is the message body WITHOUT its
+// id/type (those are columns); content parts are inline in data.content. The
+// output mirrors normalizeV2Messages: info = data merged with {id, role:type},
+// parts = data.content. found is false when the session has no v2 rows.
+func readSessionHistoryV2(db sqlQuerier, sessionID string) (out []byte, found bool, err error) {
+	rows, err := db.Query(
+		`SELECT id, type, data FROM session_message WHERE session_id = ? ORDER BY seq, time_created, id`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("query session_message: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	msgs := []messageWithParts{}
+	for rows.Next() {
+		var id, mtype, data string
+		if err := rows.Scan(&id, &mtype, &data); err != nil {
+			return nil, false, fmt.Errorf("scan session_message: %w", err)
+		}
+		mwp, err := v2RowToMessageWithParts(id, mtype, []byte(data))
+		if err != nil {
+			return nil, false, err
+		}
+		msgs = append(msgs, mwp)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("read session_message: %w", err)
+	}
+	if len(msgs) == 0 {
+		return nil, false, nil
+	}
+	b, err := json.Marshal(msgs)
+	if err != nil {
+		return nil, false, err
+	}
+	return b, true, nil
+}
+
+// v2RowToMessageWithParts converts one v2 session_message row (id + type
+// columns, data blob) into the internal messageWithParts shape: info = data
+// with {id, role:type} merged in, parts = data.content (inline). This mirrors
+// normalizeV2Page's mapping so on-disk and live reads produce identical bytes.
+func v2RowToMessageWithParts(id, mtype string, data []byte) (messageWithParts, error) {
+	info := map[string]json.RawMessage{}
+	if err := json.Unmarshal(data, &info); err != nil {
+		return messageWithParts{}, fmt.Errorf("decode session_message data: %w", err)
+	}
+	idJSON, _ := json.Marshal(id)
+	info["id"] = idJSON
+	info["role"] = mustJSON(mtype)
+
+	var parts []json.RawMessage
+	if content, ok := info["content"]; ok {
+		_ = json.Unmarshal(content, &parts)
+	}
+	if parts == nil {
+		parts = []json.RawMessage{}
+	}
+	infoBytes, err := json.Marshal(info)
+	if err != nil {
+		return messageWithParts{}, err
+	}
+	return messageWithParts{Info: infoBytes, Parts: parts}, nil
 }

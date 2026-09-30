@@ -37,17 +37,29 @@ type FeatureCascadeRootRow struct {
 // UpsertFeatureCascadeRoot records (or refreshes) a standing request.
 // Idempotent: re-clicking "run + dependents" on the same feature restamps
 // requested_at and the pause snapshot rather than creating a second chain.
-func (s *StorageLayer) UpsertFeatureCascadeRoot(ctx context.Context, projectID, rootFeatureID string, pausedAtRequest bool) error {
+func (s *TenantStore) UpsertFeatureCascadeRoot(ctx context.Context, projectID, rootFeatureID string, pausedAtRequest bool) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	if projectID == "" || rootFeatureID == "" {
 		return fmt.Errorf("project id and root feature id are required")
 	}
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO feature_cascade_roots (project_id, root_feature_id, requested_at, paused_at_request)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(project_id, root_feature_id) DO UPDATE SET
+	columns, values, conflict := "project_id, root_feature_id, requested_at, paused_at_request", "?, ?, ?, ?", "project_id, root_feature_id"
+	args := []interface{}{projectID, rootFeatureID, time.Now().UnixMilli(), boolToInt(pausedAtRequest)}
+	if scope.owner != "" {
+		columns += ", tenant_id"
+		values += ", ?"
+		conflict = "tenant_id, project_id, root_feature_id"
+		args = append(args, scope.owner)
+	}
+	_, err = s.db.ExecContext(ctx, `
+INSERT INTO feature_cascade_roots (`+columns+`)
+VALUES (`+values+`)
+ON CONFLICT(`+conflict+`) DO UPDATE SET
   requested_at = excluded.requested_at,
   paused_at_request = excluded.paused_at_request`,
-		projectID, rootFeatureID, time.Now().UnixMilli(), boolToInt(pausedAtRequest))
+		args...)
 	if err != nil {
 		return fmt.Errorf("upsert feature cascade root: %w", err)
 	}
@@ -57,13 +69,17 @@ ON CONFLICT(project_id, root_feature_id) DO UPDATE SET
 // DeleteFeatureCascadeRoot cancels a standing request. Reports whether a row
 // was actually removed so callers can tell "cancelled" from "there was
 // nothing to cancel".
-func (s *StorageLayer) DeleteFeatureCascadeRoot(ctx context.Context, projectID, rootFeatureID string) (bool, error) {
+func (s *TenantStore) DeleteFeatureCascadeRoot(ctx context.Context, projectID, rootFeatureID string) (bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, err
+	}
 	if projectID == "" || rootFeatureID == "" {
 		return false, fmt.Errorf("project id and root feature id are required")
 	}
+	where, args := scope.where("project_id = ? AND root_feature_id = ?", projectID, rootFeatureID)
 	res, err := s.db.ExecContext(ctx,
-		"DELETE FROM feature_cascade_roots WHERE project_id = ? AND root_feature_id = ?",
-		projectID, rootFeatureID)
+		"DELETE FROM feature_cascade_roots WHERE "+where, args...)
 	if err != nil {
 		return false, fmt.Errorf("delete feature cascade root: %w", err)
 	}
@@ -76,11 +92,15 @@ func (s *StorageLayer) DeleteFeatureCascadeRoot(ctx context.Context, projectID, 
 
 // ListFeatureCascadeRoots returns standing requests for one project, or for
 // every project when projectID is empty (the boot path).
-func (s *StorageLayer) ListFeatureCascadeRoots(ctx context.Context, projectID string) ([]FeatureCascadeRootRow, error) {
-	query := "SELECT project_id, root_feature_id, requested_at, paused_at_request FROM feature_cascade_roots"
-	args := []interface{}{}
+func (s *TenantStore) ListFeatureCascadeRoots(ctx context.Context, projectID string) ([]FeatureCascadeRootRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	where, args := scope.where("1=1")
+	query := "SELECT project_id, root_feature_id, requested_at, paused_at_request FROM feature_cascade_roots WHERE " + where
 	if projectID != "" {
-		query += " WHERE project_id = ?"
+		query += " AND project_id = ?"
 		args = append(args, projectID)
 	}
 	query += " ORDER BY requested_at"

@@ -625,13 +625,6 @@ export interface CreateAttentionRequest {
   actions?: AttentionAction[];
 }
 
-/** The three fields a Web Push subscription contributes to the server. */
-export interface PushSubscription {
-  endpoint: string;
-  p256dh: string;
-  auth: string;
-}
-
 export interface CreateReminderRequest {
   project?: string;
   global?: boolean;

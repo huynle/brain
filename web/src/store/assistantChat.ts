@@ -16,6 +16,7 @@
  */
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import { createUUID } from "../lib/uuid";
 import type { AssistantHistoryMessage } from "../lib/api";
 
 /** Versioned localStorage key. Bump the suffix on breaking schema changes. */
@@ -40,7 +41,21 @@ export interface AssistantChatTurn {
   streaming?: boolean;
 }
 
+interface SavedConversation {
+  id: string;
+  title: string;
+  turns: AssistantChatTurn[];
+  history: AssistantHistoryMessage[];
+}
+
 interface AssistantChatState {
+	ensureSession(): void;
+	beginNotification(): void;
+	mergeRemote(conversations: Array<{id:string;title:string;history:AssistantHistoryMessage[]}>): void;
+  sessionId: string;
+  sessions: SavedConversation[];
+  newSession(): void;
+  switchSession(id: string): void;
   turns: AssistantChatTurn[];
   history: AssistantHistoryMessage[];
   busy: boolean;
@@ -118,9 +133,35 @@ function coerceHistory(raw: unknown): AssistantHistoryMessage[] {
   return raw as AssistantHistoryMessage[];
 }
 
+function snapshot(s: AssistantChatState): SavedConversation {
+  return { id: s.sessionId, title: s.turns.find(t => t.role === "user")?.content.slice(0, 60) || "New conversation", turns: coerceTurns(s.turns), history: s.history };
+}
+
 export const useAssistantChat = create<AssistantChatState>()(
   persist(
     (set) => ({
+	  ensureSession: () => set(s => s.sessionId === "initial" ? {sessionId: createUUID()} : s),
+	  beginNotification: () => set(s => ({busy:true,turns:[...s.turns,{role:"assistant" as const,content:"",tools:[],streaming:true}].slice(-MAX_TURNS)})),
+	  mergeRemote: remote => set(s => {
+	    const convert = (c: typeof remote[number]):SavedConversation => ({id:c.id,title:c.title,history:coerceHistory(c.history),turns:coerceHistory(c.history).filter(h=>(h.role==="user"||h.role==="assistant")&&typeof h.content==="string").map(h=>({role:h.role as "user"|"assistant",content:h.content!,tools:[]}))});
+	    const sessions=[...s.sessions];
+	    for(const c of remote)if(c.id!==s.sessionId&&!sessions.some(v=>v.id===c.id))sessions.push(convert(c));
+	    const current=remote.find(c=>c.id===s.sessionId);
+	    if(current&&!s.busy&&current.history.length>0&&(s.history.length===0||current.history.at(-1)?.content!==s.history.at(-1)?.content)){const restored=convert(current);return {sessions,turns:restored.turns,history:restored.history};}
+	    return {sessions};
+	  }),
+      sessionId: "initial",
+      sessions: [],
+      newSession: () => set(s => ({
+        sessions: [...s.sessions.filter(c => c.id !== s.sessionId), snapshot(s)],
+        sessionId: createUUID(), turns: [], history: [], busy: false,
+      })),
+      switchSession: (id) => set(s => {
+        const target = s.sessions.find(c => c.id === id);
+        if (!target || id === s.sessionId) return s;
+        return { sessions: [...s.sessions.filter(c => c.id !== s.sessionId), snapshot(s)], sessionId: id,
+          turns: coerceTurns(target.turns), history: target.history, busy: false };
+      }),
       turns: [],
       history: [],
       busy: false,
@@ -167,13 +208,15 @@ export const useAssistantChat = create<AssistantChatState>()(
     }),
     {
       name: ASSISTANT_CHAT_STORAGE_KEY,
-      partialize: (s) => ({ turns: s.turns, history: s.history }),
+      partialize: (s) => ({ turns: s.turns, history: s.history, sessionId: s.sessionId, sessions: s.sessions.filter(c => c.id !== s.sessionId) }),
       storage: createJSONStorage(() => safeStorage() ?? noopStorage),
       version: 1,
       merge: (persistedState, currentState) => {
         const p = (persistedState ?? {}) as Partial<AssistantChatState>;
         return {
           ...currentState,
+          sessionId: typeof p.sessionId === "string" ? p.sessionId : "initial",
+          sessions: Array.isArray(p.sessions) ? p.sessions.filter(c => c && typeof c.id === "string" && typeof c.title === "string").map(c => ({ ...c, turns: coerceTurns(c.turns), history: coerceHistory(c.history) })) : [],
           turns: coerceTurns(p.turns),
           history: coerceHistory(p.history),
           busy: false,

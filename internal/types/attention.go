@@ -83,19 +83,6 @@ const (
 	AttentionActionRetryJob          = "retry_job"
 )
 
-// PushSubscription is a browser Web Push endpoint registered by a user's
-// device, used to deliver attention notifications when the tab is closed. It is
-// tenant + recipient scoped and keyed by endpoint (a device may re-register
-// with fresh keys, which upserts rather than duplicates).
-type PushSubscription struct {
-	ID        string `json:"id"`
-	Recipient string `json:"recipient"`
-	Endpoint  string `json:"endpoint"`
-	P256dh    string `json:"p256dh"`
-	Auth      string `json:"auth"`
-	CreatedAt string `json:"created_at,omitempty"`
-}
-
 // CreateAttentionRequest is the create payload. Recipient defaults to the
 // authenticated principal when empty (resolved by the handler, not here).
 type CreateAttentionRequest struct {

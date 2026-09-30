@@ -2,10 +2,10 @@ package service
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
-	"github.com/huynle/brain-api/internal/storage"
-	"github.com/huynle/brain-api/internal/tenant"
+	"github.com/huynle/brain-api/internal/attentionstore"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -18,13 +18,12 @@ func (c *captureIngester) Ingest(_ context.Context, ev []types.Event) error {
 
 func newAttentionService(t *testing.T) (*AttentionService, context.Context, *captureIngester) {
 	t.Helper()
-	owner, err := storage.New(":memory:")
+	store, err := attentionstore.Open(filepath.Join(t.TempDir(), "attention.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = owner.Close() })
-	store, _ := owner.ForTenant(tenant.Local)
-	ctx := tenant.Into(context.Background(), tenant.Local)
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
 	cap := &captureIngester{}
 	svc := NewAttentionService(store, WithAttentionEventIngester(cap))
 	return svc, ctx, cap

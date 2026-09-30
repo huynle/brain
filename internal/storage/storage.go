@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 
 	// Import the pure-Go SQLite driver for side effects (driver registration).
 	_ "github.com/glebarez/go-sqlite"
@@ -28,8 +30,6 @@ type StorageLayer struct {
 //	               conn 1..3 -> foreign_keys=0 synchronous=2
 //	DSN form:      conn 0..3 -> foreign_keys=1 synchronous=1
 //
-// Only journal_mode survived, because WAL is persisted in the database file.
-//
 // So SetMaxOpenConns(1) below was load-bearing for correctness, not just for
 // write serialisation: it was the only reason foreign key enforcement was
 // active at all. Raising the pool without this change would have silently
@@ -39,8 +39,22 @@ type StorageLayer struct {
 // busy_timeout is included because it is the setting that makes a pool larger
 // than one survivable at all — without it a second writer fails immediately
 // with SQLITE_BUSY instead of waiting.
+//
+// journal_mode is TRUNCATE, NOT WAL. WAL's only benefit is concurrent readers
+// alongside one writer, which cannot occur here because SetMaxOpenConns(1)
+// pins the pool to a single connection. Under the pure-Go driver
+// (github.com/glebarez/go-sqlite -> modernc.org/sqlite) WAL was actively
+// harmful in the containerized (read-only rootfs, bind-mounted volume)
+// deployment: reads that traversed the WAL -shm shared-memory index on a large
+// database threw SQLITE_IOERR_READ (disk I/O error 6410) — e.g. list-notes
+// queries selecting the body/raw_content overflow columns returned HTTP 500.
+// TRUNCATE removes the -wal/-shm/mmap path entirely with no loss of
+// concurrency, and was verified to fix the 6410 failures against the live
+// database. If the single-connection cap is ever lifted, revisit this: WAL
+// would become worthwhile again, but only once the driver's -shm handling is
+// confirmed safe in the target runtime.
 var connectionPragmas = []string{
-	"journal_mode(WAL)",
+	"journal_mode(TRUNCATE)",
 	"foreign_keys(1)",
 	"synchronous(NORMAL)",
 	"busy_timeout(5000)",
@@ -49,7 +63,11 @@ var connectionPragmas = []string{
 // dsnWithPragmas builds a driver DSN that applies connectionPragmas to every
 // connection the pool opens.
 func dsnWithPragmas(dbPath string) string {
-	dsn := "file:" + dbPath
+	u := url.URL{Scheme: "file", Path: dbPath}
+	dsn := u.String()
+	if dbPath == ":memory:" {
+		dsn = "file::memory:"
+	}
 	sep := "?"
 	for _, p := range connectionPragmas {
 		dsn += sep + "_pragma=" + url.QueryEscape(p)
@@ -60,15 +78,59 @@ func dsnWithPragmas(dbPath string) string {
 
 // New opens a SQLite database at dbPath, sets PRAGMAs, and initializes the schema.
 func New(dbPath string) (*StorageLayer, error) {
+	// dbPath is a filesystem path, not a caller-controlled SQLite URI. Use
+	// the same escaped absolute path for preflight and the writable pool.
+	if dbPath != ":memory:" {
+		var err error
+		dbPath, err = filepath.Abs(dbPath)
+		if err != nil {
+			return nil, fmt.Errorf("database path: %w", err)
+		}
+		if err := preflightSchemaFile(dbPath); err != nil {
+			return nil, err
+		}
+	}
 	db, err := sql.Open("sqlite", dsnWithPragmas(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	return newFromDB(db)
+	s, err := newFromDB(db)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// preflightSchemaFile opens existing files read-only, without connection
+// PRAGMAs (in particular WAL). Do not use immutable: committed WAL contents
+// must participate in the version read. Startup requires a stable file and
+// quiesced schema writers; this check is not a concurrent-upgrade lock.
+func preflightSchemaFile(dbPath string) error {
+	info, err := os.Stat(dbPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat database: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("database path is not a regular file: %s", dbPath)
+	}
+	u := url.URL{Scheme: "file", Path: dbPath, RawQuery: "mode=ro"}
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return fmt.Errorf("open database preflight: %w", err)
+	}
+	defer db.Close()
+	_, _, err = checkSchemaCompatibility(db)
+	return err
 }
 
 // NewWithDB wraps an existing *sql.DB connection, sets PRAGMAs, and initializes the schema.
 // Useful for testing with :memory: databases.
+// On failure the caller retains ownership of db. Caller-supplied DSN PRAGMAs
+// or previous mutations are outside this constructor's compatibility guarantee.
 func NewWithDB(db *sql.DB) (*StorageLayer, error) {
 	if db == nil {
 		return nil, errors.New("db must not be nil")
@@ -91,8 +153,10 @@ func newFromDB(db *sql.DB) (*StorageLayer, error) {
 	// own: startup runs a synchronous reindex (~33s for ~70k entries) holding
 	// this single connection, so every request in that window queues behind it
 	// and callers that time out surface as 500s (see the Logger middleware in
-	// internal/api). WAL supports concurrent readers alongside one writer, so
-	// serialising reads is self-inflicted.
+	// internal/api). Serialising reads behind one connection is self-inflicted;
+	// note that lifting the cap also means revisiting journal_mode (see
+	// connectionPragmas — TRUNCATE was chosen precisely because the pool is
+	// single-connection and WAL's -shm path was unsafe in the container).
 	//
 	// What blocked raising it was that the pragmas below only ever bound to one
 	// connection. That blocker is now cleared for the New path by
@@ -101,13 +165,16 @@ func newFromDB(db *sql.DB) (*StorageLayer, error) {
 	// serialisation the cap provides — which is a separate change with separate
 	// testing, not a rider on this one.
 	db.SetMaxOpenConns(1)
+	if _, _, err := checkSchemaCompatibility(db); err != nil {
+		return nil, err
+	}
 
 	// Belt-and-braces for the NewWithDB path, whose DSN we do not control.
 	// These bind only to the connection that serves them, which is sufficient
 	// precisely because of the cap above. New() additionally sets them in the
 	// DSN so they hold for every connection.
 	pragmas := []string{
-		"PRAGMA journal_mode = WAL",
+		"PRAGMA journal_mode = TRUNCATE",
 		"PRAGMA foreign_keys = ON",
 		"PRAGMA synchronous = NORMAL",
 	}
@@ -123,15 +190,10 @@ func newFromDB(db *sql.DB) (*StorageLayer, error) {
 	}
 
 	s := &StorageLayer{db: db}
-	if err := s.backfillInstallClaim(context.Background()); err != nil {
+	if err := (identityStore{db: db}).backfillInstallClaim(context.Background()); err != nil {
 		return nil, err
 	}
 	return s, nil
-}
-
-// DB returns the underlying *sql.DB connection.
-func (s *StorageLayer) DB() *sql.DB {
-	return s.db
 }
 
 // Close closes the underlying database connection.

@@ -65,7 +65,7 @@ func TestTaskPlacementEndpoints(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				t.Cleanup(func() { store.Close() })
+				t.Cleanup(func() { db.Close() })
 				dir := t.TempDir()
 				svc := service.NewTaskService(&config.Config{BrainDir: dir}, store, indexer.NewIndexer(dir, store))
 				meta, err := json.Marshal(map[string]any{"feature_id": "feature", "requires_capability": []string{"docker"}, "machine_affinity": tc.affinity, "origin_machine_id": tc.origin, "git_remote": tc.remote})

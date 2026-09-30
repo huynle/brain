@@ -11,7 +11,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestClaimTask_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	ok, existing, err := s.ClaimTask(ctx, "proj1", "task1", "runner-a", 30*time.Second)
@@ -45,7 +45,7 @@ func TestClaimTask_Success(t *testing.T) {
 }
 
 func TestClaimTask_SameRunnerReClaim(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// First claim
@@ -68,7 +68,7 @@ func TestClaimTask_SameRunnerReClaim(t *testing.T) {
 }
 
 func TestClaimTask_DifferentRunnerBlocked(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Runner A claims
@@ -97,7 +97,7 @@ func TestClaimTask_DifferentRunnerBlocked(t *testing.T) {
 }
 
 func TestClaimTask_ExpiredClaimTakeover(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Runner A claims with very short lease (already expired)
@@ -131,7 +131,7 @@ func TestClaimTask_ExpiredClaimTakeover(t *testing.T) {
 }
 
 func TestClaimTask_DifferentProjects(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Same task ID in different projects should both succeed
@@ -154,7 +154,7 @@ func TestClaimTask_DifferentProjects(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReleaseClaim_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Claim first
@@ -183,7 +183,7 @@ func TestReleaseClaim_Success(t *testing.T) {
 }
 
 func TestReleaseClaim_WrongRunner(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Claim by runner-a
@@ -215,7 +215,7 @@ func TestReleaseClaim_WrongRunner(t *testing.T) {
 }
 
 func TestReleaseClaim_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	released, err := s.ReleaseClaim(ctx, "proj1", "nonexistent", "runner-a")
@@ -232,7 +232,7 @@ func TestReleaseClaim_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetClaim_Exists(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	ok, _, err := s.ClaimTask(ctx, "proj1", "task1", "runner-a", 30*time.Second)
@@ -262,7 +262,7 @@ func TestGetClaim_Exists(t *testing.T) {
 }
 
 func TestGetClaim_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	claim, err := s.GetClaim(ctx, "proj1", "nonexistent")
@@ -279,7 +279,7 @@ func TestGetClaim_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetClaimsByRunner_MultipleClaims(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Runner-a claims multiple tasks
@@ -312,7 +312,7 @@ func TestGetClaimsByRunner_MultipleClaims(t *testing.T) {
 }
 
 func TestGetClaimsByRunner_Empty(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	claims, err := s.GetClaimsByRunner(ctx, "nonexistent-runner")
@@ -329,7 +329,7 @@ func TestGetClaimsByRunner_Empty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestExpireStaleClaims_RemovesExpired(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	now := time.Now().UnixMilli()
@@ -371,7 +371,7 @@ func TestExpireStaleClaims_RemovesExpired(t *testing.T) {
 }
 
 func TestExpireStaleClaims_NoneExpired(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert a valid claim
@@ -394,7 +394,7 @@ func TestExpireStaleClaims_NoneExpired(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReleaseAllByRunner_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Runner-a claims 3 tasks
@@ -440,7 +440,7 @@ func TestReleaseAllByRunner_Success(t *testing.T) {
 }
 
 func TestReleaseAllByRunner_NoClaims(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	count, err := s.ReleaseAllByRunner(ctx, "nonexistent-runner")
@@ -457,7 +457,7 @@ func TestReleaseAllByRunner_NoClaims(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRenewClaim_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Claim task
@@ -488,7 +488,7 @@ func TestRenewClaim_Success(t *testing.T) {
 }
 
 func TestRenewClaim_WrongRunner(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Claim by runner-a
@@ -505,7 +505,7 @@ func TestRenewClaim_WrongRunner(t *testing.T) {
 }
 
 func TestRenewClaim_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	err := s.RenewClaim(ctx, "proj1", "nonexistent", "runner-a", time.Now().Add(5*time.Minute))
@@ -521,7 +521,7 @@ func TestRenewClaim_NotFound(t *testing.T) {
 func TestClaimTask_TableDriven(t *testing.T) {
 	tests := []struct {
 		name            string
-		setup           func(s *StorageLayer, ctx context.Context) // pre-existing state
+		setup           func(s *TenantStore, ctx context.Context) // pre-existing state
 		projectID       string
 		taskID          string
 		runnerID        string
@@ -541,7 +541,7 @@ func TestClaimTask_TableDriven(t *testing.T) {
 		},
 		{
 			name: "same runner re-claim",
-			setup: func(s *StorageLayer, ctx context.Context) {
+			setup: func(s *TenantStore, ctx context.Context) {
 				s.ClaimTask(ctx, "proj1", "task1", "runner-a", 30*time.Second)
 			},
 			projectID:       "proj1",
@@ -553,7 +553,7 @@ func TestClaimTask_TableDriven(t *testing.T) {
 		},
 		{
 			name: "different runner blocked by active claim",
-			setup: func(s *StorageLayer, ctx context.Context) {
+			setup: func(s *TenantStore, ctx context.Context) {
 				s.ClaimTask(ctx, "proj1", "task1", "runner-a", 30*time.Second)
 			},
 			projectID:       "proj1",
@@ -565,7 +565,7 @@ func TestClaimTask_TableDriven(t *testing.T) {
 		},
 		{
 			name: "takeover expired claim",
-			setup: func(s *StorageLayer, ctx context.Context) {
+			setup: func(s *TenantStore, ctx context.Context) {
 				now := time.Now().UnixMilli()
 				s.db.ExecContext(ctx,
 					"INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at) VALUES (?, ?, ?, ?, ?)",
@@ -583,7 +583,7 @@ func TestClaimTask_TableDriven(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := newTestStorage(t)
+			s := newTestContentStorage(t)
 			ctx := context.Background()
 
 			if tt.setup != nil {

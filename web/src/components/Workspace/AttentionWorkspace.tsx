@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { useProjects } from "../../hooks/useProjects";
 import { useAttention, useAttentionCounts } from "../../hooks/useAttention";
@@ -16,13 +16,6 @@ import {
   type AttentionLifecycle,
   type SeverityFilter,
 } from "../../lib/attention";
-import {
-  disablePushNotifications,
-  enablePushNotifications,
-  pushSupported,
-} from "../../lib/push";
-import { getVapidPublicKey } from "../../lib/api";
-import { useUI } from "../../store/ui";
 import { ErrorState } from "../common/ErrorState";
 import { Loading } from "../common/Loading";
 import { AttentionRows } from "../Attention/AttentionRows";
@@ -45,81 +38,6 @@ const SEVERITIES: Array<{ id: SeverityFilter; label: string }> = [
   { id: "warning", label: "Warning" },
   { id: "info", label: "Info" },
 ];
-
-function PushControl(): JSX.Element | null {
-  const toast = useUI((s) => s.toast);
-  const [available, setAvailable] = useState<boolean | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  // Hide the control unless the browser can do Web Push AND the server has a
-  // configured VAPID key (empty key ⇒ Web Push not configured).
-  useEffect(() => {
-    let cancelled = false;
-    if (!pushSupported()) {
-      setAvailable(false);
-      return;
-    }
-    getVapidPublicKey()
-      .then((key) => {
-        if (!cancelled) setAvailable(Boolean(key));
-      })
-      .catch(() => {
-        if (!cancelled) setAvailable(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (available !== true) return null;
-
-  const enable = async () => {
-    setBusy(true);
-    try {
-      const result = await enablePushNotifications();
-      if (result.ok) {
-        toast("Browser notifications enabled", "success");
-      } else if (result.reason === "denied") {
-        toast("Notification permission was denied", "error");
-      } else if (result.reason === "not-configured") {
-        toast("Web Push is not configured on this server", "error");
-      } else if (result.reason === "unsupported") {
-        toast("This browser does not support Web Push", "error");
-      } else {
-        toast(`Could not enable notifications: ${result.message ?? ""}`, "error");
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const disable = async () => {
-    setBusy(true);
-    try {
-      const result = await disablePushNotifications();
-      if (result.ok) toast("Browser notifications disabled", "success");
-      else toast(`Could not disable notifications: ${result.message ?? ""}`, "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="attention-push">
-      <button type="button" disabled={busy} onClick={() => void enable()}>
-        Enable browser notifications
-      </button>
-      <button
-        type="button"
-        className="attention-push__off"
-        disabled={busy}
-        onClick={() => void disable()}
-      >
-        Disable
-      </button>
-    </div>
-  );
-}
 
 export function AttentionWorkspace(): JSX.Element {
   const attentionQuery = useAttention();
@@ -188,7 +106,6 @@ export function AttentionWorkspace(): JSX.Element {
             idle runners, failed deliveries, and anything else the system
             wants to surface.
           </p>
-          <PushControl />
         </div>
         <div className="attention-workspace__total">
           <strong>{totals?.unread ?? counts.unread}</strong>

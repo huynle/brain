@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"github.com/huynle/brain-api/internal/tenant"
 	"testing"
 )
 
@@ -17,7 +18,7 @@ type testGraph struct {
 	A, B, C, D *NoteRow
 }
 
-func setupTestGraph(t *testing.T, s *StorageLayer) testGraph {
+func setupTestGraph(t *testing.T, s *TenantStore) testGraph {
 	t.Helper()
 	ctx := context.Background()
 
@@ -72,7 +73,7 @@ func setupTestGraph(t *testing.T, s *StorageLayer) testGraph {
 // ---------------------------------------------------------------------------
 
 func TestGetBacklinks_HasBacklinks(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	g := setupTestGraph(t, s)
 
@@ -90,7 +91,7 @@ func TestGetBacklinks_HasBacklinks(t *testing.T) {
 }
 
 func TestGetBacklinks_MultipleBacklinks(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	g := setupTestGraph(t, s)
 
@@ -116,7 +117,7 @@ func TestGetBacklinks_MultipleBacklinks(t *testing.T) {
 }
 
 func TestGetBacklinks_NoBacklinks(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	g := setupTestGraph(t, s)
 
@@ -134,7 +135,7 @@ func TestGetBacklinks_NoBacklinks(t *testing.T) {
 }
 
 func TestGetBacklinks_UnresolvedLink(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Create a note that links to a path via target_path (unresolved — target_id is NULL).
@@ -151,7 +152,7 @@ func TestGetBacklinks_UnresolvedLink(t *testing.T) {
 	}
 
 	// Insert link with target_path but NULL target_id (simulating unresolved link).
-	_, err = s.DB().ExecContext(ctx,
+	_, err = s.db.ExecContext(ctx,
 		"INSERT INTO links (source_id, target_path, target_id, href) VALUES (?, ?, NULL, ?)",
 		inserted.ID, "projects/test/graph/unresolved-tgt.md", "projects/test/graph/unresolved-tgt.md",
 	)
@@ -177,7 +178,7 @@ func TestGetBacklinks_UnresolvedLink(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetOutlinks_HasOutlinks(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	g := setupTestGraph(t, s)
 
@@ -203,7 +204,7 @@ func TestGetOutlinks_HasOutlinks(t *testing.T) {
 }
 
 func TestGetOutlinks_SingleOutlink(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	g := setupTestGraph(t, s)
 
@@ -221,7 +222,7 @@ func TestGetOutlinks_SingleOutlink(t *testing.T) {
 }
 
 func TestGetOutlinks_NoOutlinks(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	g := setupTestGraph(t, s)
 
@@ -243,7 +244,7 @@ func TestGetOutlinks_NoOutlinks(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetRelated_SharedTarget(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	g := setupTestGraph(t, s)
 
@@ -262,7 +263,7 @@ func TestGetRelated_SharedTarget(t *testing.T) {
 }
 
 func TestGetRelated_Bidirectional(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	g := setupTestGraph(t, s)
 
@@ -280,7 +281,7 @@ func TestGetRelated_Bidirectional(t *testing.T) {
 }
 
 func TestGetRelated_NoRelated(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	g := setupTestGraph(t, s)
 
@@ -298,7 +299,7 @@ func TestGetRelated_NoRelated(t *testing.T) {
 }
 
 func TestGetRelated_ExcludesSelf(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	g := setupTestGraph(t, s)
 
@@ -315,7 +316,7 @@ func TestGetRelated_ExcludesSelf(t *testing.T) {
 }
 
 func TestGetRelated_RespectsLimit(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	g := setupTestGraph(t, s)
 
@@ -336,7 +337,7 @@ func TestGetRelated_RespectsLimit(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetOrphans_FindsOrphans(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	g := setupTestGraph(t, s)
 
@@ -363,7 +364,7 @@ func TestGetOrphans_FindsOrphans(t *testing.T) {
 }
 
 func TestGetOrphans_WithTypeFilter(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	g := setupTestGraph(t, s)
 
@@ -382,7 +383,7 @@ func TestGetOrphans_WithTypeFilter(t *testing.T) {
 }
 
 func TestGetOrphans_WithLimit(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	_ = setupTestGraph(t, s)
 
@@ -397,7 +398,7 @@ func TestGetOrphans_WithLimit(t *testing.T) {
 }
 
 func TestGetOrphans_DefaultLimit(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	_ = setupTestGraph(t, s)
 
@@ -416,7 +417,7 @@ func TestGetOrphans_DefaultLimit(t *testing.T) {
 }
 
 func TestGetOrphans_EmptyDB(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// No notes at all — should return empty slice, not nil.
@@ -433,7 +434,7 @@ func TestGetOrphans_EmptyDB(t *testing.T) {
 }
 
 func TestGetOrphans_AllNotesAreOrphans(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Create notes with no links between them — all are orphans.
@@ -456,7 +457,7 @@ func TestGetOrphans_AllNotesAreOrphans(t *testing.T) {
 }
 
 func TestGetRelated_CoCitationAcrossHrefStyles(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	target := sampleNote("projects/test/plan/shared.md", "shr12345", "Shared Target")
@@ -505,7 +506,7 @@ func TestGetRelated_CoCitationAcrossHrefStyles(t *testing.T) {
 
 // insertDanglingPathLink writes a link row that names targetPath but leaves
 // target_id NULL — the state the two queries used to disagree about.
-func insertDanglingPathLink(t *testing.T, s *StorageLayer, sourceID int64, targetPath string) {
+func insertDanglingPathLink(t *testing.T, s *TenantStore, sourceID int64, targetPath string) {
 	t.Helper()
 	_, err := s.db.ExecContext(context.Background(),
 		"INSERT INTO links (source_id, target_path, target_id, title, href, type) VALUES (?, ?, NULL, ?, ?, ?)",
@@ -517,7 +518,7 @@ func insertDanglingPathLink(t *testing.T, s *StorageLayer, sourceID int64, targe
 }
 
 func TestGetOrphans_ExcludesNotesWithUnresolvedPathBacklink(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	source, err := s.InsertNote(ctx, sampleNote("projects/test/orphan/src.md", "orpsrc01", "Source"))
@@ -553,7 +554,7 @@ func TestGetOrphans_ExcludesNotesWithUnresolvedPathBacklink(t *testing.T) {
 
 // The two queries must agree for every note, not just the constructed one.
 func TestGetOrphans_AgreesWithBacklinksForEveryNote(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	g := setupTestGraph(t, s)
@@ -584,7 +585,7 @@ func TestGetOrphans_AgreesWithBacklinksForEveryNote(t *testing.T) {
 }
 
 func TestGetStats_OrphanCountMatchesGetOrphans(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	g := setupTestGraph(t, s)
@@ -615,7 +616,7 @@ func TestGetStats_OrphanCountMatchesGetOrphans(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGraph_LinksCrossProjectAndGlobalScopes(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	proj, err := s.InsertNote(ctx, noteIn("projects/keep/walkthrough/proj.md", "xsproj01", "Project Entry", "keep"))
@@ -665,7 +666,7 @@ func TestGraph_LinksCrossProjectAndGlobalScopes(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMigrateV25_InvalidatesChecksumsForLinkReextraction(t *testing.T) {
-	s := newTestStorage(t)
+	s := &TenantStore{db: archivedSchemaFixture(t, provenanceSources[0].revision), tenantID: tenant.Local}
 	ctx := context.Background()
 
 	withWiki := sampleNote("projects/test/mig/wiki.md", "migwik01", "Has Wiki Link")
@@ -700,7 +701,9 @@ func TestMigrateV25_InvalidatesChecksumsForLinkReextraction(t *testing.T) {
 
 	checksumOf := func(path string) *string {
 		t.Helper()
-		n, err := s.GetNoteByPath(ctx, path)
+		// migrateSchema stages changes without publishing a new version. Inspect
+		// this legacy fixture directly; content handles correctly reject v24.
+		n, err := scanNoteRow(s.db.QueryRowContext(ctx, "SELECT "+noteColumns+" FROM notes WHERE path=?", path))
 		if err != nil {
 			t.Fatalf("GetNoteByPath(%q): %v", path, err)
 		}
@@ -722,7 +725,7 @@ func TestMigrateV25_InvalidatesChecksumsForLinkReextraction(t *testing.T) {
 }
 
 func TestMigrateV26_InvalidatesChecksumsForHTMLCommentReextraction(t *testing.T) {
-	s := newTestStorage(t)
+	s := &TenantStore{db: archivedSchemaFixture(t, provenanceSources[0].revision), tenantID: tenant.Local}
 	ctx := context.Background()
 
 	withComment := sampleNote("projects/test/mig/tmpl.md", "migcmt01", "Plan Template")
@@ -748,7 +751,7 @@ func TestMigrateV26_InvalidatesChecksumsForHTMLCommentReextraction(t *testing.T)
 		t.Fatalf("migrateSchema: %v", err)
 	}
 
-	got, err := s.GetNoteByPath(ctx, withComment.Path)
+	got, err := scanNoteRow(s.db.QueryRowContext(ctx, "SELECT "+noteColumns+" FROM notes WHERE path=?", withComment.Path))
 	if err != nil {
 		t.Fatalf("GetNoteByPath: %v", err)
 	}
@@ -756,7 +759,7 @@ func TestMigrateV26_InvalidatesChecksumsForHTMLCommentReextraction(t *testing.T)
 		t.Errorf("note with an HTML comment kept checksum %q; it must be re-indexed", *got.Checksum)
 	}
 
-	untouched, err := s.GetNoteByPath(ctx, plain.Path)
+	untouched, err := scanNoteRow(s.db.QueryRowContext(ctx, "SELECT "+noteColumns+" FROM notes WHERE path=?", plain.Path))
 	if err != nil {
 		t.Fatalf("GetNoteByPath: %v", err)
 	}

@@ -1,0 +1,1 @@
+`voice-speech.wav` is a generated test utterance: “Hi. This is your Brain assistant. This is a quick test of spoken replies through OpenRouter.” It contains no user recording. The browser tests use its first three seconds as recognizable speech and synthesize road rumble separately to exercise the real Silero classifier.

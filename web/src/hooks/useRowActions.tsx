@@ -16,7 +16,7 @@
  * here precisely because focus is scoped to a row — they are inert
  * everywhere else, and typing contexts are excluded below.
  */
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useState, useRef, useEffect } from "react";
 
 import { ActionSheet } from "../components/common/ActionSheet";
 import {
@@ -153,6 +153,17 @@ export function useRowActions(): UseRowActionsAPI {
     [],
   );
 
+  // One touch sequence per list, retained through SSE/query-driven rerenders.
+  const activeLongPress = useRef<() => void>(() => {});
+  const [press] = useState(() => createLongPressHandlers(() => activeLongPress.current()));
+  useEffect(() => {
+    window.addEventListener("scroll", press.onScroll, true);
+    return () => {
+      window.removeEventListener("scroll", press.onScroll, true);
+      press.dispose();
+    };
+  }, [press]);
+
   const rowProps = useCallback(
     (
       actions: readonly ActionDescriptor[],
@@ -177,12 +188,12 @@ export function useRowActions(): UseRowActionsAPI {
       // (with no anchor that degrades to marking just this row, the
       // old behavior plus the anchor seed). The full sheet remains the
       // fallback for rows with neither.
-      const press = createLongPressHandlers(() => {
+      const longPress = () => {
         if (selectionActions) openSheet(menuLabel, selectionActions);
         else if (opts?.onRangeSelect) opts.onRangeSelect();
         else if (selectAction) runner.run(selectAction);
         else openSheet(label, actions);
-      });
+      };
 
       const openMenuAt = (x: number, y: number) => {
         // Touch devices get the sheet; a context menu positioned under a
@@ -200,6 +211,8 @@ export function useRowActions(): UseRowActionsAPI {
 
         onContextMenu: (e: React.MouseEvent) => {
           e.preventDefault();
+          // The browser's own touch context menu must not bypass our hold/scroll guard.
+          if (press.isTouchInteraction()) return;
           openMenuAt(e.clientX, e.clientY);
         },
 
@@ -232,7 +245,12 @@ export function useRowActions(): UseRowActionsAPI {
           }
         },
 
-        onTouchStart: press.onTouchStart as (e: React.TouchEvent) => void,
+        onTouchStart: (e: React.TouchEvent) => {
+          e.stopPropagation();
+          const row = e.currentTarget;
+          activeLongPress.current = () => { if (row.isConnected) longPress(); };
+          press.onTouchStart(e);
+        },
         onTouchMove: press.onTouchMove as (e: React.TouchEvent) => void,
         onTouchEnd: press.onTouchEnd,
         onTouchCancel: press.onTouchCancel,
@@ -241,7 +259,7 @@ export function useRowActions(): UseRowActionsAPI {
         },
       };
     },
-    [ctx, isMobile, openSheet, runner],
+    [ctx, isMobile, openSheet, runner, press],
   );
 
   const overlays = (

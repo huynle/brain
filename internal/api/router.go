@@ -64,6 +64,15 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 			// Auth so the actor is present in context.
 			r.Use(RequestRecorder)
 
+			// Installation-wide reminder notifications require full access.
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*"))
+				if o.handler != nil {
+					r.Get("/push", o.handler.HandlePush)
+					r.Post("/push/{action}", o.handler.HandlePush)
+				}
+			})
+
 			// ─── Server request log (read:* scope) ─────────────────
 			r.Group(func(r chi.Router) {
 				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
@@ -347,10 +356,15 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				r.Group(func(r chi.Router) {
 					r.Use(RequireScope("admin:*"))
 					if o.handler != nil && o.handler.assistant != nil {
+						r.Post("/transcribe", o.handler.HandleAssistantTranscription)
+						r.Post("/voice-diagnostics", o.handler.HandleAssistantVoiceDiagnostics)
+						r.Post("/speech", o.handler.HandleAssistantSpeech)
 						r.Post("/chat", o.handler.HandleAssistantChat)
 						r.Post("/chat/stream", o.handler.HandleAssistantChatStream)
+						r.Get("/jobs", o.handler.HandleConversationJobs)
 						r.Post("/goal-draft", o.handler.HandleAssistantGoalDraft)
 					} else {
+						r.Post("/speech", notImplemented)
 						r.Post("/chat", notImplemented)
 						r.Post("/chat/stream", notImplemented)
 						r.Post("/goal-draft", notImplemented)
@@ -434,12 +448,10 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					if o.handler != nil && o.handler.attention != nil {
 						r.Get("/", o.handler.HandleListAttention)
 						r.Get("/counts", o.handler.HandleAttentionCounts)
-						r.Get("/vapid-public-key", o.handler.HandleAttentionVAPIDKey)
 						r.Get("/{id}", o.handler.HandleGetAttention)
 					} else {
 						r.Get("/", notImplemented)
 						r.Get("/counts", notImplemented)
-						r.Get("/vapid-public-key", notImplemented)
 						r.Get("/{id}", notImplemented)
 					}
 				})
@@ -465,16 +477,12 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Post("/{id}/snooze", o.handler.HandleSnoozeAttention)
 						r.Post("/{id}/resolve", o.handler.HandleResolveAttention)
 						r.Post("/{id}/dismiss", o.handler.HandleDismissAttention)
-						r.Post("/push-subscriptions", o.handler.HandleCreatePushSubscription)
-						r.Delete("/push-subscriptions", o.handler.HandleDeletePushSubscription)
 					} else {
 						r.Post("/{id}/read", notImplemented)
 						r.Post("/{id}/unread", notImplemented)
 						r.Post("/{id}/snooze", notImplemented)
 						r.Post("/{id}/resolve", notImplemented)
 						r.Post("/{id}/dismiss", notImplemented)
-						r.Post("/push-subscriptions", notImplemented)
-						r.Delete("/push-subscriptions", notImplemented)
 					}
 				})
 			})

@@ -825,8 +825,8 @@ func TestStart_PeriodicTickerReconciles(t *testing.T) {
 func TestReconcile_AuditFailureAfterTaskCreationWarnsOnly(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	// A second, closed store: brain writes still work, audit inserts fail.
-	_, deadStore, _ := newTestBrainService(t)
-	if err := deadStore.Close(); err != nil {
+	_, deadStore, _, db := newTestBrainServiceWithDB(t)
+	if err := db.Close(); err != nil {
 		t.Fatalf("close dead store: %v", err)
 	}
 

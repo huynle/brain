@@ -38,7 +38,7 @@ func assertStringSliceEqual(t *testing.T, got, want []string) {
 // ---------------------------------------------------------------------------
 
 func TestUpsertRunner_Insert(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r := makeRunner("runner-1", "host-a")
@@ -69,7 +69,7 @@ func TestUpsertRunner_Insert(t *testing.T) {
 }
 
 func TestUpsertRunner_JSONFields(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r := &RunnerRow{
@@ -124,7 +124,7 @@ func TestUpsertRunner_JSONFields(t *testing.T) {
 }
 
 func TestUpsertRunner_CapabilitiesRoundTripThroughGetListAndHeartbeat(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r := makeRunner("runner-cap", "host-cap")
@@ -168,7 +168,7 @@ func TestUpsertRunner_CapabilitiesRoundTripThroughGetListAndHeartbeat(t *testing
 }
 
 func TestUpsertRunner_BackwardCompatibleEmptyCapabilities(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r := makeRunner("runner-no-cap", "host-no-cap")
@@ -197,7 +197,7 @@ func TestRunnerRow_HasCapabilitiesField(t *testing.T) {
 }
 
 func TestUpsertRunner_DispatchMetadataRoundTripThroughGetListAndHeartbeat(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r := makeRunner("runner-dispatch", "host-dispatch")
@@ -266,7 +266,7 @@ func assertRunnerDispatchMetadata(t *testing.T, got *RunnerRow) {
 }
 
 func TestUpsertRunner_Replace(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r1 := makeRunner("runner-1", "host-a")
@@ -310,7 +310,7 @@ func TestUpsertRunner_Replace(t *testing.T) {
 }
 
 func TestUpsertRunner_NilLabelsAndExecutors(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r := &RunnerRow{
@@ -346,7 +346,7 @@ func TestUpsertRunner_NilLabelsAndExecutors(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetRunner_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	got, err := s.GetRunner(ctx, "nonexistent")
@@ -363,7 +363,7 @@ func TestGetRunner_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListRunners_Empty(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	runners, err := s.ListRunners(ctx)
@@ -376,7 +376,7 @@ func TestListRunners_Empty(t *testing.T) {
 }
 
 func TestListRunners_Multiple(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	now := time.Now().UnixMilli()
@@ -412,7 +412,7 @@ func TestListRunners_Multiple(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListRunnersByStatus(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert one online and one offline runner
@@ -465,7 +465,7 @@ func TestListRunnersByStatus(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDeleteRunner_Exists(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r := makeRunner("runner-del", "host-del")
@@ -492,7 +492,7 @@ func TestDeleteRunner_Exists(t *testing.T) {
 }
 
 func TestDeleteRunner_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	deleted, err := s.DeleteRunner(ctx, "nonexistent")
@@ -509,7 +509,7 @@ func TestDeleteRunner_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestUpdateHeartbeat_Simple(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r := makeRunner("runner-hb", "host-hb")
@@ -534,7 +534,7 @@ func TestUpdateHeartbeat_Simple(t *testing.T) {
 }
 
 func TestUpdateHeartbeat_PersistsRunningTasksWithoutStats(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r := makeRunner("runner-hb-count", "host-hb-count")
@@ -560,7 +560,7 @@ func TestUpdateHeartbeat_PersistsRunningTasksWithoutStats(t *testing.T) {
 }
 
 func TestUpdateHeartbeat_WithStats(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r := makeRunner("runner-stats", "host-stats")
@@ -596,7 +596,7 @@ func TestUpdateHeartbeat_WithStats(t *testing.T) {
 }
 
 func TestUpdateHeartbeat_RunnerNotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	err := s.UpdateHeartbeat(ctx, "nonexistent", 0, nil)
@@ -610,7 +610,7 @@ func TestUpdateHeartbeat_RunnerNotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestUpdateAffinity_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r := makeRunner("runner-aff", "host-aff")
@@ -632,7 +632,7 @@ func TestUpdateAffinity_Success(t *testing.T) {
 }
 
 func TestUpdateAffinity_EmptyList(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r := makeRunner("runner-aff2", "host-aff2")
@@ -656,7 +656,7 @@ func TestUpdateAffinity_EmptyList(t *testing.T) {
 }
 
 func TestUpdateAffinity_RunnerNotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	err := s.UpdateAffinity(ctx, "nonexistent", []string{"feat-a"})
@@ -670,7 +670,7 @@ func TestUpdateAffinity_RunnerNotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSetRunnerStatus_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r := makeRunner("runner-st", "host-st")
@@ -692,7 +692,7 @@ func TestSetRunnerStatus_Success(t *testing.T) {
 }
 
 func TestSetRunnerStatus_RunnerNotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	err := s.SetRunnerStatus(ctx, "nonexistent", "offline")
@@ -706,7 +706,7 @@ func TestSetRunnerStatus_RunnerNotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestExpireStaleRunners_MarksStale(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	now := time.Now().UnixMilli()
@@ -756,7 +756,7 @@ func TestExpireStaleRunners_MarksStale(t *testing.T) {
 }
 
 func TestExpireStaleRunners_NoneExpired(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	r := makeRunner("runner-fresh", "host-fresh")

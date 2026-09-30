@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/attentionstore"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -21,9 +21,11 @@ type attentionEventIngester interface {
 // AttentionService owns the durable, per-user attention inbox: creation with
 // dedup, revision-safe state transitions, listing, and counts. It emits
 // attention.created / attention.updated so delivery providers, webhooks, and
-// the PWA can react. SQL is the source of truth; events only announce change.
+// the PWA can react. The inbox lives in a self-contained SQLite datastore
+// (attentionstore), NOT the main brain catalog: that catalog is frozen by a
+// reviewed provenance pin and the tenant/v31 successor schema is dormant.
 type AttentionService struct {
-	store  *storage.TenantStore
+	store  *attentionstore.Store
 	events attentionEventIngester
 	now    func() time.Time
 }
@@ -41,8 +43,8 @@ func WithAttentionClock(now func() time.Time) AttentionServiceOption {
 	return func(s *AttentionService) { s.now = now }
 }
 
-// NewAttentionService builds the service.
-func NewAttentionService(store *storage.TenantStore, opts ...AttentionServiceOption) *AttentionService {
+// NewAttentionService builds the service over a self-contained attention store.
+func NewAttentionService(store *attentionstore.Store, opts ...AttentionServiceOption) *AttentionService {
 	s := &AttentionService{store: store, now: time.Now}
 	for _, o := range opts {
 		o(s)
@@ -137,20 +139,6 @@ func (s *AttentionService) GetAttention(ctx context.Context, recipient, id strin
 // AttentionCounts returns the bell-badge summary for a recipient.
 func (s *AttentionService) AttentionCounts(ctx context.Context, recipient string) (types.AttentionCounts, error) {
 	return s.store.AttentionCounts(ctx, recipient)
-}
-
-// SavePushSubscription registers or refreshes a recipient's browser Web Push
-// endpoint so closed-tab notifications can be delivered.
-func (s *AttentionService) SavePushSubscription(ctx context.Context, sub types.PushSubscription) error {
-	if sub.ID == "" {
-		sub.ID = newAttentionID()
-	}
-	return s.store.UpsertPushSubscription(ctx, sub)
-}
-
-// DeletePushSubscription removes a recipient's device by endpoint.
-func (s *AttentionService) DeletePushSubscription(ctx context.Context, recipient, endpoint string) error {
-	return s.store.DeletePushSubscription(ctx, recipient, endpoint)
 }
 
 func (s *AttentionService) findByDedup(ctx context.Context, recipient, dedupKey string) (*types.Attention, error) {

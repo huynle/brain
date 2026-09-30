@@ -10,7 +10,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestRecordAccess_FirstAccess(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	err := s.RecordAccess(ctx, "projects/test/note.md")
@@ -38,7 +38,7 @@ func TestRecordAccess_FirstAccess(t *testing.T) {
 }
 
 func TestRecordAccess_Increment(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	path := "projects/test/note.md"
@@ -65,7 +65,7 @@ func TestRecordAccess_Increment(t *testing.T) {
 }
 
 func TestRecordAccess_MultiplePaths(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	pathA := "projects/test/a.md"
@@ -104,7 +104,7 @@ func TestRecordAccess_MultiplePaths(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetAccessStats_NotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	meta, err := s.GetAccessStats(ctx, "nonexistent/path.md")
@@ -121,7 +121,7 @@ func TestGetAccessStats_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSetVerified_FirstTime(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	path := "projects/test/note.md"
@@ -143,7 +143,7 @@ func TestSetVerified_FirstTime(t *testing.T) {
 }
 
 func TestSetVerified_UpdateExisting(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	path := "projects/test/note.md"
@@ -179,7 +179,7 @@ func TestSetVerified_UpdateExisting(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetStaleEntries_FindsUnverified(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert a note that has never been verified.
@@ -201,7 +201,7 @@ func TestGetStaleEntries_FindsUnverified(t *testing.T) {
 }
 
 func TestGetStaleEntries_FindsOldVerified(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert a note.
@@ -232,7 +232,7 @@ func TestGetStaleEntries_FindsOldVerified(t *testing.T) {
 }
 
 func TestGetStaleEntries_ExcludesRecentlyVerified(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert a note.
@@ -256,7 +256,7 @@ func TestGetStaleEntries_ExcludesRecentlyVerified(t *testing.T) {
 }
 
 func TestGetStaleEntries_TypeFilter(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert two notes with different types, both unverified.
@@ -290,7 +290,7 @@ func TestGetStaleEntries_TypeFilter(t *testing.T) {
 }
 
 func TestGetStaleEntries_Limit(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert 3 unverified notes.
@@ -312,7 +312,7 @@ func TestGetStaleEntries_Limit(t *testing.T) {
 }
 
 func TestGetStaleEntries_DefaultLimit(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// With nil options, default limit should be 50.

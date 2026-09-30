@@ -61,8 +61,8 @@ func TestTaskLookupsMissingDirectoryOnly(t *testing.T) {
 
 func TestInjectGateDependencyChildENOENTFailsClosed(t *testing.T) {
 	ctx := context.Background()
-	svc, store, root := newTestBrainService(t)
-	roots, err := tenantfs.New(store, root)
+	svc, store, root, db := newTestBrainServiceWithDB(t)
+	roots, err := tenantfs.New(storagetest.RegistryWithDB(t, db), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,12 +151,11 @@ func (r *transientRootsRepository) ListTenantRoots(ctx context.Context) ([]tenan
 func TestServicePropagatesTransientPolicyFailures(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	store, err := storagetest.New(filepath.Join(t.TempDir(), "brain.db"))
+	store, registry, err := storagetest.NewWithRegistry(t, filepath.Join(t.TempDir(), "brain.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
-	repo := &transientRootsRepository{Repository: store}
+	repo := &transientRootsRepository{Repository: registry}
 	r, err := tenantfs.New(repo, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -199,12 +198,11 @@ func TestServicePropagatesTransientPolicyFailures(t *testing.T) {
 func TestDurableMetadataPolicyFailureDoesNotFallBackToDatabase(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	store, err := storagetest.New(filepath.Join(t.TempDir(), "brain.db"))
+	store, registry, err := storagetest.NewWithRegistry(t, filepath.Join(t.TempDir(), "brain.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
-	repo := &transientRootsRepository{Repository: store}
+	repo := &transientRootsRepository{Repository: registry}
 	roots, err := tenantfs.New(repo, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -253,8 +251,8 @@ func TestDurableMetadataPolicyFailureDoesNotFallBackToDatabase(t *testing.T) {
 
 func TestDurableMetadataReindexFailureDoesNotFallBackToDatabase(t *testing.T) {
 	ctx := context.Background()
-	svc, store, dir := newTestBrainService(t)
-	repo := &transientRootsRepository{Repository: store}
+	svc, store, dir, db := newTestBrainServiceWithDB(t)
+	repo := &transientRootsRepository{Repository: storagetest.RegistryWithDB(t, db)}
 	roots, err := tenantfs.New(repo, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -316,12 +314,11 @@ func TestDurableMetadataReindexFailureDoesNotFallBackToDatabase(t *testing.T) {
 func TestTenantPolicyService(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	store, err := storagetest.New(filepath.Join(t.TempDir(), "brain.db"))
+	store, registry, err := storagetest.NewWithRegistry(t, filepath.Join(t.TempDir(), "brain.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
-	r, err := tenantfs.New(store, dir)
+	r, err := tenantfs.New(registry, dir)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,6 +15,7 @@ import { SessionFull } from "./SessionFull";
 import { EntriesBrowser } from "./EntriesBrowser";
 import { RemindersWorkspace } from "./RemindersWorkspace";
 import { AttentionWorkspace } from "./AttentionWorkspace";
+import { TimelinePage } from "./TimelinePage";
 import { SelectionBar } from "../common/SelectionBar";
 
 export function Workspace(): JSX.Element {
@@ -35,6 +36,8 @@ export function Workspace(): JSX.Element {
     inner = <RemindersWorkspace />;
   } else if (view === "attention") {
     inner = <AttentionWorkspace />;
+  } else if (view === "timeline") {
+    inner = <TimelinePage />;
   } else {
     inner = <OverviewGrid />;
   }

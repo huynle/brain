@@ -125,6 +125,12 @@ export function CommandPalette(): JSX.Element | null {
         action: () => setView("attention"),
       },
       {
+        id: "view-timeline",
+        label: "Open Timeline — cross-project activity chronology",
+        hint: "⌘6",
+        action: () => setView("timeline"),
+      },
+      {
         id: "toggle-sidebar",
         label: "Toggle sidebar",
         action: toggleSidebar,

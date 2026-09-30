@@ -20,6 +20,7 @@ import (
 
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/tenant"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -363,7 +364,11 @@ func assertPersistedSkippedDerivedText(t *testing.T, dbPath, attachmentID, wantE
 		t.Fatalf("storage.New(%q) failed: %v", dbPath, err)
 	}
 	defer store.Close()
-	derived, err := store.GetAttachmentDerived(context.Background(), rowID, "text")
+	local, err := store.ForTenant(tenant.Local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived, err := local.GetAttachmentDerived(context.Background(), rowID, "text")
 	if err != nil {
 		t.Fatalf("GetAttachmentDerived failed: %v", err)
 	}

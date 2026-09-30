@@ -109,6 +109,10 @@ export function useGlobalKeyboard(): void {
           e.preventDefault();
           useWorkspace.getState().setView("attention");
           break;
+        case "6":
+          e.preventDefault();
+          useWorkspace.getState().setView("timeline");
+          break;
         // The portable close binding. Shift is checked EXPLICITLY: this
         // switch only gates on meta-or-ctrl, so a bare `case "x"` would
         // also swallow ⌘X (cut).

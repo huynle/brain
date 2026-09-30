@@ -27,23 +27,30 @@ import (
 // newTestTaskService creates a TaskServiceImpl with an in-memory DB and temp brainDir.
 func newTestTaskService(t *testing.T) (*TaskServiceImpl, *storage.TenantStore, string) {
 	t.Helper()
+	svc, store, dir, _ := newTestTaskServiceWithDB(t)
+	return svc, store, dir
+}
+
+// newTestTaskServiceWithDB owns a fresh connection, never an extracted handle.
+func newTestTaskServiceWithDB(t *testing.T) (*TaskServiceImpl, *storage.TenantStore, string, *sql.DB) {
+	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
+	t.Cleanup(func() { db.Close() })
 
 	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
 
 	brainDir := t.TempDir()
 	cfg := &config.Config{BrainDir: brainDir}
 
 	svc := NewTaskService(cfg, store, indexer.NewIndexer(brainDir, store))
-	return svc, store, brainDir
+	return svc, store, brainDir, db
 }
 
 // insertTaskNote inserts a task NoteRow into the storage layer.
@@ -2430,7 +2437,7 @@ func newTestTaskServiceWithDefaults(t *testing.T, defaults config.TaskDefaultsCo
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { db.Close() })
 
 	brainDir := t.TempDir()
 	cfg := &config.Config{
@@ -3178,15 +3185,10 @@ func TestStartClaimCleanup_ExpiresStale(t *testing.T) {
 	svc, store, _ := newTestTaskService(t)
 	ctx := context.Background()
 
-	// Seed two expired claims directly into storage with past expiry.
-	db := store.DB()
-	pastMs := time.Now().Add(-5 * time.Minute).UnixMilli()
+	// Seed two expired claims with a past expiry.
 	for _, taskID := range []string{"task1", "task2"} {
-		_, err := db.Exec(
-			"INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at) VALUES (?, ?, ?, ?, ?)",
-			"proj", taskID, "dead-runner", pastMs, pastMs,
-		)
-		if err != nil {
+		ok, _, err := store.ClaimTask(ctx, "proj", taskID, "dead-runner", -5*time.Minute)
+		if err != nil || !ok {
 			t.Fatalf("seed expired claim %s: %v", taskID, err)
 		}
 	}

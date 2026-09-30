@@ -1,0 +1,234 @@
+# j9amjg42 phase 1: archived source fixtures
+
+**Phase5 addendum:** this document retains the phase1/2 historical record below.
+Public single-mode admission now accepts genuine pinned main28/29/30 and initializes
+runtime30; private29/tenant31 remain refused. The resulting fresh runtime30 catalog
+matches the existing `main30-devices` pin byte-for-byte; no pin was loosened or
+replaced. Archived fixture generation still executes immutable Git source; pristine
+closed fixture bytes are cached per revision within a test process and copied for
+each independent fixture. Single-mode sync initialization retains main's sequence
+consumption; dormant migration never reseeds existing history. See
+[phase5 evidence](../../../docs/p4-phase5-integration.md).
+
+The executable fixture is `schema_provenance_test.go`, not the earlier synthetic
+main-additions fixture and not target `InitSchema` with appended DDL. It reads
+immutable Git objects with `git show`, retains the complete archived `schema.go`,
+and extracts ancillary constants and `initEntrySync` by Go AST source offsets.
+Only the package/import harness changes. The archived initializer executes against
+a new temporary SQLite file using this repository's pinned SQLite driver. No
+server, production database, checkout switch, network download or main write is
+used. Missing Git history fails the test; there is no mutable-source fallback.
+
+| Profile | Archived revision | Catalog objects | Exact catalog SHA-256 |
+|---|---|---:|---|
+| main28 | c0b28634355a91b24ab9e9415978f12866d3b5cd (44f963bb parent) | 129 | cb702fa33fbe1231a6c1347384aaeee874ebdf35aa308c068dcf5923e942d2c3 |
+| main29 | 44f963bbb0c5102390a06f6548088eda6d0f9832 | 136 | 269268c4e9ed0cc16a05a5ce9c9e2b23cd86d63372d1aec48e6c7af8c9888a23 |
+| main30-pre-sync | 3d2baaf450b1b93f981f6e03eb3ab07766237c21 | 146 | d43f48233533d3476d92ffeec25b1f874cb91dc55e01ee7d09e81a7880a17776 |
+| main30-initial-sync | d21ba2d948738bed6456c66f4453fc96a593d1b4 | 154 | 72fc3207492e15819c48b58df76f4faf79eefd7f1b035f007140eee95227941d |
+| main30-devices | 7132bf0ce97cb961b3d233c915c1a99ef63708c2 | 156 | 2104f3eac47abaa1b5cc8e35e7265e7ca7b7856cd0e1335df03d33f01bb65a66 |
+| main30-devices (final source check) | cd22b4bdc3b5229621169fe5b214d7ffd12a6015 | 156 | same as above |
+
+Hash input is JSON `[][4]string`: `(type,name,tbl_name,coalesce(sql,''))` for
+**every** `sqlite_schema` row ordered by type/name, including implicit indexes,
+FTS shadows and triggers. SQL bodies are byte-exact. Root pages, application rows
+and sequence values are excluded from the fingerprint, not from no-mutation
+snapshots. A profile describes a catalog lineage, not cryptographic proof of which
+binary created a database. Source version history must be nonempty positive
+integers <=30 with the profile's maximum version; historical rows need not be
+contiguous because archived bootstrap records only its current version.
+
+Private29 uses the unchanged exact relational/search/mapping and control
+validators, not main29's stamp. The existing populated private fixture is pinned
+independently to the unchanged 014d3d1d catalog: SHA-256
+`fb03efc669e87027ba2e3607d640ce3fe763d08336a7434d0da35acdaca8848e`, over newline-joined
+tab-separated catalog columns with its one random internal FTS ID replaced by
+`PINNED` (including trigger names and mapping literals). This pin prevents the
+fixture and mutable private target DDL silently drifting together. It does not
+replace the existing dynamic mapping validator.
+
+## Evidence surfaces
+
+- `TestSchemaProvenanceActualMain`: six archived fresh bootstraps, including the
+  final pinned main, with exact profile, integrity/FK and full catalog/row snapshots.
+- `TestSchemaProvenanceHistoricalUpgrades`: actual sequential archived startup
+  from 28 through 29 and all three 30 generations, including same-version startup.
+  Seeds all eleven new tables, uncertain bulk attempts/fingerprints, committed and
+  parent-linked reservations, checkpoint history, outcome-unknown supervisor
+  receipts, a conflict receipt, device draft, deletion tombstone absent from notes,
+  fixed epoch and a sequence watermark above the live maximum.
+- Main sync startup attempts `INSERT OR IGNORE ... SELECT path FROM notes` even
+  for already-known live paths. In this one-live-note fixture that consumes one
+  AUTOINCREMENT value per startup: 900 -> 901 -> 902. The classifier consumes none.
+  Future migration must preserve the actual input high-water mark, not reconstruct
+  it from live notes or `max(seq)`.
+- `TestSchemaProvenanceRefusesUnknown`, `VersionCollision`, `Private29`: reject
+  table/index/trigger/view/column mutations, partial hybrids and numeric relabeling.
+- `TestSchemaProvenanceInvalidContext`: nil/cancelled inputs and TEMP shadow denial.
+- `TestSchemaProvenanceDoesNotAdmitRuntime`: actual main29/30 still refused by
+  `New`, `NewWithDB`, `InitSchema` and the old dormant private migration.
+- Positive/refusal classification runs with SQLite `query_only=ON`; full snapshots
+  include every table, FTS shadows, catalog/root pages and sequence rows. The caller
+  can still query and roll back its transaction afterward.
+
+## Deliberately limited recognition and phase-2 contract recommendation
+
+No runtime call site is added. Runtime28, private29, receiver routing, operational
+multi-mode refusal and all ownership/method/package manifests remain unchanged.
+This adds no table, DDL allowance, raw accessor or public package function.
+
+Main recognition covers the exact fresh catalogs and the tested upgrade chain
+originating at that genuine main28 baseline. Older ALTER-derived catalogs, optional
+ANALYZE statistics, other SQLite engines/catalog renderings and operator extensions
+are **not** silently admitted. Private29 retains its existing reviewed validators
+and their existing optional engine-statistics policy. Neither path certifies row
+ownership, data integrity, root/CAS bytes, credentials or migration readiness.
+
+Phase 2 should select a distinct reviewed successor (not reused 29 or main30),
+with profile-aware dormant routing only. Under one fenced connection/transaction,
+classify before staging/TEMP snapshots; dispatch explicitly by profile, never
+restamp a source as 28 to reuse the old migration. Keep seven already-keyed ledgers
+and sync history intact. Classification is not permission to backfill a nonlocal
+ledger row as local. Require explicit ownership validation and complete preservation
+of payloads, revision history, roots, permanent claim, tombstones, epoch and sequence
+high-water marks. Stage relational/FTS/sync/claim changes together and publish the
+successor last in that same transaction only after phases 3/4 implement the full
+contract. Unknown catalogs stay untouched; committed successor repeat validates,
+never repairs. Ordinary startup/public activation remains unavailable until its
+separate reviewed integration and acceptance gates.
+
+No successor migration, scoped new receivers, main feature integration, real-copy
+recovery, load acceptance or independent external review is claimed by phase 1.
+
+## j9amjg42 phase 2: dormant tenant31 control/provenance contract
+
+Implemented on top of `8bf12ce8`, without commits or public activation. **Runtime
+remains 28; the existing private migration still targets private29.** Main28 and
+runtime28 have identical catalogs and remain supported, as explicitly confirmed
+by the user. Main29, all main30 profiles, private29 and successor31 remain refused
+by public constructors. No receiver, raw accessor, forwarding method, package
+export or boundary allowance is added. Phases 3–6 are not implemented here.
+
+### Source identity, target format, and runtime admission are separate
+
+`selectSuccessorSchema(ctx, tx)` calls the exact phase-1 classifier and returns a
+private plan with these **source** descriptors and a separate **target** descriptor
+`{family: "tenant", version: 31}`:
+
+| Source profile | Source family | Source version |
+|---|---|---:|
+| main28 | main | 28 |
+| main29 | main | 29 |
+| main30-pre-sync | main | 30 |
+| main30-initial-sync | main | 30 |
+| main30-devices | main | 30 |
+| private29 | private-tenant | 29 |
+
+The two version-29 sources cannot select the same family by number. Unknown,
+partial, additive and relabelled catalogs fail classification; no migration or
+staging is called. All inspection stays in the caller's transaction, before any
+TEMP snapshots, without writes, PRAGMAs, commit or rollback. The caller must fence
+schema writers and retain that same transaction before acting on a plan.
+
+These are planning descriptors, not an authorization capability or permission to
+publish. There is deliberately **no successful successor31 selection/reopen path**
+yet: the source classifier refuses 31, even if a plausible provenance record is
+present. Existing private29 catalog validation and receiver routing are unchanged.
+
+### Exact control DDL and record validation
+
+`successorControlDefinitions()` in `schema_successor.go` is an exact, dormant
+**control subset**, not a complete target-schema manifest:
+
+- Preserve `schema_version`'s existing exact definition and all historical rows,
+  including `applied_at`. Future publication appends 31; it does not replace or
+  relabel the source version.
+- Add `schema_provenance`, a STRICT singleton table with `singleton=1`, non-null
+  `source_profile`, `source_family`, `source_version`, `target_family` and
+  `target_version`. CHECK constraints permit only the six paired source profiles
+  above and target `tenant/31`.
+- Three exact guards (`schema_provenance_no_update`, `_no_delete`, `_no_replace`)
+  refuse UPDATE, DELETE, and any second INSERT, including REPLACE and UPSERT.
+  These are ordinary SQL guards, not security against arbitrary schema writers.
+- The entire `schema_provenance*` namespace is reserved for this contract.
+
+`readSuccessorProvenanceRecord(ctx, tx)` checks byte-exact control SQL, object
+types and parent tables; missing definitions, unknown attached indexes/triggers
+and extra reserved-namespace objects are refused. It requires exactly one record,
+independently validates its field pairing (even if CHECK enforcement was bypassed),
+and checks positive integer version history: the greatest pre-publication version
+must equal the recorded source version, and 31 must be present. Intermediate
+history need not be contiguous, matching genuine archived bootstrap behavior.
+TEMP objects and nil/cancelled context/transaction inputs are refused.
+
+**A valid record is not a valid database.** This helper does not audit objects
+outside its control subset, verify source data preservation, or certify the
+eleven new tables, FTS, ownership, roots, CAS, permanent claim, integrity or runtime
+readiness. A profile is a reviewed catalog lineage label, not cryptographic proof
+of the binary or migration that created the database. Tests deliberately use
+**control-only** fixtures for this helper and assert that successor selection and
+public startup still refuse them; no complete-successor fixture is fabricated.
+
+### Narrow, safe public refusal integration
+
+`checkSchemaCompatibility` now rejects any case-insensitive
+`schema_provenance*` object name in the main or TEMP catalog before initialization
+or constructor PRAGMAs. This includes unknown/partial artifacts with no version
+table or a lowered 28 stamp. `New`'s existing read-only preflight applies the same
+guard before opening its WAL-configured pool. It is not a concurrent-upgrade lock;
+the existing schema-writer fence and caller-DSN limitations still apply.
+
+This is **not a new full-catalog admission gate for legacy startup**. Replacing
+that gate with the exact source pins would reject supported historical
+ALTER-derived initialization paths outside the classifier's reviewed fixtures.
+Broad unknown-catalog refusal is enforced in dormant successor selection;
+public startup gains only the safe reserved-namespace refusal and retains existing
+newer-version refusal. Arbitrary legacy extensions outside that namespace are not
+newly certified or newly comprehensively rejected by phase 2.
+
+### Required composition steps — no publication until all are implemented
+
+1. Phase 3 supplies the seven tenant-keyed ledgers and scoped receivers:
+   `bulk_jobs`, `bulk_job_items`, `execution_budgets`, `budget_reservations`,
+   `supervisor_checkpoints`, `supervisor_checkpoint_versions`,
+   `supervisor_operations`. Preserve existing owners, payloads, attempts,
+   fingerprints, revisions/history, reservation parents and uncertain outcomes;
+   never blindly backfill an already-owned foreign row as local or replay it.
+2. Phase 4 reserves one fenced connection/outer transaction and classifies the
+   source **before staging or TEMP snapshots**. Explicitly dispatch by source
+   profile/family, not `max(version)` alone. Do not call the old migration owner
+   on main29/30, or change any version to 28/31 to reuse a validator or staging
+   helper. Reusable relational/FTS primitives need explicit family-aware inputs
+   and separately validated source manifests, while private29 semantics stay fixed.
+3. Snapshot all authoritative/control/workload data and sequences. Compose all
+   relational/FTS changes, unchanged roots/CAS and permanent operator-claim
+   preservation, the seven ledgers, and the four sync tables (`entry_sync_devices`,
+   `entry_sync_identity`, `entry_sync_changes`, `entry_sync_operations`) with exact
+   triggers in that transaction. Preserve tombstones absent from notes, receipts,
+   drafts, epoch and the actual sequence high-water mark—not `max(seq)` or a rebuild
+   from live notes. Earlier profiles lacking these tables need explicit empty/new
+   initialization rules rather than pretending they supplied sync history.
+4. Implement a **complete** successor catalog validator with all eleven tables,
+   exact keys/FKs/indexes/triggers, tenant FTS mapping/content, ownership, integrity,
+   root/CAS validation and exact before/after multiset/sequence/claim comparisons.
+   Keep non-schema readiness checks separate from mere source classification.
+5. After full validation, remove snapshots, write the immutable provenance record
+   from the classified source, append version31 **last**, validate final metadata,
+   and commit once. Creating these control objects alone must never commit. Inject
+   failures at all boundaries, restore FK enforcement after commit/rollback, and
+   prove complete rollback and postcommit reopen. Reopen must compose this record
+   checker with the full validator and file checks, never repair or replay.
+6. Phase 5 separately integrates newer-main features and matching receiver-family
+   selection. Keep public startup refused until the complete reviewed integration
+   exists; do not remove the namespace guard just because the dormant publisher
+   passes tests. Phase 6 closes manifests/full review; neither SQL readiness nor
+   this record closes physical/auth, production recovery or load acceptance gates.
+
+### Evidence scope
+
+`schema_successor_test.go` covers every archived source profile, private29 family
+distinction, exact control DDL, repeated read-only record validation, immutable
+guards, malformed histories/fields/control catalogs, reserved-namespace additions,
+unknown source catalogs, cancellation/TEMP denial, control-only admission denial,
+and public no-mutation refusal across InitSchema/migrateSchema/NewWithDB/New.
+The existing provenance pin, legacy compatibility and private29 migration/receiver
+suites remain unchanged and run as part of the storage suite.

@@ -34,22 +34,22 @@ var (
 
 // Config holds all Brain API configuration.
 type Config struct {
-	BrainDir        string
-	Port            int
-	Host            string
-	EnableAuth      bool
-	CORSOrigin      string
-	LogLevel        string
-	OAuthPIN        string // Optional PIN for consent page protection
-	JWTSecret       string // Optional HMAC secret for HS256 JWT bearer tokens
-	TaskDefaults    TaskDefaultsConfig
-	FeatureCheckout FeatureCheckoutConfig
-	FeatureDelivery FeatureDeliveryConfig
-	Attention       AttentionConfig
-	Embedding       EmbeddingConfig
-	Attachments     AttachmentConfig
-	Tenancy         TenancyConfig
-	loadErr         error
+	PasswordSessionTTLDays int
+	BrainDir               string
+	Port                   int
+	Host                   string
+	EnableAuth             bool
+	CORSOrigin             string
+	LogLevel               string
+	OAuthPIN               string // Optional PIN for consent page protection
+	JWTSecret              string // Optional HMAC secret for HS256 JWT bearer tokens
+	TaskDefaults           TaskDefaultsConfig
+	FeatureCheckout        FeatureCheckoutConfig
+	FeatureDelivery        FeatureDeliveryConfig
+	Embedding              EmbeddingConfig
+	Attachments            AttachmentConfig
+	Tenancy                TenancyConfig
+	loadErr                error
 
 	AttachmentExtraction AttachmentExtractionConfig
 	Assistant            AssistantConfig
@@ -80,14 +80,15 @@ func Load() Config {
 	}
 
 	cfg := Config{
-		BrainDir:   brainDir,
-		Port:       3333,
-		Host:       "localhost",
-		EnableAuth: false,
-		CORSOrigin: "", // Same-origin only; cross-origin access is opt-in.
-		LogLevel:   "info",
-		OAuthPIN:   "",
-		JWTSecret:  "",
+		PasswordSessionTTLDays: 30,
+		BrainDir:               brainDir,
+		Port:                   3333,
+		Host:                   "localhost",
+		EnableAuth:             false,
+		CORSOrigin:             "", // Same-origin only; cross-origin access is opt-in.
+		LogLevel:               "info",
+		OAuthPIN:               "",
+		JWTSecret:              "",
 	}
 
 	// Layer 2: Config file overrides
@@ -97,6 +98,7 @@ func Load() Config {
 	}
 	if err == nil {
 		s := ucfg.Server
+		cfg.PasswordSessionTTLDays = s.PasswordSessionTTLDays
 		if s.BrainDir != "" {
 			cfg.BrainDir = s.BrainDir
 		}
@@ -125,7 +127,6 @@ func Load() Config {
 		cfg.TaskDefaults = s.TaskDefaults
 		cfg.FeatureCheckout = s.FeatureCheckout
 		cfg.FeatureDelivery = s.FeatureDelivery
-		cfg.Attention = s.Attention
 		cfg.Embedding = s.Embedding
 		cfg.Attachments = s.Attachments
 		cfg.AttachmentExtraction = s.AttachmentExtraction
@@ -172,6 +173,11 @@ func Load() Config {
 	if v := os.Getenv("BRAIN_JWT_SECRET"); v != "" {
 		cfg.JWTSecret = v
 	}
+	if v := os.Getenv("BRAIN_PASSWORD_SESSION_TTL_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= MaxPasswordSessionTTLDays {
+			cfg.PasswordSessionTTLDays = n
+		}
+	}
 	if v := os.Getenv("BRAIN_FEATURE_CHECKOUT_ENABLED"); v != "" {
 		lower := strings.ToLower(v)
 		cfg.FeatureCheckout.Enabled = lower == "true" || lower == "1" || lower == "yes"
@@ -179,15 +185,6 @@ func Load() Config {
 	if v := os.Getenv("BRAIN_FEATURE_DELIVERY_ENABLED"); v != "" {
 		lower := strings.ToLower(v)
 		cfg.FeatureDelivery.Enabled = lower == "true" || lower == "1" || lower == "yes"
-	}
-	if v := os.Getenv("BRAIN_VAPID_PUBLIC_KEY"); v != "" {
-		cfg.Attention.VAPIDPublicKey = v
-	}
-	if v := os.Getenv("BRAIN_VAPID_PRIVATE_KEY"); v != "" {
-		cfg.Attention.VAPIDPrivateKey = v
-	}
-	if v := os.Getenv("BRAIN_ATTENTION_SUBSCRIBER"); v != "" {
-		cfg.Attention.Subscriber = v
 	}
 	// Rate limiting env var overrides
 	if v := os.Getenv("RATE_LIMIT_PER_MINUTE"); v != "" {

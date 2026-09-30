@@ -3,12 +3,15 @@ package api
 import (
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/logbuffer"
+	"github.com/huynle/brain-api/internal/phonepush"
 	"github.com/huynle/brain-api/internal/realtime"
 	"sync"
+	"time"
 )
 
 // Handler holds service dependencies for HTTP handlers.
 type Handler struct {
+	push                  *phonepush.PhonePush
 	entrySyncMu           sync.Mutex
 	executionBudgets      ExecutionBudgetStore
 	supervisorCheckpoints SupervisorCheckpointStore
@@ -27,7 +30,6 @@ type Handler struct {
 	goalService           GoalService
 	reminders             ReminderService
 	attention             AttentionService
-	attentionVAPIDPublic  string
 	automationRun         AutomationRunService
 	assistant             *AssistantService
 	placement             ProjectPlacementService
@@ -43,6 +45,7 @@ type Handler struct {
 	taskDefaults          config.TaskDefaultsConfig
 	credentials           CredentialVerifier
 	passwordTokens        PasswordTokenStore
+	passwordRefreshTTL    time.Duration
 	loginThrottle         *loginThrottle
 }
 
@@ -51,7 +54,7 @@ type HandlerOption func(*Handler)
 
 // NewHandler creates a Handler with the given BrainService and optional services.
 func NewHandler(brain BrainService, opts ...HandlerOption) *Handler {
-	h := &Handler{brain: brain, loginThrottle: newLoginThrottle()}
+	h := &Handler{brain: brain, passwordRefreshTTL: pwRefreshTokenTTL, loginThrottle: newLoginThrottle()}
 	for _, opt := range opts {
 		opt(h)
 	}
@@ -69,6 +72,14 @@ func WithCredentialVerifier(v CredentialVerifier) HandlerOption {
 func WithPasswordTokenStore(s PasswordTokenStore) HandlerOption {
 	return func(h *Handler) {
 		h.passwordTokens = s
+	}
+}
+
+// WithPasswordRefreshTokenTTL configures password refresh-token lifetime.
+// Zero selects explicitly non-expiring refresh tokens.
+func WithPasswordRefreshTokenTTL(ttl time.Duration) HandlerOption {
+	return func(h *Handler) {
+		h.passwordRefreshTTL = ttl
 	}
 }
 
@@ -150,14 +161,6 @@ func WithReminderService(rs ReminderService) HandlerOption {
 func WithAttentionService(as AttentionService) HandlerOption {
 	return func(h *Handler) {
 		h.attention = as
-	}
-}
-
-// WithAttentionVAPIDPublicKey sets the public VAPID key the browser needs to
-// create a Web Push subscription. Empty means Web Push is not offered.
-func WithAttentionVAPIDPublicKey(key string) HandlerOption {
-	return func(h *Handler) {
-		h.attentionVAPIDPublic = key
 	}
 }
 

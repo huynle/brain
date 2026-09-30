@@ -96,6 +96,9 @@ func diffRestartFields(prev, next *config.UnifiedConfig) []string {
 	if prev.Server.EnableAuth != next.Server.EnableAuth {
 		out = append(out, "server.enable_auth")
 	}
+	if prev.Server.PasswordSessionTTLDays != next.Server.PasswordSessionTTLDays {
+		out = append(out, "server.password_session_ttl_days")
+	}
 	if prev.Server.JWTSecret != next.Server.JWTSecret {
 		out = append(out, "server.jwt_secret")
 	}

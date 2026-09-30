@@ -1,5 +1,6 @@
 package storage
 
+// Adapted from main cd22b4bd. Current value and history commit atomically.
 import (
 	"context"
 	"database/sql"
@@ -9,10 +10,8 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-const createSupervisorCheckpoints = `CREATE TABLE IF NOT EXISTS supervisor_checkpoints (tenant_id TEXT NOT NULL, project TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(tenant_id,project,id))`
-
 func (s *TenantStore) SupervisorCheckpoints(ctx context.Context, project, after string) ([]types.SupervisorCheckpoint, error) {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "supervisor")
 	if err != nil {
 		return nil, err
 	}
@@ -20,7 +19,7 @@ func (s *TenantStore) SupervisorCheckpoints(ctx context.Context, project, after 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []types.SupervisorCheckpoint{}
 	for rows.Next() {
 		var raw string
@@ -36,7 +35,7 @@ func (s *TenantStore) SupervisorCheckpoints(ctx context.Context, project, after 
 	return out, rows.Err()
 }
 func (s *TenantStore) SupervisorCheckpoint(ctx context.Context, project, id string) (*types.SupervisorCheckpoint, error) {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "supervisor")
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +52,7 @@ func (s *TenantStore) SupervisorCheckpoint(ctx context.Context, project, id stri
 	return &out, err
 }
 func (s *TenantStore) CompareSupervisorCheckpoint(ctx context.Context, expected int, value *types.SupervisorCheckpoint) (bool, error) {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "supervisor")
 	if err != nil {
 		return false, err
 	}
@@ -65,7 +64,7 @@ func (s *TenantStore) CompareSupervisorCheckpoint(ctx context.Context, expected 
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer func() { _ = tx.Rollback() }()
 	var result sql.Result
 	if expected == 0 {
 		result, err = tx.ExecContext(ctx, `INSERT INTO supervisor_checkpoints VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING`, scope, value.Project, value.ID, value.Revision, string(raw))
@@ -84,11 +83,8 @@ func (s *TenantStore) CompareSupervisorCheckpoint(ctx context.Context, expected 
 	}
 	return true, tx.Commit()
 }
-
-const createSupervisorCheckpointVersions = `CREATE TABLE IF NOT EXISTS supervisor_checkpoint_versions (tenant_id TEXT NOT NULL,project TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(tenant_id,project,id,revision))`
-
 func (s *TenantStore) SupervisorCheckpointVersions(ctx context.Context, project, id string) ([]types.SupervisorCheckpoint, error) {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "supervisor")
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +92,7 @@ func (s *TenantStore) SupervisorCheckpointVersions(ctx context.Context, project,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []types.SupervisorCheckpoint{}
 	for rows.Next() {
 		var raw string

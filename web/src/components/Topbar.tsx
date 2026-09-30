@@ -80,14 +80,16 @@ export function Topbar({
         )}{" "}
         {sidebarDockOpen ? "▸" : "◂"}
       </button>
-      <button
-        className="icon-btn"
-        title="Assistant"
-        aria-label="Assistant"
-        onClick={toggleAssistant}
-      >
-        Assistant {assistantOpen ? "▾" : "▸"}
-      </button>
+      {!mobile && (
+        <button
+          className="icon-btn"
+          title="Assistant"
+          aria-label="Assistant"
+          onClick={toggleAssistant}
+        >
+          Assistant {assistantOpen ? "▾" : "▸"}
+        </button>
+      )}
     </>
   );
   return (
@@ -140,6 +142,12 @@ export function Topbar({
           onClick={() => setView("attention")}
         >
           Attention
+        </button>
+        <button
+          className={view === "timeline" ? "active" : ""}
+          onClick={() => setView("timeline")}
+        >
+          Timeline
         </button>
       </div>
       <div className="search" onClick={() => setCommandOpen(true)}>

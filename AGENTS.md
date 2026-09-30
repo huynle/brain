@@ -8,6 +8,13 @@ Brain API is a REST service for AI agent memory and knowledge management, with a
 
 ## Key Commands
 
+**P4 integration contract:** see [phase5 source integration](docs/p4-phase5-integration.md).
+Public startup supports reviewed single-mode runtime30, not private29/tenant31 or
+multi mode. Ordinary tenant31 readiness checks bound-tenant rows/FTS/CAS only while
+retaining exact shared structural checks; dormant migration/reopen still verifies
+all tenants globally. Keep the tenant HTTP read-only allowlist sealed. Assistant
+jobs and phone push remain dedicated single-mode sidecars, not tenant DB factories.
+
 ```bash
 # Development
 just build           # Build all Go binaries

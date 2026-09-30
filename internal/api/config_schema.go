@@ -64,6 +64,7 @@ func ConfigSchema() []ConfigField {
 		{Path: "server.host", Kind: "string", Section: "server", Label: "Host", Help: "Bind address. 'localhost' or '0.0.0.0'.", RequiresRestart: true, Required: true},
 		{Path: "server.brain_dir", Kind: "path", Section: "server", Label: "Brain directory", Help: "Filesystem root for entries, attachments, and the SQLite database.", RequiresRestart: true, Required: true},
 		{Path: "server.enable_auth", Kind: "bool", Section: "server", Label: "Enable authentication", Help: "Require OAuth PKCE / JWT bearer tokens for API calls.", RequiresRestart: true},
+		{Path: "server.password_session_ttl_days", Kind: "int", Section: "server", Label: "Password session lifetime (days)", Help: "Sliding lifetime for password-login sessions. Set to 0 for Never. Requires a server restart; existing sessions adopt the value on their next refresh.", RequiresRestart: true},
 		{Path: "server.cors_origin", Kind: "string", Section: "server", Label: "CORS origin", Help: "Allow-list for cross-origin requests. '*' allows any origin."},
 		{Path: "server.log_level", Kind: "enum", Section: "server", Label: "Log level", Enum: []string{"debug", "info", "warn", "error"}, Help: "Minimum log level for API server."},
 		{Path: "server.oauth_pin", Kind: "secret", Section: "server", Label: "OAuth PIN", Help: "Optional PIN required on the consent page.", Secret: true},

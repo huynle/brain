@@ -31,12 +31,11 @@ func (r *failingRootsRepository) ListTenantRoots(ctx context.Context) ([]tenantf
 
 func TestTenantScanPropagatesRegistryFailure(t *testing.T) {
 	dir := t.TempDir()
-	store, err := storagetest.New(filepath.Join(t.TempDir(), "brain.db"))
+	_, repo, err := storagetest.NewWithRegistry(t, filepath.Join(t.TempDir(), "brain.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
-	r, err := tenantfs.New(store, dir)
+	r, err := tenantfs.New(repo, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +48,7 @@ func TestTenantScanPropagatesRegistryFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "projects/local.md"), []byte("local"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	failing, err := tenantfs.New(&failingRootsRepository{Repository: store}, dir)
+	failing, err := tenantfs.New(&failingRootsRepository{Repository: repo}, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,12 +60,11 @@ func TestTenantScanPropagatesRegistryFailure(t *testing.T) {
 
 func TestWatcherStartPropagatesRegistryFailure(t *testing.T) {
 	dir := t.TempDir()
-	store, err := storagetest.New(filepath.Join(t.TempDir(), "brain.db"))
+	store, repo, err := storagetest.NewWithRegistry(t, filepath.Join(t.TempDir(), "brain.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
-	r, err := tenantfs.New(store, dir)
+	r, err := tenantfs.New(repo, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +74,7 @@ func TestWatcherStartPropagatesRegistryFailure(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "projects"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	failing, err := tenantfs.New(&failingRootsRepository{Repository: store}, dir)
+	failing, err := tenantfs.New(&failingRootsRepository{Repository: repo}, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,8 +95,9 @@ func TestWatcherStartPropagatesRegistryFailure(t *testing.T) {
 
 func TestWatcherContentRootRescanPropagatesRegistryFailure(t *testing.T) {
 	dir := t.TempDir()
-	store := newTestStorage(t)
-	roots, err := tenantfs.New(store, dir)
+	store, db := newTestStorageWithDB(t)
+	repo := storagetest.RegistryWithDB(t, db)
+	roots, err := tenantfs.New(repo, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +111,7 @@ func TestWatcherContentRootRescanPropagatesRegistryFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Root admission succeeds, but the relevant content root's lookup fails.
-	failing, err := tenantfs.New(&failingRootsRepository{Repository: store}, dir)
+	failing, err := tenantfs.New(&failingRootsRepository{Repository: repo}, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,12 +130,11 @@ func TestWatcherContentRootRescanPropagatesRegistryFailure(t *testing.T) {
 func TestTenantPolicyScanAndWatcher(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	store, err := storagetest.New(filepath.Join(t.TempDir(), "brain.db"))
+	store, repo, err := storagetest.NewWithRegistry(t, filepath.Join(t.TempDir(), "brain.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
-	r, err := tenantfs.New(store, dir)
+	r, err := tenantfs.New(repo, dir)
 	if err != nil {
 		t.Fatal(err)
 	}

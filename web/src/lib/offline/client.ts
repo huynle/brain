@@ -1,3 +1,5 @@
+import { createUUID } from "../uuid";
+
 let unavailable = false;
 export const offlineStorageUnavailable = () => unavailable;
 let worker: Worker | undefined;
@@ -9,7 +11,7 @@ const waiting = new Map<
 export function cacheScope(): string {
   let scope = localStorage.getItem("brain.offline.scope");
   if (!scope) {
-    scope = crypto.randomUUID();
+    scope = createUUID();
     localStorage.setItem("brain.offline.scope", scope);
   }
   return scope;

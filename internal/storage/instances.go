@@ -34,18 +34,33 @@ const instanceColumns = `instance_id, runner_id, hostname, kind, project_id, tas
        feature_id, priority, title, workdir, port, pid, session_ids, status, executor, agent, model, started_at, last_seen`
 
 // UpsertInstance inserts or replaces an OpenCode instance record.
-func (s *StorageLayer) UpsertInstance(ctx context.Context, inst *InstanceRow) error {
+func (s *TenantStore) UpsertInstance(ctx context.Context, inst *InstanceRow) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	sessionsJSON, err := marshalSessionIDs(inst.SessionIDs)
 	if err != nil {
 		return fmt.Errorf("marshal session ids: %w", err)
 	}
 
+	columns, values, conflict := "", "", "instance_id"
+	args := []interface{}{}
+	if scope.owner != "" {
+		columns, values, conflict = "tenant_id,", "?,", "tenant_id,instance_id"
+		args = append(args, scope.owner)
+	}
+	args = append(args, inst.InstanceID, inst.RunnerID, inst.Hostname, inst.Kind, inst.ProjectID, inst.TaskID, inst.FeatureID, inst.Priority,
+		inst.Title, inst.Workdir, inst.Port, inst.PID, sessionsJSON, inst.Status, inst.Executor,
+		inst.Agent, inst.Model, inst.StartedAt, inst.LastSeen)
+	// The composite FK requires an existing same-tenant durable runner key.
+	// Instance reports must never manufacture reference ownership.
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO opencode_instances
-			(instance_id, runner_id, hostname, kind, project_id, task_id, feature_id, priority,
+			(`+columns+`instance_id, runner_id, hostname, kind, project_id, task_id, feature_id, priority,
 			 title, workdir, port, pid, session_ids, status, executor, agent, model, started_at, last_seen)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (instance_id) DO UPDATE SET
+		VALUES (`+values+`?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (`+conflict+`) DO UPDATE SET
 			runner_id   = excluded.runner_id,
 			hostname    = excluded.hostname,
 			kind        = excluded.kind,
@@ -64,9 +79,7 @@ func (s *StorageLayer) UpsertInstance(ctx context.Context, inst *InstanceRow) er
 			model       = excluded.model,
 			started_at  = excluded.started_at,
 			last_seen   = excluded.last_seen`,
-		inst.InstanceID, inst.RunnerID, inst.Hostname, inst.Kind, inst.ProjectID, inst.TaskID, inst.FeatureID, inst.Priority,
-		inst.Title, inst.Workdir, inst.Port, inst.PID, sessionsJSON, inst.Status, inst.Executor,
-		inst.Agent, inst.Model, inst.StartedAt, inst.LastSeen,
+		args...,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert instance: %w", err)
@@ -76,10 +89,15 @@ func (s *StorageLayer) UpsertInstance(ctx context.Context, inst *InstanceRow) er
 
 // DeleteInstance removes an instance by ID, scoped to a runner.
 // Returns true if a row was deleted.
-func (s *StorageLayer) DeleteInstance(ctx context.Context, runnerID, instanceID string) (bool, error) {
+func (s *TenantStore) DeleteInstance(ctx context.Context, runnerID, instanceID string) (bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, err
+	}
+	pred, args := scope.where("runner_id = ? AND instance_id = ?", runnerID, instanceID)
 	result, err := s.db.ExecContext(ctx,
-		"DELETE FROM opencode_instances WHERE runner_id = ? AND instance_id = ?",
-		runnerID, instanceID,
+		"DELETE FROM opencode_instances WHERE "+pred,
+		args...,
 	)
 	if err != nil {
 		return false, fmt.Errorf("delete instance: %w", err)
@@ -93,10 +111,15 @@ func (s *StorageLayer) DeleteInstance(ctx context.Context, runnerID, instanceID 
 
 // DeleteInstancesByRunner removes all instances reported by a runner.
 // Used by the lifecycle sweep when a runner goes offline or deregisters.
-func (s *StorageLayer) DeleteInstancesByRunner(ctx context.Context, runnerID string) (int64, error) {
+func (s *TenantStore) DeleteInstancesByRunner(ctx context.Context, runnerID string) (int64, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return 0, err
+	}
+	pred, args := scope.where("runner_id = ?", runnerID)
 	result, err := s.db.ExecContext(ctx,
-		"DELETE FROM opencode_instances WHERE runner_id = ?",
-		runnerID,
+		"DELETE FROM opencode_instances WHERE "+pred,
+		args...,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("delete instances by runner: %w", err)
@@ -109,10 +132,15 @@ func (s *StorageLayer) DeleteInstancesByRunner(ctx context.Context, runnerID str
 }
 
 // GetInstance returns an instance by ID, or nil if not found.
-func (s *StorageLayer) GetInstance(ctx context.Context, instanceID string) (*InstanceRow, error) {
+func (s *TenantStore) GetInstance(ctx context.Context, instanceID string) (*InstanceRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pred, args := scope.where("instance_id = ?", instanceID)
 	row := s.db.QueryRowContext(ctx,
-		"SELECT "+instanceColumns+" FROM opencode_instances WHERE instance_id = ?",
-		instanceID,
+		"SELECT "+instanceColumns+" FROM opencode_instances WHERE "+pred,
+		args...,
 	)
 	inst, err := scanInstance(row)
 	if err == sql.ErrNoRows {
@@ -126,10 +154,15 @@ func (s *StorageLayer) GetInstance(ctx context.Context, instanceID string) (*Ins
 
 // ListInstancesByRunner returns all instances reported by a runner,
 // newest first.
-func (s *StorageLayer) ListInstancesByRunner(ctx context.Context, runnerID string) ([]InstanceRow, error) {
+func (s *TenantStore) ListInstancesByRunner(ctx context.Context, runnerID string) ([]InstanceRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pred, args := scope.where("runner_id = ?", runnerID)
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT "+instanceColumns+" FROM opencode_instances WHERE runner_id = ? ORDER BY started_at DESC",
-		runnerID,
+		"SELECT "+instanceColumns+" FROM opencode_instances WHERE "+pred+" ORDER BY started_at DESC",
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list instances by runner: %w", err)
@@ -139,9 +172,14 @@ func (s *StorageLayer) ListInstancesByRunner(ctx context.Context, runnerID strin
 }
 
 // ListAllInstances returns every instance across all runners, newest first.
-func (s *StorageLayer) ListAllInstances(ctx context.Context) ([]InstanceRow, error) {
+func (s *TenantStore) ListAllInstances(ctx context.Context) ([]InstanceRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pred, args := scope.where("1=1")
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT "+instanceColumns+" FROM opencode_instances ORDER BY started_at DESC",
+		"SELECT "+instanceColumns+" FROM opencode_instances WHERE "+pred+" ORDER BY started_at DESC", args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list all instances: %w", err)
@@ -153,7 +191,11 @@ func (s *StorageLayer) ListAllInstances(ctx context.Context) ([]InstanceRow, err
 // ReplaceInstancesForRunner atomically replaces all instances for a runner
 // with the given set. Used by heartbeat reconciliation so server state
 // self-heals from missed upserts/deletes.
-func (s *StorageLayer) ReplaceInstancesForRunner(ctx context.Context, runnerID string, instances []InstanceRow) error {
+func (s *TenantStore) ReplaceInstancesForRunner(ctx context.Context, runnerID string, instances []InstanceRow) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin replace instances: %w", err)
@@ -161,9 +203,18 @@ func (s *StorageLayer) ReplaceInstancesForRunner(ctx context.Context, runnerID s
 	// Rolling back an already-committed tx returns sql.ErrTxDone; the
 	// commit result above is what callers act on.
 	defer func() { _ = tx.Rollback() }()
+	if scope.owner != "" {
+		// Validate even an empty replacement. Durable ownership is enough for
+		// reconciliation; it is not evidence of active enrollment.
+		var known int
+		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM tenant_runner_keys WHERE tenant_id=? AND runner_id=?`, scope.owner, runnerID).Scan(&known); err != nil {
+			return fmt.Errorf("replace instances runner reference: %w", err)
+		}
+	}
 
+	pred, args := scope.where("runner_id = ?", runnerID)
 	if _, err := tx.ExecContext(ctx,
-		"DELETE FROM opencode_instances WHERE runner_id = ?", runnerID); err != nil {
+		"DELETE FROM opencode_instances WHERE "+pred, args...); err != nil {
 		return fmt.Errorf("replace instances delete: %w", err)
 	}
 
@@ -173,14 +224,21 @@ func (s *StorageLayer) ReplaceInstancesForRunner(ctx context.Context, runnerID s
 		if err != nil {
 			return fmt.Errorf("marshal session ids: %w", err)
 		}
+		columns, values := "", ""
+		args := []interface{}{}
+		if scope.owner != "" {
+			columns, values = "tenant_id,", "?,"
+			args = append(args, scope.owner)
+		}
+		args = append(args, inst.InstanceID, runnerID, inst.Hostname, inst.Kind, inst.ProjectID, inst.TaskID, inst.FeatureID, inst.Priority,
+			inst.Title, inst.Workdir, inst.Port, inst.PID, sessionsJSON, inst.Status, inst.Executor,
+			inst.Agent, inst.Model, inst.StartedAt, inst.LastSeen)
 		if _, err := tx.ExecContext(ctx, `
 			INSERT OR REPLACE INTO opencode_instances
-				(instance_id, runner_id, hostname, kind, project_id, task_id, feature_id, priority,
+				(`+columns+`instance_id, runner_id, hostname, kind, project_id, task_id, feature_id, priority,
 				 title, workdir, port, pid, session_ids, status, executor, agent, model, started_at, last_seen)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			inst.InstanceID, runnerID, inst.Hostname, inst.Kind, inst.ProjectID, inst.TaskID, inst.FeatureID, inst.Priority,
-			inst.Title, inst.Workdir, inst.Port, inst.PID, sessionsJSON, inst.Status, inst.Executor,
-			inst.Agent, inst.Model, inst.StartedAt, inst.LastSeen,
+			VALUES (`+values+`?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			args...,
 		); err != nil {
 			return fmt.Errorf("replace instances insert: %w", err)
 		}

@@ -20,7 +20,11 @@ import (
 // safe direction for a switch a human flipped.
 
 // SetFeaturePaused turns the feature dial on or off for one feature.
-func (s *StorageLayer) SetFeaturePaused(ctx context.Context, projectID, featureID string, paused bool) error {
+func (s *TenantStore) SetFeaturePaused(ctx context.Context, projectID, featureID string, paused bool) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	if projectID == "" {
 		return fmt.Errorf("project id is required")
 	}
@@ -30,13 +34,21 @@ func (s *StorageLayer) SetFeaturePaused(ctx context.Context, projectID, featureI
 		return fmt.Errorf("feature id is required")
 	}
 	now := time.Now().UnixMilli()
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO feature_pause_state (project_id, feature_id, paused, updated_at)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT(project_id, feature_id) DO UPDATE SET
+	columns, values, conflict := "project_id, feature_id, paused, updated_at", "?, ?, ?, ?", "project_id, feature_id"
+	args := []interface{}{projectID, featureID, boolToInt(paused), now}
+	if scope.owner != "" {
+		columns += ", tenant_id"
+		values += ", ?"
+		conflict = "tenant_id, project_id, feature_id"
+		args = append(args, scope.owner)
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO feature_pause_state (`+columns+`)
+		VALUES (`+values+`)
+		ON CONFLICT(`+conflict+`) DO UPDATE SET
 		  paused = excluded.paused,
 		  updated_at = excluded.updated_at`,
-		projectID, featureID, boolToInt(paused), now)
+		args...)
 	if err != nil {
 		return fmt.Errorf("set feature pause state: %w", err)
 	}
@@ -53,9 +65,14 @@ type PausedFeature struct {
 // projects. Read whole rather than per-feature because the scheduler asks
 // about one task at a time and a query per task would be one query per
 // dispatch decision.
-func (s *StorageLayer) ListPausedFeatures(ctx context.Context) ([]PausedFeature, error) {
+func (s *TenantStore) ListPausedFeatures(ctx context.Context) ([]PausedFeature, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	where, args := scope.where("paused = 1")
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT project_id, feature_id FROM feature_pause_state WHERE paused = 1`)
+		SELECT project_id, feature_id FROM feature_pause_state WHERE `+where, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list paused features: %w", err)
 	}
@@ -73,14 +90,19 @@ func (s *StorageLayer) ListPausedFeatures(ctx context.Context) ([]PausedFeature,
 }
 
 // IsFeaturePaused reports whether one feature's dial is off.
-func (s *StorageLayer) IsFeaturePaused(ctx context.Context, projectID, featureID string) (bool, error) {
+func (s *TenantStore) IsFeaturePaused(ctx context.Context, projectID, featureID string) (bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, err
+	}
 	if projectID == "" || featureID == "" {
 		return false, nil
 	}
 	var value int
-	err := s.db.QueryRowContext(ctx,
-		"SELECT paused FROM feature_pause_state WHERE project_id = ? AND feature_id = ?",
-		projectID, featureID).Scan(&value)
+	where, args := scope.where("project_id = ? AND feature_id = ?", projectID, featureID)
+	err = s.db.QueryRowContext(ctx,
+		"SELECT paused FROM feature_pause_state WHERE "+where,
+		args...).Scan(&value)
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return false, nil

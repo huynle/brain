@@ -433,8 +433,6 @@ type AttentionService interface {
 	GetAttention(ctx context.Context, recipient, id string) (*types.Attention, error)
 	AttentionCounts(ctx context.Context, recipient string) (types.AttentionCounts, error)
 	SetAttentionState(ctx context.Context, recipient, id, state, snoozedUntil string) (*types.Attention, error)
-	SavePushSubscription(ctx context.Context, sub types.PushSubscription) error
-	DeletePushSubscription(ctx context.Context, recipient, endpoint string) error
 }
 
 type GoalService interface {

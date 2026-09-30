@@ -568,6 +568,19 @@ func CommonBuildEnvMap(task *types.ResolvedTask, config RunnerConfig) map[string
 	return env
 }
 
+func opencodeChildEnvironmentMap(task *types.ResolvedTask, config RunnerConfig) map[string]string {
+	env := CommonBuildEnvMap(task, config)
+	if config.Opencode.ConfigDir != "" {
+		// Load the selected component tree while moving standard global lookup
+		// underneath it, so ~/.config/opencode cannot be merged back in.
+		delete(env, "OPENCODE_CONFIG")
+		delete(env, "OPENCODE_CONFIG_CONTENT")
+		env["OPENCODE_CONFIG_DIR"] = config.Opencode.ConfigDir
+		env["XDG_CONFIG_HOME"] = config.Opencode.ConfigDir
+	}
+	return env
+}
+
 // injectTaskCredential is deliberately empty until P7 supplies a
 // validated, claim-bound per-task credential. No standing-token fallback.
 func injectTaskCredential(_ map[string]string, _ *types.ResolvedTask) {}
@@ -602,7 +615,14 @@ func shellStartupKey(key string) bool {
 }
 
 func childEnvironment(task *types.ResolvedTask, config RunnerConfig) []string {
-	m := CommonBuildEnvMap(task, config)
+	return environmentSlice(CommonBuildEnvMap(task, config))
+}
+
+func opencodeChildEnvironment(task *types.ResolvedTask, config RunnerConfig) []string {
+	return environmentSlice(opencodeChildEnvironmentMap(task, config))
+}
+
+func environmentSlice(m map[string]string) []string {
 	env := make([]string, 0, len(m))
 	for k, v := range m {
 		env = append(env, k+"="+v)
@@ -617,8 +637,12 @@ func shellEnvQuote(value string) string { return "'" + strings.ReplaceAll(value,
 // not merely in the tmux client. Privileged bash ignores startup env/functions;
 // the inner shell runs unprivileged with only the sanitized environment.
 func childRunnerScript(body string, task *types.ResolvedTask, config RunnerConfig) string {
+	return childRunnerScriptWithEnv(body, childEnvironment(task, config))
+}
+
+func childRunnerScriptWithEnv(body string, env []string) string {
 	args := []string{"#!/bin/bash -p\nexec /usr/bin/env -i"}
-	for _, entry := range childEnvironment(task, config) {
+	for _, entry := range env {
 		args = append(args, shellEnvQuote(entry))
 	}
 	args = append(args, "/bin/bash --noprofile --norc -c", shellEnvQuote(body))

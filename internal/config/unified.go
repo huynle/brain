@@ -48,6 +48,7 @@
 //   - opencode.bin → Runner.Opencode.Bin
 //   - opencode.agent → Runner.Opencode.Agent
 //   - opencode.model → Runner.Opencode.Model
+//   - opencode.config_dir → Runner.Opencode.ConfigDir
 //   - exclude_projects[] → Runner.ExcludeProjects[]
 //
 // All other subsystems (Server, MCP, Plugins) use default values if not present in unified config.
@@ -87,13 +88,23 @@ type EmbeddingConfig struct {
 }
 
 // AssistantConfig holds server-side LLM configuration for the built-in PWA assistant.
-type AssistantConfig struct {
+type AssistantSpeechConfig struct {
 	Enabled   bool   `yaml:"enabled"`
 	Provider  string `yaml:"provider"`
 	BaseURL   string `yaml:"base_url"`
 	APIKeyEnv string `yaml:"api_key_env"`
 	Model     string `yaml:"model"`
-	TimeoutMs int    `yaml:"timeout_ms"`
+	Voice     string `yaml:"voice"`
+}
+
+type AssistantConfig struct {
+	Speech    AssistantSpeechConfig `yaml:"speech"`
+	Enabled   bool                  `yaml:"enabled"`
+	Provider  string                `yaml:"provider"`
+	BaseURL   string                `yaml:"base_url"`
+	APIKeyEnv string                `yaml:"api_key_env"`
+	Model     string                `yaml:"model"`
+	TimeoutMs int                   `yaml:"timeout_ms"`
 }
 
 // AttachmentExtractionConfig holds multimodal model-role configuration for
@@ -122,32 +133,34 @@ type AttachmentConfig struct {
 }
 
 type ServerConfig struct {
-	Port            int                   `yaml:"port"`
-	Host            string                `yaml:"host"`
-	BrainDir        string                `yaml:"brain_dir"`
-	EnableAuth      bool                  `yaml:"enable_auth"`
-	CORSOrigin      string                `yaml:"cors_origin"`
-	LogLevel        string                `yaml:"log_level"`
-	OAuthPIN        string                `yaml:"oauth_pin"`
-	JWTSecret       string                `yaml:"jwt_secret"`
-	TLSCert         string                `yaml:"tls_cert"`
-	TLSKey          string                `yaml:"tls_key"`
-	PIDFile         string                `yaml:"pid_file"`
-	LogFile         string                `yaml:"log_file"`
-	LogMaxSizeMB    int                   `yaml:"log_max_size_mb"` // rotate log_file above this size (default 100)
-	LogMaxBackups   int                   `yaml:"log_max_backups"` // rotated backups to keep (default 5)
-	TaskDefaults    TaskDefaultsConfig    `yaml:"task_defaults"`
-	FeatureCheckout FeatureCheckoutConfig `yaml:"feature_checkout"`
-	FeatureDelivery FeatureDeliveryConfig `yaml:"feature_delivery"`
-	Attention       AttentionConfig       `yaml:"attention"`
-	IndexWatch      IndexWatchConfig      `yaml:"index_watch"`
-	Tenancy         TenancyConfig         `yaml:"tenancy"`
-	Embedding       EmbeddingConfig       `yaml:"embedding"`
-	Attachments     AttachmentConfig      `yaml:"attachments"`
+	PasswordSessionTTLDays int                   `yaml:"password_session_ttl_days"`
+	Port                   int                   `yaml:"port"`
+	Host                   string                `yaml:"host"`
+	BrainDir               string                `yaml:"brain_dir"`
+	EnableAuth             bool                  `yaml:"enable_auth"`
+	CORSOrigin             string                `yaml:"cors_origin"`
+	LogLevel               string                `yaml:"log_level"`
+	OAuthPIN               string                `yaml:"oauth_pin"`
+	JWTSecret              string                `yaml:"jwt_secret"`
+	TLSCert                string                `yaml:"tls_cert"`
+	TLSKey                 string                `yaml:"tls_key"`
+	PIDFile                string                `yaml:"pid_file"`
+	LogFile                string                `yaml:"log_file"`
+	LogMaxSizeMB           int                   `yaml:"log_max_size_mb"` // rotate log_file above this size (default 100)
+	LogMaxBackups          int                   `yaml:"log_max_backups"` // rotated backups to keep (default 5)
+	TaskDefaults           TaskDefaultsConfig    `yaml:"task_defaults"`
+	FeatureCheckout        FeatureCheckoutConfig `yaml:"feature_checkout"`
+	FeatureDelivery        FeatureDeliveryConfig `yaml:"feature_delivery"`
+	IndexWatch             IndexWatchConfig      `yaml:"index_watch"`
+	Tenancy                TenancyConfig         `yaml:"tenancy"`
+	Embedding              EmbeddingConfig       `yaml:"embedding"`
+	Attachments            AttachmentConfig      `yaml:"attachments"`
 
 	AttachmentExtraction AttachmentExtractionConfig `yaml:"attachment_extraction"`
 	Assistant            AssistantConfig            `yaml:"assistant"`
 }
+
+const MaxPasswordSessionTTLDays = 36500
 
 // FeatureCheckoutConfig controls built-in feature completion checkout automation.
 type FeatureCheckoutConfig struct {
@@ -163,19 +176,6 @@ type TenancyConfig struct {
 // automation (opt-in: default disabled at workspace level too).
 type FeatureDeliveryConfig struct {
 	Enabled bool `yaml:"enabled"`
-}
-
-// AttentionConfig controls delivery of durable attention notifications beyond
-// the in-app inbox. Web Push requires a VAPID keypair; generate one once with
-// `brain attention vapid-keys` (or the webpush-go GenerateVAPIDKeys helper) and
-// keep the private key secret. Subscriber is the mailto:/https: contact the
-// push service uses to reach the operator per RFC 8292; it is required by most
-// push services. With no keys configured, Web Push delivery is simply skipped
-// and the inbox + any configured webhooks still work.
-type AttentionConfig struct {
-	VAPIDPublicKey  string `yaml:"vapid_public_key"`
-	VAPIDPrivateKey string `yaml:"vapid_private_key"`
-	Subscriber      string `yaml:"subscriber"`
 }
 
 // IndexWatchConfig controls the filesystem watcher that keeps SQLite in sync
@@ -233,9 +233,10 @@ type RunnerConfig struct {
 
 // OpencodeSettings holds OpenCode executor settings.
 type OpencodeSettings struct {
-	Bin   string `yaml:"bin"`
-	Agent string `yaml:"agent"`
-	Model string `yaml:"model"`
+	Bin       string `yaml:"bin"`
+	Agent     string `yaml:"agent"`
+	Model     string `yaml:"model"`
+	ConfigDir string `yaml:"config_dir,omitempty"`
 }
 
 // TaskDefaultsConfig holds default values for task execution settings.
@@ -309,6 +310,9 @@ func (c *UnifiedConfig) Validate() error {
 	}
 	if c.Server.LogMaxBackups < 0 {
 		errs = append(errs, "server.log_max_backups must be >= 0")
+	}
+	if c.Server.PasswordSessionTTLDays < 0 || c.Server.PasswordSessionTTLDays > MaxPasswordSessionTTLDays {
+		errs = append(errs, fmt.Sprintf("server.password_session_ttl_days must be 0..%d (0 means never)", MaxPasswordSessionTTLDays))
 	}
 	// TLS pair — either both or neither.
 	if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
@@ -415,16 +419,17 @@ func defaultConfig() UnifiedConfig {
 
 	return UnifiedConfig{
 		Server: ServerConfig{
-			Port:            3333,
-			Host:            "localhost",
-			BrainDir:        brainDir,
-			LogLevel:        "info",
-			PIDFile:         filepath.Join(stateHome, "brain-api", "brain-api.pid"),
-			LogFile:         filepath.Join(stateHome, "brain-api", "brain-api.log"),
-			EnableAuth:      false,
-			CORSOrigin:      "", // Same-origin only; cross-origin access is opt-in.
-			FeatureCheckout: FeatureCheckoutConfig{Enabled: true},
-			FeatureDelivery: FeatureDeliveryConfig{Enabled: false},
+			Port:                   3333,
+			PasswordSessionTTLDays: 30,
+			Host:                   "localhost",
+			BrainDir:               brainDir,
+			LogLevel:               "info",
+			PIDFile:                filepath.Join(stateHome, "brain-api", "brain-api.pid"),
+			LogFile:                filepath.Join(stateHome, "brain-api", "brain-api.log"),
+			EnableAuth:             false,
+			CORSOrigin:             "", // Same-origin only; cross-origin access is opt-in.
+			FeatureCheckout:        FeatureCheckoutConfig{Enabled: true},
+			FeatureDelivery:        FeatureDeliveryConfig{Enabled: false},
 			TaskDefaults: TaskDefaultsConfig{
 				ExecutionMode:      "worktree",
 				MergePolicy:        "auto_merge",
@@ -599,6 +604,9 @@ func LoadConfig() (UnifiedConfig, error) {
 		if err := loadConfigFile(unifiedPath, &cfg); err != nil {
 			return UnifiedConfig{}, err
 		}
+		if err := cfg.Validate(); err != nil {
+			return UnifiedConfig{}, err
+		}
 		return cfg, nil
 	}
 
@@ -608,6 +616,9 @@ func LoadConfig() (UnifiedConfig, error) {
 		log.Printf("Migrating config from %s to %s", legacyPath, unifiedPath)
 		// Migrate legacy config to unified format
 		if err := migrateConfig(legacyPath, unifiedPath, &cfg); err != nil {
+			return UnifiedConfig{}, err
+		}
+		if err := cfg.Validate(); err != nil {
 			return UnifiedConfig{}, err
 		}
 		log.Printf("Migration complete. Backup saved: %s.backup", legacyPath)
@@ -728,6 +739,9 @@ func migrateConfig(legacyPath, unifiedPath string, cfg *UnifiedConfig) error {
 		}
 		if v, ok := opencodeData["model"].(string); ok {
 			cfg.Runner.Opencode.Model = v
+		}
+		if v, ok := opencodeData["config_dir"].(string); ok {
+			cfg.Runner.Opencode.ConfigDir = v
 		}
 	}
 

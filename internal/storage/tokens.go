@@ -10,7 +10,7 @@ import (
 
 // GenerateToken generates a secure random token using 32 bytes of crypto/rand
 // and encodes it as base64 URL-safe string (43 characters).
-func (s *StorageLayer) GenerateToken() (string, error) {
+func generateToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("generate random bytes: %w", err)
@@ -20,7 +20,7 @@ func (s *StorageLayer) GenerateToken() (string, error) {
 
 // CreateToken stores a token with the given name and scope in the database.
 // If scope is empty, it defaults to "admin:*".
-func (s *StorageLayer) CreateToken(ctx context.Context, name, token, scope string) error {
+func (s identityStore) createToken(ctx context.Context, name, token, scope string) error {
 	if scope == "" {
 		scope = "admin:*"
 	}
@@ -65,7 +65,7 @@ func tokenPrefix(token string) string {
 
 // ValidateToken looks up a token by its value, rejects revoked tokens,
 // and updates last_used on success. Returns the full Token on success.
-func (s *StorageLayer) ValidateToken(ctx context.Context, tokenValue string) (*Token, error) {
+func (s identityStore) validateToken(ctx context.Context, tokenValue string) (*Token, error) {
 	var t Token
 	err := s.db.QueryRowContext(ctx,
 		`SELECT name, token, scope, created_at, COALESCE(last_used, '') 
@@ -79,9 +79,9 @@ func (s *StorageLayer) ValidateToken(ctx context.Context, tokenValue string) (*T
 		return nil, fmt.Errorf("validate token: %w", err)
 	}
 
-	// Update last_used asynchronously. Telemetry only — a failure must not
-	// affect the validation result the caller already has.
-	go func() { _ = s.UpdateTokenLastUsed(context.Background(), t.Name) }()
+	// Best-effort telemetry is synchronous: no detached work can outlive this
+	// operation and race the shared owner's shutdown. Failure does not deny auth.
+	_ = s.updateTokenLastUsed(ctx, t.Name)
 
 	return &t, nil
 }
@@ -89,7 +89,7 @@ func (s *StorageLayer) ValidateToken(ctx context.Context, tokenValue string) (*T
 // ListTokens returns non-revoked tokens by default. Token values are masked
 // to show only the first 8 characters. Set includeRevoked to true to include
 // revoked tokens in the result.
-func (s *StorageLayer) ListTokens(ctx context.Context, includeRevoked ...bool) ([]Token, error) {
+func (s identityStore) listTokens(ctx context.Context, includeRevoked ...bool) ([]Token, error) {
 	query := "SELECT name, token, scope, created_at, COALESCE(last_used, ''), COALESCE(revoked_at, '') FROM api_tokens"
 	if len(includeRevoked) == 0 || !includeRevoked[0] {
 		query += " WHERE revoked_at IS NULL"
@@ -123,7 +123,7 @@ func (s *StorageLayer) ListTokens(ctx context.Context, includeRevoked ...bool) (
 }
 
 // GetTokenByName returns a token by name.
-func (s *StorageLayer) GetTokenByName(ctx context.Context, name string) (*Token, error) {
+func (s identityStore) getTokenByName(ctx context.Context, name string) (*Token, error) {
 	var t Token
 	err := s.db.QueryRowContext(ctx,
 		"SELECT name, token, scope, created_at, COALESCE(last_used, ''), COALESCE(revoked_at, '') FROM api_tokens WHERE name = ?",
@@ -141,7 +141,7 @@ func (s *StorageLayer) GetTokenByName(ctx context.Context, name string) (*Token,
 // RevokeToken soft-revokes a token by setting revoked_at. The token remains
 // in the database but will be rejected by ValidateToken and excluded from
 // ListTokens by default.
-func (s *StorageLayer) RevokeToken(ctx context.Context, name string) error {
+func (s identityStore) revokeToken(ctx context.Context, name string) error {
 	result, err := s.db.ExecContext(ctx,
 		"UPDATE api_tokens SET revoked_at = datetime('now') WHERE name = ? AND revoked_at IS NULL",
 		name,
@@ -162,7 +162,7 @@ func (s *StorageLayer) RevokeToken(ctx context.Context, name string) error {
 
 // DeleteTokenPermanent permanently removes a token from the database.
 // For normal revocation, use RevokeToken instead.
-func (s *StorageLayer) DeleteTokenPermanent(ctx context.Context, name string) error {
+func (s identityStore) deleteTokenPermanent(ctx context.Context, name string) error {
 	result, err := s.db.ExecContext(ctx,
 		"DELETE FROM api_tokens WHERE name = ?",
 		name,
@@ -183,7 +183,7 @@ func (s *StorageLayer) DeleteTokenPermanent(ctx context.Context, name string) er
 
 // CountActiveTokens returns the number of non-revoked tokens in the database.
 // This is informational, not a bootstrap gate; use BootstrapToken for that.
-func (s *StorageLayer) CountActiveTokens(ctx context.Context) (int, error) {
+func (s identityStore) countActiveTokens(ctx context.Context) (int, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM api_tokens WHERE revoked_at IS NULL",
@@ -195,7 +195,7 @@ func (s *StorageLayer) CountActiveTokens(ctx context.Context) (int, error) {
 }
 
 // UpdateTokenLastUsed updates the last_used timestamp for a token.
-func (s *StorageLayer) UpdateTokenLastUsed(ctx context.Context, name string) error {
+func (s identityStore) updateTokenLastUsed(ctx context.Context, name string) error {
 	result, err := s.db.ExecContext(ctx,
 		"UPDATE api_tokens SET last_used = datetime('now') WHERE name = ?",
 		name,

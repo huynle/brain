@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	_ "github.com/glebarez/go-sqlite"
+	"github.com/huynle/brain-api/internal/storage"
 )
 
 func TestCheckBrainDirectory(t *testing.T) {
@@ -331,7 +332,7 @@ func TestLoadAttachmentDigestChecksFromDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(`CREATE TABLE attachments (id INTEGER PRIMARY KEY, digest TEXT NOT NULL, size INTEGER NOT NULL, media_type TEXT, metadata TEXT, created_at TEXT)`); err != nil {
+	if err := storage.InitSchema(db); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO attachments (digest, size, media_type, metadata, created_at) VALUES ('` + strings.Repeat("d", 64) + `', 42, 'text/plain', '{}', 'now')`); err != nil {

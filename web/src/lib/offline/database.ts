@@ -1,6 +1,7 @@
 import type { Database } from "@sqlite.org/sqlite-wasm";
 import { makeDraft, matches, rawParts } from "./model";
 import type { CachedEntry, ChangePage, Mutation, SyncState } from "./model";
+import { createUUID } from "../uuid";
 
 // This class is shared by the browser worker and real SQLite unit tests.
 export class EntryDatabase {
@@ -126,7 +127,7 @@ export class EntryDatabase {
     const row = this.rows("SELECT data FROM query_cache WHERE key=?", [key])[0];
     if (!row) return null;
     this.db.exec({
-      sql: "UPDATE query_cache SET accessed=? WHERE key=?",
+      sql: "UPDATE query_cache SET accessed=MAX(?, (SELECT COALESCE(MAX(accessed),0)+1 FROM query_cache)) WHERE key=?",
       bind: [Date.now(), key],
     });
     return JSON.parse(String(row.data));
@@ -136,8 +137,10 @@ export class EntryDatabase {
     const prior = this.rows("SELECT data FROM query_cache WHERE key=?", [
       key,
     ])[0];
+    // Use a persisted monotonic recency on both puts and hits: wall-clock
+    // milliseconds can tie, leaving LIMIT free to evict the newest page.
     this.db.exec({
-      sql: "INSERT OR REPLACE INTO query_cache VALUES (?,?,?)",
+      sql: "INSERT OR REPLACE INTO query_cache SELECT ?,?,MAX(?, COALESCE(MAX(accessed),0)+1) FROM query_cache",
       bind: [key, value, Date.now()],
     });
     this.db.exec(
@@ -401,7 +404,7 @@ export class EntryDatabase {
   deviceInfo() {
     let row = this.rows("SELECT value FROM state WHERE key='device'")[0];
     if (!row) {
-      this.set("device", { id: crypto.randomUUID() });
+      this.set("device", { id: createUUID() });
       row = this.rows("SELECT value FROM state WHERE key='device'")[0];
     }
     return JSON.parse(String(row.value)) as {
@@ -448,7 +451,7 @@ export class EntryDatabase {
           current
         ) {
           // Validate and replace in the same transaction as the durable command receipt.
-          op.id = crypto.randomUUID();
+          op.id = createUUID();
           op.revision = current.revision;
           op.raw = command.action === "merge" ? command.raw : op.draft.raw;
           if (op.raw === undefined)
@@ -492,7 +495,7 @@ export class EntryDatabase {
         throw new Error(
           "Server entry was deleted. Export your draft before discarding it.",
         );
-      op.id = crypto.randomUUID();
+      op.id = createUUID();
       op.revision = current.revision;
       op.sent = false;
       delete op.error;

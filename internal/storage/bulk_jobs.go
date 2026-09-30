@@ -1,46 +1,19 @@
 package storage
 
+// Storage behavior imported from main cd22b4bd; execution scope is the P4
+// ledger-specific guard, not main's listQuery/content-schema shortcut.
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
-	"github.com/huynle/brain-api/internal/tenant"
 	"github.com/huynle/brain-api/internal/types"
 )
 
-const createBulkJobsTable = `CREATE TABLE IF NOT EXISTS bulk_jobs (
- tenant_id TEXT NOT NULL, id TEXT NOT NULL, request_id TEXT NOT NULL,
- request_hash TEXT NOT NULL, request_json TEXT NOT NULL, operation TEXT NOT NULL,
- state TEXT NOT NULL, submitted_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
- PRIMARY KEY(tenant_id,id), UNIQUE(tenant_id,request_id)
-)`
-const createBulkJobItemsTable = `CREATE TABLE IF NOT EXISTS bulk_job_items (
- tenant_id TEXT NOT NULL, job_id TEXT NOT NULL, sequence INTEGER NOT NULL,
- path TEXT NOT NULL, entry_id TEXT NOT NULL, title TEXT NOT NULL, fingerprint TEXT NOT NULL,
- state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', destination TEXT NOT NULL DEFAULT '',
- PRIMARY KEY(tenant_id,job_id,sequence), UNIQUE(tenant_id,job_id,path),
- FOREIGN KEY(tenant_id,job_id) REFERENCES bulk_jobs(tenant_id,id) ON DELETE CASCADE
-)`
-
-const createBulkJobItemsIndex = `CREATE INDEX IF NOT EXISTS bulk_items_pending ON bulk_job_items(tenant_id,job_id,state,sequence)`
-
-func (s *TenantStore) bulkScope(ctx context.Context) (string, error) {
-	if _, _, err := s.listQuery(nil); err != nil {
-		return "", err
-	}
-	id, ok := tenant.From(ctx)
-	if !ok || id != s.tenantID {
-		return "", fmt.Errorf("bulk job tenant scope mismatch")
-	}
-	return id.String(), nil
-}
-
 func (s *TenantStore) InsertBulkJob(ctx context.Context, job *types.BulkJob, items []types.BulkJobItem) error {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "bulk")
 	if err != nil {
 		return err
 	}
@@ -75,7 +48,7 @@ const bulkJobSelect = `SELECT j.id,j.request_id,j.request_hash,j.request_json,j.
  FROM bulk_jobs j LEFT JOIN bulk_job_items i ON i.tenant_id=j.tenant_id AND i.job_id=j.id WHERE j.tenant_id=?`
 
 func (s *TenantStore) readBulkJobs(ctx context.Context, clause string, args ...interface{}) ([]types.BulkJob, error) {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "bulk")
 	if err != nil {
 		return nil, err
 	}
@@ -101,6 +74,10 @@ func (s *TenantStore) readBulkJobs(ctx context.Context, clause string, args ...i
 	return jobs, rows.Err()
 }
 func (s *TenantStore) ListBulkJobs(ctx context.Context) ([]types.BulkJob, error) {
+	// Do not dereference the binding to construct arguments before scope checking.
+	if s == nil {
+		return nil, errors.New("execution ledger requires a bound store")
+	}
 	return s.readBulkJobs(ctx, ` AND j.id IN (SELECT id FROM bulk_jobs WHERE tenant_id=? ORDER BY CASE WHEN state IN ('queued','running','paused') THEN 0 ELSE 1 END,created_at DESC LIMIT 100) GROUP BY j.id ORDER BY CASE WHEN j.state IN ('queued','running','paused') THEN 0 ELSE 1 END,j.created_at DESC`, s.tenantID.String())
 }
 func (s *TenantStore) GetBulkJob(ctx context.Context, id string) (*types.BulkJob, error) {
@@ -124,7 +101,7 @@ func (s *TenantStore) BulkJobByRequest(ctx context.Context, id string) (*types.B
 	return &jobs[0], nil
 }
 func (s *TenantStore) BulkJobItems(ctx context.Context, id string, offset, limit int) ([]types.BulkJobItem, error) {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "bulk")
 	if err != nil {
 		return nil, err
 	}
@@ -150,9 +127,9 @@ func (s *TenantStore) BulkJobItems(ctx context.Context, id string, offset, limit
 	return items, rows.Err()
 }
 
-// Only pending work is claimable. Restart recovery NEVER replays an in-flight mutation.
+// Only pending work is claimable. Recovery NEVER replays an in-flight mutation.
 func (s *TenantStore) ClaimBulkJobItem(ctx context.Context, id string) (*types.BulkJobItem, error) {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "bulk")
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +141,7 @@ func (s *TenantStore) ClaimBulkJobItem(ctx context.Context, id string) (*types.B
 	return &i, err
 }
 func (s *TenantStore) FinishBulkJobItem(ctx context.Context, id string, i types.BulkJobItem) error {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "bulk")
 	if err != nil {
 		return err
 	}
@@ -172,7 +149,7 @@ func (s *TenantStore) FinishBulkJobItem(ctx context.Context, id string, i types.
 	return err
 }
 func (s *TenantStore) TransitionBulkJob(ctx context.Context, id, from, to string) error {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "bulk")
 	if err != nil {
 		return err
 	}
@@ -180,7 +157,7 @@ func (s *TenantStore) TransitionBulkJob(ctx context.Context, id, from, to string
 	return err
 }
 func (s *TenantStore) RetryBulkJob(ctx context.Context, id string) error {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "bulk")
 	if err != nil {
 		return err
 	}
@@ -198,7 +175,7 @@ func (s *TenantStore) RetryBulkJob(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 func (s *TenantStore) RecoverBulkJobs(ctx context.Context) error {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "bulk")
 	if err != nil {
 		return err
 	}
@@ -215,9 +192,8 @@ func (s *TenantStore) RecoverBulkJobs(ctx context.Context) error {
 	}
 	return tx.Commit()
 }
-
 func (s *TenantStore) NextRunnableBulkJob(ctx context.Context) (*types.BulkJob, error) {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "bulk")
 	if err != nil {
 		return nil, err
 	}
@@ -236,10 +212,10 @@ func (s *TenantStore) NextRunnableBulkJob(ctx context.Context) (*types.BulkJob, 
 	return &j, nil
 }
 
-// Quarantine any unacknowledged write before declaring a job finished. This
-// also handles an outcome-commit failure without requiring a server restart.
+// Quarantine an unacknowledged write even when its outcome commit failed without
+// a server restart. Unknown is not failed/retryable.
 func (s *TenantStore) QuarantineBulkJobItems(ctx context.Context, id string) error {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "bulk")
 	if err != nil {
 		return err
 	}

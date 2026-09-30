@@ -1,12 +1,13 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 32
+const CurrentSchemaVersion = 30
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -519,11 +520,16 @@ END;`
 // migrateSchema applies incremental migrations for existing databases.
 // New databases get the latest DDL directly; this handles upgrades.
 func migrateSchema(db *sql.DB) error {
-	ver, err := GetSchemaVersion(db)
-	if err != nil {
-		// schema_version table doesn't exist yet — fresh DB, no migration needed.
-		return nil
+	ver, exists, err := checkSchemaCompatibility(db)
+	if err != nil || !exists {
+		return err
 	}
+	return migrateAdmittedSchema(db, ver)
+}
+
+// Only InitSchema and the checked migration entry point supply this version,
+// after read-only admission and before any bootstrap DDL changes the catalog.
+func migrateAdmittedSchema(db *sql.DB, ver int) error {
 
 	if ver < 2 {
 		// v2: add revoked_at column to api_tokens for soft revocation.
@@ -1028,18 +1034,6 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
-	if ver < 32 {
-		if _, err := db.Exec(createPushSubscriptionsTable); err != nil {
-			return fmt.Errorf("migrate v32 (push subscriptions): %w", err)
-		}
-	}
-	if ver < 31 {
-		for _, ddl := range []string{createAttentionItemsTable, createAttentionRecipientIndex, createAttentionDedupIndex} {
-			if _, err := db.Exec(ddl); err != nil {
-				return fmt.Errorf("migrate v31 (attention): %w", err)
-			}
-		}
-	}
 	if ver < 30 {
 		for _, ddl := range []string{createExecutionBudgets, createBudgetReservations, createSupervisorCheckpointVersions} {
 			if _, err := db.Exec(ddl); err != nil {
@@ -1257,6 +1251,15 @@ func searchSubstring(s, substr string) bool {
 // schema_version belongs to the shared migration owner, not either handle. There
 // is no per-tenant database registry, schema initialization, or database stamp.
 func InitSchema(db *sql.DB) error {
+	version, _, err := checkSchemaCompatibility(db)
+	if err != nil {
+		return err
+	}
+	if version == 30 {
+		if err := normalizeHistoricalMain30(context.Background(), db); err != nil {
+			return err
+		}
+	}
 	// Tables (order matters for foreign keys)
 	tables := []string{
 		createExecutionBudgets,
@@ -1297,10 +1300,6 @@ func InitSchema(db *sql.DB) error {
 		createEntryAttachmentsTable,
 		createAttachmentDerivedTable,
 		createFeatureCascadeRootsTable,
-		createAttentionItemsTable,
-		createAttentionRecipientIndex,
-		createAttentionDedupIndex,
-		createPushSubscriptionsTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {
@@ -1326,7 +1325,7 @@ func InitSchema(db *sql.DB) error {
 	}
 
 	// Run migrations for existing databases (may drop/recreate tables).
-	if err := migrateSchema(db); err != nil {
+	if err := migrateAdmittedSchema(db, version); err != nil {
 		return fmt.Errorf("migrate schema: %w", err)
 	}
 	if err := ensureNoteEmbeddingsTable(db); err != nil {
@@ -1355,10 +1354,76 @@ func InitSchema(db *sql.DB) error {
 	return nil
 }
 
+// checkSchemaCompatibility is read-only and must precede bootstrap/migration
+// writes. Only an absent version table is fresh; catalog/read/scan failures
+// must not turn an unreadable database into permission to initialize it.
+func checkSchemaCompatibility(db *sql.DB) (version int, exists bool, err error) {
+	// The successor's reserved control namespace is never a legacy bootstrap
+	// input, including partial/unknown artifacts with an absent or lowered stamp.
+	// This is a narrow refusal, NOT successor admission or an exact catalog audit
+	// of historical legacy schemas. Keep their existing initialization semantics.
+	var provenance int
+	if err := db.QueryRow(`SELECT count(*) FROM (
+SELECT name FROM main.sqlite_schema UNION ALL SELECT name FROM sqlite_temp_schema
+) WHERE lower(name) GLOB 'schema_provenance*'`).Scan(&provenance); err != nil {
+		return 0, false, fmt.Errorf("inspect schema provenance: %w", err)
+	}
+	if provenance != 0 {
+		return 0, true, fmt.Errorf("successor schema provenance is not supported by runtime version %d", CurrentSchemaVersion)
+	}
+	// Newer ledger/sync/tenant artifacts require exact source classification,
+	// including with an empty/lowered version table. Historical legacy inputs
+	// without these artifacts retain their existing initialization policy.
+	var ledgers int
+	if err := db.QueryRow(`SELECT count(*) FROM (
+SELECT name FROM main.sqlite_schema UNION ALL SELECT name FROM sqlite_temp_schema
+) WHERE lower(name) IN ('bulk_jobs','bulk_job_items','execution_budgets','budget_reservations',
+ 'supervisor_checkpoints','supervisor_checkpoint_versions','supervisor_operations',
+ 'entry_sync_devices','entry_sync_identity','entry_sync_changes','entry_sync_operations','tenants')`).Scan(&ledgers); err != nil {
+		return 0, false, fmt.Errorf("inspect execution ledger schema: %w", err)
+	}
+	var kind string
+	err = db.QueryRow("SELECT type FROM main.sqlite_master WHERE name = 'schema_version' COLLATE NOCASE").Scan(&kind)
+	if err == sql.ErrNoRows {
+		if ledgers != 0 {
+			return 0, true, fmt.Errorf("execution ledger schema is not supported by runtime version %d", CurrentSchemaVersion)
+		}
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("inspect schema version: %w", err)
+	}
+	if kind != "table" {
+		return 0, true, fmt.Errorf("schema version: expected table, found %s", kind)
+	}
+	version, err = GetSchemaVersion(db)
+	if err != nil {
+		return 0, true, err
+	}
+	if version > CurrentSchemaVersion {
+		return version, true, fmt.Errorf("database schema version %d is newer than supported version %d", version, CurrentSchemaVersion)
+	}
+	if ledgers != 0 || version >= 29 {
+		tx, e := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+		if e != nil {
+			return version, true, e
+		}
+		defer func() { _ = tx.Rollback() }()
+		profile, e := classifySchemaSource(context.Background(), tx)
+		if e != nil {
+			return version, true, e
+		}
+		if profile == "private29" {
+			return version, true, fmt.Errorf("private tenant schema is not publicly supported")
+		}
+	}
+	return version, true, nil
+}
+
 // GetSchemaVersion returns the highest schema version, or 0 if none set.
 func GetSchemaVersion(db *sql.DB) (int, error) {
 	var version int
-	err := db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&version)
+	err := db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM main.schema_version").Scan(&version)
 	if err != nil {
 		return 0, fmt.Errorf("get schema version: %w", err)
 	}

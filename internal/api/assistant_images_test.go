@@ -66,13 +66,13 @@ func TestChatMessage_MarshalJSON_MultimodalForm(t *testing.T) {
 // TestValidImageDataURLs filters to well-formed base64 image data URLs only.
 func TestValidImageDataURLs(t *testing.T) {
 	in := []string{
-		"data:image/png;base64,AAAA",  // ok
-		"data:image/jpeg;base64,BBBB", // ok
+		"data:image/png;base64,AAAA",     // ok
+		"data:image/jpeg;base64,BBBB",    // ok
 		"  data:image/gif;base64,CCCC  ", // ok (trimmed)
-		"data:text/plain;base64,DDDD", // wrong media type
-		"data:image/png,EEEE",         // missing ;base64,
-		"https://example.com/x.png",   // not a data URL
-		"",                            // empty
+		"data:text/plain;base64,DDDD",    // wrong media type
+		"data:image/png,EEEE",            // missing ;base64,
+		"https://example.com/x.png",      // not a data URL
+		"",                               // empty
 	}
 	got := validImageDataURLs(in)
 	if len(got) != 3 {

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huynle/brain-api/internal/storage"
 )
@@ -83,6 +84,56 @@ func TestAuthLogin_Success(t *testing.T) {
 	}
 }
 
+func TestAuthLogin_ConfiguresRefreshTokenLifetime(t *testing.T) {
+	tests := []struct {
+		name     string
+		ttl      time.Duration
+		wantUnix int64
+	}{
+		{name: "finite", ttl: 7 * 24 * time.Hour},
+		{name: "never", ttl: 0, wantUnix: -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newFakeTokenStore()
+			h := NewHandler(nil,
+				WithCredentialVerifier(fakeVerifier{ok: true, configured: true}),
+				WithPasswordTokenStore(store),
+				WithPasswordRefreshTokenTTL(tt.ttl),
+			)
+
+			before := time.Now()
+			w := postJSON(h.HandleAuthLogin, `{"username":"admin","password":"pw"}`)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+			}
+			var resp tokenResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			refresh := store.refresh[resp.RefreshToken]
+			if refresh == nil {
+				t.Fatal("refresh token not persisted")
+			}
+			if tt.wantUnix != 0 {
+				if refresh.ExpiresAt != tt.wantUnix {
+					t.Fatalf("refresh ExpiresAt = %d, want %d", refresh.ExpiresAt, tt.wantUnix)
+				}
+			} else {
+				wantMin := before.Add(tt.ttl).Unix()
+				wantMax := time.Now().Add(tt.ttl).Unix()
+				if refresh.ExpiresAt < wantMin || refresh.ExpiresAt > wantMax {
+					t.Fatalf("refresh ExpiresAt = %d, want between %d and %d", refresh.ExpiresAt, wantMin, wantMax)
+				}
+			}
+			access := store.access[resp.AccessToken]
+			if access.ExpiresAt < before.Add(time.Hour).Unix() || access.ExpiresAt > time.Now().Add(time.Hour).Unix() {
+				t.Fatalf("access token lifetime changed: ExpiresAt=%d", access.ExpiresAt)
+			}
+		})
+	}
+}
+
 func TestAuthLogin_BadCredentials(t *testing.T) {
 	h, _ := loginHandler(t, false, true)
 	w := postJSON(h.HandleAuthLogin, `{"username":"admin","password":"wrong"}`)
@@ -135,6 +186,9 @@ func TestAuthRefresh_RotatesAndRejectsReuse(t *testing.T) {
 	}
 	if _, ok := store.refresh[login.RefreshToken]; ok {
 		t.Fatal("expected old refresh token to be invalidated")
+	}
+	if store.refresh[refreshed.RefreshToken].ExpiresAt <= time.Now().Add(29*24*time.Hour).Unix() {
+		t.Fatal("rotated refresh token did not receive configured default lifetime")
 	}
 	// Reusing the now-consumed refresh token must fail (single-use rotation).
 	again := postJSON(h.HandleAuthRefresh, fmt.Sprintf(`{"refresh_token":%q}`, login.RefreshToken))

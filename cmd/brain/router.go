@@ -545,6 +545,7 @@ func defaultConfig() *UnifiedConfig {
 	cfg.Server.Port = 3333
 	cfg.Server.Host = "localhost"
 	cfg.Server.BrainDir = brainDir
+	cfg.Server.PasswordSessionTTLDays = 30
 	cfg.Server.FeatureCheckout.Enabled = true
 	cfg.Server.LogLevel = "info"
 	cfg.Server.PIDFile = filepath.Join(stateHome, "brain-api", "brain-api.pid")
@@ -582,6 +583,7 @@ func defaultConfig() *UnifiedConfig {
 		}
 		// Bool fields: always apply from config (can't distinguish zero from "not set")
 		cfg.Server.EnableAuth = ucfg.Server.EnableAuth
+		cfg.Server.PasswordSessionTTLDays = ucfg.Server.PasswordSessionTTLDays
 		// CORS and OAuth
 		if ucfg.Server.CORSOrigin != "" {
 			cfg.Server.CORSOrigin = ucfg.Server.CORSOrigin
@@ -596,7 +598,6 @@ func defaultConfig() *UnifiedConfig {
 		cfg.Server.TaskDefaults = ucfg.Server.TaskDefaults
 		cfg.Server.FeatureCheckout = ucfg.Server.FeatureCheckout
 		cfg.Server.FeatureDelivery = ucfg.Server.FeatureDelivery
-		cfg.Server.Attention = ucfg.Server.Attention
 		cfg.Server.IndexWatch = ucfg.Server.IndexWatch
 		cfg.Server.Embedding = ucfg.Server.Embedding
 		cfg.Server.Attachments = ucfg.Server.Attachments
@@ -649,6 +650,11 @@ func defaultConfig() *UnifiedConfig {
 	if v := os.Getenv("BRAIN_JWT_SECRET"); v != "" {
 		cfg.Server.JWTSecret = v
 	}
+	if v := os.Getenv("BRAIN_PASSWORD_SESSION_TTL_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= uconfig.MaxPasswordSessionTTLDays {
+			cfg.Server.PasswordSessionTTLDays = n
+		}
+	}
 	if v := os.Getenv("BRAIN_FEATURE_CHECKOUT_ENABLED"); v != "" {
 		lower := strings.ToLower(v)
 		cfg.Server.FeatureCheckout.Enabled = lower == "true" || lower == "1" || lower == "yes"
@@ -656,15 +662,6 @@ func defaultConfig() *UnifiedConfig {
 	if v := os.Getenv("BRAIN_FEATURE_DELIVERY_ENABLED"); v != "" {
 		lower := strings.ToLower(v)
 		cfg.Server.FeatureDelivery.Enabled = lower == "true" || lower == "1" || lower == "yes"
-	}
-	if v := os.Getenv("BRAIN_VAPID_PUBLIC_KEY"); v != "" {
-		cfg.Server.Attention.VAPIDPublicKey = v
-	}
-	if v := os.Getenv("BRAIN_VAPID_PRIVATE_KEY"); v != "" {
-		cfg.Server.Attention.VAPIDPrivateKey = v
-	}
-	if v := os.Getenv("BRAIN_ATTENTION_SUBSCRIBER"); v != "" {
-		cfg.Server.Attention.Subscriber = v
 	}
 	if v := os.Getenv("BRAIN_INDEX_WATCH"); v != "" {
 		lower := strings.ToLower(v)
@@ -712,6 +709,7 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.CORSOrigin = cfg.Server.CORSOrigin
 	cmdCfg.Server.OAuthPIN = cfg.Server.OAuthPIN
 	cmdCfg.Server.JWTSecret = cfg.Server.JWTSecret
+	cmdCfg.Server.PasswordSessionTTLDays = cfg.Server.PasswordSessionTTLDays
 	cmdCfg.Server.PIDFile = cfg.Server.PIDFile
 	cmdCfg.Server.LogFile = cfg.Server.LogFile
 	cmdCfg.Server.LogMaxSize = cfg.Server.LogMaxSize
@@ -722,7 +720,6 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.TaskDefaults = cfg.Server.TaskDefaults
 	cmdCfg.Server.FeatureCheckout = cfg.Server.FeatureCheckout
 	cmdCfg.Server.FeatureDelivery = cfg.Server.FeatureDelivery
-	cmdCfg.Server.Attention = cfg.Server.Attention
 	cmdCfg.Server.IndexWatch = cfg.Server.IndexWatch
 	cmdCfg.Server.Embedding = cfg.Server.Embedding
 	cmdCfg.Server.Attachments = cfg.Server.Attachments

@@ -29,7 +29,6 @@ import type {
   AttentionListResponse,
   AttentionCounts,
   CreateAttentionRequest,
-  PushSubscription,
   GoalProgressResponse,
   GoalReconcileAudit,
   GoalSummary,
@@ -1282,6 +1281,7 @@ export function summarizeTriggerResults(results: TriggerResponse[]): {
 // ─── Built-in Assistant ──────────────────────────────────────────
 
 export interface AssistantStatusResponse {
+  speech_available?: boolean;
   available: boolean;
   mode: "agentic" | "direct_llm" | "manual" | string;
   provider?: string;
@@ -1385,8 +1385,11 @@ export interface AssistantStreamEvent {
 
 export async function assistantChatStream(
   body: {
+	conversation_id?: string;
+	inbox?: boolean;
     project?: string;
     message: string;
+    voice?: boolean;
     model?: string;
     attachments?: string[];
     images?: string[];
@@ -2271,27 +2274,6 @@ export const setAttentionState = (
     { method: "POST", ...(body ? { body } : {}) },
   );
 
-/**
- * Fetch the VAPID public key for Web Push. An empty string means Web Push
- * is not configured on the server; the caller hides the enable control.
- */
-export const getVapidPublicKey = () =>
-  api<{ public_key: string }>("/api/v1/attention/vapid-public-key").then(
-    (r) => r.public_key || "",
-  );
-
-export const savePushSubscription = (sub: PushSubscription) =>
-  api<{ status: string }>("/api/v1/attention/push-subscriptions", {
-    method: "POST",
-    body: sub,
-  });
-
-export const deletePushSubscription = (endpoint: string) =>
-  api<{ status: string }>("/api/v1/attention/push-subscriptions", {
-    method: "DELETE",
-    body: { endpoint },
-  });
-
 // ─── Goals ───────────────────────────────────────────────────────
 
 /**
@@ -2412,3 +2394,8 @@ export const updateServerConfig = (cfg: ServerConfig) =>
     method: "PUT",
     body: { config: cfg },
   });
+
+
+/** Metadata only: never transmit the transcript or raw audio to diagnostics. */
+export const assistantVoiceDiagnostic = (body: {attempt: string; event: string; error: string; elapsed_ms: number; results: number; android: boolean; hands_free: boolean}) =>
+  api<void>("/api/v1/assistant/voice-diagnostics", {method: "POST", body});

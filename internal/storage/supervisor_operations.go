@@ -1,5 +1,6 @@
 package storage
 
+// Adapted from main cd22b4bd. Receipts are keyed by tenant, actor AND ID.
 import (
 	"context"
 	"database/sql"
@@ -9,13 +10,8 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-const createSupervisorOperations = `CREATE TABLE IF NOT EXISTS supervisor_operations (
- tenant_id TEXT NOT NULL, actor TEXT NOT NULL, id TEXT NOT NULL, operation TEXT NOT NULL,
- digest TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
- PRIMARY KEY(tenant_id,actor,id))`
-
 func (s *TenantStore) BeginSupervisorOperation(ctx context.Context, actor, id, operation, digest string) (bool, error) {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "supervisor")
 	if err != nil {
 		return false, err
 	}
@@ -28,7 +24,7 @@ func (s *TenantStore) BeginSupervisorOperation(ctx context.Context, actor, id, o
 	return n == 1, err
 }
 func (s *TenantStore) SupervisorOperation(ctx context.Context, actor, id string) (*types.SupervisorOperation, string, error) {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "supervisor")
 	if err != nil {
 		return nil, "", err
 	}
@@ -50,7 +46,7 @@ func (s *TenantStore) SupervisorOperation(ctx context.Context, actor, id string)
 	return &out, digest, nil
 }
 func (s *TenantStore) FinishSupervisorOperation(ctx context.Context, actor, id, state, detail string) error {
-	scope, err := s.bulkScope(ctx)
+	scope, err := s.executionScope(ctx, "supervisor")
 	if err != nil {
 		return err
 	}

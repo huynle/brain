@@ -43,6 +43,7 @@ export default defineConfig({
   // served from the site root.
   base: "/",
   resolve: {
+    conditions: ["onnxruntime-web-use-extern-wasm", "module", "browser", "development|production"],
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
@@ -50,10 +51,13 @@ export default defineConfig({
   plugins: [
     react(),
     viteStaticCopy({
-      targets: ["cmaps", "standard_fonts", "wasm"].map((dir) => ({
+      targets: [...["cmaps", "standard_fonts", "wasm"].map((dir) => ({
         src: `node_modules/pdfjs-dist/${dir}`,
         dest: "assets/pdf",
       })),
+      {src: "node_modules/@ricky0123/vad-web/dist/silero_vad_v5.onnx", dest: "assets/voice/v5-0.0.30-ort1.29.0", rename: {stripBase: true}},
+      {src: "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.{wasm,mjs}", dest: "assets/voice/v5-0.0.30-ort1.29.0", rename: {stripBase: true}},
+      ],
     }),
     VitePWA({
       // "prompt" holds a new build in the SW "waiting" state and fires
@@ -67,6 +71,7 @@ export default defineConfig({
       // The OAuth flow does full-page redirects to server-rendered routes; the
       // SW must let these through to the network rather than serving the shell.
       workbox: {
+        importScripts: ["/push-sw.js"],
         navigateFallback: "/index.html",
         navigateFallbackDenylist: [
           /^\/read(?:\.html)?(?:\?|$)/,
@@ -82,10 +87,6 @@ export default defineConfig({
         // until the activated worker controls it. Claim clients immediately so
         // Workbox's controlling event fires after the user clicks Reload.
         clientsClaim: true,
-        // Hand-written Web Push handler (push + notificationclick). Kept in
-        // public/ so it ships as a static asset the generated SW can import;
-        // Workbox owns everything else (precache, routing, caching).
-        importScripts: ["/attention-sw.js"],
         // Don't precache source maps; cache the app shell + assets.
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         globPatterns: ["**/*.{js,mjs,wasm,css,html,svg,png,ico,woff2}"],
@@ -100,12 +101,14 @@ export default defineConfig({
         // like "**/chunk-*" once excluded the app's own entry bundle and
         // silently broke offline start-up.
         globIgnores: [
+          "assets/voice/**",
           "**/assets/diagram/**",
           "**/assets/pdf/**",
           "**/assets/pdf.worker*.mjs",
         ],
         // API responses are real-time; never serve them from the SW cache.
         runtimeCaching: [
+          {urlPattern: ({url, sameOrigin}) => sameOrigin && url.pathname.startsWith("/assets/voice/"), handler: "CacheFirst", options: {cacheName: "voice-model-assets", expiration: {maxEntries: 6, maxAgeSeconds: 2592000}}},
           {
             urlPattern: ({ url }) => url.pathname.startsWith("/api"),
             handler: "NetworkOnly",

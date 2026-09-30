@@ -715,7 +715,7 @@ func (bc *BridgeClient) spawnAdhoc(spec *types.SpawnInstanceSpec) (*types.Openco
 	}
 
 	cmd := exec.Command(bc.opencodeBin(), args...)
-	cmd.Env = bc.execEnv()
+	cmd.Env = bc.opencodeEnv()
 	cmd.Dir = spec.Workdir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -1513,6 +1513,13 @@ func (bc *BridgeClient) execEnv() []string {
 		return childEnvironment(nil, RunnerConfig{})
 	}
 	return childEnvironment(nil, bc.runner.config)
+}
+
+func (bc *BridgeClient) opencodeEnv() []string {
+	if bc.runner == nil {
+		return opencodeChildEnvironment(nil, RunnerConfig{})
+	}
+	return opencodeChildEnvironment(nil, bc.runner.config)
 }
 
 // execTimeout normalises a requested command budget into a duration.

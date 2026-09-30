@@ -29,6 +29,7 @@ func TestUnscopedGitBaseline(t *testing.T) {
 				{"site golden growth only", "Old", "x.Old()", "", "sites golden"},
 				{"source growth hidden by golden", "Old", "x.Old(); x.Old()", "", "sites source"},
 				{"archive attributes ignored", "Old", "x.Old()", "", ""},
+				{"reviewed identity is not a future base allowance", "Old", "x.Old()", "", "sites source"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					root := t.TempDir()
@@ -70,6 +71,12 @@ func TestUnscopedGitBaseline(t *testing.T) {
 					}
 					git("init", "--quiet")
 					source("Old", "x.Old()", golden)
+					if tc.name == "reviewed identity is not a future base allowance" {
+						// Retain the method spelling in both sources. The exact named
+						// main site must still be new debt against this actual base.
+						write("internal/storage/names.go", "package storage; func (*StorageLayer) ListAllInstances() {}")
+						source("Old", "x.Old()", golden)
+					}
 					// Archives would omit the very source needed for bootstrap.
 					write(".gitattributes", "internal/service/* export-ignore\n")
 					git("add", ".")
@@ -77,6 +84,8 @@ func TestUnscopedGitBaseline(t *testing.T) {
 					base := git("rev-parse", "HEAD")
 					source(tc.methods, tc.body, true)
 					switch tc.name {
+					case "reviewed identity is not a future base allowance":
+						write("internal/apiserver/live_injector.go", "package apiserver; func (i *bridgeLiveInjector) findTaskInstance() { i.instances.ListAllInstances() }")
 					case "method golden growth only":
 						write("internal/storage/testdata/storage_unscoped_methods.golden", "New\nOld\n")
 					case "site golden growth only":

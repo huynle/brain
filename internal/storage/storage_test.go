@@ -42,7 +42,7 @@ func TestSchemaCreation_TablesExist(t *testing.T) {
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			var name string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='table' AND name=?", table,
 			).Scan(&name)
 			if err != nil {
@@ -90,7 +90,7 @@ func TestSchemaCreation_IndexesExist(t *testing.T) {
 	for _, idx := range indexes {
 		t.Run(idx.name, func(t *testing.T) {
 			var name string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='index' AND name=?", idx.name,
 			).Scan(&name)
 			if err != nil {
@@ -108,7 +108,7 @@ func TestSchemaCreation_FTS5Exists(t *testing.T) {
 	s := newTestStorage(t)
 
 	var name string
-	err := s.DB().QueryRow(
+	err := s.db.QueryRow(
 		"SELECT name FROM sqlite_master WHERE type='table' AND name='notes_fts'",
 	).Scan(&name)
 	if err != nil {
@@ -130,7 +130,7 @@ func TestSchemaCreation_TriggersExist(t *testing.T) {
 	for _, trig := range triggers {
 		t.Run(trig, func(t *testing.T) {
 			var name string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='trigger' AND name=?", trig,
 			).Scan(&name)
 			if err != nil {
@@ -160,7 +160,7 @@ func TestPragmas_InMemory(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.pragma, func(t *testing.T) {
 			var got string
-			err := s.DB().QueryRow("PRAGMA " + tt.pragma).Scan(&got)
+			err := s.db.QueryRow("PRAGMA " + tt.pragma).Scan(&got)
 			if err != nil {
 				t.Fatalf("PRAGMA %s failed: %v", tt.pragma, err)
 			}
@@ -171,9 +171,9 @@ func TestPragmas_InMemory(t *testing.T) {
 	}
 }
 
-func TestPragmas_WALMode(t *testing.T) {
-	// WAL mode requires a file-based database.
-	dbPath := t.TempDir() + "/wal-test.db"
+func TestPragmas_JournalMode(t *testing.T) {
+	// journal_mode is persisted in the file, so use a file-based database.
+	dbPath := t.TempDir() + "/journal-test.db"
 	s, err := New(dbPath)
 	if err != nil {
 		t.Fatalf("New(%q) failed: %v", dbPath, err)
@@ -181,11 +181,15 @@ func TestPragmas_WALMode(t *testing.T) {
 	defer s.Close()
 
 	var journalMode string
-	if err := s.DB().QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+	if err := s.db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
 		t.Fatalf("PRAGMA journal_mode failed: %v", err)
 	}
-	if journalMode != "wal" {
-		t.Errorf("PRAGMA journal_mode = %q, want %q", journalMode, "wal")
+	// TRUNCATE, not WAL: see connectionPragmas in storage.go. WAL's -shm mmap
+	// path throws SQLITE_IOERR_READ (6410) under the pure-Go driver in the
+	// containerized deployment, and WAL's concurrency benefit is moot because
+	// SetMaxOpenConns(1) pins the pool to one connection.
+	if journalMode != "truncate" {
+		t.Errorf("PRAGMA journal_mode = %q, want %q", journalMode, "truncate")
 	}
 }
 
@@ -263,16 +267,16 @@ func TestStorageLayer_Close(t *testing.T) {
 
 	// After close, DB operations should fail
 	var n int
-	err := s.DB().QueryRow("SELECT 1").Scan(&n)
+	err := s.db.QueryRow("SELECT 1").Scan(&n)
 	if err == nil {
 		t.Error("expected error after Close, got nil")
 	}
 }
 
-func TestStorageLayer_DB(t *testing.T) {
+func TestStorageLayer_InitializesConnection(t *testing.T) {
 	s := newTestStorage(t)
-	if s.DB() == nil {
-		t.Fatal("DB() returned nil")
+	if s.db == nil {
+		t.Fatal("storage connection is nil")
 	}
 }
 
@@ -308,10 +312,10 @@ func TestInitSchema_Idempotent(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFTS5_InsertTrigger(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	// Insert a note directly
-	_, err := s.DB().Exec(`
+	_, err := s.db.Exec(`
 		INSERT INTO notes (path, short_id, title, body)
 		VALUES ('test/path.md', 'abc123', 'Test Title', 'Test body content')
 	`)
@@ -321,7 +325,7 @@ func TestFTS5_InsertTrigger(t *testing.T) {
 
 	// FTS5 should find it
 	var title string
-	err = s.DB().QueryRow(
+	err = s.db.QueryRow(
 		"SELECT title FROM notes_fts WHERE notes_fts MATCH 'Test'",
 	).Scan(&title)
 	if err != nil {
@@ -333,10 +337,10 @@ func TestFTS5_InsertTrigger(t *testing.T) {
 }
 
 func TestFTS5_DeleteTrigger(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	// Insert then delete
-	_, err := s.DB().Exec(`
+	_, err := s.db.Exec(`
 		INSERT INTO notes (path, short_id, title, body)
 		VALUES ('test/path.md', 'abc123', 'Unique Title', 'Unique body')
 	`)
@@ -344,14 +348,14 @@ func TestFTS5_DeleteTrigger(t *testing.T) {
 		t.Fatalf("insert failed: %v", err)
 	}
 
-	_, err = s.DB().Exec("DELETE FROM notes WHERE path = 'test/path.md'")
+	_, err = s.db.Exec("DELETE FROM notes WHERE path = 'test/path.md'")
 	if err != nil {
 		t.Fatalf("delete failed: %v", err)
 	}
 
 	// FTS5 should NOT find it
 	var count int
-	err = s.DB().QueryRow(
+	err = s.db.QueryRow(
 		"SELECT count(*) FROM notes_fts WHERE notes_fts MATCH 'Unique'",
 	).Scan(&count)
 	if err != nil {
@@ -363,10 +367,10 @@ func TestFTS5_DeleteTrigger(t *testing.T) {
 }
 
 func TestFTS5_UpdateTrigger(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	// Insert
-	_, err := s.DB().Exec(`
+	_, err := s.db.Exec(`
 		INSERT INTO notes (path, short_id, title, body)
 		VALUES ('test/path.md', 'abc123', 'Original Title', 'Original body')
 	`)
@@ -375,14 +379,14 @@ func TestFTS5_UpdateTrigger(t *testing.T) {
 	}
 
 	// Update title
-	_, err = s.DB().Exec("UPDATE notes SET title = 'Updated Title' WHERE path = 'test/path.md'")
+	_, err = s.db.Exec("UPDATE notes SET title = 'Updated Title' WHERE path = 'test/path.md'")
 	if err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
 
 	// FTS5 should find the new title
 	var count int
-	err = s.DB().QueryRow(
+	err = s.db.QueryRow(
 		"SELECT count(*) FROM notes_fts WHERE notes_fts MATCH 'Updated'",
 	).Scan(&count)
 	if err != nil {
@@ -393,7 +397,7 @@ func TestFTS5_UpdateTrigger(t *testing.T) {
 	}
 
 	// FTS5 should NOT find the old title
-	err = s.DB().QueryRow(
+	err = s.db.QueryRow(
 		"SELECT count(*) FROM notes_fts WHERE notes_fts MATCH 'Original'",
 	).Scan(&count)
 	if err != nil {
@@ -402,7 +406,7 @@ func TestFTS5_UpdateTrigger(t *testing.T) {
 	// Note: 'Original' still appears in body, so count should be 1 for body match
 	// But the title should be 'Updated Title' not 'Original Title'
 	var title string
-	err = s.DB().QueryRow(
+	err = s.db.QueryRow(
 		"SELECT title FROM notes_fts WHERE notes_fts MATCH 'Updated'",
 	).Scan(&title)
 	if err != nil {
@@ -421,7 +425,7 @@ func TestForeignKeys_LinksRequireNote(t *testing.T) {
 	s := newTestStorage(t)
 
 	// Inserting a link with non-existent source_id should fail
-	_, err := s.DB().Exec(`
+	_, err := s.db.Exec(`
 		INSERT INTO links (source_id, target_path, href)
 		VALUES (9999, 'some/path.md', 'some/path.md')
 	`)
@@ -434,7 +438,7 @@ func TestForeignKeys_TagsRequireNote(t *testing.T) {
 	s := newTestStorage(t)
 
 	// Inserting a tag with non-existent note_id should fail
-	_, err := s.DB().Exec(`
+	_, err := s.db.Exec(`
 		INSERT INTO tags (note_id, tag)
 		VALUES (9999, 'test-tag')
 	`)
@@ -448,10 +452,10 @@ func TestForeignKeys_TagsRequireNote(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCascadeDelete_LinksRemoved(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	// Insert a note
-	res, err := s.DB().Exec(`
+	res, err := s.db.Exec(`
 		INSERT INTO notes (path, short_id, title) VALUES ('test/note.md', 'abc', 'Test')
 	`)
 	if err != nil {
@@ -460,7 +464,7 @@ func TestCascadeDelete_LinksRemoved(t *testing.T) {
 	noteID, _ := res.LastInsertId()
 
 	// Insert a link referencing the note
-	_, err = s.DB().Exec(`
+	_, err = s.db.Exec(`
 		INSERT INTO links (source_id, target_path, href) VALUES (?, 'other/path.md', 'other/path.md')
 	`, noteID)
 	if err != nil {
@@ -468,14 +472,14 @@ func TestCascadeDelete_LinksRemoved(t *testing.T) {
 	}
 
 	// Delete the note
-	_, err = s.DB().Exec("DELETE FROM notes WHERE id = ?", noteID)
+	_, err = s.db.Exec("DELETE FROM notes WHERE id = ?", noteID)
 	if err != nil {
 		t.Fatalf("delete note failed: %v", err)
 	}
 
 	// Link should be gone (CASCADE)
 	var count int
-	err = s.DB().QueryRow("SELECT count(*) FROM links WHERE source_id = ?", noteID).Scan(&count)
+	err = s.db.QueryRow("SELECT count(*) FROM links WHERE source_id = ?", noteID).Scan(&count)
 	if err != nil {
 		t.Fatalf("count links failed: %v", err)
 	}
@@ -485,10 +489,10 @@ func TestCascadeDelete_LinksRemoved(t *testing.T) {
 }
 
 func TestCascadeDelete_TagsRemoved(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	// Insert a note
-	res, err := s.DB().Exec(`
+	res, err := s.db.Exec(`
 		INSERT INTO notes (path, short_id, title) VALUES ('test/note.md', 'abc', 'Test')
 	`)
 	if err != nil {
@@ -497,20 +501,20 @@ func TestCascadeDelete_TagsRemoved(t *testing.T) {
 	noteID, _ := res.LastInsertId()
 
 	// Insert a tag
-	_, err = s.DB().Exec("INSERT INTO tags (note_id, tag) VALUES (?, 'my-tag')", noteID)
+	_, err = s.db.Exec("INSERT INTO tags (note_id, tag) VALUES (?, 'my-tag')", noteID)
 	if err != nil {
 		t.Fatalf("insert tag failed: %v", err)
 	}
 
 	// Delete the note
-	_, err = s.DB().Exec("DELETE FROM notes WHERE id = ?", noteID)
+	_, err = s.db.Exec("DELETE FROM notes WHERE id = ?", noteID)
 	if err != nil {
 		t.Fatalf("delete note failed: %v", err)
 	}
 
 	// Tag should be gone (CASCADE)
 	var count int
-	err = s.DB().QueryRow("SELECT count(*) FROM tags WHERE note_id = ?", noteID).Scan(&count)
+	err = s.db.QueryRow("SELECT count(*) FROM tags WHERE note_id = ?", noteID).Scan(&count)
 	if err != nil {
 		t.Fatalf("count tags failed: %v", err)
 	}
@@ -533,7 +537,7 @@ func TestNew_WithTempFile(t *testing.T) {
 
 	// Should be able to query
 	var n int
-	if err := s.DB().QueryRow("SELECT 1").Scan(&n); err != nil {
+	if err := s.db.QueryRow("SELECT 1").Scan(&n); err != nil {
 		t.Fatalf("query after New failed: %v", err)
 	}
 	if n != 1 {
@@ -542,7 +546,7 @@ func TestNew_WithTempFile(t *testing.T) {
 
 	// Tables should exist
 	var name string
-	err = s.DB().QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='notes'").Scan(&name)
+	err = s.db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='notes'").Scan(&name)
 	if err != nil {
 		t.Fatalf("notes table not found after New: %v", err)
 	}
@@ -561,7 +565,7 @@ func TestNew_MaxOpenConns(t *testing.T) {
 	// Insert multiple notes — if MaxOpenConns weren't set, this could
 	// cause issues with WAL mode on some platforms
 	for i := 0; i < 10; i++ {
-		_, err := s.DB().Exec(
+		_, err := s.db.Exec(
 			"INSERT INTO notes (path, short_id, title) VALUES (?, ?, ?)",
 			"test/"+string(rune('a'+i))+".md", "id"+string(rune('0'+i)), "Title",
 		)
@@ -580,7 +584,7 @@ func TestTaskClaimsTable_FreshDB(t *testing.T) {
 
 	// Table should exist
 	var name string
-	err := s.DB().QueryRow(
+	err := s.db.QueryRow(
 		"SELECT name FROM sqlite_master WHERE type='table' AND name='task_claims'",
 	).Scan(&name)
 	if err != nil {
@@ -588,7 +592,7 @@ func TestTaskClaimsTable_FreshDB(t *testing.T) {
 	}
 
 	// Verify columns by inserting and querying a row
-	_, err = s.DB().Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
+	_, err = s.db.Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
 		VALUES ('proj1', 'task1', 'runner1', 1000, 2000)`)
 	if err != nil {
 		t.Fatalf("insert into task_claims failed: %v", err)
@@ -596,7 +600,7 @@ func TestTaskClaimsTable_FreshDB(t *testing.T) {
 
 	var projectID, taskID, runnerID string
 	var claimedAt, expiresAt int64
-	err = s.DB().QueryRow("SELECT project_id, task_id, runner_id, claimed_at, expires_at FROM task_claims").
+	err = s.db.QueryRow("SELECT project_id, task_id, runner_id, claimed_at, expires_at FROM task_claims").
 		Scan(&projectID, &taskID, &runnerID, &claimedAt, &expiresAt)
 	if err != nil {
 		t.Fatalf("select from task_claims failed: %v", err)
@@ -613,21 +617,21 @@ func TestTaskClaimsTable_PrimaryKey(t *testing.T) {
 	s := newTestStorage(t)
 
 	// Insert first claim
-	_, err := s.DB().Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
+	_, err := s.db.Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
 		VALUES ('proj1', 'task1', 'runner1', 1000, 2000)`)
 	if err != nil {
 		t.Fatalf("first insert failed: %v", err)
 	}
 
 	// Duplicate (project_id, task_id) should fail — composite PK
-	_, err = s.DB().Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
+	_, err = s.db.Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
 		VALUES ('proj1', 'task1', 'runner2', 3000, 4000)`)
 	if err == nil {
 		t.Fatal("expected PK violation for duplicate (project_id, task_id), got nil")
 	}
 
 	// Same task_id but different project_id should succeed
-	_, err = s.DB().Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
+	_, err = s.db.Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
 		VALUES ('proj2', 'task1', 'runner1', 1000, 2000)`)
 	if err != nil {
 		t.Fatalf("insert with different project_id failed: %v", err)
@@ -644,7 +648,7 @@ func TestTaskClaimsTable_Indexes(t *testing.T) {
 	for _, idx := range indexes {
 		t.Run(idx, func(t *testing.T) {
 			var name string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='index' AND name=?", idx,
 			).Scan(&name)
 			if err != nil {
@@ -699,10 +703,12 @@ func TestSchemaVersion_IncludesFeatureCascadeRoots(t *testing.T) {
 	// Bumped with each migration. v23 added runner_pause_state, v24 added
 	// feature_cascade_roots, v25 invalidated checksums for link re-extraction,
 	// v26 did the same for HTML comments, v27 added feature_pause_state,
-	// v28 added durable tenant root mappings, v31 added attention_items,
-	// and v32 added push_subscriptions.
-	if CurrentSchemaVersion != 32 {
-		t.Errorf("CurrentSchemaVersion = %d, want 32", CurrentSchemaVersion)
+	// and v28 added durable tenant root mappings. v31 is RESERVED for the P4
+	// successor schema; attention_items and push_subscriptions are additive
+	// version-independent tables created via ensureAttentionTables, so they do
+	// NOT bump this constant.
+	if CurrentSchemaVersion != 30 {
+		t.Errorf("CurrentSchemaVersion = %d, want 30", CurrentSchemaVersion)
 	}
 }
 
@@ -711,7 +717,7 @@ func TestSchemaVersion_IncludesFeatureCascadeRoots(t *testing.T) {
 func TestFeatureCascadeRootsTable_FreshDB(t *testing.T) {
 	s := newTestStorage(t)
 	var name string
-	err := s.DB().QueryRow(
+	err := s.db.QueryRow(
 		"SELECT name FROM sqlite_master WHERE type='table' AND name=?",
 		"feature_cascade_roots",
 	).Scan(&name)
@@ -721,7 +727,7 @@ func TestFeatureCascadeRootsTable_FreshDB(t *testing.T) {
 }
 
 func TestFeatureCascadeRoots_RoundTrip(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	if err := s.UpsertFeatureCascadeRoot(ctx, "proj", "root-a", true); err != nil {
@@ -758,11 +764,11 @@ func TestFeatureCascadeRoots_RoundTrip(t *testing.T) {
 }
 
 func TestBrainClientTables_FreshDB(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	for _, table := range []string{"brain_clients", "brain_client_workspaces"} {
 		var name string
-		err := s.DB().QueryRow(
+		err := s.db.QueryRow(
 			"SELECT name FROM sqlite_master WHERE type='table' AND name=?",
 			table,
 		).Scan(&name)
@@ -787,14 +793,14 @@ func TestFeatureAssignmentsTable_FreshDB(t *testing.T) {
 	s := newTestStorage(t)
 
 	var name string
-	err := s.DB().QueryRow(
+	err := s.db.QueryRow(
 		"SELECT name FROM sqlite_master WHERE type='table' AND name='feature_assignments'",
 	).Scan(&name)
 	if err != nil {
 		t.Fatalf("feature_assignments table not found: %v", err)
 	}
 
-	_, err = s.DB().Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
+	_, err = s.db.Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
 		VALUES ('proj1', 'feat1', 'runner1', 'auto', 'active', 1000, 2000)`)
 	if err != nil {
 		t.Fatalf("insert into feature_assignments failed: %v", err)
@@ -802,7 +808,7 @@ func TestFeatureAssignmentsTable_FreshDB(t *testing.T) {
 
 	var projectID, featureID, runnerID, source, status string
 	var assignedAt, updatedAt int64
-	err = s.DB().QueryRow("SELECT project_id, feature_id, runner_id, source, status, assigned_at, updated_at FROM feature_assignments").
+	err = s.db.QueryRow("SELECT project_id, feature_id, runner_id, source, status, assigned_at, updated_at FROM feature_assignments").
 		Scan(&projectID, &featureID, &runnerID, &source, &status, &assignedAt, &updatedAt)
 	if err != nil {
 		t.Fatalf("select from feature_assignments failed: %v", err)
@@ -821,19 +827,19 @@ func TestFeatureAssignmentsTable_FreshDB(t *testing.T) {
 func TestFeatureAssignmentsTable_PrimaryKey(t *testing.T) {
 	s := newTestStorage(t)
 
-	_, err := s.DB().Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
+	_, err := s.db.Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
 		VALUES ('proj1', 'feat1', 'runner1', 'auto', 'active', 1000, 2000)`)
 	if err != nil {
 		t.Fatalf("first insert failed: %v", err)
 	}
 
-	_, err = s.DB().Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
+	_, err = s.db.Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
 		VALUES ('proj1', 'feat1', 'runner2', 'manual', 'active', 3000, 4000)`)
 	if err == nil {
 		t.Fatal("expected PK violation for duplicate (project_id, feature_id), got nil")
 	}
 
-	_, err = s.DB().Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
+	_, err = s.db.Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
 		VALUES ('proj2', 'feat1', 'runner2', 'manual', 'active', 3000, 4000)`)
 	if err != nil {
 		t.Fatalf("insert with different project_id failed: %v", err)
@@ -851,7 +857,7 @@ func TestFeatureAssignmentsTable_Indexes(t *testing.T) {
 	for _, idx := range indexes {
 		t.Run(idx, func(t *testing.T) {
 			var name string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='index' AND name=?", idx,
 			).Scan(&name)
 			if err != nil {
@@ -920,7 +926,7 @@ func TestRunnersTable_FreshDB(t *testing.T) {
 
 	// Table should exist
 	var name string
-	err := s.DB().QueryRow(
+	err := s.db.QueryRow(
 		"SELECT name FROM sqlite_master WHERE type='table' AND name='runners'",
 	).Scan(&name)
 	if err != nil {
@@ -928,7 +934,7 @@ func TestRunnersTable_FreshDB(t *testing.T) {
 	}
 
 	// Verify columns by inserting and querying a row
-	_, err = s.DB().Exec(`INSERT INTO runners (runner_id, hostname, labels, executors, max_parallel, feature_ids, registered_at, last_heartbeat, status)
+	_, err = s.db.Exec(`INSERT INTO runners (runner_id, hostname, labels, executors, max_parallel, feature_ids, registered_at, last_heartbeat, status)
 		VALUES ('runner-1', 'host1.local', '{"env":"prod"}', '["opencode"]', 4, 'feat-a,feat-b', 1000, 2000, 'online')`)
 	if err != nil {
 		t.Fatalf("insert into runners failed: %v", err)
@@ -937,7 +943,7 @@ func TestRunnersTable_FreshDB(t *testing.T) {
 	var runnerID, hostname, labels, executors, featureIDs, status string
 	var maxParallel int
 	var registeredAt, lastHeartbeat int64
-	err = s.DB().QueryRow("SELECT runner_id, hostname, labels, executors, max_parallel, feature_ids, registered_at, last_heartbeat, status FROM runners").
+	err = s.db.QueryRow("SELECT runner_id, hostname, labels, executors, max_parallel, feature_ids, registered_at, last_heartbeat, status FROM runners").
 		Scan(&runnerID, &hostname, &labels, &executors, &maxParallel, &featureIDs, &registeredAt, &lastHeartbeat, &status)
 	if err != nil {
 		t.Fatalf("select from runners failed: %v", err)
@@ -967,7 +973,7 @@ func TestRunnersTable_FreshDB_CapabilitiesColumn(t *testing.T) {
 
 	var columnName string
 	var defaultValue sql.NullString
-	err := s.DB().QueryRow(`SELECT name, dflt_value FROM pragma_table_info('runners') WHERE name = 'capabilities'`).
+	err := s.db.QueryRow(`SELECT name, dflt_value FROM pragma_table_info('runners') WHERE name = 'capabilities'`).
 		Scan(&columnName, &defaultValue)
 	if err != nil {
 		t.Fatalf("capabilities column not found in fresh runners table: %v", err)
@@ -979,14 +985,14 @@ func TestRunnersTable_FreshDB_CapabilitiesColumn(t *testing.T) {
 		t.Fatalf("capabilities default = %q (valid=%v), want '[]'", defaultValue.String, defaultValue.Valid)
 	}
 
-	_, err = s.DB().Exec(`INSERT INTO runners (runner_id, hostname, labels, executors, capabilities, max_parallel, registered_at, last_heartbeat)
+	_, err = s.db.Exec(`INSERT INTO runners (runner_id, hostname, labels, executors, capabilities, max_parallel, registered_at, last_heartbeat)
 		VALUES ('runner-cap', 'host-cap', '{}', '["opencode"]', '["gpu","docker"]', 1, 1000, 2000)`)
 	if err != nil {
 		t.Fatalf("insert runner with capabilities failed: %v", err)
 	}
 
 	var capabilities string
-	err = s.DB().QueryRow("SELECT capabilities FROM runners WHERE runner_id = 'runner-cap'").Scan(&capabilities)
+	err = s.db.QueryRow("SELECT capabilities FROM runners WHERE runner_id = 'runner-cap'").Scan(&capabilities)
 	if err != nil {
 		t.Fatalf("select capabilities failed: %v", err)
 	}
@@ -1050,7 +1056,7 @@ func TestRunnersTable_FreshDB_DispatchMetadataColumns(t *testing.T) {
 	}
 	for column, wantDefault := range wantDefaults {
 		var defaultValue sql.NullString
-		err := s.DB().QueryRow(`SELECT dflt_value FROM pragma_table_info('runners') WHERE name = ?`, column).Scan(&defaultValue)
+		err := s.db.QueryRow(`SELECT dflt_value FROM pragma_table_info('runners') WHERE name = ?`, column).Scan(&defaultValue)
 		if err != nil {
 			t.Fatalf("%s column not found in fresh runners table: %v", column, err)
 		}
@@ -1059,7 +1065,7 @@ func TestRunnersTable_FreshDB_DispatchMetadataColumns(t *testing.T) {
 		}
 	}
 
-	_, err := s.DB().Exec(`INSERT INTO runners (runner_id, hostname, machine_id, dispatch_push, workspace_roots, projects, resources, capacity, draining, max_parallel, registered_at, last_heartbeat)
+	_, err := s.db.Exec(`INSERT INTO runners (runner_id, hostname, machine_id, dispatch_push, workspace_roots, projects, resources, capacity, draining, max_parallel, registered_at, last_heartbeat)
 		VALUES ('runner-dispatch', 'host-dispatch', 'machine-explicit', 1, '["/work/brain"]', '["brain-api"]', '{"os":"darwin"}', '{"max_parallel":4}', 1, 4, 1000, 2000)`)
 	if err != nil {
 		t.Fatalf("insert runner with dispatch metadata failed: %v", err)
@@ -1067,7 +1073,7 @@ func TestRunnersTable_FreshDB_DispatchMetadataColumns(t *testing.T) {
 
 	var machineID, workspaceRoots, projects, resources, capacity string
 	var dispatchPush, draining int
-	err = s.DB().QueryRow(`SELECT machine_id, dispatch_push, workspace_roots, projects, resources, capacity, draining FROM runners WHERE runner_id = 'runner-dispatch'`).
+	err = s.db.QueryRow(`SELECT machine_id, dispatch_push, workspace_roots, projects, resources, capacity, draining FROM runners WHERE runner_id = 'runner-dispatch'`).
 		Scan(&machineID, &dispatchPush, &workspaceRoots, &projects, &resources, &capacity, &draining)
 	if err != nil {
 		t.Fatalf("select dispatch metadata failed: %v", err)
@@ -1125,14 +1131,14 @@ func TestRunnersTable_DefaultStatus(t *testing.T) {
 	s := newTestStorage(t)
 
 	// Insert without explicit status — should default to 'online'
-	_, err := s.DB().Exec(`INSERT INTO runners (runner_id, hostname, max_parallel, registered_at, last_heartbeat)
+	_, err := s.db.Exec(`INSERT INTO runners (runner_id, hostname, max_parallel, registered_at, last_heartbeat)
 		VALUES ('runner-2', 'host2.local', 1, 1000, 2000)`)
 	if err != nil {
 		t.Fatalf("insert with defaults failed: %v", err)
 	}
 
 	var status string
-	err = s.DB().QueryRow("SELECT status FROM runners WHERE runner_id = 'runner-2'").Scan(&status)
+	err = s.db.QueryRow("SELECT status FROM runners WHERE runner_id = 'runner-2'").Scan(&status)
 	if err != nil {
 		t.Fatalf("select status failed: %v", err)
 	}
@@ -1144,14 +1150,14 @@ func TestRunnersTable_DefaultStatus(t *testing.T) {
 func TestRunnersTable_PrimaryKey(t *testing.T) {
 	s := newTestStorage(t)
 
-	_, err := s.DB().Exec(`INSERT INTO runners (runner_id, hostname, max_parallel, registered_at, last_heartbeat)
+	_, err := s.db.Exec(`INSERT INTO runners (runner_id, hostname, max_parallel, registered_at, last_heartbeat)
 		VALUES ('runner-1', 'host1', 1, 1000, 2000)`)
 	if err != nil {
 		t.Fatalf("first insert failed: %v", err)
 	}
 
 	// Duplicate runner_id should fail
-	_, err = s.DB().Exec(`INSERT INTO runners (runner_id, hostname, max_parallel, registered_at, last_heartbeat)
+	_, err = s.db.Exec(`INSERT INTO runners (runner_id, hostname, max_parallel, registered_at, last_heartbeat)
 		VALUES ('runner-1', 'host2', 2, 3000, 4000)`)
 	if err == nil {
 		t.Fatal("expected PK violation for duplicate runner_id, got nil")
@@ -1162,7 +1168,7 @@ func TestRunnersTable_Index(t *testing.T) {
 	s := newTestStorage(t)
 
 	var name string
-	err := s.DB().QueryRow(
+	err := s.db.QueryRow(
 		"SELECT name FROM sqlite_master WHERE type='index' AND name='idx_runners_status'",
 	).Scan(&name)
 	if err != nil {
@@ -1231,10 +1237,11 @@ func TestRunnersTable_MigrationFromV5(t *testing.T) {
 //	conn 0    -> foreign_keys=1 synchronous=1
 //	conn 1..3 -> foreign_keys=0 synchronous=2
 //
-// Only journal_mode survived, because WAL is persisted in the database file.
-// So the connection cap was load-bearing for CORRECTNESS, and anyone raising it
-// for the obvious performance reason would have quietly turned off foreign key
-// enforcement.
+// Only journal_mode survives per-connection drift, because it is persisted in
+// the database file (now TRUNCATE, not WAL — see connectionPragmas in
+// storage.go). So the connection cap was load-bearing for CORRECTNESS, and
+// anyone raising it for the obvious performance reason would have quietly
+// turned off foreign key enforcement.
 //
 // The oracle here is SQLite's own PRAGMA readback on each live connection, not
 // a restatement of what the code intends to do.
@@ -1245,7 +1252,7 @@ func TestNew_PragmasHoldOnEveryConnection(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
-	db := store.DB()
+	db := store.db
 	// Lift the cap for this check only. The point is that the pragmas no longer
 	// depend on it, so verifying them requires more than one connection to
 	// actually exist.
@@ -1288,8 +1295,8 @@ func TestNew_PragmasHoldOnEveryConnection(t *testing.T) {
 		if synchronous != 1 {
 			t.Errorf("conn %d: synchronous=%d, want 1 (NORMAL)", i, synchronous)
 		}
-		if journalMode != "wal" {
-			t.Errorf("conn %d: journal_mode=%q, want wal", i, journalMode)
+		if journalMode != "truncate" {
+			t.Errorf("conn %d: journal_mode=%q, want truncate", i, journalMode)
 		}
 		// Without a busy timeout, a pool larger than one fails immediately on
 		// write contention instead of waiting.
@@ -1316,7 +1323,7 @@ func TestNewWithDB_KeepsForeignKeysUnderTheConnectionCap(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	var foreignKeys int
-	if err := store.DB().QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+	if err := store.db.QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
 		t.Fatalf("read foreign_keys: %v", err)
 	}
 	if foreignKeys != 1 {
@@ -1328,7 +1335,7 @@ func TestNewWithDB_KeepsForeignKeysUnderTheConnectionCap(t *testing.T) {
 func TestFeaturePauseStateTable_FreshDB(t *testing.T) {
 	s := newTestStorage(t)
 	var name string
-	err := s.DB().QueryRow(
+	err := s.db.QueryRow(
 		"SELECT name FROM sqlite_master WHERE type='table' AND name='feature_pause_state'").Scan(&name)
 	if err != nil {
 		t.Fatalf("feature_pause_state table missing on a fresh DB: %v", err)
@@ -1336,7 +1343,7 @@ func TestFeaturePauseStateTable_FreshDB(t *testing.T) {
 }
 
 func TestFeaturePauseState_RoundTrip(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	if paused, err := s.IsFeaturePaused(ctx, "proj", "feat"); err != nil || paused {
@@ -1374,7 +1381,7 @@ func TestFeaturePauseState_RoundTrip(t *testing.T) {
 // either match nothing or, read loosely, be taken for "every task with no
 // feature".
 func TestFeaturePauseState_RefusesEmptyIDs(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	if err := s.SetFeaturePaused(ctx, "", "feat", true); err == nil {
 		t.Error("empty project id was accepted")

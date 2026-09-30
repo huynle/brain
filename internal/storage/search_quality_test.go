@@ -18,7 +18,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestSearchQuality_TitleMatchRanksHigher(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert a note with "authentication" in the title
@@ -60,7 +60,7 @@ func TestSearchQuality_TitleMatchRanksHigher(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchQuality_PathMatchRanksHigherThanBody(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert a note with "migration" in the path
@@ -102,7 +102,7 @@ func TestSearchQuality_PathMatchRanksHigherThanBody(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchQuality_TypeFilter(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert notes of different types with the same keyword
@@ -151,7 +151,7 @@ func TestSearchQuality_TypeFilter(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchQuality_LimitRespected(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert several notes
@@ -185,7 +185,7 @@ func TestSearchQuality_LimitRespected(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchQuality_EmptyQueryReturnsEmpty(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -204,7 +204,7 @@ func TestSearchQuality_EmptyQueryReturnsEmpty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchQuality_FTSSyntaxErrorReturnsEmpty(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -233,7 +233,7 @@ func TestSearchQuality_FTSSyntaxErrorReturnsEmpty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchQuality_MultiWordQuery(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -254,7 +254,7 @@ func TestSearchQuality_MultiWordQuery(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchQuality_ExactTitleMatchRanksFirst(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert an exact title match
@@ -296,7 +296,7 @@ func TestSearchQuality_ExactTitleMatchRanksFirst(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchQuality_StatusFilter(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	active := sampleNote("projects/p/plan/active.md", "actv1234", "Active Plan")
@@ -337,7 +337,7 @@ func TestSearchQuality_StatusFilter(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchQuality_DefaultLimit(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert more than default limit (20) notes
@@ -372,7 +372,7 @@ func TestSearchQuality_DefaultLimit(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchQuality_Strategies(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	n := sampleNote("projects/p/plan/strategy-test.md", "strt1234", "Strategy Test Plan")
@@ -421,7 +421,7 @@ func TestSearchQuality_Strategies(t *testing.T) {
 // empty result. Live against the real store, `once_per cooldown` returned 5
 // entries and `once_per: cooldown` returned 0 — one character apart.
 func TestSearchQuality_PunctuationIsNotSyntax(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -458,7 +458,7 @@ func TestSearchQuality_PunctuationIsNotSyntax(t *testing.T) {
 // remove results — and agents write long descriptive queries. When the AND
 // pass finds nothing, the OR pass supplies recall instead of silence.
 func TestSearchQuality_LongQueryFallsBackToOr(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -475,7 +475,7 @@ func TestSearchQuality_LongQueryFallsBackToOr(t *testing.T) {
 // TestSearchQuality_ExpressionSyntaxStillWorks pins the power-user escape
 // hatch: deliberate FTS5 expressions must not be quoted into literals.
 func TestSearchQuality_ExpressionSyntaxStillWorks(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -500,7 +500,7 @@ func TestSearchQuality_ExpressionSyntaxStillWorks(t *testing.T) {
 // deliberate expression that fails to parse falls back to a literal word
 // search rather than to silence.
 func TestSearchQuality_MalformedExpressionDegradesToWords(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 

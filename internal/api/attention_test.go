@@ -78,14 +78,6 @@ func (f *fakeAttention) SetAttentionState(_ context.Context, recipient, id, stat
 	return a, nil
 }
 
-func (f *fakeAttention) SavePushSubscription(_ context.Context, _ types.PushSubscription) error {
-	return nil
-}
-
-func (f *fakeAttention) DeletePushSubscription(_ context.Context, _, _ string) error {
-	return nil
-}
-
 func attnRouter(fa AttentionService) http.Handler {
 	h := NewHandler(nil, WithAttentionService(fa))
 	r := chi.NewRouter()

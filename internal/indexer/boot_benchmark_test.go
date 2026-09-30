@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"io/fs"
@@ -73,7 +74,7 @@ func BenchmarkBootAttachmentTree(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			defer store.Close()
+			defer db.Close()
 			idx := NewIndexer(root, store)
 			if r, err := idx.IndexChanged(); err != nil || r.Added != notes || len(r.Errors) != 0 {
 				b.Fatalf("seed: %+v, %v", r, err)
@@ -122,22 +123,13 @@ func oldUnchangedBoot(idx *Indexer) (*IndexResult, error) {
 	for _, f := range files {
 		diskSet[f] = true
 	}
-	rows, err := idx.storage.DB().Query("SELECT path, checksum FROM notes")
+	rows, err := idx.storage.ListIndexedNoteStates(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	dbMap := make(map[string]*string)
-	for rows.Next() {
-		var path string
-		var checksum *string
-		if err := rows.Scan(&path, &checksum); err != nil {
-			return nil, err
-		}
-		dbMap[path] = checksum
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	for _, row := range rows {
+		dbMap[row.Path] = row.Checksum
 	}
 	r := &IndexResult{}
 	for _, file := range files {

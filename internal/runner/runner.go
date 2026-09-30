@@ -2164,7 +2164,7 @@ func mostRecentSessionID(sessions map[string]types.SessionInfo) string {
 }
 
 // knownPort, when > 0, is the already-resolved server port (headless
-// serve+attach reports it at spawn time, and the run --attach process binds
+// serve+attach reports it at spawn time, and the run --server process binds
 // no port of its own); discovery via the PID is skipped in that case.
 //
 // pinnedSessionID, when non-empty, is a session this runner created itself and

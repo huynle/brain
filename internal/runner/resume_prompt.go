@@ -200,8 +200,8 @@ func selectResumePrompt(task *types.ResolvedTask, opts SpawnOptions, sameSession
 // the serve-startup and session-creation steps so tests can stub them without
 // spawning a real `opencode` process. Production wiring calls the real
 // methods.
-var startHeadlessServerFn = func(e *OpenCodeExecutor, workdir, projectID, taskID string) (int, map[string]struct{}, Process, error) {
-	return e.startHeadlessServer(workdir, projectID, taskID)
+var startHeadlessServerFn = func(e *OpenCodeExecutor, workdir, projectID, taskID, servePassword string) (int, map[string]struct{}, Process, error) {
+	return e.startHeadlessServer(workdir, projectID, taskID, servePassword)
 }
 
 var createOpencodeSessionFn = func(port int, title string) (string, error) {

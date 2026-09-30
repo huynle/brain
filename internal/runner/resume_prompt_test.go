@@ -28,7 +28,7 @@ func readPromptFileForTest(t *testing.T, path string) string {
 // restore func.
 func stubStartHeadlessServer(port int) func() {
 	prev := startHeadlessServerFn
-	startHeadlessServerFn = func(_ *OpenCodeExecutor, _, _, _ string) (int, map[string]struct{}, Process, error) {
+	startHeadlessServerFn = func(_ *OpenCodeExecutor, _, _, _, _ string) (int, map[string]struct{}, Process, error) {
 		return port, map[string]struct{}{}, noopProcess{}, nil
 	}
 	return func() { startHeadlessServerFn = prev }

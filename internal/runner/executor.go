@@ -83,7 +83,7 @@ type OpenCodeExecutor struct {
 
 	// serveProcs holds the persistent `opencode serve` process backing each
 	// attachable headless task, keyed by task ID. The task is driven by a
-	// separate `opencode run --attach` process (tracked for completion); the
+	// separate `opencode run --server` process (tracked for completion); the
 	// serve process is torn down in Cleanup.
 	serveAdmission sync.RWMutex // shutdown excludes the entire headless spawn
 	serveMu        sync.Mutex
@@ -816,7 +816,7 @@ func (e *OpenCodeExecutor) validateScriptWorkdir(workdir string) error {
 //
 // By default it makes the task attachable: a persistent `opencode serve`
 // process is started (a discoverable HTTP port → registered as the task
-// instance), and the task is driven by `opencode run --attach` against it.
+// instance), and the task is driven by `opencode run --server` against it.
 // Completion is detected by the run process exiting (unchanged); the serve
 // process is torn down in Cleanup.
 //
@@ -841,14 +841,19 @@ func (e *OpenCodeExecutor) spawnHeadless(
 		return nil, fmt.Errorf("headless executor is shut down")
 	}
 	if e.config.Control.Disabled {
-		return e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, 0, "")
+		return e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, 0, "", "")
 	}
 
-	port, existingSessionIDs, serveProc, err := startHeadlessServerFn(e, workdir, projectID, task.ID)
+	// One strong per-serve password authenticates the v2 server. It is exported
+	// to the serve process (OPENCODE_PASSWORD) and reused for the run process
+	// and every API call the runner makes to this instance.
+	servePassword := generateOpenCodePassword()
+
+	port, existingSessionIDs, serveProc, err := startHeadlessServerFn(e, workdir, projectID, task.ID, servePassword)
 	if err != nil {
 		slog.Warn("headless server unavailable, running task non-attachable",
 			"task_id", task.ID, "error", err)
-		return e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, 0, "")
+		return e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, 0, "", "")
 	}
 
 	// Pin the session up front rather than guessing it afterwards. Creating
@@ -876,7 +881,7 @@ func (e *OpenCodeExecutor) spawnHeadless(
 		}
 	}
 
-	res, err := e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, port, sessionID)
+	res, err := e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, port, sessionID, servePassword)
 	if err != nil {
 		// Driver failed to start — don't leak the server we started.
 		e.killServeGeneration(task.ID, serveProc)
@@ -925,9 +930,11 @@ func (e *OpenCodeExecutor) spawnHeadless(
 }
 
 // spawnHeadlessDirect runs `opencode run`. When attachPort > 0 it drives a
-// persistent server via `--attach`; otherwise it runs the model in-process
-// (not attachable). Returns a SpawnResult whose Proc is the run process
-// (its exit signals completion) and whose OpencodePort is attachPort.
+// persistent server via `--server` (v2; `--attach` was removed), authenticating
+// with attachPassword exported as OPENCODE_PASSWORD in the run env; otherwise
+// it runs the model in-process (not attachable). Returns a SpawnResult whose
+// Proc is the run process (its exit signals completion) and whose OpencodePort
+// is attachPort.
 func (e *OpenCodeExecutor) spawnHeadlessDirect(
 	workdir, projectID string,
 	task *types.ResolvedTask,
@@ -935,6 +942,7 @@ func (e *OpenCodeExecutor) spawnHeadlessDirect(
 	opts SpawnOptions,
 	attachPort int,
 	attachSession string,
+	attachPassword string,
 ) (*SpawnResult, error) {
 	outputFile := filepath.Join(e.config.StateDir, fmt.Sprintf("output_%s_%s.log", projectID, task.ID))
 	logFile, err := os.Create(outputFile)
@@ -953,7 +961,7 @@ func (e *OpenCodeExecutor) spawnHeadlessDirect(
 
 	args := []string{"run"}
 	if attachPort > 0 {
-		args = append(args, "--attach", fmt.Sprintf("http://127.0.0.1:%d", attachPort))
+		args = append(args, "--server", fmt.Sprintf("http://127.0.0.1:%d", attachPort))
 		if attachSession != "" {
 			args = append(args, "--session", attachSession)
 		}
@@ -967,7 +975,7 @@ func (e *OpenCodeExecutor) spawnHeadlessDirect(
 	args = append(args, string(promptContent))
 
 	cmd := e.CommandFactory(e.config.Opencode.Bin, args...)
-	cmd.Env = opencodeChildEnvironment(task, e.config)
+	cmd.Env = opencodeChildEnvironmentWithPassword(task, e.config, attachPassword)
 	cmd.Dir = workdir
 
 	var output io.Writer = logFile
@@ -999,9 +1007,11 @@ func (e *OpenCodeExecutor) spawnHeadlessDirect(
 }
 
 // startHeadlessServer spawns `opencode serve --port 0` and waits for it to
-// bind a healthy HTTP port. Returns the port and the server process, or an
-// error if it never becomes ready (caller falls back to in-process run).
-func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID string) (int, map[string]struct{}, Process, error) {
+// bind a healthy HTTP port. servePassword is exported as OPENCODE_PASSWORD so
+// the v2 server requires Basic auth with a runner-known credential. Returns the
+// port and the server process, or an error if it never becomes ready (caller
+// falls back to in-process run).
+func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID, servePassword string) (int, map[string]struct{}, Process, error) {
 	serveLog := filepath.Join(e.config.StateDir, fmt.Sprintf("serve_%s_%s.log", projectID, taskID))
 	logFile, err := os.Create(serveLog)
 	if err != nil {
@@ -1009,7 +1019,7 @@ func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID string
 	}
 
 	cmd := e.CommandFactory(e.config.Opencode.Bin, "serve", "--port", "0")
-	cmd.Env = opencodeChildEnvironment(nil, e.config)
+	cmd.Env = opencodeChildEnvironmentWithPassword(nil, e.config, servePassword)
 	cmd.Dir = workdir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile

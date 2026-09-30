@@ -2367,8 +2367,8 @@ func TestSpawnHeadless_ControlDisabled_DirectRun(t *testing.T) {
 	if args[0] != "run" {
 		t.Errorf("expected 'run', got %v", args)
 	}
-	if indexOf(args, "--attach") >= 0 {
-		t.Errorf("control disabled should not use --attach: %v", args)
+	if indexOf(args, "--attach") >= 0 || indexOf(args, "--server") >= 0 {
+		t.Errorf("control disabled should not use --attach/--server: %v", args)
 	}
 	if indexOf(args, "--port") >= 0 {
 		t.Errorf("the dead --port flag should not be passed: %v", args)
@@ -2411,8 +2411,8 @@ func TestSpawnHeadless_ServeFailsFallsBackToDirect(t *testing.T) {
 	if lastArgs[0] != "run" {
 		t.Errorf("fallback should be a direct run, got %v", lastArgs)
 	}
-	if indexOf(lastArgs, "--attach") >= 0 {
-		t.Errorf("fallback run must not use --attach: %v", lastArgs)
+	if indexOf(lastArgs, "--attach") >= 0 || indexOf(lastArgs, "--server") >= 0 {
+		t.Errorf("fallback run must not use --attach/--server: %v", lastArgs)
 	}
 	if res.OpencodePort != 0 {
 		t.Errorf("fallback (non-attachable) should report no port, got %d", res.OpencodePort)

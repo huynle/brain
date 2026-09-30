@@ -63,9 +63,9 @@ func TestChildEnvironmentBoundary(t *testing.T) {
 				if mode == "attached" {
 					port = 12345
 				}
-				res, err = e.spawnHeadlessDirect(dir, "p", task, prompt, SpawnOptions{}, port, "")
+				res, err = e.spawnHeadlessDirect(dir, "p", task, prompt, SpawnOptions{}, port, "", "")
 			case "server":
-				_, _, _, _ = e.startHeadlessServer(dir, "p", task.ID)
+				_, _, _, _ = e.startHeadlessServer(dir, "p", task.ID, "")
 				data, readErr := os.ReadFile(filepath.Join(dir, "serve_p_task.log"))
 				if readErr != nil {
 					t.Fatal(readErr)

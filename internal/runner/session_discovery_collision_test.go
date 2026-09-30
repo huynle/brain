@@ -271,7 +271,7 @@ func TestSpawnHeadlessDirect_PinsSession(t *testing.T) {
 	}
 
 	task := testResolvedTask("abc123")
-	res, err := e.spawnHeadlessDirect(stateDir, "proj", task, promptFile, SpawnOptions{}, 4096, "ses_pinned")
+	res, err := e.spawnHeadlessDirect(stateDir, "proj", task, promptFile, SpawnOptions{}, 4096, "ses_pinned", "pw")
 	if err != nil {
 		t.Fatalf("spawnHeadlessDirect: %v", err)
 	}
@@ -279,8 +279,8 @@ func TestSpawnHeadlessDirect_PinsSession(t *testing.T) {
 		t.Fatalf("SpawnResult.SessionID = %q, want ses_pinned", res.SessionID)
 	}
 	joined := strings.Join(gotArgs, " ")
-	if !strings.Contains(joined, "--attach http://127.0.0.1:4096") {
-		t.Fatalf("run must attach to the server that created the pinned session, got: %s", joined)
+	if !strings.Contains(joined, "--server http://127.0.0.1:4096") {
+		t.Fatalf("run must connect to the server that created the pinned session, got: %s", joined)
 	}
 	if !strings.Contains(joined, "--session ses_pinned") {
 		t.Fatalf("run args should pin the session, got: %s", joined)
@@ -305,7 +305,7 @@ func TestSpawnHeadlessDirect_NoSessionFlagWithoutAttach(t *testing.T) {
 	}
 
 	task := testResolvedTask("abc123")
-	if _, err := e.spawnHeadlessDirect(stateDir, "proj", task, promptFile, SpawnOptions{}, 0, ""); err != nil {
+	if _, err := e.spawnHeadlessDirect(stateDir, "proj", task, promptFile, SpawnOptions{}, 0, "", ""); err != nil {
 		t.Fatalf("spawnHeadlessDirect: %v", err)
 	}
 	if strings.Contains(strings.Join(gotArgs, " "), "--session") {

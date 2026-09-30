@@ -622,6 +622,15 @@ func opencodeChildEnvironment(task *types.ResolvedTask, config RunnerConfig) []s
 	return environmentSlice(opencodeChildEnvironmentMap(task, config))
 }
 
+// opencodeChildEnvironmentWithPassword is opencodeChildEnvironment plus the
+// per-serve OPENCODE_PASSWORD (v2 Basic auth). An empty password adds nothing,
+// so non-attach in-process runs are unchanged.
+func opencodeChildEnvironmentWithPassword(task *types.ResolvedTask, config RunnerConfig, password string) []string {
+	env := opencodeChildEnvironmentMap(task, config)
+	injectOpenCodePassword(env, password)
+	return environmentSlice(env)
+}
+
 func environmentSlice(m map[string]string) []string {
 	env := make([]string, 0, len(m))
 	for k, v := range m {

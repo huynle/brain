@@ -2070,7 +2070,7 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 			Task: runningTask,
 			Proc: NewPidProcess(runningTask.PID),
 		}, runnerHostname()))
-		go tr.discoverAndSaveSession(task.Path, spawnResult.PID, spawnResult.OpencodePort, spawnResult.ExistingSessionIDs, spawnResult.SessionID)
+		go tr.discoverAndSaveSession(task.Path, spawnResult.PID, spawnResult.OpencodePort, spawnResult.ExistingSessionIDs, spawnResult.SessionID, spawnResult.OpencodePassword)
 	}
 
 	return nil
@@ -2170,7 +2170,7 @@ func mostRecentSessionID(sessions map[string]types.SessionInfo) string {
 // pinnedSessionID, when non-empty, is a session this runner created itself and
 // handed to `opencode run --session`. There is then nothing to discover: the
 // heuristic below is skipped entirely and the known ID is recorded as-is.
-func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort int, excludeSessionIDs map[string]struct{}, pinnedSessionID string) {
+func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort int, excludeSessionIDs map[string]struct{}, pinnedSessionID string, password string) {
 	port := knownPort
 	if port <= 0 {
 		if pid <= 0 {
@@ -2214,7 +2214,7 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort
 	if sessionID == "" {
 		var err error
 		for attempt := 0; attempt < 5; attempt++ {
-			sessionID, err = tr.claimDiscoveredSession(taskPath, port, excludeSessionIDs)
+			sessionID, err = tr.claimDiscoveredSession(taskPath, port, excludeSessionIDs, password)
 			if err == nil && sessionID != "" {
 				break
 			}
@@ -2290,7 +2290,7 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort
 //
 // This is only the fallback path: when the session was pinned at spawn (the
 // normal attach case) discovery never runs at all.
-func (tr *TaskRunner) claimDiscoveredSession(taskPath string, port int, exclude map[string]struct{}) (string, error) {
+func (tr *TaskRunner) claimDiscoveredSession(taskPath string, port int, exclude map[string]struct{}, password string) (string, error) {
 	tr.sessionClaimMu.Lock()
 	defer tr.sessionClaimMu.Unlock()
 
@@ -2302,7 +2302,7 @@ func (tr *TaskRunner) claimDiscoveredSession(taskPath string, port int, exclude 
 		skip[id] = struct{}{}
 	}
 
-	sessionID, err := discoverSessionID(port, skip)
+	sessionID, err := discoverSessionID(port, skip, password)
 	if err != nil || sessionID == "" {
 		return "", err
 	}
@@ -2401,12 +2401,35 @@ func discoverChildPort(parentPID int) (int, error) {
 }
 
 type opencodeSession struct {
-	ID       string `json:"id"`
-	ParentID string `json:"parentID,omitempty"`
-	Time     struct {
+	ID        string `json:"id"`
+	ParentID  string `json:"parentID,omitempty"`
+	ProjectID string `json:"projectID,omitempty"`
+	Agent     string `json:"agent,omitempty"`
+	Model     struct {
+		ID         string `json:"id"`
+		ProviderID string `json:"providerID"`
+		Variant    string `json:"variant,omitempty"`
+	} `json:"model,omitempty"`
+	Time struct {
 		Created int64 `json:"created"`
 		Updated int64 `json:"updated"`
 	} `json:"time"`
+}
+
+// sessionsEnvelope is the v2 GET /api/session response wrapper: the session
+// list lives under "data", paginated by "cursor".
+type sessionsEnvelope struct {
+	Data   []opencodeSession `json:"data"`
+	Cursor struct {
+		Previous *string `json:"previous"`
+		Next     *string `json:"next"`
+	} `json:"cursor"`
+}
+
+// sessionEnvelope is the v2 POST /api/session response wrapper: the created
+// session lives under "data".
+type sessionEnvelope struct {
+	Data opencodeSession `json:"data"`
 }
 
 // order returns the value sessions are ranked by when picking one for a task.
@@ -2420,38 +2443,39 @@ func (s opencodeSession) order() int64 {
 	return s.Time.Updated
 }
 
-func fetchSessions(port int) ([]opencodeSession, error) {
-	url := fmt.Sprintf("http://localhost:%d/session", port)
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(url)
+func fetchSessions(port int, password string) ([]opencodeSession, error) {
+	c := newLocalOpenCodeClient(port, password)
+	req, err := c.newRequest(context.Background(), http.MethodGet, "/session", nil)
 	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", url, err)
+		return nil, fmt.Errorf("build session request: %w", err)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", c.url("/session"), err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
+		return nil, fmt.Errorf("GET %s: status %d", c.url("/session"), resp.StatusCode)
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read session response: %w", err)
 	}
 
-	var sessions []opencodeSession
-	if err := json.Unmarshal(body, &sessions); err == nil {
-		return sessions, nil
-	}
-	var single opencodeSession
-	if err := json.Unmarshal(body, &single); err != nil {
+	// v2 wraps the list under {"data":[…],"cursor":{…}}.
+	var env sessionsEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
 		return nil, fmt.Errorf("decode session response: %w", err)
 	}
-	return []opencodeSession{single}, nil
+	return env.Data, nil
 }
 
 // listSessionIDs snapshots the session IDs an opencode server can currently
 // see, for use as a pre-spawn baseline.
-func listSessionIDs(port int) (map[string]struct{}, error) {
-	sessions, err := fetchSessions(port)
+func listSessionIDs(port int, password string) (map[string]struct{}, error) {
+	sessions, err := fetchSessions(port, password)
 	if err != nil {
 		return nil, err
 	}
@@ -2474,7 +2498,8 @@ func listSessionIDs(port int) (map[string]struct{}, error) {
 // that was not there when I started" cannot tell two concurrently-spawned
 // tasks apart — each one's baseline was taken before the other's session
 // existed, and both land on whichever session was touched last.
-func createOpencodeSession(port int, title string) (string, error) {
+func createOpencodeSession(port int, title string, password string) (string, error) {
+	// v2 requires a JSON body; title is optional. An empty object is valid.
 	body := map[string]string{}
 	if title != "" {
 		body["title"] = title
@@ -2484,8 +2509,8 @@ func createOpencodeSession(port int, title string) (string, error) {
 		return "", fmt.Errorf("encode session request: %w", err)
 	}
 
-	url := fmt.Sprintf("http://localhost:%d/session", port)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	c := newLocalOpenCodeClient(port, password)
+	req, err := c.newRequest(context.Background(), http.MethodPost, "/session", bytes.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("build session request: %w", err)
 	}
@@ -2494,22 +2519,23 @@ func createOpencodeSession(port int, title string) (string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("POST %s: %w", url, err)
+		return "", fmt.Errorf("POST %s: %w", c.url("/session"), err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("POST %s: status %d", url, resp.StatusCode)
+		return "", fmt.Errorf("POST %s: status %d", c.url("/session"), resp.StatusCode)
 	}
 
-	var created opencodeSession
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+	// v2 wraps the created session under {"data":{…}}.
+	var env sessionEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		return "", fmt.Errorf("decode session response: %w", err)
 	}
-	if created.ID == "" {
-		return "", fmt.Errorf("POST %s: response had no session id", url)
+	if env.Data.ID == "" {
+		return "", fmt.Errorf("POST %s: response had no session id", c.url("/session"))
 	}
-	return created.ID, nil
+	return env.Data.ID, nil
 }
 
 // discoverSessionID queries an opencode HTTP server for the task session ID.
@@ -2524,8 +2550,8 @@ func createOpencodeSession(port int, title string) (string, error) {
 //
 // This remains a heuristic. Prefer pinning the session at spawn
 // (createOpencodeSession); this is the fallback for when that is unavailable.
-func discoverSessionID(port int, exclude map[string]struct{}) (string, error) {
-	sessions, err := fetchSessions(port)
+func discoverSessionID(port int, exclude map[string]struct{}, password string) (string, error) {
+	sessions, err := fetchSessions(port, password)
 	if err != nil {
 		return "", err
 	}

@@ -204,6 +204,6 @@ var startHeadlessServerFn = func(e *OpenCodeExecutor, workdir, projectID, taskID
 	return e.startHeadlessServer(workdir, projectID, taskID, servePassword)
 }
 
-var createOpencodeSessionFn = func(port int, title string) (string, error) {
-	return createOpencodeSession(port, title)
+var createOpencodeSessionFn = func(port int, title string, password string) (string, error) {
+	return createOpencodeSession(port, title, password)
 }

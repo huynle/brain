@@ -38,14 +38,14 @@ func (s *sharedSessionStore) add(id string, created int64) {
 func (s *sharedSessionStore) serve(t *testing.T) int {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/session" {
+		if r.URL.Path != "/api/session" {
 			http.NotFound(w, r)
 			return
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(s.sessions)
+		_ = json.NewEncoder(w).Encode(sessionsEnvelope{Data: s.sessions})
 	}))
 	t.Cleanup(srv.Close)
 	return serverPortFromURL(t, srv.URL)
@@ -67,8 +67,8 @@ func TestDiscoverSessionID_ExcludeAloneCannotSeparateSharedWorkdir(t *testing.T)
 	store.add("ses_a", 2000)
 	store.add("ses_b", 3000)
 
-	a, errA := discoverSessionID(portA, baselineA)
-	b, errB := discoverSessionID(portB, baselineB)
+	a, errA := discoverSessionID(portA, baselineA, "")
+	b, errB := discoverSessionID(portB, baselineB, "")
 	if errA != nil || errB != nil {
 		t.Fatalf("discoverSessionID errors: %v / %v", errA, errB)
 	}
@@ -116,11 +116,11 @@ func TestClaimDiscoveredSession_SharedWorkdir(t *testing.T) {
 
 			tr, pathA, pathB := runnerWithTwoTasksInOneWorkdir(t)
 
-			a, err := tr.claimDiscoveredSession(pathA, portA, baselineA)
+			a, err := tr.claimDiscoveredSession(pathA, portA, baselineA, "")
 			if err != nil {
 				t.Fatalf("claim A: %v", err)
 			}
-			b, err := tr.claimDiscoveredSession(pathB, portB, baselineB)
+			b, err := tr.claimDiscoveredSession(pathB, portB, baselineB, "")
 			if err != nil {
 				t.Fatalf("claim B: %v", err)
 			}
@@ -169,7 +169,7 @@ func TestClaimDiscoveredSession_ConcurrentClaimsAreSerialized(t *testing.T) {
 		go func(i int, path string, port int, baseline map[string]struct{}) {
 			defer wg.Done()
 			<-start
-			results[i], errs[i] = tr.claimDiscoveredSession(path, port, baseline)
+			results[i], errs[i] = tr.claimDiscoveredSession(path, port, baseline, "")
 		}(i, c.path, c.port, c.baseline)
 	}
 	close(start)
@@ -196,11 +196,11 @@ func TestClaimDiscoveredSession_ReclaimsOwnSession(t *testing.T) {
 
 	tr, pathA, _ := runnerWithTwoTasksInOneWorkdir(t)
 
-	first, err := tr.claimDiscoveredSession(pathA, portA, baseline)
+	first, err := tr.claimDiscoveredSession(pathA, portA, baseline, "")
 	if err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
-	second, err := tr.claimDiscoveredSession(pathA, portA, baseline)
+	second, err := tr.claimDiscoveredSession(pathA, portA, baseline, "")
 	if err != nil {
 		t.Fatalf("second claim: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestClaimDiscoveredSession_ReclaimsOwnSession(t *testing.T) {
 func TestCreateOpencodeSession_ReturnsID(t *testing.T) {
 	var gotTitle string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/session" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/session" {
 			http.NotFound(w, r)
 			return
 		}
@@ -224,11 +224,11 @@ func TestCreateOpencodeSession_ReturnsID(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		gotTitle = body["title"]
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"ses_created","time":{"updated":42}}`))
+		_, _ = w.Write([]byte(`{"data":{"id":"ses_created","projectID":"p","time":{"updated":42}}}`))
 	}))
 	defer srv.Close()
 
-	id, err := createOpencodeSession(serverPortFromURL(t, srv.URL), "Test Task abc123")
+	id, err := createOpencodeSession(serverPortFromURL(t, srv.URL), "Test Task abc123", "pw")
 	if err != nil {
 		t.Fatalf("createOpencodeSession: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestCreateOpencodeSession_ErrorsOnBadStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := createOpencodeSession(serverPortFromURL(t, srv.URL), "t"); err == nil {
+	if _, err := createOpencodeSession(serverPortFromURL(t, srv.URL), "t", "pw"); err == nil {
 		t.Fatal("expected an error so the caller falls back to discovery")
 	}
 }
@@ -319,10 +319,10 @@ func TestSpawnHeadlessDirect_NoSessionFlagWithoutAttach(t *testing.T) {
 func TestDiscoverAndSaveSession_PinnedSkipsDiscovery(t *testing.T) {
 	var sessionListCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/session" {
+		if r.URL.Path == "/api/session" {
 			sessionListCalls++
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`[{"id":"ses_decoy","time":{"updated":99999}}]`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"ses_decoy","projectID":"p","time":{"updated":99999}}]}`))
 			return
 		}
 		http.NotFound(w, r)
@@ -330,10 +330,10 @@ func TestDiscoverAndSaveSession_PinnedSkipsDiscovery(t *testing.T) {
 	defer srv.Close()
 
 	tr, pathA, _ := runnerWithTwoTasksInOneWorkdir(t)
-	tr.discoverAndSaveSession(pathA, 0, serverPortFromURL(t, srv.URL), nil, "ses_pinned")
+	tr.discoverAndSaveSession(pathA, 0, serverPortFromURL(t, srv.URL), nil, "ses_pinned", "")
 
 	if sessionListCalls != 0 {
-		t.Fatalf("pinned session should not query /session, got %d calls", sessionListCalls)
+		t.Fatalf("pinned session should not query /api/session, got %d calls", sessionListCalls)
 	}
 	assertRecordedSessions(t, tr, map[string]string{pathA: "ses_pinned"})
 }
@@ -344,7 +344,7 @@ func TestDiscoverAndSaveSession_PinnedSkipsDiscovery(t *testing.T) {
 
 func baselineFor(t *testing.T, port int) map[string]struct{} {
 	t.Helper()
-	ids, err := listSessionIDs(port)
+	ids, err := listSessionIDs(port, "")
 	if err != nil {
 		t.Fatalf("listSessionIDs(%d): %v", port, err)
 	}

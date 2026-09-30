@@ -1862,32 +1862,32 @@ func TestTaskRunner_Poll_UsesServerOwnedProjectPauseState(t *testing.T) {
 func TestDiscoverSessionID_IgnoresExistingSessions(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/session" {
+		if r.URL.Path != "/api/session" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		calls++
 		w.Header().Set("Content-Type", "application/json")
 		switch calls {
 		case 1:
-			_, _ = w.Write([]byte(`[
-				{"id":"ses_old","time":{"updated":9000}}
-			]`))
+			_, _ = w.Write([]byte(`{"data":[
+				{"id":"ses_old","projectID":"p","time":{"updated":9000}}
+			]}`))
 		default:
-			_, _ = w.Write([]byte(`[
-				{"id":"ses_old","time":{"updated":9000}},
-				{"id":"ses_task","time":{"updated":1000}}
-			]`))
+			_, _ = w.Write([]byte(`{"data":[
+				{"id":"ses_old","projectID":"p","time":{"updated":9000}},
+				{"id":"ses_task","projectID":"p","time":{"updated":1000}}
+			]}`))
 		}
 	}))
 	defer server.Close()
 
 	port := serverPortFromURL(t, server.URL)
-	baseline, err := listSessionIDs(port)
+	baseline, err := listSessionIDs(port, "")
 	if err != nil {
 		t.Fatalf("listSessionIDs failed: %v", err)
 	}
 
-	sessionID, err := discoverSessionID(port, baseline)
+	sessionID, err := discoverSessionID(port, baseline, "")
 	if err != nil {
 		t.Fatalf("discoverSessionID failed: %v", err)
 	}

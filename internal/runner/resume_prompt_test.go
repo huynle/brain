@@ -36,7 +36,7 @@ func stubStartHeadlessServer(port int) func() {
 
 // stubCreateOpencodeSession replaces the session-creation hook. Returns a
 // restore func.
-func stubCreateOpencodeSession(fn func(port int, title string) (string, error)) func() {
+func stubCreateOpencodeSession(fn func(port int, title string, password string) (string, error)) func() {
 	prev := createOpencodeSessionFn
 	createOpencodeSessionFn = fn
 	return func() { createOpencodeSessionFn = prev }
@@ -343,7 +343,7 @@ func TestSpawn_SameSession_UsesStoredSessionNoCreate(t *testing.T) {
 	defer restoreServe()
 
 	created := false
-	restoreCreate := stubCreateOpencodeSession(func(port int, title string) (string, error) {
+	restoreCreate := stubCreateOpencodeSession(func(port int, title string, password string) (string, error) {
 		created = true
 		return "ses_freshly_created", nil
 	})
@@ -393,7 +393,7 @@ func TestSpawn_Rehydrate_CreatesFreshSession(t *testing.T) {
 	defer restoreServe()
 
 	created := false
-	restoreCreate := stubCreateOpencodeSession(func(port int, title string) (string, error) {
+	restoreCreate := stubCreateOpencodeSession(func(port int, title string, password string) (string, error) {
 		created = true
 		return "ses_fresh", nil
 	})
@@ -444,7 +444,7 @@ func TestSpawn_LegacyEmptyResumeMode_Unchanged(t *testing.T) {
 	defer restoreServe()
 
 	created := false
-	restoreCreate := stubCreateOpencodeSession(func(port int, title string) (string, error) {
+	restoreCreate := stubCreateOpencodeSession(func(port int, title string, password string) (string, error) {
 		created = true
 		return "ses_legacy", nil
 	})

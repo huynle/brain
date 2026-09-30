@@ -60,6 +60,7 @@ type SpawnResult struct {
 	WindowName         string
 	PromptFile         string
 	OpencodePort       int
+	OpencodePassword   string
 	SessionID          string
 	ExistingSessionIDs map[string]struct{}
 	Workdir            string
@@ -873,7 +874,7 @@ func (e *OpenCodeExecutor) spawnHeadless(
 	if opts.ResumeMode == ResumeModeSameSession && opts.ResumeSessionID != "" {
 		sessionID = opts.ResumeSessionID
 	} else {
-		sessionID, err = createOpencodeSessionFn(port, task.Title)
+		sessionID, err = createOpencodeSessionFn(port, task.Title, servePassword)
 		if err != nil {
 			slog.Warn("could not pre-create opencode session; falling back to session discovery",
 				"task_id", task.ID, "port", port, "error", err)
@@ -889,6 +890,7 @@ func (e *OpenCodeExecutor) spawnHeadless(
 	}
 	res.ExistingSessionIDs = existingSessionIDs
 	res.SessionID = sessionID
+	res.OpencodePassword = servePassword
 
 	// Tie the server's lifetime to the driver process: when the run process
 	// exits (completion, kill, crash, or runner shutdown), tear the server
@@ -1042,7 +1044,7 @@ func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID, serve
 			return 0, nil, nil, fmt.Errorf("opencode serve exited during startup (code %d)", proc.ExitCode())
 		}
 		if port, derr := DiscoverPort(proc.Pid()); derr == nil && port > 0 && instanceHealthy(port) {
-			baseline, _ := listSessionIDs(port)
+			baseline, _ := listSessionIDs(port, servePassword)
 			return port, baseline, proc, nil
 		}
 		time.Sleep(1 * time.Second)

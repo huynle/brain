@@ -16,7 +16,7 @@
 /** What a history entry remembers: an INTENT, never a layout. */
 export interface NavEntry {
   /** The view that was on screen. */
-  view: "overview" | "focus" | "entries" | "reminders" | "session";
+  view: "overview" | "focus" | "entries" | "reminders" | "attention" | "session";
   /** The pane that was brought forward, when the navigation opened one. */
   leaf?: {
     dock: "focus" | "sidebar";

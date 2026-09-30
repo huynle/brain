@@ -40,6 +40,7 @@ type UnifiedConfig struct {
 		TaskDefaults    config.TaskDefaultsConfig
 		FeatureCheckout config.FeatureCheckoutConfig
 		FeatureDelivery config.FeatureDeliveryConfig
+		Attention       config.AttentionConfig
 		IndexWatch      config.IndexWatchConfig
 		Embedding       config.EmbeddingConfig
 		Attachments     config.AttachmentConfig
@@ -97,6 +98,7 @@ func (c *APICommand) Execute() error {
 		TaskDefaults:    c.Config.Server.TaskDefaults,
 		FeatureCheckout: c.Config.Server.FeatureCheckout,
 		FeatureDelivery: c.Config.Server.FeatureDelivery,
+		Attention:       c.Config.Server.Attention,
 		IndexWatch:      c.Config.Server.IndexWatch,
 		Embedding:       c.Config.Server.Embedding,
 		Attachments:     c.Config.Server.Attachments,

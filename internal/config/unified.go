@@ -139,6 +139,7 @@ type ServerConfig struct {
 	TaskDefaults    TaskDefaultsConfig    `yaml:"task_defaults"`
 	FeatureCheckout FeatureCheckoutConfig `yaml:"feature_checkout"`
 	FeatureDelivery FeatureDeliveryConfig `yaml:"feature_delivery"`
+	Attention       AttentionConfig       `yaml:"attention"`
 	IndexWatch      IndexWatchConfig      `yaml:"index_watch"`
 	Tenancy         TenancyConfig         `yaml:"tenancy"`
 	Embedding       EmbeddingConfig       `yaml:"embedding"`
@@ -162,6 +163,19 @@ type TenancyConfig struct {
 // automation (opt-in: default disabled at workspace level too).
 type FeatureDeliveryConfig struct {
 	Enabled bool `yaml:"enabled"`
+}
+
+// AttentionConfig controls delivery of durable attention notifications beyond
+// the in-app inbox. Web Push requires a VAPID keypair; generate one once with
+// `brain attention vapid-keys` (or the webpush-go GenerateVAPIDKeys helper) and
+// keep the private key secret. Subscriber is the mailto:/https: contact the
+// push service uses to reach the operator per RFC 8292; it is required by most
+// push services. With no keys configured, Web Push delivery is simply skipped
+// and the inbox + any configured webhooks still work.
+type AttentionConfig struct {
+	VAPIDPublicKey  string `yaml:"vapid_public_key"`
+	VAPIDPrivateKey string `yaml:"vapid_private_key"`
+	Subscriber      string `yaml:"subscriber"`
 }
 
 // IndexWatchConfig controls the filesystem watcher that keeps SQLite in sync

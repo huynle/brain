@@ -282,6 +282,7 @@ type UnifiedConfig struct {
 		TaskDefaults    uconfig.TaskDefaultsConfig
 		FeatureCheckout uconfig.FeatureCheckoutConfig
 		FeatureDelivery uconfig.FeatureDeliveryConfig
+		Attention       uconfig.AttentionConfig
 		IndexWatch      uconfig.IndexWatchConfig
 		Embedding       uconfig.EmbeddingConfig
 		Attachments     uconfig.AttachmentConfig

@@ -4567,6 +4567,231 @@ body.mobile .reminder-panel {
   width: auto; max-width: none;
 }
 
+/* ─── Attention bell + panel ──────────────────────────────────────
+   The inbox equivalent of the reminder bell. Reuses the reminder panel's
+   sizing/chrome so the two topbar popovers read as siblings, with an added
+   per-severity accent dot. */
+.attention-bell { position: relative; display: inline-flex; }
+.attention-panel {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 80;
+  width: 400px; max-width: 92vw;
+  background: #12161a; border: 1px solid #2a2f35; border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+.attention-panel__head {
+  padding: 7px 10px; font-size: 10px; letter-spacing: 0.05em;
+  text-transform: uppercase; color: #9098a1;
+  border-bottom: 1px solid #22272c; background: #0e1114;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.attention-panel__all {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font-size: 10px; letter-spacing: 0.05em; color: #6a8bff;
+}
+.attention-panel__all:hover { text-decoration: underline; }
+.attention-panel__list { max-height: min(60vh, 420px); overflow-y: auto; }
+.attention-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-bottom: 1px solid #1a1e22;
+}
+.attention-row:last-child { border-bottom: 0; }
+.attention-row__main { min-width: 0; flex: 1; }
+.attention-row__title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: #d7dbe0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.attention-row__meta { font-size: 10px; color: #6b757e; margin-top: 2px; }
+.attention-row__acts { display: flex; gap: 4px; flex: 0 0 auto; }
+.attention-row__acts button {
+  background: #12161a; border: 1px solid #2a2f35; color: #9098a1;
+  font-size: 10px; padding: 2px 7px; border-radius: 3px; cursor: pointer;
+}
+.attention-row__acts button:hover { background: #1a1f25; color: #d7dbe0; }
+.attention-row__acts button.primary { border-color: #3d5a3f; color: #6fca7d; }
+
+/* Severity dot: one color per level, shared between the bell and the inbox. */
+.attention-sev {
+  display: inline-block; flex: 0 0 auto;
+  width: 7px; height: 7px; border-radius: 999px; background: #6b757e;
+}
+.attention-sev--info { background: #5b8def; }
+.attention-sev--warning { background: #e0a530; }
+.attention-sev--critical { background: #e0574f; }
+
+body[data-theme="light"] .attention-panel {
+  background: #ffffff; border-color: #d5dde5;
+  box-shadow: 0 8px 28px rgba(20, 30, 45, 0.14);
+}
+body[data-theme="light"] .attention-panel__head {
+  background: #f1f4f7; border-bottom-color: #d5dde5; color: #64717e;
+}
+body[data-theme="light"] .attention-row { border-bottom-color: #e6ebf0; }
+body[data-theme="light"] .attention-row__title { color: #1b232b; }
+body[data-theme="light"] .attention-row__acts button {
+  background: #f8fafc; border-color: #d5dde5; color: #64717e;
+}
+body[data-theme="light"] .attention-row__acts button:hover { color: #1b232b; }
+body[data-theme="light"] .attention-row__acts button.primary {
+  border-color: #9ac9a2; color: #2f7d3c;
+}
+
+@media (max-width: 620px) {
+  .attention-panel {
+    position: fixed;
+    top: 46px; left: 8px; right: 8px;
+    width: auto; max-width: none;
+  }
+}
+body.mobile .attention-panel {
+  position: fixed;
+  top: 46px; left: 8px; right: 8px;
+  width: auto; max-width: none;
+}
+
+/* ─── Attention inbox workspace ───────────────────────────────────
+   Mirrors the reminders centre layout. */
+.attention-workspace {
+  padding: 16px 18px 40px; height: 100%; overflow-y: auto;
+  background:
+    radial-gradient(circle at 86% -8%, #5b8def12, transparent 28%),
+    linear-gradient(180deg, #0f1316 0, #0c0f12 100%);
+}
+.attention-workspace__hero {
+  display: flex; justify-content: space-between; gap: 16px;
+  padding-bottom: 14px; margin-bottom: 14px;
+  border-bottom: 1px solid #22272c;
+}
+.attention-workspace__eyebrow {
+  font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: #5b8def; margin-bottom: 6px;
+}
+.attention-workspace__hero h1 { margin: 0 0 6px; font-size: 20px; color: #e6e9ec; }
+.attention-workspace__hero p { margin: 0; max-width: 60ch; color: #8b949d; font-size: 12px; }
+.attention-workspace__total {
+  flex: 0 0 auto; display: grid; justify-items: center; align-content: center;
+  gap: 2px; padding: 8px 16px; border-radius: 8px;
+  border: 1px solid #262c33; background: #12161a; color: #8b949d; font-size: 10px;
+}
+.attention-workspace__total strong { font-size: 24px; color: #e6e9ec; }
+.attention-push { display: flex; gap: 8px; margin-top: 12px; }
+.attention-push button {
+  padding: 6px 12px; border-radius: 5px; cursor: pointer; font-size: 11px;
+  border: 1px solid #34506f; background: #13202f; color: #7fb0f0;
+}
+.attention-push button:hover:not(:disabled) { border-color: #4b6f96; color: #a9cbf5; }
+.attention-push button:disabled { opacity: .5; cursor: default; }
+.attention-push__off { border-color: #3a424b !important; background: #12161a !important; color: #87919b !important; }
+.attention-toolbar {
+  display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;
+}
+.attention-toolbar input, .attention-toolbar select {
+  padding: 7px 9px; border-radius: 5px; border: 1px solid #262c33;
+  background: #12161a; color: #d7dbe0; font-size: 11px;
+}
+.attention-toolbar input { flex: 1 1 200px; }
+.attention-filters {
+  display: grid; grid-template-columns: repeat(5, minmax(88px, 1fr));
+  gap: 5px; margin-bottom: 12px;
+}
+.attention-filters button {
+  display: flex; justify-content: space-between; align-items: center; gap: 6px;
+  min-width: 0; padding: 7px 9px; cursor: pointer;
+  border: 1px solid #262c33; border-radius: 5px;
+  background: #12161a; color: #87919b; font-size: 10px;
+}
+.attention-filters button:hover { border-color: #3a424b; color: #d7dbe0; }
+.attention-filters button.active {
+  border-color: #34506f; background: #5b8def12; color: #7fb0f0;
+}
+.attention-filters strong {
+  min-width: 20px; padding: 1px 5px; border-radius: 999px;
+  background: #0b0e10; color: inherit; font-size: 9px; text-align: center;
+}
+.attention-workspace__list {
+  overflow: hidden; border: 1px solid #262c33; border-radius: 7px;
+  background: #0f1316; box-shadow: 0 16px 44px #0003;
+}
+.attention-workspace__list-head {
+  display: flex; justify-content: space-between; padding: 8px 12px;
+  border-bottom: 1px solid #22272c; color: #8b949d;
+  font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase;
+}
+.attention-items { padding: 4px 8px 8px; }
+.attention-item {
+  margin: 0; padding: 10px 8px; border-bottom: 1px solid #1d2227;
+  border-left: 2px solid transparent;
+}
+.attention-item:last-child { border-bottom: 0; }
+.attention-item--critical { border-left-color: #e0574f; }
+.attention-item--warning { border-left-color: #e0a530; }
+.attention-item--info { border-left-color: #5b8def; }
+.attention-item__row { display: flex; gap: 12px; align-items: flex-start; }
+.attention-item--openable { transition: background .12s, border-color .12s; }
+.attention-item--openable:hover { background: #14191e; }
+.attention-item__open {
+  flex: 1 1 auto; min-width: 0; padding: 0; border: 0; background: transparent;
+  color: inherit; cursor: pointer; text-align: left; font: inherit;
+}
+.attention-item__open:disabled { cursor: default; }
+.attention-item__open:focus-visible {
+  outline: 2px solid #5b8def; outline-offset: -2px; background: #14191e;
+}
+.attention-item__title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: #d7dbe0;
+}
+.attention-item__body { font-size: 11px; color: #9098a1; margin-top: 3px; }
+.attention-item__meta { font-size: 10px; color: #6b757e; margin-top: 2px; }
+.attention-item__acts { display: flex; gap: 4px; flex: 0 0 auto; }
+.attention-item__acts button {
+  background: #12161a; border: 1px solid #2a2f35; color: #9098a1;
+  font-size: 10px; padding: 2px 7px; border-radius: 3px; cursor: pointer;
+  min-width: 32px; min-height: 30px;
+}
+.attention-item__acts button:hover { background: #1a1f25; color: #d7dbe0; }
+.attention-item__acts button.primary { border-color: #3d5a3f; color: #6fca7d; }
+.attention-workspace__empty {
+  display: grid; justify-items: center; gap: 4px; padding: 48px 20px;
+  color: #68727c; font-size: 11px;
+}
+.attention-workspace__empty strong { color: #aab1b8; font-size: 12px; }
+
+body[data-theme="light"] .attention-workspace {
+  background:
+    radial-gradient(circle at 86% -8%, #5b8def12, transparent 28%),
+    linear-gradient(180deg, #fbfcfd 0, #f5f7f9 100%);
+}
+body[data-theme="light"] .attention-workspace__hero { border-bottom-color: #dce2e8; }
+body[data-theme="light"] .attention-workspace__hero h1 { color: #1b232b; }
+body[data-theme="light"] .attention-workspace__hero p { color: #64717e; }
+body[data-theme="light"] .attention-toolbar input,
+body[data-theme="light"] .attention-toolbar select {
+  background: #fff; border-color: #dce2e8; color: #1b232b;
+}
+body[data-theme="light"] .attention-filters button {
+  background: #fff; border-color: #dce2e8; color: #64717e;
+}
+body[data-theme="light"] .attention-filters button.active {
+  background: #eef4fe; border-color: #6a98d8; color: #2f5f9c;
+}
+body[data-theme="light"] .attention-filters strong { background: #f2f4f6; }
+body[data-theme="light"] .attention-workspace__list {
+  background: #fff; border-color: #dce2e8; box-shadow: 0 14px 36px #26354412;
+}
+body[data-theme="light"] .attention-workspace__list-head,
+body[data-theme="light"] .attention-item { border-color: #e6ebf0; }
+body[data-theme="light"] .attention-item__title { color: #1b232b; }
+body[data-theme="light"] .attention-item--openable:hover,
+body[data-theme="light"] .attention-item__open:focus-visible { background: #f5f7f9; }
+body[data-theme="light"] .attention-item__acts button {
+  background: #f8fafc; border-color: #d5dde5; color: #64717e;
+}
+body[data-theme="light"] .attention-item__acts button.primary {
+  border-color: #9ac9a2; color: #2f7d3c;
+}
+
 .background-operation-tray {
   position: fixed; right: 14px; bottom: 76px; z-index: 1100;
   width: min(380px, calc(100vw - 28px)); max-height: 40vh;

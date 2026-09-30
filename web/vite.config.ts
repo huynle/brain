@@ -82,6 +82,10 @@ export default defineConfig({
         // until the activated worker controls it. Claim clients immediately so
         // Workbox's controlling event fires after the user clicks Reload.
         clientsClaim: true,
+        // Hand-written Web Push handler (push + notificationclick). Kept in
+        // public/ so it ships as a static asset the generated SW can import;
+        // Workbox owns everything else (precache, routing, caching).
+        importScripts: ["/attention-sw.js"],
         // Don't precache source maps; cache the app shell + assets.
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         globPatterns: ["**/*.{js,mjs,wasm,css,html,svg,png,ico,woff2}"],

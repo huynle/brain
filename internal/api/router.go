@@ -427,6 +427,58 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				})
 			})
 
+			r.Route("/attention", func(r chi.Router) {
+				// Reads — the recipient is the authenticated principal name.
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+					if o.handler != nil && o.handler.attention != nil {
+						r.Get("/", o.handler.HandleListAttention)
+						r.Get("/counts", o.handler.HandleAttentionCounts)
+						r.Get("/vapid-public-key", o.handler.HandleAttentionVAPIDKey)
+						r.Get("/{id}", o.handler.HandleGetAttention)
+					} else {
+						r.Get("/", notImplemented)
+						r.Get("/counts", notImplemented)
+						r.Get("/vapid-public-key", notImplemented)
+						r.Get("/{id}", notImplemented)
+					}
+				})
+
+				// Creation is admin:* (an agent producing attention for a
+				// user is a privileged act). Per-user state changes — read,
+				// snooze, resolve, dismiss — are ordinary inbox actions and
+				// accept read:* so a normal UI session can manage its own
+				// notifications without an admin grant.
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*", "runner:*"))
+					if o.handler != nil && o.handler.attention != nil {
+						r.Post("/", o.handler.HandleCreateAttention)
+					} else {
+						r.Post("/", notImplemented)
+					}
+				})
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+					if o.handler != nil && o.handler.attention != nil {
+						r.Post("/{id}/read", o.handler.HandleReadAttention)
+						r.Post("/{id}/unread", o.handler.HandleUnreadAttention)
+						r.Post("/{id}/snooze", o.handler.HandleSnoozeAttention)
+						r.Post("/{id}/resolve", o.handler.HandleResolveAttention)
+						r.Post("/{id}/dismiss", o.handler.HandleDismissAttention)
+						r.Post("/push-subscriptions", o.handler.HandleCreatePushSubscription)
+						r.Delete("/push-subscriptions", o.handler.HandleDeletePushSubscription)
+					} else {
+						r.Post("/{id}/read", notImplemented)
+						r.Post("/{id}/unread", notImplemented)
+						r.Post("/{id}/snooze", notImplemented)
+						r.Post("/{id}/resolve", notImplemented)
+						r.Post("/{id}/dismiss", notImplemented)
+						r.Post("/push-subscriptions", notImplemented)
+						r.Delete("/push-subscriptions", notImplemented)
+					}
+				})
+			})
+
 			// ─── Scheduler ────────────────────────────────────────
 			r.Route("/scheduler", func(r chi.Router) {
 				r.Use(RequireScope("admin:*", "runner:*", "read:*"))

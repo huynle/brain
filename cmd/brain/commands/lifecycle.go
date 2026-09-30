@@ -394,6 +394,7 @@ func (c *StartCommand) startForeground(pidFile, logFile string) error {
 		TaskDefaults:    c.Config.Server.TaskDefaults,
 		FeatureCheckout: c.Config.Server.FeatureCheckout,
 		FeatureDelivery: c.Config.Server.FeatureDelivery,
+		Attention:       c.Config.Server.Attention,
 		IndexWatch:      c.Config.Server.IndexWatch,
 		Embedding:       c.Config.Server.Embedding,
 		Attachments:     c.Config.Server.Attachments,

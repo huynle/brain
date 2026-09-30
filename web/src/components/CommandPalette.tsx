@@ -119,6 +119,12 @@ export function CommandPalette(): JSX.Element | null {
         action: () => setView("reminders"),
       },
       {
+        id: "view-attention",
+        label: "Go to Attention (notification inbox)",
+        hint: "⌘5",
+        action: () => setView("attention"),
+      },
+      {
         id: "toggle-sidebar",
         label: "Toggle sidebar",
         action: toggleSidebar,

@@ -52,6 +52,7 @@ type ServerOptions struct {
 	FeatureCheckout config.FeatureCheckoutConfig
 	Tenancy         config.TenancyConfig
 	FeatureDelivery config.FeatureDeliveryConfig
+	Attention       config.AttentionConfig
 	// IndexWatch, when enabled, runs a filesystem watcher that re-indexes
 	// out-of-band writes to BrainDir. Off by default; see
 	// config.IndexWatchConfig for why.
@@ -418,6 +419,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		FeatureCheckout: opts.FeatureCheckout,
 		Tenancy:         opts.Tenancy,
 		FeatureDelivery: opts.FeatureDelivery,
+		Attention:       opts.Attention,
 		Embedding:       opts.Embedding,
 		Attachments:     attachments,
 
@@ -603,6 +605,27 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	)
 	go reminderSvc.Start(ctx)
 
+	// ─── Attention Service ─────────────────────────────────────────
+	// Durable per-user notification inbox. Emits attention.* events so the
+	// PWA, webhooks, and delivery providers can react.
+	attentionSvc := service.NewAttentionService(store,
+		service.WithAttentionEventIngester(eventSvc),
+	)
+
+	// ─── Attention Delivery Dispatcher ─────────────────────────────
+	// Fan attention.created out to out-of-band providers. Web Push is inert
+	// without a VAPID keypair; a generic signed webhook path is served by the
+	// existing webhook subsystem subscribing to attention.* events.
+	webPush := service.NewWebPushProvider(store, cfg.Attention.VAPIDPublicKey, cfg.Attention.VAPIDPrivateKey, cfg.Attention.Subscriber)
+	if webPush.Configured() {
+		// Bind the local tenant here, in the audited apiserver seam, so the
+		// dispatcher itself never resolves tenancy. Mirrors how single-mode
+		// storage is scoped elsewhere in this file.
+		attentionCtx := tenant.Into(ctx, tenant.Local)
+		attentionDispatcher := service.NewAttentionDispatcher(eventHub, store, attentionCtx, webPush)
+		go attentionDispatcher.Start(ctx)
+	}
+
 	// ─── Webhook Dispatcher ────────────────────────────────────────
 	// Subscribe to all EventHub events and deliver to matching webhooks.
 	webhookDispatcher := realtime.NewWebhookDispatcher(eventHub, webhookSvc)
@@ -659,6 +682,8 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithWebhookService(webhookSvc),
 		api.WithGoalService(goalSvc),
 		api.WithReminderService(reminderSvc),
+		api.WithAttentionService(attentionSvc),
+		api.WithAttentionVAPIDPublicKey(cfg.Attention.VAPIDPublicKey),
 		api.WithAutomationRunService(automationSvc),
 		api.WithAssistantService(assistantSvc),
 		api.WithBridgeService(bridgeHub),

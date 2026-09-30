@@ -25,6 +25,11 @@ import type {
   ReminderSummary,
   ReminderListResponse,
   CreateReminderRequest,
+  Attention,
+  AttentionListResponse,
+  AttentionCounts,
+  CreateAttentionRequest,
+  PushSubscription,
   GoalProgressResponse,
   GoalReconcileAudit,
   GoalSummary,
@@ -2201,6 +2206,90 @@ export const snoozeReminder = (id: string, remindAt: string) =>
   api<ReminderSummary>(`/api/v1/reminders/${encodeURIComponent(id)}/snooze`, {
     method: "POST",
     body: { remind_at: remindAt },
+  });
+
+// ─── Attention ───────────────────────────────────────────────────
+//
+// Shapes mirror internal/api/attention.go. The attention inbox is the
+// durable, actionable notification surface: an item that is unread IS the
+// notification, so there is no separate client store to drift.
+
+export interface AttentionFilter {
+  state?: string;
+  project?: string;
+  kind?: string;
+  severity?: string;
+  source_type?: string;
+  include_snoozed?: boolean;
+}
+
+export const listAttention = (filter?: AttentionFilter) => {
+  const query: Record<string, string | boolean | undefined> | undefined =
+    filter
+      ? {
+          state: filter.state,
+          project: filter.project,
+          kind: filter.kind,
+          severity: filter.severity,
+          source_type: filter.source_type,
+          include_snoozed: filter.include_snoozed,
+        }
+      : undefined;
+  return api<AttentionListResponse>("/api/v1/attention", { query }).then(
+    (r) => r.attention || [],
+  );
+};
+
+export const getAttentionCounts = () =>
+  api<AttentionCounts>("/api/v1/attention/counts");
+
+export const getAttention = (id: string) =>
+  api<Attention>(`/api/v1/attention/${encodeURIComponent(id)}`);
+
+export const createAttention = (body: CreateAttentionRequest) =>
+  api<Attention>("/api/v1/attention", { method: "POST", body });
+
+/** The state transitions the server exposes as POST sub-routes. */
+export type AttentionAction =
+  | "read"
+  | "unread"
+  | "snooze"
+  | "resolve"
+  | "dismiss";
+
+/**
+ * Transition an attention item's state. `snooze` requires a body carrying
+ * the RFC3339 instant to snooze until; the other actions take no body.
+ */
+export const setAttentionState = (
+  id: string,
+  action: AttentionAction,
+  body?: { snoozed_until: string },
+) =>
+  api<Attention>(
+    `/api/v1/attention/${encodeURIComponent(id)}/${action}`,
+    { method: "POST", ...(body ? { body } : {}) },
+  );
+
+/**
+ * Fetch the VAPID public key for Web Push. An empty string means Web Push
+ * is not configured on the server; the caller hides the enable control.
+ */
+export const getVapidPublicKey = () =>
+  api<{ public_key: string }>("/api/v1/attention/vapid-public-key").then(
+    (r) => r.public_key || "",
+  );
+
+export const savePushSubscription = (sub: PushSubscription) =>
+  api<{ status: string }>("/api/v1/attention/push-subscriptions", {
+    method: "POST",
+    body: sub,
+  });
+
+export const deletePushSubscription = (endpoint: string) =>
+  api<{ status: string }>("/api/v1/attention/push-subscriptions", {
+    method: "DELETE",
+    body: { endpoint },
   });
 
 // ─── Goals ───────────────────────────────────────────────────────

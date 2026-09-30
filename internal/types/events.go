@@ -113,6 +113,12 @@ const (
 	// — the exact thing webhook.received went years without (see above).
 	EventReminderFired = "reminder.fired"
 
+	// EventAttentionCreated / EventAttentionUpdated announce durable
+	// per-user attention inbox changes. SQL is the source of truth; these
+	// events only prompt clients to refetch and drive delivery/webhooks.
+	EventAttentionCreated = "attention.created"
+	EventAttentionUpdated = "attention.updated"
+
 	// Remote-control audit events.
 	EventControlPromptSent          = "control.prompt_sent"
 	EventControlPermissionResponded = "control.permission_responded"
@@ -160,6 +166,7 @@ var AllEventTypes = []string{
 	EventControlInstanceSpawned, EventControlInstanceKilled,
 	EventControlExecStarted,
 	EventReminderFired,
+	EventAttentionCreated, EventAttentionUpdated,
 }
 
 // eventTypeSet is a lookup set for O(1) event type validation.

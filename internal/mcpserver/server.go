@@ -44,6 +44,7 @@ func RunMCPServer(ctx context.Context, opts MCPOptions, stdin io.Reader, stdout 
 	mcp.RegisterWebhookTools(server, client)
 	mcp.RegisterGoalTools(server, client)
 	mcp.RegisterReminderTools(server, client)
+	mcp.RegisterAttentionTools(server, client)
 
 	// Run the server (reads from stdin, writes to stdout)
 	if err := server.Serve(ctx, stdin, stdout); err != nil {

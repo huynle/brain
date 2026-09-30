@@ -26,6 +26,8 @@ type Handler struct {
 	webhooks              WebhookService
 	goalService           GoalService
 	reminders             ReminderService
+	attention             AttentionService
+	attentionVAPIDPublic  string
 	automationRun         AutomationRunService
 	assistant             *AssistantService
 	placement             ProjectPlacementService
@@ -141,6 +143,21 @@ func WithGoalService(gs GoalService) HandlerOption {
 func WithReminderService(rs ReminderService) HandlerOption {
 	return func(h *Handler) {
 		h.reminders = rs
+	}
+}
+
+// WithAttentionService sets the AttentionService on the Handler.
+func WithAttentionService(as AttentionService) HandlerOption {
+	return func(h *Handler) {
+		h.attention = as
+	}
+}
+
+// WithAttentionVAPIDPublicKey sets the public VAPID key the browser needs to
+// create a Web Push subscription. Empty means Web Push is not offered.
+func WithAttentionVAPIDPublicKey(key string) HandlerOption {
+	return func(h *Handler) {
+		h.attentionVAPIDPublic = key
 	}
 }
 

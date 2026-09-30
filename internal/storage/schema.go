@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 30
+const CurrentSchemaVersion = 32
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -1028,6 +1028,18 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 32 {
+		if _, err := db.Exec(createPushSubscriptionsTable); err != nil {
+			return fmt.Errorf("migrate v32 (push subscriptions): %w", err)
+		}
+	}
+	if ver < 31 {
+		for _, ddl := range []string{createAttentionItemsTable, createAttentionRecipientIndex, createAttentionDedupIndex} {
+			if _, err := db.Exec(ddl); err != nil {
+				return fmt.Errorf("migrate v31 (attention): %w", err)
+			}
+		}
+	}
 	if ver < 30 {
 		for _, ddl := range []string{createExecutionBudgets, createBudgetReservations, createSupervisorCheckpointVersions} {
 			if _, err := db.Exec(ddl); err != nil {
@@ -1285,6 +1297,10 @@ func InitSchema(db *sql.DB) error {
 		createEntryAttachmentsTable,
 		createAttachmentDerivedTable,
 		createFeatureCascadeRootsTable,
+		createAttentionItemsTable,
+		createAttentionRecipientIndex,
+		createAttentionDedupIndex,
+		createPushSubscriptionsTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {

@@ -45,6 +45,7 @@ type Config struct {
 	TaskDefaults    TaskDefaultsConfig
 	FeatureCheckout FeatureCheckoutConfig
 	FeatureDelivery FeatureDeliveryConfig
+	Attention       AttentionConfig
 	Embedding       EmbeddingConfig
 	Attachments     AttachmentConfig
 	Tenancy         TenancyConfig
@@ -124,6 +125,7 @@ func Load() Config {
 		cfg.TaskDefaults = s.TaskDefaults
 		cfg.FeatureCheckout = s.FeatureCheckout
 		cfg.FeatureDelivery = s.FeatureDelivery
+		cfg.Attention = s.Attention
 		cfg.Embedding = s.Embedding
 		cfg.Attachments = s.Attachments
 		cfg.AttachmentExtraction = s.AttachmentExtraction
@@ -177,6 +179,15 @@ func Load() Config {
 	if v := os.Getenv("BRAIN_FEATURE_DELIVERY_ENABLED"); v != "" {
 		lower := strings.ToLower(v)
 		cfg.FeatureDelivery.Enabled = lower == "true" || lower == "1" || lower == "yes"
+	}
+	if v := os.Getenv("BRAIN_VAPID_PUBLIC_KEY"); v != "" {
+		cfg.Attention.VAPIDPublicKey = v
+	}
+	if v := os.Getenv("BRAIN_VAPID_PRIVATE_KEY"); v != "" {
+		cfg.Attention.VAPIDPrivateKey = v
+	}
+	if v := os.Getenv("BRAIN_ATTENTION_SUBSCRIBER"); v != "" {
+		cfg.Attention.Subscriber = v
 	}
 	// Rate limiting env var overrides
 	if v := os.Getenv("RATE_LIMIT_PER_MINUTE"); v != "" {

@@ -75,7 +75,8 @@ export type WorkspaceView =
   | "focus"
   | "session"
   | "entries"
-  | "reminders";
+  | "reminders"
+  | "attention";
 
 export type SidebarSectionKey = "projects" | "sessions" | "runners";
 

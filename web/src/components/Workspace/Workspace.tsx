@@ -14,6 +14,7 @@ import { FocusPanes } from "./FocusPanes";
 import { SessionFull } from "./SessionFull";
 import { EntriesBrowser } from "./EntriesBrowser";
 import { RemindersWorkspace } from "./RemindersWorkspace";
+import { AttentionWorkspace } from "./AttentionWorkspace";
 import { SelectionBar } from "../common/SelectionBar";
 
 export function Workspace(): JSX.Element {
@@ -32,6 +33,8 @@ export function Workspace(): JSX.Element {
     inner = <EntriesBrowser />;
   } else if (view === "reminders") {
     inner = <RemindersWorkspace />;
+  } else if (view === "attention") {
+    inner = <AttentionWorkspace />;
   } else {
     inner = <OverviewGrid />;
   }

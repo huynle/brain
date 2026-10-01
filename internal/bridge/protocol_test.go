@@ -14,6 +14,7 @@ func TestAllowedRequest(t *testing.T) {
 		{"GET", "/session/ses_123/message", true},
 		{"GET", "/session/ses_123/message?limit=50", true},
 		{"POST", "/session/ses_123/prompt_async", true},
+		{"POST", "/session/ses_123/prompt", true},
 		{"POST", "/session/ses_123/permissions/perm_9", true},
 		{"POST", "/session/ses_123/abort", true},
 		{"GET", "/agent", true},

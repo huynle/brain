@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -70,6 +71,28 @@ func TestAdhocOrphanNeedsReap(t *testing.T) {
 	// A dead PID: nothing to reap (IsPidAlive false). Use an implausibly high PID.
 	if adhocOrphanNeedsReap(types.OpencodeInstance{InstanceID: "c", PID: 2147480000}) {
 		t.Error("dead PID should not be reaped")
+	}
+}
+
+// v2 permission events keep the v1 names (permission.asked / permission.replied)
+// but moved the permission id: asked carries it at data.id, replied at
+// data.requestID (v1 used properties.id). These are the real captured v2.0.18
+// payloads. trackPendingPermission must populate on asked and clear on replied.
+func TestTrackPendingPermission_V2Payloads(t *testing.T) {
+	tr := &TaskRunner{config: RunnerConfig{StateDir: t.TempDir()}}
+	bc := NewBridgeClient(tr)
+	const inst = "inst_perm"
+
+	asked := json.RawMessage(`{"id":"evt_1","type":"permission.asked","data":{"id":"per_abc","sessionID":"ses_1","action":"shell","resources":["echo hello"]}}`)
+	bc.trackPendingPermission(inst, asked)
+	if got := bc.PendingPermissionCount(inst); got != 1 {
+		t.Fatalf("after asked: pending = %d, want 1 (v2 id at data.id not parsed?)", got)
+	}
+
+	replied := json.RawMessage(`{"id":"evt_2","type":"permission.replied","data":{"sessionID":"ses_1","requestID":"per_abc","reply":"reject"}}`)
+	bc.trackPendingPermission(inst, replied)
+	if got := bc.PendingPermissionCount(inst); got != 0 {
+		t.Fatalf("after replied: pending = %d, want 0 (v2 id at data.requestID not parsed?)", got)
 	}
 }
 

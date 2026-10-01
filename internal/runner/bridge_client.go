@@ -554,16 +554,39 @@ func (bc *BridgeClient) handleEventLine(instanceID string, line []byte) {
 }
 
 // bridgePermEvent is the minimal shape needed to fold permission.* control
-// events into the pending set. Mirrors internal/bridge/hub.go opencodeEvent:
-// the id may be at properties.id or properties.info.id.
+// events into the pending set. v2.0.18 (captured live): the event carries its
+// payload under "data" — permission.asked has the id at data.id, while
+// permission.replied carries it at data.requestID. The v1 shape (id at
+// properties.id or properties.info.id) is retained as a fallback so a mixed or
+// legacy stream still folds correctly.
 type bridgePermEvent struct {
-	Type       string `json:"type"`
+	Type string `json:"type"`
+	Data struct {
+		ID        string `json:"id"`         // permission.asked
+		RequestID string `json:"requestID"`  // permission.replied
+	} `json:"data"`
 	Properties struct {
 		ID   string `json:"id"`
 		Info struct {
 			ID string `json:"id"`
 		} `json:"info"`
 	} `json:"properties"`
+}
+
+// permID returns the permission id from whichever field the event carries it
+// in, preferring the v2 "data" shape and falling back to the v1 "properties"
+// shape.
+func (e bridgePermEvent) permID() string {
+	switch {
+	case e.Data.ID != "":
+		return e.Data.ID
+	case e.Data.RequestID != "":
+		return e.Data.RequestID
+	case e.Properties.ID != "":
+		return e.Properties.ID
+	default:
+		return e.Properties.Info.ID
+	}
 }
 
 // trackPendingPermission updates the per-instance pending-permission set from
@@ -581,10 +604,7 @@ func (bc *BridgeClient) trackPendingPermission(instanceID string, raw json.RawMe
 	if !strings.HasPrefix(evt.Type, "permission.") {
 		return
 	}
-	permID := evt.Properties.ID
-	if permID == "" {
-		permID = evt.Properties.Info.ID
-	}
+	permID := evt.permID()
 	if permID == "" {
 		return
 	}

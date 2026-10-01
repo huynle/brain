@@ -757,8 +757,15 @@ func (c *runnerConn) publishExecData(execID, stream, chunk string) {
 }
 
 // opencodeEvent is the minimal shape needed to classify control events.
+// v2.0.18 (captured live) carries the permission payload under "data":
+// permission.asked has the id at data.id, permission.replied at
+// data.requestID. The v1 "properties" shape is retained as a fallback.
 type opencodeEvent struct {
-	Type       string `json:"type"`
+	Type string `json:"type"`
+	Data struct {
+		ID        string `json:"id"`        // permission.asked
+		RequestID string `json:"requestID"` // permission.replied
+	} `json:"data"`
 	Properties struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
@@ -766,6 +773,22 @@ type opencodeEvent struct {
 			ID string `json:"id"`
 		} `json:"info"`
 	} `json:"properties"`
+}
+
+// permID returns the permission id from whichever field the event carries it
+// in, preferring the v2 "data" shape and falling back to the v1 "properties"
+// shape.
+func (e opencodeEvent) permID() string {
+	switch {
+	case e.Data.ID != "":
+		return e.Data.ID
+	case e.Data.RequestID != "":
+		return e.Data.RequestID
+	case e.Properties.ID != "":
+		return e.Properties.ID
+	default:
+		return e.Properties.Info.ID
+	}
 }
 
 // trackControlEvent updates the per-instance live cache (pending permissions
@@ -787,10 +810,7 @@ func (c *runnerConn) trackControlEvent(instanceID string, raw json.RawMessage) {
 		c.live[instanceID] = live
 	}
 
-	permID := evt.Properties.ID
-	if permID == "" {
-		permID = evt.Properties.Info.ID
-	}
+	permID := evt.permID()
 
 	switch {
 	case evt.Type == "permission.updated" || evt.Type == "permission.asked":
@@ -801,14 +821,20 @@ func (c *runnerConn) trackControlEvent(instanceID string, raw json.RawMessage) {
 		if permID != "" {
 			delete(live.pendingPerm, permID)
 		}
-	case evt.Type == "session.idle":
-		live.status = types.InstanceStatusIdle
-	case evt.Type == "session.error":
+	// v2.0.18 status taxonomy (captured live): a turn's lifecycle is
+	// session.execution.started/succeeded/failed/interrupted and step events
+	// are session.step.*. The v1 session.idle/session.updated/message.updated
+	// names no longer fire. Retain the v1 names as fallbacks for a mixed or
+	// legacy stream.
+	case evt.Type == "session.execution.started" || evt.Type == "session.step.started" ||
+		evt.Type == "session.updated" || evt.Type == "message.updated":
+		live.status = types.InstanceStatusBusy
+	case evt.Type == "session.execution.succeeded" || evt.Type == "session.execution.failed" ||
+		evt.Type == "session.execution.interrupted" || evt.Type == "session.idle" ||
+		evt.Type == "session.error":
 		live.status = types.InstanceStatusIdle
 	case evt.Type == "session.status" && evt.Properties.Status != "":
 		live.status = evt.Properties.Status
-	case evt.Type == "session.updated" || evt.Type == "message.updated":
-		live.status = types.InstanceStatusBusy
 	}
 }
 

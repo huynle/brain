@@ -54,6 +54,25 @@ func TestInstanceHealthy_V2_InfoPathAuth(t *testing.T) {
 	}
 }
 
+// v2 adhoc instances cannot be re-adopted across a runner restart: their
+// per-serve OPENCODE_PASSWORD is in-memory only (never persisted), so under
+// v2 Basic auth they are undriveable. A still-live orphan must be reaped; a
+// dead PID needs no action.
+func TestAdhocOrphanNeedsReap(t *testing.T) {
+	// A live PID (this test process) is a reapable orphan.
+	if !adhocOrphanNeedsReap(types.OpencodeInstance{InstanceID: "a", PID: os.Getpid(), Port: 5252}) {
+		t.Error("live-PID adhoc orphan should be reaped")
+	}
+	// PID 0 / unset: nothing to reap.
+	if adhocOrphanNeedsReap(types.OpencodeInstance{InstanceID: "b", PID: 0}) {
+		t.Error("PID 0 should not be reaped")
+	}
+	// A dead PID: nothing to reap (IsPidAlive false). Use an implausibly high PID.
+	if adhocOrphanNeedsReap(types.OpencodeInstance{InstanceID: "c", PID: 2147480000}) {
+		t.Error("dead PID should not be reaped")
+	}
+}
+
 func TestPasswordForInstance_AdhocAndTracked(t *testing.T) {
 	pm := NewProcessManager(RunnerConfig{APITimeout: 5000})
 	task := RunningTask{ID: "t1", InstanceID: "inst_tracked", OpencodePort: 4242, OpencodePassword: "trackedpw", ExecutorType: "opencode"}

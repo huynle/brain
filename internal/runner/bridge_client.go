@@ -1751,33 +1751,38 @@ func (bc *BridgeClient) readoptAdhocInstances() {
 		return
 	}
 
-	adopted := 0
+	// Re-adoption across a runner restart is NOT supported for v2 adhoc
+	// instances by design. The per-serve OPENCODE_PASSWORD lived only in the
+	// prior process's memory and is deliberately never persisted — a secret
+	// must not live in the 0644 state file. Without it, v2's Basic auth makes
+	// the instance undriveable: every proxied request and the health probe
+	// would 401. Rather than rely on that doomed 401 round-trip — which also
+	// leaves the orphaned `opencode serve` running and holding its full heap
+	// forever — explicitly drop every persisted entry and SIGTERM any still-
+	// live orphan to reclaim it.
+	reaped := 0
 	for _, inst := range state.Instances {
-		// v2 requires Basic auth for the health probe, but the per-serve
-		// password was in-memory only in the prior runner process and is not
-		// persisted (a secret must not live in a state file). So a re-adopted
-		// adhoc instance cannot be authenticated and its health probe 401s —
-		// it is correctly dropped here. Re-adoption across a runner restart is
-		// therefore not supported for v2 adhoc instances.
-		if inst.PID <= 0 || !IsPidAlive(inst.PID) || !instanceHealthy(inst.Port, bc.passwordForPort(inst.Port)) {
-			continue
+		if adhocOrphanNeedsReap(inst) {
+			slog.Info("bridge client: dropping unadoptable adhoc instance; killing orphaned serve",
+				"instance", inst.InstanceID, "pid", inst.PID, "port", inst.Port,
+				"reason", "per-serve password not persisted across runner restart (v2 Basic auth)")
+			_ = NewPidProcess(inst.PID).Kill(syscall.SIGTERM)
+			reaped++
 		}
-		inst.RunnerID = bc.runner.runnerID
-		inst.LastSeen = time.Now().UnixMilli()
-		bc.mu.Lock()
-		bc.adhoc[inst.InstanceID] = &adhocInstance{
-			Instance: inst,
-			proc:     NewPidProcess(inst.PID),
-		}
-		bc.mu.Unlock()
-		bc.runner.reportInstance(inst)
-		bc.EnsurePump(inst.InstanceID)
-		adopted++
 	}
+	// None are adopted, so the persisted set is now empty.
 	bc.persistAdhocState()
-	if adopted > 0 {
-		slog.Info("bridge client: re-adopted ad-hoc instances", "count", adopted)
+	if reaped > 0 {
+		slog.Info("bridge client: reaped orphaned ad-hoc serve processes on restart", "count", reaped)
 	}
+}
+
+// adhocOrphanNeedsReap reports whether a persisted adhoc instance from a prior
+// runner process is a live orphan that should be SIGTERMed. It is a live
+// orphan when its serve PID is still running; a dead PID needs no action. Pure
+// for testability.
+func adhocOrphanNeedsReap(inst types.OpencodeInstance) bool {
+	return inst.PID > 0 && IsPidAlive(inst.PID)
 }
 
 // instanceHealthy probes an instance's v2 info endpoint on localhost. v2

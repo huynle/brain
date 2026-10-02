@@ -138,6 +138,7 @@ var allowedRoutes = []allowedRoute{
 	{"POST", "/session"},
 	{"GET", "/session/status"},
 	{"GET", "/session/*/message"},
+	{"POST", "/session/*/prompt"},
 	{"POST", "/session/*/prompt_async"},
 	{"POST", "/session/*/permissions/*"},
 	{"POST", "/session/*/abort"},

@@ -60,7 +60,7 @@ func taskInstance(runner, instance, task, executor string, sessions ...string) t
 	}
 }
 
-func TestBridgeGoalSteerer_SteersViaPromptAsync(t *testing.T) {
+func TestBridgeGoalSteerer_SteersViaPrompt(t *testing.T) {
 	lister := &fakeInstanceLister{instances: []types.OpencodeInstance{
 		taskInstance("runner-1", "inst-1", "task-42", "opencode", "ses_old", "ses_new"),
 	}}
@@ -77,18 +77,22 @@ func TestBridgeGoalSteerer_SteersViaPromptAsync(t *testing.T) {
 	if bridge.runnerID != "runner-1" || bridge.instanceID != "inst-1" {
 		t.Errorf("routed to %s/%s, want runner-1/inst-1", bridge.runnerID, bridge.instanceID)
 	}
-	// Most recent session wins; prompt goes through prompt_async.
-	if bridge.method != "POST" || bridge.path != "/session/ses_new/prompt_async" {
-		t.Errorf("request = %s %s, want POST /session/ses_new/prompt_async", bridge.method, bridge.path)
+	// Most recent session wins; prompt goes through the v2 /prompt endpoint.
+	if bridge.method != "POST" || bridge.path != "/session/ses_new/prompt" {
+		t.Errorf("request = %s %s, want POST /session/ses_new/prompt", bridge.method, bridge.path)
 	}
 	var payload struct {
+		Text  string           `json:"text"`
 		Parts []map[string]any `json:"parts"`
 	}
 	if err := json.Unmarshal(bridge.body, &payload); err != nil {
 		t.Fatalf("unmarshal body: %v", err)
 	}
-	if len(payload.Parts) != 1 || payload.Parts[0]["type"] != "text" || payload.Parts[0]["text"] != "steer prompt" {
-		t.Errorf("payload parts = %+v, want single text part with the prompt", payload.Parts)
+	if payload.Text != "steer prompt" {
+		t.Errorf("payload.text = %q, want %q (v2 prompt body)", payload.Text, "steer prompt")
+	}
+	if len(payload.Parts) != 0 {
+		t.Errorf("payload must not carry the v1 parts array, got %+v", payload.Parts)
 	}
 }
 

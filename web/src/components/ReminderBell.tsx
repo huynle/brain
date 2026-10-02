@@ -34,7 +34,7 @@ export function ReminderBell(): JSX.Element | null {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const toast = useUI((s) => s.toast);
-  const openInFocus = useWorkspace((s) => s.openInFocus);
+  const setView = useWorkspace((s) => s.setView);
 
   // Close on an outside click or Escape, like every other transient popover.
   useEffect(() => {
@@ -98,7 +98,7 @@ export function ReminderBell(): JSX.Element | null {
               className="reminder-panel__all"
               onClick={() => {
                 setOpen(false);
-                openInFocus("reminders", {}, "Reminders");
+                setView("reminders");
               }}
             >
               See all →

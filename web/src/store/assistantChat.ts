@@ -16,6 +16,7 @@
  */
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import { createUUID } from "../lib/uuid";
 import type { AssistantHistoryMessage } from "../lib/api";
 
 /** Versioned localStorage key. Bump the suffix on breaking schema changes. */
@@ -139,7 +140,7 @@ function snapshot(s: AssistantChatState): SavedConversation {
 export const useAssistantChat = create<AssistantChatState>()(
   persist(
     (set) => ({
-	  ensureSession: () => set(s => s.sessionId === "initial" ? {sessionId: crypto.randomUUID()} : s),
+	  ensureSession: () => set(s => s.sessionId === "initial" ? {sessionId: createUUID()} : s),
 	  beginNotification: () => set(s => ({busy:true,turns:[...s.turns,{role:"assistant" as const,content:"",tools:[],streaming:true}].slice(-MAX_TURNS)})),
 	  mergeRemote: remote => set(s => {
 	    const convert = (c: typeof remote[number]):SavedConversation => ({id:c.id,title:c.title,history:coerceHistory(c.history),turns:coerceHistory(c.history).filter(h=>(h.role==="user"||h.role==="assistant")&&typeof h.content==="string").map(h=>({role:h.role as "user"|"assistant",content:h.content!,tools:[]}))});
@@ -153,7 +154,7 @@ export const useAssistantChat = create<AssistantChatState>()(
       sessions: [],
       newSession: () => set(s => ({
         sessions: [...s.sessions.filter(c => c.id !== s.sessionId), snapshot(s)],
-        sessionId: crypto.randomUUID(), turns: [], history: [], busy: false,
+        sessionId: createUUID(), turns: [], history: [], busy: false,
       })),
       switchSession: (id) => set(s => {
         const target = s.sessions.find(c => c.id === id);

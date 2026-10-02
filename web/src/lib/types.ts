@@ -546,6 +546,85 @@ export interface ReminderListResponse {
   count: number;
 }
 
+// ─── Attention ───────────────────────────────────────────────────
+//
+// The attention inbox: durable, actionable notifications addressed to a
+// recipient. Shapes mirror internal/api/attention.go. Unlike a toast, an
+// attention item survives a reload — its lifecycle state IS its record.
+
+/** How loud the item is; drives severity styling. */
+export type AttentionSeverity = "info" | "warning" | "critical";
+
+/** Lifecycle state of an attention item. */
+export type AttentionState =
+  | "unread"
+  | "read"
+  | "snoozed"
+  | "resolved"
+  | "dismissed";
+
+/** A typed, server-suggested action a client can offer on an item. */
+export interface AttentionAction {
+  kind: string;
+  label: string;
+  params?: Record<string, string>;
+}
+
+export interface Attention {
+  id: string;
+  recipient: string;
+  kind: string;
+  severity: AttentionSeverity;
+  title: string;
+  body?: string;
+  project?: string;
+  task_id?: string;
+  feature_id?: string;
+  session_id?: string;
+  runner_id?: string;
+  instance_id?: string;
+  source_type?: string;
+  source_id?: string;
+  dedup_key?: string;
+  state: AttentionState;
+  actions?: AttentionAction[];
+  created_at: string;
+  updated_at: string;
+  read_at?: string;
+  snoozed_until?: string;
+  resolved_at?: string;
+  revision: number;
+}
+
+export interface AttentionListResponse {
+  attention: Attention[];
+  count: number;
+}
+
+export interface AttentionCounts {
+  unread: number;
+  total: number;
+  critical: number;
+}
+
+export interface CreateAttentionRequest {
+  recipient?: string;
+  kind: string;
+  severity?: AttentionSeverity;
+  title: string;
+  body?: string;
+  project?: string;
+  task_id?: string;
+  feature_id?: string;
+  session_id?: string;
+  runner_id?: string;
+  instance_id?: string;
+  source_type?: string;
+  source_id?: string;
+  dedup_key?: string;
+  actions?: AttentionAction[];
+}
+
 export interface CreateReminderRequest {
   project?: string;
   global?: boolean;

@@ -19,6 +19,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.Port != 3333 {
 		t.Errorf("Server.Port = %d, want 3333", cfg.Server.Port)
 	}
+	if cfg.Server.PasswordSessionTTLDays != 30 {
+		t.Errorf("Server.PasswordSessionTTLDays = %d, want 30", cfg.Server.PasswordSessionTTLDays)
+	}
 	if cfg.Server.Host != "localhost" {
 		t.Errorf("Server.Host = %q, want %q", cfg.Server.Host, "localhost")
 	}
@@ -65,6 +68,38 @@ func TestDefaultConfig(t *testing.T) {
 	// Plugins defaults
 	if cfg.Plugins.OpencodePath != "opencode" {
 		t.Errorf("Plugins.OpencodePath = %q, want %q", cfg.Plugins.OpencodePath, "opencode")
+	}
+}
+
+func TestValidatePasswordSessionTTLDays(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Server.PasswordSessionTTLDays = 0
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("zero (never) should be valid: %v", err)
+	}
+	cfg.Server.PasswordSessionTTLDays = -1
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("negative password session TTL should be rejected")
+	}
+	cfg.Server.PasswordSessionTTLDays = MaxPasswordSessionTTLDays + 1
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("password session TTL above maximum should be rejected")
+	}
+}
+
+func TestLoadConfigRejectsInvalidPasswordSessionTTL(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	configDir := filepath.Join(configHome, "brain")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("server:\n  password_session_ttl_days: -1\n")
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("startup should reject negative password session TTL")
 	}
 }
 
@@ -783,6 +818,7 @@ opencode:
   bin: "/usr/local/bin/opencode"
   agent: "dev"
   model: "claude-sonnet-4"
+  config_dir: "~/.local/brain/executor/opencode"
 exclude_projects:
   - "test-project"
   - "legacy-project"
@@ -807,6 +843,9 @@ exclude_projects:
 	}
 	if cfg.Runner.Opencode.Model != "claude-sonnet-4" {
 		t.Errorf("Runner.Opencode.Model = %q, want %q", cfg.Runner.Opencode.Model, "claude-sonnet-4")
+	}
+	if cfg.Runner.Opencode.ConfigDir != "~/.local/brain/executor/opencode" {
+		t.Errorf("Runner.Opencode.ConfigDir = %q, want legacy value", cfg.Runner.Opencode.ConfigDir)
 	}
 
 	// Verify array fields

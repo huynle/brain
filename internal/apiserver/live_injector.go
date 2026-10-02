@@ -17,7 +17,7 @@ import (
 // Production implementation of service.LiveInjector. It reuses the SAME
 // in-process control plumbing the goal steerer uses (instance registry to
 // locate the live task instance + runner bridge to deliver the prompt via the
-// OpenCode /session/{id}/prompt_async proxy). This lets ResumeTaskWithContext
+// OpenCode /session/{id}/prompt proxy). This lets ResumeTaskWithContext
 // inject supervisor context into a still-running session without a relaunch.
 //
 // Deliberately mirrors bridgeGoalSteerer (goal_steerer.go) rather than
@@ -39,7 +39,7 @@ func newBridgeLiveInjector(instances goalInstanceLister, bridge goalBridgeDoer) 
 }
 
 // InjectContext locates the live instance serving the task and delivers the
-// supervisor context into its most recent session via prompt_async.
+// supervisor context into its most recent session via the v2 /prompt endpoint.
 //
 // Returns (injected, sessionID, err):
 //   - (false, "", nil) graceful skip: nil wiring, no live instance, no session
@@ -56,8 +56,8 @@ func (i *bridgeLiveInjector) InjectContext(ctx context.Context, projectID, taskI
 	if inst == nil {
 		return false, "", nil
 	}
-	// Only OpenCode instances expose prompt_async. Pi (or anything else) is a
-	// graceful skip → relaunch.
+	// Only OpenCode instances expose the prompt endpoint. Pi (or anything else)
+	// is a graceful skip → relaunch.
 	if inst.Executor != "" && inst.Executor != "opencode" {
 		return false, "", nil
 	}
@@ -66,17 +66,17 @@ func (i *bridgeLiveInjector) InjectContext(ctx context.Context, projectID, taskI
 	}
 	sessionID := inst.SessionIDs[len(inst.SessionIDs)-1]
 
-	// Same upstream shape HandleControlPrompt / the goal steerer send.
+	// v2 prompt body: a single "text" field (the v1 {parts:[…]} shape is gone).
 	body, err := json.Marshal(map[string]interface{}{
-		"parts": []map[string]interface{}{
-			{"type": "text", "text": injectedContext},
-		},
+		"text": injectedContext,
 	})
 	if err != nil {
 		return false, "", fmt.Errorf("marshal injected context: %w", err)
 	}
 
-	path := fmt.Sprintf("/session/%s/prompt_async", url.PathEscape(sessionID))
+	// v2 endpoint is /session/{id}/prompt (NOT /prompt_async); the bridge
+	// proxy /api-prefixes it to /api/session/{id}/prompt.
+	path := fmt.Sprintf("/session/%s/prompt", url.PathEscape(sessionID))
 	status, _, err := i.bridge.Do(ctx, inst.RunnerID, inst.InstanceID, http.MethodPost, path, body)
 	if err != nil {
 		return false, "", fmt.Errorf("bridge inject to %s/%s session %s: %w",

@@ -1255,6 +1255,11 @@ func InitSchema(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	if version == 30 {
+		if err := normalizeHistoricalMain30(context.Background(), db); err != nil {
+			return err
+		}
+	}
 	// Tables (order matters for foreign keys)
 	tables := []string{
 		createExecutionBudgets,

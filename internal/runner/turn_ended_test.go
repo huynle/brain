@@ -17,7 +17,7 @@ import (
 func stubSessionHistory(t *testing.T, body []byte, err error) {
 	t.Helper()
 	prev := sessionHistoryForPort
-	sessionHistoryForPort = func(int, string) ([]byte, error) { return body, err }
+	sessionHistoryForPort = func(int, string, string) ([]byte, error) { return body, err }
 	t.Cleanup(func() { sessionHistoryForPort = prev })
 }
 
@@ -69,7 +69,7 @@ func TestCheckOpencodeTurnEnded_CompletedAssistant(t *testing.T) {
 	)
 	stubSessionHistory(t, body, nil)
 
-	ended, last, ok := checkOpencodeTurnEnded(1234, "ses_abc")
+	ended, last, ok := checkOpencodeTurnEnded(1234, "ses_abc", "pw")
 	if !ok {
 		t.Fatalf("ok = false, want true")
 	}
@@ -90,7 +90,7 @@ func TestCheckOpencodeTurnEnded_InFlightAssistant(t *testing.T) {
 	)
 	stubSessionHistory(t, body, nil)
 
-	ended, last, ok := checkOpencodeTurnEnded(1234, "ses_abc")
+	ended, last, ok := checkOpencodeTurnEnded(1234, "ses_abc", "pw")
 	if !ok {
 		t.Fatalf("ok = false, want true")
 	}
@@ -112,7 +112,7 @@ func TestCheckOpencodeTurnEnded_LaterUserMessageIgnored(t *testing.T) {
 	)
 	stubSessionHistory(t, body, nil)
 
-	ended, last, ok := checkOpencodeTurnEnded(1234, "ses_abc")
+	ended, last, ok := checkOpencodeTurnEnded(1234, "ses_abc", "pw")
 	if !ok {
 		t.Fatalf("ok = false, want true")
 	}
@@ -132,7 +132,7 @@ func TestCheckOpencodeTurnEnded_NoAssistantMessage(t *testing.T) {
 	)
 	stubSessionHistory(t, body, nil)
 
-	_, _, ok := checkOpencodeTurnEnded(1234, "ses_abc")
+	_, _, ok := checkOpencodeTurnEnded(1234, "ses_abc", "pw")
 	if ok {
 		t.Errorf("ok = true, want false (no assistant message)")
 	}
@@ -141,7 +141,7 @@ func TestCheckOpencodeTurnEnded_NoAssistantMessage(t *testing.T) {
 func TestCheckOpencodeTurnEnded_FetchError(t *testing.T) {
 	stubSessionHistory(t, nil, errors.New("boom"))
 
-	_, _, ok := checkOpencodeTurnEnded(1234, "ses_abc")
+	_, _, ok := checkOpencodeTurnEnded(1234, "ses_abc", "pw")
 	if ok {
 		t.Errorf("ok = true, want false (fetch error)")
 	}
@@ -150,7 +150,7 @@ func TestCheckOpencodeTurnEnded_FetchError(t *testing.T) {
 func TestCheckOpencodeTurnEnded_UnmarshalError(t *testing.T) {
 	stubSessionHistory(t, []byte("not json"), nil)
 
-	_, _, ok := checkOpencodeTurnEnded(1234, "ses_abc")
+	_, _, ok := checkOpencodeTurnEnded(1234, "ses_abc", "pw")
 	if ok {
 		t.Errorf("ok = true, want false (unmarshal error)")
 	}
@@ -163,7 +163,7 @@ func TestCheckOpencodeTurnEnded_PartTimeIsNewest(t *testing.T) {
 	)
 	stubSessionHistory(t, body, nil)
 
-	ended, last, ok := checkOpencodeTurnEnded(1234, "ses_abc")
+	ended, last, ok := checkOpencodeTurnEnded(1234, "ses_abc", "pw")
 	if !ok {
 		t.Fatalf("ok = false, want true")
 	}
@@ -182,7 +182,9 @@ func TestCheckIdleStatus_BusyButTurnEnded_SetsIdleSince(t *testing.T) {
 	// Busy status server (non-empty map).
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"ses_abc": map[string]interface{}{"type": "busy"},
+			"data": map[string]interface{}{
+				"ses_abc": map[string]interface{}{"type": "running"},
+			},
 		})
 	}))
 	defer server.Close()
@@ -246,7 +248,9 @@ func TestCheckIdleStatus_BusyButTurnEnded_SetsIdleSince(t *testing.T) {
 func TestCheckIdleStatus_BusyButTurnEnded_ThresholdExceeded_Completes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"ses_abc": map[string]interface{}{"type": "busy"},
+			"data": map[string]interface{}{
+				"ses_abc": map[string]interface{}{"type": "running"},
+			},
 		})
 	}))
 	defer server.Close()
@@ -307,7 +311,9 @@ func TestCheckIdleStatus_BusyButTurnEnded_ThresholdExceeded_Completes(t *testing
 func TestCheckIdleStatus_BusyAndTurnNotEnded_ClearsIdleSince(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"ses_abc": map[string]interface{}{"type": "busy"},
+			"data": map[string]interface{}{
+				"ses_abc": map[string]interface{}{"type": "running"},
+			},
 		})
 	}))
 	defer server.Close()

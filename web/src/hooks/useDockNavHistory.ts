@@ -36,6 +36,7 @@ import {
   installNavPush,
   withoutNav,
   leafIdentity,
+  canonicalNavEntry,
   type NavEntry,
 } from "../lib/navBridge";
 import { useWorkspace } from "../store/workspace";
@@ -75,7 +76,8 @@ export function useDockNavHistory(): void {
       return;
     }
     if (navigationType !== "POP") return;
-    const entry = (location.state as DockNavState | null)?.dockNav;
+    const rawEntry = (location.state as DockNavState | null)?.dockNav;
+    const entry = rawEntry ? canonicalNavEntry(rawEntry) : undefined;
     if (!entry) {
       // A history entry authored by useEntryNavHistory: it records an entry
       // selection but carries no view, and its own POP effect returns early

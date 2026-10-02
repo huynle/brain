@@ -15,6 +15,7 @@ import { useIsMobile } from "../hooks/useIsMobile";
 import { Modal } from "./common/Modal";
 import { useWorkspace } from "../store/workspace";
 import { ReminderBell } from "./ReminderBell";
+import { AttentionBell } from "./AttentionBell";
 import { countLeaves } from "../lib/dock";
 
 export function Topbar({
@@ -130,6 +131,24 @@ export function Topbar({
         >
           Entries
         </button>
+        <button
+          className={view === "reminders" ? "active" : ""}
+          onClick={() => setView("reminders")}
+        >
+          Reminders
+        </button>
+        <button
+          className={view === "attention" ? "active" : ""}
+          onClick={() => setView("attention")}
+        >
+          Attention
+        </button>
+        <button
+          className={view === "timeline" ? "active" : ""}
+          onClick={() => setView("timeline")}
+        >
+          Timeline
+        </button>
       </div>
       <div className="search" onClick={() => setCommandOpen(true)}>
         <span style={{ color: "#6b757e" }}>⌕</span>
@@ -151,6 +170,7 @@ export function Topbar({
         {mobile ? "Search" : "⌘K"}
       </button>
       <ReminderBell />
+      <AttentionBell />
       {mobile ? (
         <button
           className="icon-btn"

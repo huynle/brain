@@ -28,6 +28,8 @@ type graphIdentity struct {
 	tokens          api.TokenService
 	verifier        api.CredentialVerifier
 	passwords       api.PasswordTokenStore
+	passwordTTL     time.Duration
+	passwordTTLSet  bool
 	assistantMCPURL string
 }
 
@@ -178,6 +180,9 @@ func newTenantGraph(ctx context.Context, store *storage.TenantStore, roots *tena
 		api.WithCredentialVerifier(identity.verifier),
 		api.WithPasswordTokenStore(identity.passwords),
 	)
+	if identity.passwordTTLSet {
+		api.WithPasswordRefreshTokenTTL(identity.passwordTTL)(handler)
+	}
 	return &tenantGraph{
 		id:                store.TenantID(),
 		config:            cfg,

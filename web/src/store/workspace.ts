@@ -70,9 +70,49 @@ import { pushNav } from "../lib/navBridge";
 /** Versioned localStorage key. Bump the suffix on breaking schema changes. */
 export const WORKSPACE_STORAGE_KEY = "panes-v2:workspace:v1";
 
-export type WorkspaceView = "overview" | "focus" | "session" | "entries";
+export type WorkspaceView =
+  | "overview"
+  | "focus"
+  | "session"
+  | "entries"
+  | "reminders"
+  | "attention"
+  | "timeline";
 
 export type SidebarSectionKey = "projects" | "sessions" | "runners";
+
+export type OverviewModuleKey =
+  | "workflow"
+  | "attention"
+  | "active"
+  | "blocked"
+  | "finished"
+  | "readyToMerge"
+  | "validated"
+  | "brainMemory";
+
+export type OverviewModules = Record<OverviewModuleKey, boolean>;
+
+export const DEFAULT_OVERVIEW_MODULES: OverviewModules = {
+  workflow: true,
+  attention: true,
+  active: true,
+  blocked: true,
+  finished: true,
+  readyToMerge: true,
+  validated: true,
+  brainMemory: true,
+};
+
+export function normalizeOverviewModules(raw: unknown): OverviewModules {
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_OVERVIEW_MODULES };
+  const saved = raw as Partial<Record<OverviewModuleKey, unknown>>;
+  const normalized = { ...DEFAULT_OVERVIEW_MODULES };
+  for (const key of Object.keys(normalized) as OverviewModuleKey[]) {
+    if (typeof saved[key] === "boolean") normalized[key] = saved[key];
+  }
+  return normalized;
+}
 
 /** Which dock a tree-mutating action targets. Not part of the public
  *  store surface — every action is exposed as a Focus/sidebar pair
@@ -159,6 +199,8 @@ export interface WorkspaceState {
   /** Close the pane the user is currently working in. */
   closeCurrentLeaf(): void;
   sidebarSection: Record<SidebarSectionKey, boolean>;
+  /** Browser-local visibility for non-project modules on Overview. */
+  overviewModules: OverviewModules;
   /** Whole sidebar collapsed to a slim rail. Independent of the
    *  per-section collapse map. Driven by user toggle in the topbar. */
   sidebarCollapsed: boolean;
@@ -259,6 +301,7 @@ export interface WorkspaceState {
   steerIntent: boolean;
   setSteerIntent(v: boolean): void;
   toggleSidebarSection(k: SidebarSectionKey): void;
+  setOverviewModule(key: OverviewModuleKey, enabled: boolean): void;
   toggleSidebarCollapsed(): void;
   setAssistantOpen(open: boolean): void;
   toggleAssistant(): void;
@@ -451,6 +494,7 @@ export function persistedSlice(s: WorkspaceState) {
         focusSessionId: s.focusSessionId,
         focusSessionRef: s.focusSessionRef,
         sidebarSection: s.sidebarSection,
+        overviewModules: s.overviewModules,
         sidebarCollapsed: s.sidebarCollapsed,
         theme: s.theme,
         featureCollapsed: s.featureCollapsed,
@@ -755,6 +799,7 @@ export const useWorkspace = create<WorkspaceState>()(
         lastSidebarLeafId: null,
         lastActiveDock: null,
         sidebarSection: { projects: true, sessions: true, runners: true },
+        overviewModules: { ...DEFAULT_OVERVIEW_MODULES },
         sidebarCollapsed: false,
         assistantOpen: false,
         commandOpen: false,
@@ -773,8 +818,45 @@ export const useWorkspace = create<WorkspaceState>()(
         dedupeTabs: true,
 
         setView: (v) => {
-          if (get().view !== v) pushNav({ view: v });
-          set({ view: v });
+          const state = get();
+          if (state.view !== v) pushNav({ view: v });
+          if (v !== "reminders") {
+            set({ view: v });
+            return;
+          }
+
+          // Reminders used to be a Focus leaf. The top-level centre is now
+          // the one canonical destination, so remove any persisted legacy
+          // panes while preserving the rest of the user's layout.
+          const sweep = (tree: DockNode | null): DockNode | null => {
+            if (!tree) return null;
+            const doomed: string[] = [];
+            walkLeaves(tree, (leaf, id) => {
+              if (leaf.kind === "reminders") doomed.push(id);
+            });
+            let next = tree;
+            for (const id of doomed) {
+              const pruned = removeDockNode(next, id);
+              if (!pruned) return null;
+              next = pruned;
+            }
+            return next;
+          };
+          const focus = sweep(state.docks.focus);
+          const sidebar = sweep(state.docks.sidebar);
+          set({
+            view: v,
+            docks: { focus, sidebar },
+            lastFocusLeafId:
+              focus && state.lastFocusLeafId && leafIdExists(focus, state.lastFocusLeafId)
+                ? state.lastFocusLeafId
+                : null,
+            lastSidebarLeafId:
+              sidebar && state.lastSidebarLeafId && leafIdExists(sidebar, state.lastSidebarLeafId)
+                ? state.lastSidebarLeafId
+                : null,
+            sidebarDockOpen: sidebar ? state.sidebarDockOpen : false,
+          });
         },
 
         setFocusSession: (id) =>
@@ -797,6 +879,11 @@ export const useWorkspace = create<WorkspaceState>()(
         toggleSidebarSection: (k) =>
           set((s) => ({
             sidebarSection: { ...s.sidebarSection, [k]: !s.sidebarSection[k] },
+          })),
+
+        setOverviewModule: (key, enabled) =>
+          set((s) => ({
+            overviewModules: { ...s.overviewModules, [key]: enabled },
           })),
 
         toggleSidebarCollapsed: () =>
@@ -1189,6 +1276,7 @@ export const useWorkspace = create<WorkspaceState>()(
         return {
           ...currentState,
           ...p,
+          overviewModules: normalizeOverviewModules(p.overviewModules),
           docks: { focus: focusTree, sidebar: sidebarTree },
           lastFocusLeafId:
             focusTree &&

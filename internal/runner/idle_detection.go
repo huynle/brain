@@ -25,11 +25,11 @@ var steerHoldMax = 10 * time.Minute
 // busy/idle without a real OpenCode server on localhost.
 var sessionStatusForPort = checkOpencodeStatus
 
-// steerFlusher performs the actual prompt_async re-poke. Indirected for tests.
+// steerFlusher performs the actual prompt re-poke. Indirected for tests.
 var steerFlusher = postEmptyPrompt
 
-// sessionAborter performs the actual /session/{id}/abort POST used by stall
-// recovery to clear a busy wedge. Indirected for tests.
+// sessionAborter performs the actual /api/session/{id}/interrupt POST used by
+// stall recovery to clear a busy wedge. Indirected for tests.
 var sessionAborter = postAbort
 
 // stalledNoteMarker is the exact prefix the runner appends to a task's body
@@ -56,15 +56,23 @@ var pendingPermissionsForTask = func(tr *TaskRunner, task RunningTask) int {
 	return 0
 }
 
-// postEmptyPrompt POSTs an empty-parts continuation to an OpenCode session so
-// it starts the next turn and drains a queued steer/control prompt. OpenCode
-// only delivers a queued prompt on a fresh turn; an empty {"parts":[]} body is
-// the least-intrusive way to force the queue forward without injecting
-// spurious text. Returns nil on a 2xx response; a non-2xx status or transport
-// error yields an error so the caller can leave PendingSteer set for retry.
-func postEmptyPrompt(port int, sessionID string) error {
-	url := fmt.Sprintf("http://localhost:%d/session/%s/prompt_async", port, sessionID)
-	resp, err := opcodeStatusClient.Post(url, "application/json", strings.NewReader(`{"parts":[]}`))
+// postEmptyPrompt POSTs a minimal continuation to an OpenCode v2 session so it
+// starts the next turn and drains a queued steer/control prompt. OpenCode only
+// delivers a queued prompt on a fresh turn. v2's POST /api/session/{id}/prompt
+// requires a JSON body with a "text" field (the v1 empty {"parts":[]} body no
+// longer works — verified against opencode v2.0.18 /openapi.json), so an empty
+// text string is the least-intrusive way to force the queue forward without
+// injecting spurious content. Returns nil on a 2xx response; a non-2xx status
+// or transport error yields an error so the caller can leave PendingSteer set
+// for retry.
+func postEmptyPrompt(port int, sessionID string, password string) error {
+	c := newLocalOpenCodeClient(port, password)
+	req, err := c.newRequest(context.Background(), http.MethodPost, "/session/"+sessionID+"/prompt", strings.NewReader(`{"text":""}`))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := opcodeStatusClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -72,19 +80,23 @@ func postEmptyPrompt(port int, sessionID string) error {
 	// Drain so the connection can be reused.
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("prompt_async re-poke: unexpected status %d", resp.StatusCode)
+		return fmt.Errorf("prompt re-poke: unexpected status %d", resp.StatusCode)
 	}
 	return nil
 }
 
-// postAbort POSTs to /session/{id}/abort on a local OpenCode instance to clear
-// a busy wedge (proven in the incident to unstick an 18+ minute silent-busy
-// session). Mirrors postEmptyPrompt's localhost POST plumbing. Returns nil on
-// a 2xx response; a non-2xx status or transport error yields an error so the
-// caller can decide whether to escalate.
-func postAbort(port int, sessionID string) error {
-	url := fmt.Sprintf("http://localhost:%d/session/%s/abort", port, sessionID)
-	resp, err := opcodeStatusClient.Post(url, "application/json", strings.NewReader(`{}`))
+// postAbort POSTs to /api/session/{id}/interrupt on a local OpenCode v2
+// instance to clear a busy wedge (v1's /session/{id}/abort was renamed to
+// /interrupt in v2). The interrupt endpoint takes no request body and returns
+// {"interrupted":bool}. Returns nil on a 2xx response; a non-2xx status or
+// transport error yields an error so the caller can decide whether to escalate.
+func postAbort(port int, sessionID string, password string) error {
+	c := newLocalOpenCodeClient(port, password)
+	req, err := c.newRequest(context.Background(), http.MethodPost, "/session/"+sessionID+"/interrupt", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := opcodeStatusClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -92,7 +104,7 @@ func postAbort(port int, sessionID string) error {
 	// Drain so the connection can be reused.
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("session abort: unexpected status %d", resp.StatusCode)
+		return fmt.Errorf("session interrupt: unexpected status %d", resp.StatusCode)
 	}
 	return nil
 }
@@ -107,7 +119,7 @@ func (tr *TaskRunner) flushQueuedSteer(task RunningTask) {
 	if task.OpencodePort == 0 || task.SessionID == "" {
 		return
 	}
-	if err := steerFlusher(task.OpencodePort, task.SessionID); err != nil {
+	if err := steerFlusher(task.OpencodePort, task.SessionID, task.OpencodePassword); err != nil {
 		tr.logger.Printf("steer flush: task %s re-poke failed: %v (leaving PendingSteer set)", task.ID, err)
 		return
 	}
@@ -115,13 +127,18 @@ func (tr *TaskRunner) flushQueuedSteer(task RunningTask) {
 	tr.logger.Printf("steer flush: task %s re-poked session %s to drain queued steer", task.ID, task.SessionID)
 }
 
-// checkOpencodeStatus queries the OpenCode HTTP API to check if it's idle or busy.
-// The /session/status endpoint returns a map of session IDs to statuses.
-// An empty map {} means all sessions are idle. Sessions that are busy appear in the map.
-// Returns "idle", "busy", or "unavailable".
-func checkOpencodeStatus(port int) string {
-	url := fmt.Sprintf("http://localhost:%d/session/status", port)
-	resp, err := opcodeStatusClient.Get(url)
+// checkOpencodeStatus queries the OpenCode v2 API to check if a session is
+// idle or busy. GET /api/session/active returns {"data":{}} when everything is
+// idle, and {"data":{"ses_x":{"type":"running"}}} keyed by the running session
+// id when busy. An empty data map means idle; any entries mean at least one
+// session is busy. Returns "idle", "busy", or "unavailable".
+func checkOpencodeStatus(port int, password string) string {
+	c := newLocalOpenCodeClient(port, password)
+	req, err := c.newRequest(context.Background(), http.MethodGet, "/session/active", nil)
+	if err != nil {
+		return "unavailable"
+	}
+	resp, err := opcodeStatusClient.Do(req)
 	if err != nil {
 		return "unavailable"
 	}
@@ -131,14 +148,16 @@ func checkOpencodeStatus(port int) string {
 		return "unavailable"
 	}
 
-	// Response is a map of sessionID -> status object.
-	// Empty map = all idle, any entries = at least one busy.
-	var statusMap map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&statusMap); err != nil {
+	// v2 wraps the active-session map under "data": empty = all idle, any
+	// entries = at least one busy.
+	var env struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		return "unavailable"
 	}
 
-	if len(statusMap) == 0 {
+	if len(env.Data) == 0 {
 		return "idle"
 	}
 	return "busy"
@@ -240,7 +259,7 @@ func (tr *TaskRunner) checkOpencodeIdleStatus(ctx context.Context, task RunningT
 		return
 	}
 
-	status := checkOpencodeStatus(port)
+	status := checkOpencodeStatus(port, task.OpencodePassword)
 
 	switch status {
 	case "idle":
@@ -252,7 +271,7 @@ func (tr *TaskRunner) checkOpencodeIdleStatus(ctx context.Context, task RunningT
 		// still reported busy. Probe the transcript to distinguish a
 		// genuinely-working agent from a wedged-busy question turn.
 		if task.SessionID != "" {
-			ended, lastActivity, ok := checkOpencodeTurnEnded(port, task.SessionID)
+			ended, lastActivity, ok := checkOpencodeTurnEnded(port, task.SessionID, task.OpencodePassword)
 			if ok && !lastActivity.IsZero() {
 				// Phase 4 consumes LastActivity for the stall timer; harmless now.
 				tr.processMgr.UpdateLastActivity(task.ID, lastActivity)
@@ -401,7 +420,7 @@ func (tr *TaskRunner) recoverStall(ctx context.Context, task RunningTask) {
 	// surface above is written either way so the task stays resumable.
 	if tr.getBridgeClient() != nil {
 		if task.OpencodePort != 0 && task.SessionID != "" {
-			if err := sessionAborter(task.OpencodePort, task.SessionID); err != nil {
+			if err := sessionAborter(task.OpencodePort, task.SessionID, task.OpencodePassword); err != nil {
 				tr.logger.Printf("stall recovery: task %s session abort failed: %v", task.ID, err)
 			} else {
 				tr.logger.Printf("stall recovery: task %s aborted session %s to clear busy wedge", task.ID, task.SessionID)

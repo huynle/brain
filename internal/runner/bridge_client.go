@@ -30,6 +30,9 @@ import (
 type adhocInstance struct {
 	Instance types.OpencodeInstance `json:"instance"`
 	proc     Process
+	// password is the per-serve OPENCODE_PASSWORD for this adhoc instance's
+	// v2 server. Held in memory only — never persisted or sent over the wire.
+	password string
 }
 
 // adhocStateFileName persists ad-hoc instances across runner restarts so
@@ -297,8 +300,12 @@ func (bc *BridgeClient) proxyRequest(f bridge.Frame) (int, []byte, error) {
 	if len(f.Body) > 0 {
 		bodyReader = bytes.NewReader(f.Body)
 	}
-	url := fmt.Sprintf("http://127.0.0.1:%d%s", port, f.Path)
-	req, err := http.NewRequestWithContext(ctx, f.Method, url, bodyReader)
+	// v2 serves every API route under /api and requires Basic auth. Frames
+	// carry bare v1-style paths (e.g. /session/{id}/message); prefix /api when
+	// absent and attach the owning instance's per-serve credential. The
+	// localOpenCodeClient centralizes both.
+	client := newLocalOpenCodeClient(port, bc.passwordForInstance(f.InstanceID))
+	req, err := client.newRequest(ctx, f.Method, f.Path, bodyReader)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -326,13 +333,16 @@ func (bc *BridgeClient) proxyRequest(f bridge.Frame) (int, []byte, error) {
 }
 
 // markSteerIfPromptAsync marks the owning task's PendingSteer flag when the
-// proxied frame is a steer/control prompt (POST .../prompt_async). It maps the
-// frame's InstanceID to a tracked task via the process manager; ad-hoc
-// instances (no RunningTask) and unmatched/empty IDs are skipped silently. It
-// must never fail the proxy — callers invoke it only on the 2xx path and
-// ignore its effect on the returned status/body.
+// proxied frame is a steer/control prompt (POST .../prompt or the legacy
+// .../prompt_async). It maps the frame's InstanceID to a tracked task via the
+// process manager; ad-hoc instances (no RunningTask) and unmatched/empty IDs
+// are skipped silently. It must never fail the proxy — callers invoke it only
+// on the 2xx path and ignore its effect on the returned status/body.
 func (bc *BridgeClient) markSteerIfPromptAsync(f bridge.Frame) {
-	if f.Method != http.MethodPost || !strings.Contains(f.Path, "/prompt_async") {
+	if f.Method != http.MethodPost {
+		return
+	}
+	if !strings.Contains(f.Path, "/prompt_async") && !strings.HasSuffix(trimQuery(f.Path), "/prompt") {
 		return
 	}
 	if f.InstanceID == "" {
@@ -356,6 +366,14 @@ func (bc *BridgeClient) baseContext() context.Context {
 		return bc.ctx
 	}
 	return context.Background()
+}
+
+// trimQuery strips a "?..." query string from a path.
+func trimQuery(path string) string {
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		return path[:i]
+	}
+	return path
 }
 
 // ---------------------------------------------------------------------------
@@ -454,24 +472,29 @@ func isControlEvent(eventType string) bool {
 		strings.HasPrefix(eventType, "session.")
 }
 
-// tailEvents tails GET /event on a local instance and forwards events.
+// tailEvents tails GET /api/event on a local v2 instance and forwards events.
+// v2 requires Basic auth; the credential is the owning instance's per-serve
+// password. The SSE payload format is unchanged in the way that matters here:
+// each event arrives on a `data:` line as a JSON object whose own `type` field
+// is the event type (v2 does NOT use a separate `event:` line), which is
+// exactly what handleEventLine already parses.
 func (bc *BridgeClient) tailEvents(ctx context.Context, instanceID string, port int) error {
-	url := fmt.Sprintf("http://127.0.0.1:%d/event", port)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	client := newLocalOpenCodeClient(port, bc.passwordForInstance(instanceID))
+	req, err := client.newRequest(ctx, http.MethodGet, "/event", nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Accept", "text/event-stream")
 
 	// No timeout: this is a long-lived stream bounded by ctx.
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	httpClient := &http.Client{}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET /event: status %d", resp.StatusCode)
+		return fmt.Errorf("GET %s: status %d", client.url("/event"), resp.StatusCode)
 	}
 
 	// Read line by line with a bound on how much of one line is kept, not on
@@ -531,16 +554,39 @@ func (bc *BridgeClient) handleEventLine(instanceID string, line []byte) {
 }
 
 // bridgePermEvent is the minimal shape needed to fold permission.* control
-// events into the pending set. Mirrors internal/bridge/hub.go opencodeEvent:
-// the id may be at properties.id or properties.info.id.
+// events into the pending set. v2.0.18 (captured live): the event carries its
+// payload under "data" — permission.asked has the id at data.id, while
+// permission.replied carries it at data.requestID. The v1 shape (id at
+// properties.id or properties.info.id) is retained as a fallback so a mixed or
+// legacy stream still folds correctly.
 type bridgePermEvent struct {
-	Type       string `json:"type"`
+	Type string `json:"type"`
+	Data struct {
+		ID        string `json:"id"`         // permission.asked
+		RequestID string `json:"requestID"`  // permission.replied
+	} `json:"data"`
 	Properties struct {
 		ID   string `json:"id"`
 		Info struct {
 			ID string `json:"id"`
 		} `json:"info"`
 	} `json:"properties"`
+}
+
+// permID returns the permission id from whichever field the event carries it
+// in, preferring the v2 "data" shape and falling back to the v1 "properties"
+// shape.
+func (e bridgePermEvent) permID() string {
+	switch {
+	case e.Data.ID != "":
+		return e.Data.ID
+	case e.Data.RequestID != "":
+		return e.Data.RequestID
+	case e.Properties.ID != "":
+		return e.Properties.ID
+	default:
+		return e.Properties.Info.ID
+	}
 }
 
 // trackPendingPermission updates the per-instance pending-permission set from
@@ -558,10 +604,7 @@ func (bc *BridgeClient) trackPendingPermission(instanceID string, raw json.RawMe
 	if !strings.HasPrefix(evt.Type, "permission.") {
 		return
 	}
-	permID := evt.Properties.ID
-	if permID == "" {
-		permID = evt.Properties.Info.ID
-	}
+	permID := evt.permID()
 	if permID == "" {
 		return
 	}
@@ -708,6 +751,11 @@ func (bc *BridgeClient) spawnAdhoc(spec *types.SpawnInstanceSpec) (*types.Openco
 	instanceID := generateInstanceID()
 	args := []string{"serve", "--port", "0"}
 
+	// Mint a per-serve password for this adhoc v2 instance and export it so
+	// the server requires (and we can satisfy) Basic auth. Held in memory on
+	// the adhocInstance; never persisted or sent over the wire.
+	servePassword := generateOpenCodePassword()
+
 	logPath := filepath.Join(bc.runner.config.StateDir, fmt.Sprintf("adhoc_%s.log", instanceID))
 	logFile, err := os.Create(logPath)
 	if err != nil {
@@ -715,7 +763,7 @@ func (bc *BridgeClient) spawnAdhoc(spec *types.SpawnInstanceSpec) (*types.Openco
 	}
 
 	cmd := exec.Command(bc.opencodeBin(), args...)
-	cmd.Env = bc.execEnv()
+	cmd.Env = bc.opencodeEnvWithPassword(servePassword)
 	cmd.Dir = spec.Workdir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -768,7 +816,7 @@ func (bc *BridgeClient) spawnAdhoc(spec *types.SpawnInstanceSpec) (*types.Openco
 	}
 
 	bc.mu.Lock()
-	bc.adhoc[instanceID] = &adhocInstance{Instance: inst, proc: proc}
+	bc.adhoc[instanceID] = &adhocInstance{Instance: inst, proc: proc, password: servePassword}
 	bc.mu.Unlock()
 	bc.persistAdhocState()
 
@@ -916,8 +964,7 @@ func (bc *BridgeClient) fetchSessionHistory(sessionID string) ([]byte, error) {
 		return nil, errors.New("missing session id")
 	}
 	if port := bc.portForSession(sessionID); port > 0 {
-		path := "/session/" + sessionID + "/message"
-		if status, body, err := bc.httpGet(port, path); err == nil && status == http.StatusOK {
+		if body, err := bc.fetchLiveMessagesV2(port, sessionID); err == nil {
 			return body, nil
 		}
 		// Fall through to on-disk read if the live server can't answer.
@@ -930,13 +977,61 @@ func (bc *BridgeClient) fetchSessionHistory(sessionID string) ([]byte, error) {
 	}
 	// Last resort: a runner-owned server may still hold the messages in memory.
 	if port := bc.portForExternalSession(sessionID); port > 0 {
-		path := "/session/" + sessionID + "/message"
-		if status, body, err := bc.httpGet(port, path); err == nil && status == http.StatusOK {
+		if body, err := bc.fetchLiveMessagesV2(port, sessionID); err == nil {
 			return body, nil
 		}
 	}
 	// Re-run readSessionHistory so the caller gets its (well-shaped) error.
 	return readSessionHistory(sessionID)
+}
+
+// fetchLiveMessagesV2 reads a session's messages from a live v2 server on the
+// given port (Basic auth via the per-serve password paired with that port),
+// following cursor pagination and normalizing into the internal {info,parts}
+// JSON shape. The password is resolved from the tracked task / ad-hoc instance
+// that owns the port; an empty password (unknown owner) sends no auth header
+// and the v2 server will reject it, correctly falling through to on-disk.
+func (bc *BridgeClient) fetchLiveMessagesV2(port int, sessionID string) ([]byte, error) {
+	return fetchLiveSessionMessagesV2(port, sessionID, bc.passwordForPort(port))
+}
+
+// passwordForPort returns the per-serve OPENCODE_PASSWORD for the opencode
+// instance listening on port, resolved from the tracked task or ad-hoc
+// instance that owns it, or "" when unknown. Ports/passwords never come from
+// the wire.
+func (bc *BridgeClient) passwordForPort(port int) string {
+	bc.mu.Lock()
+	for _, ad := range bc.adhoc {
+		if ad.Instance.Port == port && ad.password != "" {
+			bc.mu.Unlock()
+			return ad.password
+		}
+	}
+	bc.mu.Unlock()
+	for _, info := range bc.runner.processMgr.GetAll() {
+		if info.Task.OpencodePort == port && info.Task.OpencodePassword != "" {
+			return info.Task.OpencodePassword
+		}
+	}
+	return ""
+}
+
+// passwordForInstance returns the per-serve OPENCODE_PASSWORD for an instance
+// id (ad-hoc first, then tracked task), or "" when unknown.
+func (bc *BridgeClient) passwordForInstance(instanceID string) string {
+	bc.mu.Lock()
+	if ad := bc.adhoc[instanceID]; ad != nil {
+		pw := ad.password
+		bc.mu.Unlock()
+		return pw
+	}
+	bc.mu.Unlock()
+	for _, info := range bc.runner.processMgr.GetAll() {
+		if info.Task.InstanceID == instanceID {
+			return info.Task.OpencodePassword
+		}
+	}
+	return ""
 }
 
 // portForSession returns the localhost port of a live instance whose session
@@ -977,21 +1072,35 @@ func (bc *BridgeClient) portForExternalSession(sessionID string) int {
 	if len(listeners) == 0 {
 		return 0
 	}
-	path := "/session/" + sessionID + "/message"
+	path := "/api/session/" + sessionID + "/message"
 	for _, l := range listeners {
 		status, body, err := bc.httpGetFast(l.Port, path, externalProbeTimeout)
 		if err != nil || status != http.StatusOK {
 			continue
 		}
-		// Empty array means the server replied but doesn't actually have
-		// any messages for this session — keep looking.
-		trimmed := strings.TrimSpace(string(body))
-		if trimmed == "" || trimmed == "[]" {
+		// v2 wraps messages under {"data":[…]}. An empty (or absent) data
+		// array means the server replied but doesn't actually have any
+		// messages for this session — keep looking. (An external instance we
+		// didn't spawn requires its own Basic auth we can't know, so it 401s
+		// here and is correctly skipped.)
+		if !v2MessagesNonEmpty(body) {
 			continue
 		}
 		return l.Port
 	}
 	return 0
+}
+
+// v2MessagesNonEmpty reports whether a v2 GET /api/session/{id}/message body
+// carries at least one message under "data".
+func v2MessagesNonEmpty(body []byte) bool {
+	var env struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return false
+	}
+	return len(env.Data) > 0
 }
 
 // externalProbeTimeout bounds each per-listener probe. OpenCode's
@@ -1515,6 +1624,23 @@ func (bc *BridgeClient) execEnv() []string {
 	return childEnvironment(nil, bc.runner.config)
 }
 
+func (bc *BridgeClient) opencodeEnv() []string {
+	if bc.runner == nil {
+		return opencodeChildEnvironment(nil, RunnerConfig{})
+	}
+	return opencodeChildEnvironment(nil, bc.runner.config)
+}
+
+// opencodeEnvWithPassword is opencodeEnv plus OPENCODE_PASSWORD for the v2
+// serve instance's Basic auth.
+func (bc *BridgeClient) opencodeEnvWithPassword(password string) []string {
+	cfg := RunnerConfig{}
+	if bc.runner != nil {
+		cfg = bc.runner.config
+	}
+	return opencodeChildEnvironmentWithPassword(nil, cfg, password)
+}
+
 // execTimeout normalises a requested command budget into a duration.
 func execTimeout(requestedMs int) time.Duration {
 	ms := requestedMs
@@ -1645,36 +1771,54 @@ func (bc *BridgeClient) readoptAdhocInstances() {
 		return
 	}
 
-	adopted := 0
+	// Re-adoption across a runner restart is NOT supported for v2 adhoc
+	// instances by design. The per-serve OPENCODE_PASSWORD lived only in the
+	// prior process's memory and is deliberately never persisted — a secret
+	// must not live in the 0644 state file. Without it, v2's Basic auth makes
+	// the instance undriveable: every proxied request and the health probe
+	// would 401. Rather than rely on that doomed 401 round-trip — which also
+	// leaves the orphaned `opencode serve` running and holding its full heap
+	// forever — explicitly drop every persisted entry and SIGTERM any still-
+	// live orphan to reclaim it.
+	reaped := 0
 	for _, inst := range state.Instances {
-		if inst.PID <= 0 || !IsPidAlive(inst.PID) || !instanceHealthy(inst.Port) {
-			continue
+		if adhocOrphanNeedsReap(inst) {
+			slog.Info("bridge client: dropping unadoptable adhoc instance; killing orphaned serve",
+				"instance", inst.InstanceID, "pid", inst.PID, "port", inst.Port,
+				"reason", "per-serve password not persisted across runner restart (v2 Basic auth)")
+			_ = NewPidProcess(inst.PID).Kill(syscall.SIGTERM)
+			reaped++
 		}
-		inst.RunnerID = bc.runner.runnerID
-		inst.LastSeen = time.Now().UnixMilli()
-		bc.mu.Lock()
-		bc.adhoc[inst.InstanceID] = &adhocInstance{
-			Instance: inst,
-			proc:     NewPidProcess(inst.PID),
-		}
-		bc.mu.Unlock()
-		bc.runner.reportInstance(inst)
-		bc.EnsurePump(inst.InstanceID)
-		adopted++
 	}
+	// None are adopted, so the persisted set is now empty.
 	bc.persistAdhocState()
-	if adopted > 0 {
-		slog.Info("bridge client: re-adopted ad-hoc instances", "count", adopted)
+	if reaped > 0 {
+		slog.Info("bridge client: reaped orphaned ad-hoc serve processes on restart", "count", reaped)
 	}
 }
 
-// instanceHealthy probes an instance's health endpoint on localhost.
-func instanceHealthy(port int) bool {
+// adhocOrphanNeedsReap reports whether a persisted adhoc instance from a prior
+// runner process is a live orphan that should be SIGTERMed. It is a live
+// orphan when its serve PID is still running; a dead PID needs no action. Pure
+// for testability.
+func adhocOrphanNeedsReap(inst types.OpencodeInstance) bool {
+	return inst.PID > 0 && IsPidAlive(inst.PID)
+}
+
+// instanceHealthy probes an instance's v2 info endpoint on localhost. v2
+// requires Basic auth, so a missing/wrong password yields 401 and the instance
+// is reported unhealthy.
+func instanceHealthy(port int, password string) bool {
 	if port <= 0 {
 		return false
 	}
+	c := newLocalOpenCodeClient(port, password)
+	req, err := c.newRequest(context.Background(), http.MethodGet, "/info", nil)
+	if err != nil {
+		return false
+	}
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/global/health", port))
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}

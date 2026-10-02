@@ -25,7 +25,7 @@ import (
 // max_parallel is a count, and a count cannot bound a process. On 2026-09-01
 // and 2026-09-04 this runner's host panicked twice (watchdog timeout under
 // total memory exhaustion) while running at max_parallel 3: a single task's
-// `opencode serve` + `opencode run --attach` pair reached 27 GB + 26 GB, and
+// `opencode serve` + `opencode run --server` pair reached 27 GB + 26 GB, and
 // a ten-minute-old pair was already at 10 GB each. See the brain report
 // projects/brain-api/report/sgh4c2ti.md for the mechanism (a 198 MB user
 // message re-broadcast on every agent step).

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { stringify } from "yaml";
 import { api, ApiError } from "../api";
 import { useAuth } from "../auth";
+import { createUUID } from "../uuid";
 import {
   cacheScope,
   database,
@@ -481,7 +482,7 @@ export async function queueEdit(
   if (!base.revision)
     throw new Error("Download this entry before editing offline.");
   const op: Mutation = {
-    id: crypto.randomUUID(),
+    id: createUUID(),
     path: base.path,
     method: "PATCH",
     baseLocalID:
@@ -513,7 +514,7 @@ export async function queueCreate(body: Record<string, unknown>) {
     useOffline.setState((s) => ({ generation: s.generation + 1 }));
     return cachedEntry(result.path);
   }
-  const id = crypto.randomUUID();
+  const id = createUUID();
   const path = "local/" + id;
   const fields = { ...body };
   delete fields.content;

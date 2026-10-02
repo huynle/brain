@@ -424,6 +424,17 @@ type ReminderService interface {
 	FireReminderNow(ctx context.Context, reminderID string) (*types.ReminderSummary, error)
 }
 
+// AttentionService is the durable per-user attention inbox surface the API
+// needs. Implemented by service.AttentionService; declared here so internal/api
+// does not import internal/service.
+type AttentionService interface {
+	CreateAttention(ctx context.Context, caller string, req types.CreateAttentionRequest) (*types.Attention, error)
+	ListAttention(ctx context.Context, f types.AttentionListFilter) ([]types.Attention, error)
+	GetAttention(ctx context.Context, recipient, id string) (*types.Attention, error)
+	AttentionCounts(ctx context.Context, recipient string) (types.AttentionCounts, error)
+	SetAttentionState(ctx context.Context, recipient, id, state, snoozedUntil string) (*types.Attention, error)
+}
+
 type GoalService interface {
 	// CreateGoal builds and persists a goal automation, returning its summary.
 	CreateGoal(ctx context.Context, req types.CreateGoalRequest) (*types.GoalSummary, error)

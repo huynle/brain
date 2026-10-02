@@ -113,6 +113,24 @@ export function CommandPalette(): JSX.Element | null {
         action: () => setView("entries"),
       },
       {
+        id: "view-reminders",
+        label: "Go to Reminders",
+        hint: "⌘4",
+        action: () => setView("reminders"),
+      },
+      {
+        id: "view-attention",
+        label: "Go to Attention (notification inbox)",
+        hint: "⌘5",
+        action: () => setView("attention"),
+      },
+      {
+        id: "view-timeline",
+        label: "Open Timeline — cross-project activity chronology",
+        hint: "⌘6",
+        action: () => setView("timeline"),
+      },
+      {
         id: "toggle-sidebar",
         label: "Toggle sidebar",
         action: toggleSidebar,

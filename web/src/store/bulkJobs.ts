@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api, ApiError, type BulkFilter } from "../lib/api";
+import { createUUID } from "../lib/uuid";
 
 export interface BulkJobRequest {
   label?: string;
@@ -76,7 +77,7 @@ export async function retrySubmission(submission: Submission): Promise<void> {
   } finally { inFlight.delete(id); }
 }
 export async function submitBulkJob(request: Omit<BulkJobRequest, "request_id">, label: string = `${request.operation.replace("_", " ")} · ${request.filters?.[0]?.project || request.paths?.[0]?.split("/")[1] || "entries"}`): Promise<void> {
-  const submission = { request: { ...request, label, request_id: crypto.randomUUID() }, label };
+  const submission = { request: { ...request, label, request_id: createUUID() }, label };
   const pending = [...useBulkJobs.getState().submissions, submission];
   saveSubmissions(pending); useBulkJobs.setState({ submissions: pending });
   await retrySubmission(submission);

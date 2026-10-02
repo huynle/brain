@@ -25,6 +25,10 @@ import type {
   ReminderSummary,
   ReminderListResponse,
   CreateReminderRequest,
+  Attention,
+  AttentionListResponse,
+  AttentionCounts,
+  CreateAttentionRequest,
   GoalProgressResponse,
   GoalReconcileAudit,
   GoalSummary,
@@ -2206,6 +2210,69 @@ export const snoozeReminder = (id: string, remindAt: string) =>
     method: "POST",
     body: { remind_at: remindAt },
   });
+
+// ─── Attention ───────────────────────────────────────────────────
+//
+// Shapes mirror internal/api/attention.go. The attention inbox is the
+// durable, actionable notification surface: an item that is unread IS the
+// notification, so there is no separate client store to drift.
+
+export interface AttentionFilter {
+  state?: string;
+  project?: string;
+  kind?: string;
+  severity?: string;
+  source_type?: string;
+  include_snoozed?: boolean;
+}
+
+export const listAttention = (filter?: AttentionFilter) => {
+  const query: Record<string, string | boolean | undefined> | undefined =
+    filter
+      ? {
+          state: filter.state,
+          project: filter.project,
+          kind: filter.kind,
+          severity: filter.severity,
+          source_type: filter.source_type,
+          include_snoozed: filter.include_snoozed,
+        }
+      : undefined;
+  return api<AttentionListResponse>("/api/v1/attention", { query }).then(
+    (r) => r.attention || [],
+  );
+};
+
+export const getAttentionCounts = () =>
+  api<AttentionCounts>("/api/v1/attention/counts");
+
+export const getAttention = (id: string) =>
+  api<Attention>(`/api/v1/attention/${encodeURIComponent(id)}`);
+
+export const createAttention = (body: CreateAttentionRequest) =>
+  api<Attention>("/api/v1/attention", { method: "POST", body });
+
+/** The state transitions the server exposes as POST sub-routes. */
+export type AttentionAction =
+  | "read"
+  | "unread"
+  | "snooze"
+  | "resolve"
+  | "dismiss";
+
+/**
+ * Transition an attention item's state. `snooze` requires a body carrying
+ * the RFC3339 instant to snooze until; the other actions take no body.
+ */
+export const setAttentionState = (
+  id: string,
+  action: AttentionAction,
+  body?: { snoozed_until: string },
+) =>
+  api<Attention>(
+    `/api/v1/attention/${encodeURIComponent(id)}/${action}`,
+    { method: "POST", ...(body ? { body } : {}) },
+  );
 
 // ─── Goals ───────────────────────────────────────────────────────
 

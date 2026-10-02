@@ -21,19 +21,20 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-// fakeOpencode is a minimal stand-in for an OpenCode HTTP server: serves
-// /session, /session/{id}/prompt_async, and a one-shot /event SSE stream.
+// fakeOpencode is a minimal stand-in for an OpenCode v2 HTTP server: serves
+// /api/session, /api/session/{id}/prompt_async, and a one-shot /api/event SSE
+// stream. Paths are the v2 /api-prefixed forms the runner proxy now targets.
 func fakeOpencode(t *testing.T) (*httptest.Server, int) {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/session", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/session", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `[{"id":"ses_test","time":{"updated":100}}]`)
+		fmt.Fprint(w, `{"data":[{"id":"ses_test","projectID":"p","time":{"updated":100}}],"cursor":{"previous":null,"next":null}}`)
 	})
-	mux.HandleFunc("/session/ses_test/prompt_async", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/session/ses_test/prompt_async", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("/event", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/event", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 		// One control event, one full-stream event.

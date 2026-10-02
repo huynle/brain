@@ -136,6 +136,18 @@ export function Dashboard(): JSX.Element {
     }
   }, [isMobile]);
 
+  // A push notification deep-links to /?attention=<id> (the attention
+  // dispatcher sets this URL on the phonepush message). On load, surface the
+  // inbox so the item is in
+  // view. Mount-once: it is an entry intent, not a live subscription.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).has("attention")) {
+      withoutNav(() => useWorkspace.getState().setView("attention"));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Single owner of the pause / scheduler polling. Every pause indicator in
   // the tree reads the same cache entries without adding a timer — see the
   // per-observer note in usePauseState.

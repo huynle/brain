@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
@@ -69,9 +70,15 @@ func GetExecutionContext(directory string) ExecutionContext {
 		}
 	}
 
-	// Get git remote
+	// Get git remote. Strip any userinfo before it enters the execution
+	// context: the downstream gitremote.Parse policy rejects a URL whose
+	// url.User is set as "embedded credentials", and that check runs before
+	// the scheme check — so an ordinary SSH origin (ssh://git@host/repo, or
+	// the scp-style git@host:repo) would be misclassified as credential-
+	// bearing and block every task save. We keep the host/path routing
+	// identity and drop only the credential/username component.
 	if out, err := gitCommand(directory, "remote", "get-url", "origin"); err == nil {
-		gitRemote = strings.TrimSpace(out)
+		gitRemote = sanitizeGitRemote(strings.TrimSpace(out))
 	}
 
 	// Get current branch
@@ -346,4 +353,43 @@ func StringSliceArg(args map[string]any, key string) []string {
 		return result
 	}
 	return nil
+}
+
+// sanitizeGitRemote normalizes a `git remote get-url` value into a form the
+// downstream gitremote.Parse policy accepts, or returns "" when it cannot.
+//
+// The policy accepts ONLY a credential-free https:// URL with a host and a
+// path; it rejects SSH (ssh://git@host/repo), scp-style (git@host:repo), and
+// any URL carrying userinfo. Rather than stamp an unusable remote onto the
+// execution context (which would fail admission and block every task save),
+// we:
+//
+//   - strip userinfo/credentials from any URL-form remote,
+//   - return a clean https:// remote unchanged (host/path preserved),
+//   - return "" for SSH/scp/other schemes or unparseable input.
+//
+// An empty remote is valid: validateConfiguredGitRemote treats "" as "no
+// remote", and the runner resolves the repo from the workdir instead — the
+// same shape working tasks already use.
+func sanitizeGitRemote(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	// URL form: has a scheme delimiter "://".
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return ""
+		}
+		u.User = nil // drop any credential/username component
+		if u.Scheme != "https" || u.Host == "" || u.Path == "" {
+			// Non-HTTPS (e.g. ssh://) or malformed: unusable for admission.
+			return ""
+		}
+		return u.String()
+	}
+	// scp-like form "user@host:path" or "host:path": never https, so it is
+	// not an admissible remote. Drop it rather than stamp an SSH remote.
+	return ""
 }

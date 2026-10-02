@@ -84,15 +84,6 @@ export function SettingsModal(): JSX.Element {
   const queryClient = useQueryClient();
 
   // ─── workspace-only (client) settings ────────────────────────
-  const sidebar = useWorkspace((s) => s.sidebarSection);
-  const toggleSection = useWorkspace((s) => s.toggleSidebarSection);
-  const streaming = useWorkspace((s) => s.streaming);
-  const setStreaming = useWorkspace((s) => s.setStreaming);
-  const theme = useWorkspace((s) => s.theme);
-  const setTheme = useWorkspace((s) => s.setTheme);
-  const dedupeTabs = useWorkspace((s) => s.dedupeTabs);
-  const setDedupeTabs = useWorkspace((s) => s.setDedupeTabs);
-
   // ─── server config (from API) ────────────────────────────────
   const cfgQ = useQuery({
     queryKey: ["settings", "config"],
@@ -186,24 +177,35 @@ export function SettingsModal(): JSX.Element {
 
   const body = (() => {
     if (cfgQ.isLoading || schemaQ.isLoading) {
-      return <Loading label="Loading configuration…" />;
+      return (
+        <>
+          <BrowserSettings />
+          <Loading label="Loading server configuration…" />
+        </>
+      );
     }
     if (cfgQ.error) {
       return (
-        <ErrorState
-          error={cfgQ.error}
-          onRetry={() => cfgQ.refetch()}
-          title="Couldn't load server config"
-        />
+        <>
+          <BrowserSettings />
+          <ErrorState
+            error={cfgQ.error}
+            onRetry={() => cfgQ.refetch()}
+            title="Couldn't load server config"
+          />
+        </>
       );
     }
     if (schemaQ.error) {
       return (
-        <ErrorState
-          error={schemaQ.error}
-          onRetry={() => schemaQ.refetch()}
-          title="Couldn't load config schema"
-        />
+        <>
+          <BrowserSettings />
+          <ErrorState
+            error={schemaQ.error}
+            onRetry={() => schemaQ.refetch()}
+            title="Couldn't load config schema"
+          />
+        </>
       );
     }
     if (!edited || !schemaQ.data) return null;
@@ -218,73 +220,7 @@ export function SettingsModal(): JSX.Element {
 
     return (
       <>
-        {/* Workspace (client-only) */}
-        <SectionCard title="Workspace (this browser)">
-          <div className="setting-field">
-            <label>Theme</label>
-            <select
-              value={theme}
-              onChange={(e) =>
-                setTheme(e.target.value as "dark" | "light" | "system")
-              }
-            >
-              <option value="dark">Dark</option>
-              <option value="light">Light</option>
-              <option value="system">System</option>
-            </select>
-          </div>
-          <label className="setting-checkbox">
-            <input
-              type="checkbox"
-              checked={streaming}
-              onChange={(e) => setStreaming(e.target.checked)}
-            />
-            Live logs streaming
-          </label>
-          <label
-            className="setting-checkbox"
-            title="When on, opening something that is already docked jumps to that pane instead of adding another tab for it. Drag-and-drop always places a new pane where you drop it."
-          >
-            <input
-              type="checkbox"
-              checked={dedupeTabs}
-              onChange={(e) => setDedupeTabs(e.target.checked)}
-            />
-            Reuse open tabs (don't open duplicates)
-          </label>
-          <div style={{ marginTop: 8 }}>
-            <div style={{ color: "#f4b23a", fontSize: 10, marginBottom: 4 }}>
-              Sidebar sections
-            </div>
-            <label className="setting-checkbox">
-              <input
-                type="checkbox"
-                checked={sidebar.projects}
-                onChange={() => toggleSection("projects")}
-              />
-              Show Projects
-            </label>
-            <label className="setting-checkbox">
-              <input
-                type="checkbox"
-                checked={sidebar.sessions}
-                onChange={() => toggleSection("sessions")}
-              />
-              Show Sessions
-            </label>
-            <label className="setting-checkbox">
-              <input
-                type="checkbox"
-                checked={sidebar.runners}
-                onChange={() => toggleSection("runners")}
-              />
-              Show Runners
-            </label>
-          </div>
-          <div style={{ marginTop: 10, fontSize: 10, color: "#6b757e" }}>
-            Persisted key: <code>{WORKSPACE_STORAGE_KEY}</code>
-          </div>
-        </SectionCard>
+        <BrowserSettings />
 
         {/* Server config sections */}
         {saveResult && saveResult.requires_restart.length > 0 && (
@@ -404,6 +340,151 @@ function SectionCard({
       <h4>{title}</h4>
       {children}
     </div>
+  );
+}
+
+function BrowserSettings(): JSX.Element {
+  const sidebar = useWorkspace((s) => s.sidebarSection);
+  const toggleSection = useWorkspace((s) => s.toggleSidebarSection);
+  const streaming = useWorkspace((s) => s.streaming);
+  const setStreaming = useWorkspace((s) => s.setStreaming);
+  const theme = useWorkspace((s) => s.theme);
+  const setTheme = useWorkspace((s) => s.setTheme);
+  const dedupeTabs = useWorkspace((s) => s.dedupeTabs);
+  const setDedupeTabs = useWorkspace((s) => s.setDedupeTabs);
+  const overviewModules = useWorkspace((s) => s.overviewModules);
+  const setOverviewModule = useWorkspace((s) => s.setOverviewModule);
+
+  return (
+    <>
+      <SectionCard title="Workspace (this browser)">
+        <div className="setting-field">
+          <label>Theme</label>
+          <select
+            value={theme}
+            onChange={(e) =>
+              setTheme(e.target.value as "dark" | "light" | "system")
+            }
+          >
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+            <option value="system">System</option>
+          </select>
+        </div>
+        <label className="setting-checkbox">
+          <input
+            type="checkbox"
+            checked={streaming}
+            onChange={(e) => setStreaming(e.target.checked)}
+          />
+          Live logs streaming
+        </label>
+        <label
+          className="setting-checkbox"
+          title="When on, opening something that is already docked jumps to that pane instead of adding another tab for it. Drag-and-drop always places a new pane where you drop it."
+        >
+          <input
+            type="checkbox"
+            checked={dedupeTabs}
+            onChange={(e) => setDedupeTabs(e.target.checked)}
+          />
+          Reuse open tabs (don't open duplicates)
+        </label>
+        <div style={{ marginTop: 8 }}>
+          <div className="settings-subhead">Sidebar sections</div>
+          <OverviewModuleToggle
+            label="Show Projects"
+            checked={sidebar.projects}
+            onChange={() => toggleSection("projects")}
+          />
+          <OverviewModuleToggle
+            label="Show Sessions"
+            checked={sidebar.sessions}
+            onChange={() => toggleSection("sessions")}
+          />
+          <OverviewModuleToggle
+            label="Show Runners"
+            checked={sidebar.runners}
+            onChange={() => toggleSection("runners")}
+          />
+        </div>
+        <div style={{ marginTop: 10, fontSize: 10, color: "#6b757e" }}>
+          Persisted key: <code>{WORKSPACE_STORAGE_KEY}</code>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Overview modules (this browser)">
+        <div className="settings-note">
+          Choose which cross-project panels appear above your project cards.
+          Changes apply immediately.
+        </div>
+        <OverviewModuleToggle
+          label="Workflow command center"
+          checked={overviewModules.workflow}
+          onChange={(enabled) => setOverviewModule("workflow", enabled)}
+        />
+        <OverviewModuleToggle
+          label="Needs attention"
+          checked={overviewModules.attention}
+          onChange={(enabled) => setOverviewModule("attention", enabled)}
+        />
+        <div className="settings-subhead">Status columns</div>
+        <div className="settings-checkbox-grid">
+          <OverviewModuleToggle
+            label="Active"
+            checked={overviewModules.active}
+            onChange={(enabled) => setOverviewModule("active", enabled)}
+          />
+          <OverviewModuleToggle
+            label="Blocked"
+            checked={overviewModules.blocked}
+            onChange={(enabled) => setOverviewModule("blocked", enabled)}
+          />
+          <OverviewModuleToggle
+            label="Finished"
+            checked={overviewModules.finished}
+            onChange={(enabled) => setOverviewModule("finished", enabled)}
+          />
+          <OverviewModuleToggle
+            label="Ready to merge"
+            checked={overviewModules.readyToMerge}
+            onChange={(enabled) => setOverviewModule("readyToMerge", enabled)}
+          />
+          <OverviewModuleToggle
+            label="Validated"
+            checked={overviewModules.validated}
+            onChange={(enabled) => setOverviewModule("validated", enabled)}
+          />
+        </div>
+        <div className="settings-subhead">Memory</div>
+        <OverviewModuleToggle
+          label="Recently updated Brain Memory"
+          checked={overviewModules.brainMemory}
+          onChange={(enabled) => setOverviewModule("brainMemory", enabled)}
+        />
+      </SectionCard>
+    </>
+  );
+}
+
+function OverviewModuleToggle({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (enabled: boolean) => void;
+}): JSX.Element {
+  return (
+    <label className="setting-checkbox">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      {label}
+    </label>
   );
 }
 

@@ -710,6 +710,42 @@ func TestConsumeRefreshToken_Success(t *testing.T) {
 	}
 }
 
+func TestConsumeRefreshToken_NonExpiring(t *testing.T) {
+	s := newIdentityTestStorage(t)
+	ctx := context.Background()
+	client := createTestClient(t, s)
+
+	token := &OAuthRefreshToken{
+		Token:     "non-expiring-refresh",
+		ClientID:  client.ClientID,
+		ExpiresAt: -1,
+	}
+	if err := s.CreateRefreshToken(ctx, token); err != nil {
+		t.Fatalf("CreateRefreshToken failed: %v", err)
+	}
+
+	got, err := s.ConsumeRefreshToken(ctx, token.Token)
+	if err != nil {
+		t.Fatalf("ConsumeRefreshToken failed: %v", err)
+	}
+	if got.ExpiresAt != -1 {
+		t.Fatalf("ExpiresAt = %d, want -1 non-expiring sentinel", got.ExpiresAt)
+	}
+}
+
+func TestConsumeRefreshToken_RejectsUnknownNegativeExpiry(t *testing.T) {
+	s := newIdentityTestStorage(t)
+	ctx := context.Background()
+	client := createTestClient(t, s)
+	token := &OAuthRefreshToken{Token: "invalid-negative-refresh", ClientID: client.ClientID, ExpiresAt: -2}
+	if err := s.CreateRefreshToken(ctx, token); err != nil {
+		t.Fatalf("CreateRefreshToken failed: %v", err)
+	}
+	if _, err := s.ConsumeRefreshToken(ctx, token.Token); err == nil {
+		t.Fatal("unknown negative expiry should not be treated as non-expiring")
+	}
+}
+
 func TestConsumeRefreshToken_Expired(t *testing.T) {
 	s := newIdentityTestStorage(t)
 	ctx := context.Background()
@@ -799,6 +835,14 @@ func TestCleanupExpiredRefreshTokens(t *testing.T) {
 	if err := s.CreateRefreshToken(ctx, valid); err != nil {
 		t.Fatalf("CreateRefreshToken (valid) failed: %v", err)
 	}
+	nonExpiring := &OAuthRefreshToken{
+		Token:     "non-expiring-cleanup-refresh",
+		ClientID:  client.ClientID,
+		ExpiresAt: -1,
+	}
+	if err := s.CreateRefreshToken(ctx, nonExpiring); err != nil {
+		t.Fatalf("CreateRefreshToken (non-expiring) failed: %v", err)
+	}
 
 	err := (identityStore{db: s.db}).cleanupExpiredRefreshTokens(ctx)
 	if err != nil {
@@ -818,6 +862,13 @@ func TestCleanupExpiredRefreshTokens(t *testing.T) {
 	).Scan(&count)
 	if count != 1 {
 		t.Error("valid refresh token should still exist")
+	}
+
+	s.db.QueryRowContext(ctx,
+		"SELECT count(*) FROM oauth_refresh_tokens WHERE token = ?", "non-expiring-cleanup-refresh",
+	).Scan(&count)
+	if count != 1 {
+		t.Error("non-expiring refresh token should still exist")
 	}
 }
 

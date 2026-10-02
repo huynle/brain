@@ -178,9 +178,10 @@ type ControlConfig struct {
 
 // OpencodeConfig holds configuration for the OpenCode executor.
 type OpencodeConfig struct {
-	Bin   string `yaml:"bin" json:"bin"`
-	Agent string `yaml:"agent" json:"agent"`
-	Model string `yaml:"model" json:"model"`
+	Bin       string `yaml:"bin" json:"bin"`
+	Agent     string `yaml:"agent" json:"agent"`
+	Model     string `yaml:"model" json:"model"`
+	ConfigDir string `yaml:"config_dir" json:"config_dir"`
 }
 
 // HooksConfig holds configuration for the event hook system.
@@ -375,6 +376,7 @@ type RunningTask struct {
 	Model           string    `json:"model,omitempty"`
 	InstanceID      string    `json:"instanceId,omitempty"`
 	OpencodePort    int       `json:"opencodePort,omitempty"`
+	OpencodePassword string   `json:"-"` // v2 serve Basic-auth secret; never persisted
 	SessionID       string    `json:"sessionId,omitempty"`
 	IdleSince       string    `json:"idleSince,omitempty"` // ISO timestamp
 	CompleteOnIdle  bool      `json:"completeOnIdle,omitempty"`

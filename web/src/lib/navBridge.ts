@@ -16,7 +16,7 @@
 /** What a history entry remembers: an INTENT, never a layout. */
 export interface NavEntry {
   /** The view that was on screen. */
-  view: "overview" | "focus" | "entries" | "session";
+  view: "overview" | "focus" | "entries" | "reminders" | "attention" | "session" | "timeline";
   /** The pane that was brought forward, when the navigation opened one. */
   leaf?: {
     dock: "focus" | "sidebar";
@@ -24,6 +24,12 @@ export interface NavEntry {
     target: Record<string, unknown>;
     title?: string;
   };
+}
+
+/** Translate navigation recorded before Reminders became a top-level view. */
+export function canonicalNavEntry(entry: NavEntry): NavEntry {
+  if (entry.leaf?.kind !== "reminders") return entry;
+  return { view: "reminders" };
 }
 
 type PushFn = (entry: NavEntry) => void;

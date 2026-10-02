@@ -43,7 +43,7 @@ function firedAgo(firedAt?: string): string {
 export function ReminderStatusPopups(): JSX.Element | null {
   const { fired, ack, snooze } = useReminders();
   const toast = useUI((s) => s.toast);
-  const openInFocus = useWorkspace((s) => s.openInFocus);
+  const setView = useWorkspace((s) => s.setView);
 
   // Locally hidden cards (dismissed without acknowledging). Keyed by
   // reminder_id. Not persisted — see the module docstring.
@@ -119,8 +119,8 @@ export function ReminderStatusPopups(): JSX.Element | null {
               Snooze 1h
             </button>
             <button
-              title="Open the Reminders pane"
-              onClick={() => openInFocus("reminders", {}, "Reminders")}
+              title="Open Reminders"
+              onClick={() => setView("reminders")}
             >
               Open
             </button>

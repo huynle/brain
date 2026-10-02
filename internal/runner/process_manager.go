@@ -525,7 +525,7 @@ func (pm *ProcessManager) CheckCompletion(taskID string, checkTaskFile bool) Com
 	// idles, bounded by steerHoldMax so a wedged session can't pin the
 	// task forever. Checked before every completion path below.
 	if procExited && info.Proc.ExitCode() == 0 && info.Task.OpencodePort > 0 {
-		if sessionStatusForPort(info.Task.OpencodePort) == "busy" {
+		if sessionStatusForPort(info.Task.OpencodePort, info.Task.OpencodePassword) == "busy" {
 			// The raw busy flag lingers after a question-tool turn: the
 			// turn ended but the session still reports busy. If the
 			// transcript confirms the latest assistant turn completed,
@@ -535,7 +535,7 @@ func (pm *ProcessManager) CheckCompletion(taskID string, checkTaskFile bool) Com
 			// (conservative: preserve the old hold).
 			turnEnded := false
 			if info.Task.SessionID != "" {
-				if ended, _, ok := checkOpencodeTurnEnded(info.Task.OpencodePort, info.Task.SessionID); ok && ended {
+				if ended, _, ok := checkOpencodeTurnEnded(info.Task.OpencodePort, info.Task.SessionID, info.Task.OpencodePassword); ok && ended {
 					turnEnded = true
 				}
 			}

@@ -26,7 +26,7 @@ func stubSessionAborter(t *testing.T, err error) *struct {
 		sessionID string
 	}{}
 	prev := sessionAborter
-	sessionAborter = func(port int, sessionID string) error {
+	sessionAborter = func(port int, sessionID string, password string) error {
 		rec.called = true
 		rec.port = port
 		rec.sessionID = sessionID
@@ -67,15 +67,15 @@ func TestPostAbort_Success(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", r.Method)
 		}
-		if r.URL.Path != "/session/ses_abc/abort" {
-			t.Errorf("path = %q, want /session/ses_abc/abort", r.URL.Path)
+		if r.URL.Path != "/api/session/ses_abc/interrupt" {
+			t.Errorf("path = %q, want /api/session/ses_abc/interrupt", r.URL.Path)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 	port := serverPort(t, srv)
 
-	if err := postAbort(port, "ses_abc"); err != nil {
+	if err := postAbort(port, "ses_abc", "pw"); err != nil {
 		t.Fatalf("postAbort returned error on 2xx: %v", err)
 	}
 }
@@ -87,7 +87,7 @@ func TestPostAbort_Non2xx(t *testing.T) {
 	defer srv.Close()
 	port := serverPort(t, srv)
 
-	if err := postAbort(port, "ses_abc"); err == nil {
+	if err := postAbort(port, "ses_abc", "pw"); err == nil {
 		t.Fatal("postAbort should return error on non-2xx")
 	}
 }
@@ -162,12 +162,14 @@ func stallTestRunner(t *testing.T, stallTimeoutMs int) (*TaskRunner, *mockProces
 }
 
 // busyStatusServer returns a server reporting the session busy via
-// /session/status.
+// /api/session/active (v2).
 func busyStatusServer(t *testing.T, sessionID string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			sessionID: map[string]interface{}{"type": "busy"},
+			"data": map[string]interface{}{
+				sessionID: map[string]interface{}{"type": "running"},
+			},
 		})
 	}))
 }

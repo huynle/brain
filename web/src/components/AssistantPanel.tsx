@@ -5,7 +5,6 @@ import { AssistantMicrophone } from "./AssistantMicrophone";
  * AssistantPanel — wireframe-parity port of `renderAssistantPanel`.
  *
  * Right-side slide-in with:
- *   • Suggested next move (from live attention queue)
  *   • Multi-turn chat thread (streaming via assistantChatStream; prior turns
  *     are replayed to the stateless server through the `history` field)
  *   • Quick actions

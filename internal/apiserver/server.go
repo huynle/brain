@@ -18,6 +18,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/attentionstore"
 	"github.com/huynle/brain-api/internal/auth"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
@@ -40,14 +41,15 @@ type ServerOptions struct {
 	// LogWriter, when set, receives all slog output instead of os.Stderr.
 	// Callers use it to direct server logs to the configured log_file so
 	// `brain api logs` works regardless of how the server was started.
-	LogWriter       io.Writer
-	CORSOrigin      string
-	OAuthPIN        string
-	JWTSecret       string
-	TaskDefaults    config.TaskDefaultsConfig
-	FeatureCheckout config.FeatureCheckoutConfig
-	Tenancy         config.TenancyConfig
-	FeatureDelivery config.FeatureDeliveryConfig
+	LogWriter               io.Writer
+	CORSOrigin              string
+	OAuthPIN                string
+	JWTSecret               string
+	PasswordRefreshTokenTTL *time.Duration
+	TaskDefaults            config.TaskDefaultsConfig
+	FeatureCheckout         config.FeatureCheckoutConfig
+	Tenancy                 config.TenancyConfig
+	FeatureDelivery         config.FeatureDeliveryConfig
 	// IndexWatch, when enabled, runs a filesystem watcher that re-indexes
 	// out-of-band writes to BrainDir. Off by default; see
 	// config.IndexWatchConfig for why.
@@ -321,6 +323,10 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 
 	// Graph assembly is separate from single-mode boot effects. No worker,
 	// built-in install or content scan is started by newTenantGraph.
+	passwordRefreshTTL := 30 * 24 * time.Hour
+	if opts.PasswordRefreshTokenTTL != nil {
+		passwordRefreshTTL = *opts.PasswordRefreshTokenTTL
+	}
 	graph, err := newTenantGraph(ctx, store, roots, config.Config{
 		BrainDir: opts.BrainDir, Host: opts.Host, Port: opts.Port,
 		EnableAuth: opts.EnableAuth, CORSOrigin: opts.CORSOrigin,
@@ -328,7 +334,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		TaskDefaults: opts.TaskDefaults, FeatureCheckout: opts.FeatureCheckout, FeatureDelivery: opts.FeatureDelivery,
 		Tenancy: opts.Tenancy, Embedding: opts.Embedding, Attachments: attachments,
 		AttachmentExtraction: opts.AttachmentExtraction, Assistant: opts.Assistant,
-	}, graphIdentity{tokens: views.tokens, verifier: credVerifier, passwords: control, assistantMCPURL: assistantMCPBaseURL(opts)})
+	}, graphIdentity{tokens: views.tokens, verifier: credVerifier, passwords: control, passwordTTL: passwordRefreshTTL, passwordTTLSet: true, assistantMCPURL: assistantMCPBaseURL(opts)})
 	if err != nil {
 		cleanup()
 		return nil, "", nil, err
@@ -502,6 +508,26 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	stopPush := graph.handler.StartPush(ctx)
 	beforePushStop := cleanup
 	cleanup = func() { stopPush(); beforePushStop() }
+
+	// ─── Attention Inbox ───────────────────────────────────────────
+	// Durable per-user notification inbox in its own SQLite datastore, kept
+	// out of the reviewed brain catalog (which admits no additive tables) and
+	// the dormant tenant/v31 successor schema. Mirrors the phone-push store.
+	attentionStore, err := attentionstore.Open(filepath.Join(dataDir, "attention", "attention.db"))
+	if err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("open attention store: %w", err)
+	}
+	attnCleanup := cleanup
+	cleanup = func() { _ = attentionStore.Close(); attnCleanup() }
+	attentionSvc := service.NewAttentionService(attentionStore, service.WithAttentionEventIngester(graph.events))
+	api.WithAttentionService(attentionSvc)(graph.handler)
+	// Attention reuses the single phonepush Web Push transport rather than a
+	// second, competing push stack. On attention.created the dispatcher enqueues
+	// a notification into phonepush, which owns device subscriptions, the VAPID
+	// keypair, retries, and the service-worker handler.
+	attentionDispatcher := service.NewAttentionDispatcher(graph.eventHub, attentionStore, pushSvc)
+	go attentionDispatcher.Start(ctx)
 
 	// ─── Rate Limiting ─────────────────────────────────────────────
 	var rateLimiter *api.RateLimiter

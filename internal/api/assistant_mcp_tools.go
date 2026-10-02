@@ -75,6 +75,7 @@ func (s *AssistantService) mcpToolset(token string) []ToolDefinition {
 	mcppkg.RegisterWebhookTools(server, client)
 	mcppkg.RegisterGoalTools(server, client)
 	mcppkg.RegisterReminderTools(server, client)
+	mcppkg.RegisterAttentionTools(server, client)
 
 	regs := server.RegisteredTools()
 	defs := make([]ToolDefinition, 0, len(regs))

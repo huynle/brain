@@ -63,9 +63,9 @@ func TestChildEnvironmentBoundary(t *testing.T) {
 				if mode == "attached" {
 					port = 12345
 				}
-				res, err = e.spawnHeadlessDirect(dir, "p", task, prompt, SpawnOptions{}, port, "")
+				res, err = e.spawnHeadlessDirect(dir, "p", task, prompt, SpawnOptions{}, port, "", "")
 			case "server":
-				_, _, _, _ = e.startHeadlessServer(dir, "p", task.ID)
+				_, _, _, _ = e.startHeadlessServer(dir, "p", task.ID, "")
 				data, readErr := os.ReadFile(filepath.Join(dir, "serve_p_task.log"))
 				if readErr != nil {
 					t.Fatal(readErr)
@@ -249,5 +249,46 @@ func TestChildEnvironmentLiteralExports(t *testing.T) {
 	}
 	if len(defaultEnvPassthrough(nil)) != 0 {
 		t.Fatal("default passthrough must not forward Brain credentials")
+	}
+}
+
+func TestOpenCodeChildEnvironmentUsesIsolatedConfig(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/inherited/xdg")
+	t.Setenv("OPENCODE_CONFIG_DIR", "/inherited/opencode")
+	t.Setenv("OPENCODE_CONFIG", "/inherited/opencode.json")
+	t.Setenv("OPENCODE_CONFIG_CONTENT", `{"model":"inherited/model"}`)
+	task := &types.ResolvedTask{Env: map[string]string{
+		"XDG_CONFIG_HOME":         "/task/xdg",
+		"OPENCODE_CONFIG_DIR":     "/task/opencode",
+		"OPENCODE_CONFIG":         "/task/opencode.json",
+		"OPENCODE_CONFIG_CONTENT": `{"model":"task/model"}`,
+	}}
+	cfg := RunnerConfig{Opencode: OpencodeConfig{ConfigDir: "/runner/opencode"}}
+
+	env := opencodeChildEnvironmentMap(task, cfg)
+	if env["OPENCODE_CONFIG_DIR"] != "/runner/opencode" {
+		t.Fatalf("OPENCODE_CONFIG_DIR = %q, want runner config", env["OPENCODE_CONFIG_DIR"])
+	}
+	if env["XDG_CONFIG_HOME"] != "/runner/opencode" {
+		t.Fatalf("XDG_CONFIG_HOME = %q, want isolated config directory", env["XDG_CONFIG_HOME"])
+	}
+	for _, key := range []string{"OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT"} {
+		if _, ok := env[key]; ok {
+			t.Fatalf("%s bypassed isolated OpenCode config", key)
+		}
+	}
+}
+
+func TestCommonChildEnvironmentDoesNotApplyOpencodeIsolation(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/inherited/xdg")
+	t.Setenv("OPENCODE_CONFIG_DIR", "/inherited/opencode")
+	cfg := RunnerConfig{Opencode: OpencodeConfig{ConfigDir: "/runner/opencode"}}
+
+	env := CommonBuildEnvMap(nil, cfg)
+	if env["XDG_CONFIG_HOME"] != "/inherited/xdg" {
+		t.Fatalf("XDG_CONFIG_HOME = %q, want inherited value for non-OpenCode child", env["XDG_CONFIG_HOME"])
+	}
+	if env["OPENCODE_CONFIG_DIR"] != "/inherited/opencode" {
+		t.Fatalf("OPENCODE_CONFIG_DIR = %q, want inherited value for non-OpenCode child", env["OPENCODE_CONFIG_DIR"])
 	}
 }

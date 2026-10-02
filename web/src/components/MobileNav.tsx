@@ -66,6 +66,30 @@ export function MobileNav(): JSX.Element {
       >
         Entries
       </button>
+      <button
+        type="button"
+        aria-pressed={view === "reminders"}
+        className={`pill ${view === "reminders" ? "active" : ""}`}
+        onClick={() => setView("reminders")}
+      >
+        Reminders
+      </button>
+      <button
+        type="button"
+        aria-pressed={view === "attention"}
+        className={`pill ${view === "attention" ? "active" : ""}`}
+        onClick={() => setView("attention")}
+      >
+        Attention
+      </button>
+      <button
+        type="button"
+        aria-pressed={view === "timeline"}
+        className={`pill ${view === "timeline" ? "active" : ""}`}
+        onClick={() => setView("timeline")}
+      >
+        Timeline
+      </button>
       {sessions
         .filter((s) => s.status === "busy" || s.status === "starting")
         .map((s) => (

@@ -18,7 +18,7 @@ import (
 // in-process control plumbing the /control handlers use: the runner instance
 // registry locates the live instance serving a task (the way abort-task
 // resolution works), and the runner bridge delivers the prompt through the
-// OpenCode /session/{id}/prompt_async proxy path. No HTTP self-calls.
+// OpenCode /session/{id}/prompt proxy path. No HTTP self-calls.
 // =============================================================================
 
 // goalInstanceLister is the slice of the runner registry the steerer needs.
@@ -47,7 +47,7 @@ func newBridgeGoalSteerer(instances goalInstanceLister, bridge goalBridgeDoer) *
 }
 
 // SteerTask locates the live instance serving the task and injects the prompt
-// into its most recent session via prompt_async.
+// into its most recent session via the v2 /session/{id}/prompt endpoint.
 //
 // Graceful skips (SteerResult with Steered=false, nil error): no live task
 // instance, no discovered session yet, or a non-OpenCode executor (e.g. Pi
@@ -62,7 +62,7 @@ func (s *bridgeGoalSteerer) SteerTask(ctx context.Context, projectID, taskID, pr
 	if inst == nil {
 		return service.SteerResult{Reason: "no live instance for task"}, nil
 	}
-	// Only OpenCode instances expose the prompt_async endpoint. Anything else
+	// Only OpenCode instances expose the prompt endpoint. Anything else
 	// (e.g. "pi") is skipped as unsupported rather than errored.
 	if inst.Executor != "" && inst.Executor != "opencode" {
 		return service.SteerResult{
@@ -75,17 +75,18 @@ func (s *bridgeGoalSteerer) SteerTask(ctx context.Context, projectID, taskID, pr
 	}
 	sessionID := inst.SessionIDs[len(inst.SessionIDs)-1]
 
-	// Same upstream shape HandleControlPrompt sends: a single text part.
+	// v2 prompt body: a single "text" field (the v1 {parts:[…]} shape is gone;
+	// POST /api/session/{id}/prompt takes {"text":"…"}).
 	body, err := json.Marshal(map[string]interface{}{
-		"parts": []map[string]interface{}{
-			{"type": "text", "text": prompt},
-		},
+		"text": prompt,
 	})
 	if err != nil {
 		return service.SteerResult{}, fmt.Errorf("marshal steering prompt: %w", err)
 	}
 
-	path := fmt.Sprintf("/session/%s/prompt_async", url.PathEscape(sessionID))
+	// v2 endpoint is /session/{id}/prompt (NOT /prompt_async). The bridge
+	// proxy /api-prefixes it to /api/session/{id}/prompt.
+	path := fmt.Sprintf("/session/%s/prompt", url.PathEscape(sessionID))
 	status, _, err := s.bridge.Do(ctx, inst.RunnerID, inst.InstanceID, http.MethodPost, path, body)
 	if err != nil {
 		return service.SteerResult{}, fmt.Errorf("bridge prompt to %s/%s session %s: %w",

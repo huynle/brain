@@ -22,7 +22,7 @@ func (*BootstrapClosedError) Error() string { return "bootstrap closed" }
 // hash; storage deliberately does not read environment or server configuration.
 // A credential-based refusal commits the claim; an insertion failure rolls it back.
 func (s identityStore) bootstrapToken(ctx context.Context, name, token string, passwordConfigured bool) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return fmt.Errorf("begin bootstrap: %w", err)
 	}
@@ -30,7 +30,7 @@ func (s identityStore) bootstrapToken(ctx context.Context, name, token string, p
 
 	// Write FIRST: SQLite serializes writers across independent handles/processes.
 	// A read before this write would risk a stale snapshot / SQLITE_BUSY upgrade.
-	result, err := insertInstallClaim(ctx, tx)
+	result, err := insertInstallClaim(ctx, tx.Tx)
 	if err != nil {
 		return err
 	}
@@ -63,12 +63,12 @@ func (s identityStore) bootstrapToken(ctx context.Context, name, token string, p
 // MarkInstallClaimed permanently and idempotently closes bootstrap. Server startup
 // should call this when a password hash is configured, before serving requests.
 func (s identityStore) markInstallClaimed(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := insertInstallClaim(ctx, tx); err != nil {
+	if _, err := insertInstallClaim(ctx, tx.Tx); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -130,12 +130,12 @@ const activeInstallCredentials = `EXISTS(SELECT 1 FROM api_tokens WHERE revoked_
 // Backfill on every storage open, including databases already at current schema.
 // INSERT ... SELECT is one write statement, with no read-to-write upgrade race.
 func (s identityStore) backfillInstallClaim(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	table, err := installClaimTable(ctx, tx)
+	table, err := installClaimTable(ctx, tx.Tx)
 	if err != nil {
 		return err
 	}

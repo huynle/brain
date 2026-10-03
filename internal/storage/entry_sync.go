@@ -89,7 +89,7 @@ func (s *TenantStore) syncScope(ctx context.Context, tx *sql.Tx, devices bool) (
 
 // Validate binding before BeginTx as nil/cancelled handles must fail, not panic.
 // This helper never admits a schema; syncScope validates inside the snapshot.
-func beginSync(ctx context.Context, s *TenantStore) (*sql.Tx, error) {
+func beginSync(ctx context.Context, s *TenantStore) (*resilientTx, error) {
 	if ctx == nil || s == nil || s.db == nil || !s.tenantID.Valid() {
 		return nil, fmt.Errorf("invalid sync handle or context")
 	}
@@ -97,7 +97,7 @@ func beginSync(ctx context.Context, s *TenantStore) (*sql.Tx, error) {
 	if !ok || id != s.tenantID {
 		return nil, fmt.Errorf("sync tenant scope mismatch")
 	}
-	return s.db.BeginTx(ctx, nil)
+	return beginResilientTx(ctx, s.db, nil)
 }
 
 func (s *TenantStore) ReadEntryChanges(ctx context.Context, epoch string, after int64, limit int) (*EntrySyncPage, error) {
@@ -106,7 +106,7 @@ func (s *TenantStore) ReadEntryChanges(ctx context.Context, epoch string, after 
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	scope, err := s.syncScope(ctx, tx, false)
+	scope, err := s.syncScope(ctx, tx.Tx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +169,7 @@ func (s *TenantStore) ReadSelectedEntries(ctx context.Context, paths []string) (
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	scope, err := s.syncScope(ctx, tx, false)
+	scope, err := s.syncScope(ctx, tx.Tx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +198,7 @@ func (s *TenantStore) ReserveSyncOperation(ctx context.Context, id, hash string)
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	scope, err := s.syncScope(ctx, tx, false)
+	scope, err := s.syncScope(ctx, tx.Tx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +237,7 @@ func (s *TenantStore) CompleteSyncOperation(ctx context.Context, id string, stat
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	scope, err := s.syncScope(ctx, tx, false)
+	scope, err := s.syncScope(ctx, tx.Tx, false)
 	if err != nil {
 		return err
 	}

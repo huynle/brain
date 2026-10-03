@@ -196,7 +196,7 @@ func (s *TenantStore) ReplaceInstancesForRunner(ctx context.Context, runnerID st
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return fmt.Errorf("begin replace instances: %w", err)
 	}

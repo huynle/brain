@@ -60,7 +60,7 @@ func (s *TenantStore) CompareSupervisorCheckpoint(ctx context.Context, expected 
 	if err != nil {
 		return false, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return false, err
 	}

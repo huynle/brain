@@ -65,12 +65,12 @@ func (s *TenantStore) SetLinks(ctx context.Context, notePath string, links []Lin
 		}
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if err := requireOwnedNote(ctx, tx, scope, note.ID); err != nil {
+	if err := requireOwnedNote(ctx, tx.Tx, scope, note.ID); err != nil {
 		return err
 	}
 
@@ -89,7 +89,7 @@ func (s *TenantStore) SetLinks(ctx context.Context, notePath string, links []Lin
 		}
 
 		if rl.targetID != nil {
-			if err := requireOwnedNote(ctx, tx, scope, *rl.targetID); err != nil {
+			if err := requireOwnedNote(ctx, tx.Tx, scope, *rl.targetID); err != nil {
 				return err
 			}
 		}
@@ -179,7 +179,7 @@ func (s *TenantStore) resolveLinksTo(ctx context.Context, noteID int64, path, sh
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return fmt.Errorf("begin repair: %w", err)
 	}

@@ -86,6 +86,13 @@ linters:
       - linters:
           - errcheck
         path: _test\.go
+      # Tests use t.Fatal for nil guards before dereferencing fixtures and
+      # results. Staticcheck does not model testing.T's Goexit semantics, so
+      # SA5011 reports the guarded dereference as reachable.
+      - linters:
+          - staticcheck
+        path: _test\.go
+        text: SA5011
     paths:
       - third_party$
       - builtin$

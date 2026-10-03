@@ -21,7 +21,7 @@ func (s *TenantStore) InsertBulkJob(ctx context.Context, job *types.BulkJob, ite
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func (s *TenantStore) RetryBulkJob(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return err
 	}
@@ -179,7 +179,7 @@ func (s *TenantStore) RecoverBulkJobs(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return err
 	}

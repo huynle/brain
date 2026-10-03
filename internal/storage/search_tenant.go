@@ -12,7 +12,7 @@ import (
 // hydration and attachment merging. No code called inside it may use the pool.
 // This path is reached only on privately migrated tenant29/31, not runtime30.
 func (s *TenantStore) searchTenant(ctx context.Context, query, strategy string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrTenantSearchUnavailable, err)
 	}
@@ -24,7 +24,7 @@ func (s *TenantStore) searchTenant(ctx context.Context, query, strategy string, 
 	if version != 29 && version != successorSchemaVersion {
 		return nil, ErrTenantSearchUnavailable
 	}
-	name, err := tenantSearchTable(ctx, tx, s.tenantID)
+	name, err := tenantSearchTable(ctx, tx.Tx, s.tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +35,7 @@ func (s *TenantStore) searchTenant(ctx context.Context, query, strategy string, 
 	if limit <= 0 {
 		limit = defaultSearchLimit
 	}
-	search := tenantSearchSnapshot{tx: tx, owner: s.tenantID.String(), table: name}
+	search := tenantSearchSnapshot{tx: tx.Tx, owner: s.tenantID.String(), table: name}
 	var notes []*NoteRow
 	switch strategy {
 	case "match":

@@ -103,6 +103,7 @@ func classifySchemaSource(ctx context.Context, tx *sql.Tx) (string, error) {
 		{30, "main30-pre-sync", "d43f48233533d3476d92ffeec25b1f874cb91dc55e01ee7d09e81a7880a17776"},
 		{30, "main30-initial-sync", "72fc3207492e15819c48b58df76f4faf79eefd7f1b035f007140eee95227941d"},
 		{30, "main30-devices", "2104f3eac47abaa1b5cc8e35e7265e7ca7b7856cd0e1335df03d33f01bb65a66"},
+		{30, "main30-devices", "d880e7c11459536ef05797d69f7112bb8fe7356e1ecb0e587ad73bd83c806761"},
 		{30, "main30-historical-preflight", "2eade101a417bb1982de902e36663a9229ea2e49b3c8d7f2231e1d139ef06b0f"},
 	} {
 		if version == pin.version && digest == pin.digest {

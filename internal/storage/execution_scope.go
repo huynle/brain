@@ -25,7 +25,7 @@ func (s *TenantStore) executionScope(ctx context.Context, group string) (string,
 	if group != "bulk" && group != "budget" && group != "supervisor" {
 		return "", fmt.Errorf("unknown execution ledger group")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return "", err
 	}
@@ -35,7 +35,7 @@ func (s *TenantStore) executionScope(ctx context.Context, group string) (string,
 		return "", err
 	}
 	if version == successorSchemaVersion {
-		if err = validateSuccessorReceiver(ctx, tx, s.tenantID); err != nil {
+		if err = validateSuccessorReceiver(ctx, tx.Tx, s.tenantID); err != nil {
 			return "", err
 		}
 		return id.String(), nil
@@ -43,7 +43,7 @@ func (s *TenantStore) executionScope(ctx context.Context, group string) (string,
 	if id != tenant.Local || version < 29 || version > 30 {
 		return "", fmt.Errorf("execution ledger schema unavailable")
 	}
-	profile, err := classifySchemaSource(ctx, tx)
+	profile, err := classifySchemaSource(ctx, tx.Tx)
 	if err != nil {
 		return "", err
 	}

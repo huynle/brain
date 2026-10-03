@@ -75,7 +75,7 @@ func (s *TenantStore) UpsertBrainClient(ctx context.Context, client *BrainClient
 	args = append(args, client.ClientID, client.Kind, client.HostID, client.Hostname, client.OS, client.Arch,
 		client.Username, client.HomeDir, string(labelsJSON), string(capabilitiesJSON),
 		client.RegisteredAt, client.LastSeen, client.Status)
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return err
 	}

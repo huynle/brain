@@ -24,12 +24,12 @@ func (s identityStore) createToken(ctx context.Context, name, token, scope strin
 	if scope == "" {
 		scope = "admin:*"
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return fmt.Errorf("begin create token: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := insertInstallClaim(ctx, tx); err != nil {
+	if _, err := insertInstallClaim(ctx, tx.Tx); err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx,

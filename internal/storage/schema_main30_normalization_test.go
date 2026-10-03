@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-const historicalMain30Digest = "2eade101a417bb1982de902e36663a9229ea2e49b3c8d7f2231e1d139ef06b0f"
-
 func historicalMain30Fixture(t *testing.T) *sql.DB {
 	t.Helper()
 	db := compatibilityDB(t, t.TempDir()+"/historical.db")

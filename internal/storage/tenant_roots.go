@@ -53,7 +53,7 @@ func (s identityStore) registerTenantRoots(ctx context.Context, m tenantfs.Mappi
 	if !m.ID.Valid() || validate == nil {
 		return fmt.Errorf("invalid tenant root registration")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return err
 	}

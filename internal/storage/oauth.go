@@ -268,7 +268,7 @@ func (s identityStore) createAuthCode(ctx context.Context, code *OAuthAuthCode) 
 // ConsumeAuthCode retrieves and deletes an authorization code (single-use).
 // Returns an error if the code is expired or not found.
 func (s identityStore) consumeAuthCode(ctx context.Context, codeValue string) (*OAuthAuthCode, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
@@ -342,7 +342,7 @@ func (s identityStore) createAccessToken(ctx context.Context, token *OAuthAccess
 		token.ExpiresAt = now.Add(AccessTokenTTL).Unix()
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return fmt.Errorf("begin create access token: %w", err)
 	}
@@ -350,7 +350,7 @@ func (s identityStore) createAccessToken(ctx context.Context, token *OAuthAccess
 	// Match GetAccessToken's inclusive expiry boundary. Sampling before waiting
 	// for the write lock is conservative if the token expires during contention.
 	if token.ExpiresAt >= now.Unix() {
-		if _, err := insertInstallClaim(ctx, tx); err != nil {
+		if _, err := insertInstallClaim(ctx, tx.Tx); err != nil {
 			return err
 		}
 	}
@@ -477,7 +477,7 @@ func (s identityStore) createRefreshToken(ctx context.Context, token *OAuthRefre
 // ConsumeRefreshToken retrieves and deletes a refresh token (single-use rotation).
 // Returns an error if the token is expired or not found.
 func (s identityStore) consumeRefreshToken(ctx context.Context, tokenValue string) (*OAuthRefreshToken, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}

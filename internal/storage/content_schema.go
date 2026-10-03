@@ -37,12 +37,12 @@ func (s *TenantStore) contentScope(ctx context.Context) (contentScope, error) {
 		if owned != 0 {
 			return contentScope{owner: s.tenantID.String()}, nil
 		}
-		tx, err := s.db.BeginTx(ctx, nil)
+		tx, err := beginResilientTx(ctx, s.db, nil)
 		if err != nil {
 			return contentScope{}, err
 		}
 		defer func() { _ = tx.Rollback() }()
-		if _, err := classifySchemaSource(ctx, tx); err != nil {
+		if _, err := classifySchemaSource(ctx, tx.Tx); err != nil {
 			return contentScope{}, err
 		}
 		fallthrough
@@ -54,12 +54,12 @@ func (s *TenantStore) contentScope(ctx context.Context) (contentScope, error) {
 		// Like legacy28, this route only permits the single-install local view.
 		return contentScope{}, nil
 	case successorSchemaVersion:
-		tx, err := s.db.BeginTx(ctx, nil)
+		tx, err := beginResilientTx(ctx, s.db, nil)
 		if err != nil {
 			return contentScope{}, err
 		}
 		defer func() { _ = tx.Rollback() }()
-		if err = validateSuccessorReceiver(ctx, tx, s.tenantID); err != nil {
+		if err = validateSuccessorReceiver(ctx, tx.Tx, s.tenantID); err != nil {
 			return contentScope{}, err
 		}
 		return contentScope{owner: s.tenantID.String()}, nil

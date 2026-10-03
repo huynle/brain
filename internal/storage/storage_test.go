@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // helper: open an in-memory StorageLayer for testing
@@ -190,6 +192,113 @@ func TestPragmas_JournalMode(t *testing.T) {
 	// SetMaxOpenConns(1) pins the pool to one connection.
 	if journalMode != "truncate" {
 		t.Errorf("PRAGMA journal_mode = %q, want %q", journalMode, "truncate")
+	}
+}
+
+func TestTransactionCommitBusyDoesNotPoisonConnection(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "commit-busy.db")
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	if _, err := store.db.Exec("PRAGMA busy_timeout = 1"); err != nil {
+		t.Fatalf("set writer busy timeout: %v", err)
+	}
+
+	observer, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		t.Fatalf("open observer: %v", err)
+	}
+	defer observer.Close()
+	readTx, err := observer.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatalf("begin observer transaction: %v", err)
+	}
+	var count int
+	if err := readTx.QueryRow("SELECT COUNT(*) FROM api_tokens").Scan(&count); err != nil {
+		t.Fatalf("hold observer read lock: %v", err)
+	}
+
+	tokens := identityStore{db: store.db}
+	err = tokens.createToken(context.Background(), "blocked", "blocked-token", "read:*")
+	if err == nil || (!strings.Contains(err.Error(), "locked") && !strings.Contains(err.Error(), "busy")) {
+		t.Fatalf("first token write error = %v, want lock contention", err)
+	}
+	if err := readTx.Rollback(); err != nil {
+		t.Fatalf("release observer lock: %v", err)
+	}
+
+	if err := tokens.createToken(context.Background(), "recovered", "recovered-token", "read:*"); err != nil {
+		t.Fatalf("token write after lock release poisoned the connection: %v", err)
+	}
+	var blocked, recovered int
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM api_tokens WHERE name = 'blocked'").Scan(&blocked); err != nil {
+		t.Fatalf("count blocked token: %v", err)
+	}
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM api_tokens WHERE name = 'recovered'").Scan(&recovered); err != nil {
+		t.Fatalf("count recovered token: %v", err)
+	}
+	if blocked != 0 || recovered != 1 {
+		t.Fatalf("token counts after recovery = blocked:%d recovered:%d, want 0 and 1", blocked, recovered)
+	}
+}
+
+func TestConcurrentCommitRollbackDoesNotReturnPoisonedConnection(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "concurrent-close.db")
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	if _, err := store.db.Exec("PRAGMA busy_timeout = 200"); err != nil {
+		t.Fatalf("set writer busy timeout: %v", err)
+	}
+
+	observer, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		t.Fatalf("open observer: %v", err)
+	}
+	defer observer.Close()
+	readTx, err := observer.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatalf("begin observer transaction: %v", err)
+	}
+	var count int
+	if err := readTx.QueryRow("SELECT COUNT(*) FROM api_tokens").Scan(&count); err != nil {
+		t.Fatalf("hold observer read lock: %v", err)
+	}
+
+	tx, err := beginResilientTx(context.Background(), store.db, nil)
+	if err != nil {
+		t.Fatalf("begin writer transaction: %v", err)
+	}
+	if _, err := tx.Exec("INSERT INTO api_tokens(name, token, scope) VALUES('blocked', 'blocked-token', 'read:*')"); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+	commitStarted := make(chan struct{})
+	commitResult := make(chan error, 1)
+	go func() {
+		close(commitStarted)
+		commitResult <- tx.Commit()
+	}()
+	<-commitStarted
+	time.Sleep(20 * time.Millisecond)
+	_ = tx.Rollback()
+	commitErr := <-commitResult
+	if commitErr == nil || (!strings.Contains(commitErr.Error(), "locked") && !strings.Contains(commitErr.Error(), "busy")) {
+		t.Fatalf("commit error = %v, want lock contention", commitErr)
+	}
+	if err := readTx.Rollback(); err != nil {
+		t.Fatalf("release observer lock: %v", err)
+	}
+
+	next, err := beginResilientTx(context.Background(), store.db, nil)
+	if err != nil {
+		t.Fatalf("begin after concurrent commit/rollback returned a poisoned connection: %v", err)
+	}
+	if err := next.Rollback(); err != nil {
+		t.Fatalf("rollback recovery transaction: %v", err)
 	}
 }
 

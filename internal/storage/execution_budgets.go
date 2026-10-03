@@ -66,7 +66,7 @@ func (s *TenantStore) ReserveBudget(ctx context.Context, project, budgetID, id, 
 	if units < 1 || units > 1e9 || id == "" {
 		return nil, false, fmt.Errorf("units must be 1..1000000000 and reservation ID is required")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return nil, false, err
 	}

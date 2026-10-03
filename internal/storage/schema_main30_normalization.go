@@ -132,6 +132,6 @@ func schemaProfile(ctx context.Context, db *sql.DB) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	return classifySchemaSource(ctx, tx)
 }

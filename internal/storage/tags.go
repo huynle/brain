@@ -21,12 +21,12 @@ func (s *TenantStore) SetTags(ctx context.Context, notePath string, tags []strin
 		return fmt.Errorf("note not found: %s", notePath)
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if err := requireOwnedNote(ctx, tx, scope, note.ID); err != nil {
+	if err := requireOwnedNote(ctx, tx.Tx, scope, note.ID); err != nil {
 		return err
 	}
 

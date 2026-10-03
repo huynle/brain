@@ -64,7 +64,7 @@ func (s *TenantStore) EmbeddingSource(ctx context.Context, noteID int64) (string
 	if err != nil {
 		return "", err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return "", err
 	}

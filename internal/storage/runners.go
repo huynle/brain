@@ -87,7 +87,7 @@ func (s *TenantStore) UpsertRunner(ctx context.Context, runner *RunnerRow) error
 		columns, values, conflict = "tenant_id,", "?,", "tenant_id,runner_id"
 		args = append(args, scope.owner)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return err
 	}

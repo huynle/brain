@@ -91,7 +91,7 @@ func (s *TenantStore) PurgeProjectState(ctx context.Context, projectID string) (
 		return nil, fmt.Errorf("project id required")
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin purge tx: %w", err)
 	}

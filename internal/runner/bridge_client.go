@@ -562,8 +562,8 @@ func (bc *BridgeClient) handleEventLine(instanceID string, line []byte) {
 type bridgePermEvent struct {
 	Type string `json:"type"`
 	Data struct {
-		ID        string `json:"id"`         // permission.asked
-		RequestID string `json:"requestID"`  // permission.replied
+		ID        string `json:"id"`        // permission.asked
+		RequestID string `json:"requestID"` // permission.replied
 	} `json:"data"`
 	Properties struct {
 		ID   string `json:"id"`
@@ -1168,12 +1168,7 @@ func (bc *BridgeClient) ownedOpencodePIDs() map[int]bool {
 	return owned
 }
 
-// httpGet performs a bounded GET against a localhost instance port.
-func (bc *BridgeClient) httpGet(port int, path string) (int, []byte, error) {
-	return bc.httpGetFast(port, path, time.Duration(bridge.DefaultTimeoutMs)*time.Millisecond)
-}
-
-// httpGetFast is like httpGet but with a caller-supplied per-request
+// httpGetFast performs a bounded GET against a localhost instance port with a caller-supplied per-request
 // timeout. Used by external-listener probes to keep a stuck listener from
 // blocking the whole audit request.
 func (bc *BridgeClient) httpGetFast(port int, path string, timeout time.Duration) (int, []byte, error) {
@@ -1624,15 +1619,8 @@ func (bc *BridgeClient) execEnv() []string {
 	return childEnvironment(nil, bc.runner.config)
 }
 
-func (bc *BridgeClient) opencodeEnv() []string {
-	if bc.runner == nil {
-		return opencodeChildEnvironment(nil, RunnerConfig{})
-	}
-	return opencodeChildEnvironment(nil, bc.runner.config)
-}
-
-// opencodeEnvWithPassword is opencodeEnv plus OPENCODE_PASSWORD for the v2
-// serve instance's Basic auth.
+// opencodeEnvWithPassword builds the OpenCode child environment plus
+// OPENCODE_PASSWORD for the v2 serve instance's Basic auth.
 func (bc *BridgeClient) opencodeEnvWithPassword(password string) []string {
 	cfg := RunnerConfig{}
 	if bc.runner != nil {

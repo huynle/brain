@@ -233,7 +233,7 @@ func (s *TenantStore) MergeMetadata(ctx context.Context, path string, fields map
 	// task through the resume prompt, and the runner CLEARS that flag after a
 	// successful spawn. Two writers, one note, a flag whose loss silently turns
 	// a resume back into an ordinary run.
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin merge metadata tx: %w", err)
 	}

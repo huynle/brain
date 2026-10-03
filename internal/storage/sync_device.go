@@ -15,7 +15,7 @@ func (s *TenantStore) SyncDevices(ctx context.Context) ([]types.SyncDevice, erro
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	scope, err := s.syncScope(ctx, tx, true)
+	scope, err := s.syncScope(ctx, tx.Tx, true)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func (s *TenantStore) SaveSyncDevice(ctx context.Context, before *types.SyncDevi
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	scope, err := s.syncScope(ctx, tx, true)
+	scope, err := s.syncScope(ctx, tx.Tx, true)
 	if err != nil {
 		return err
 	}
@@ -92,7 +92,7 @@ func (s *TenantStore) SyncNote(ctx context.Context, path string) (*NoteRow, erro
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	scope, err := s.syncScope(ctx, tx, false)
+	scope, err := s.syncScope(ctx, tx.Tx, false)
 	if err != nil {
 		return nil, err
 	}

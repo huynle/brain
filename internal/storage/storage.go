@@ -3,11 +3,13 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 
 	// Import the pure-Go SQLite driver for side effects (driver registration).
 	_ "github.com/glebarez/go-sqlite"
@@ -16,6 +18,67 @@ import (
 // StorageLayer wraps a *sql.DB with schema management and query methods.
 type StorageLayer struct {
 	db *sql.DB
+}
+
+type resilientTx struct {
+	*sql.Tx
+	conn *sql.Conn
+	mu   sync.Mutex
+}
+
+// beginResilientTx retains the physical connection until Commit or Rollback.
+// SQLite can leave a connection transaction-active when COMMIT fails with
+// SQLITE_BUSY; database/sql otherwise returns that poisoned connection to the
+// pool, where the next Begin reports "cannot start a transaction within a
+// transaction". A failed transaction is discarded before release instead.
+func beginResilientTx(ctx context.Context, db *sql.DB, opts *sql.TxOptions) (*resilientTx, error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := conn.BeginTx(ctx, opts)
+	if err != nil {
+		discardConnection(conn)
+		return nil, err
+	}
+	return &resilientTx{Tx: tx, conn: conn}, nil
+}
+
+func (tx *resilientTx) Commit() error {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if tx.conn == nil {
+		return sql.ErrTxDone
+	}
+	err := tx.Tx.Commit()
+	tx.releaseLocked(err)
+	return err
+}
+
+func (tx *resilientTx) Rollback() error {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if tx.conn == nil {
+		return sql.ErrTxDone
+	}
+	err := tx.Tx.Rollback()
+	tx.releaseLocked(err)
+	return err
+}
+
+func (tx *resilientTx) releaseLocked(txErr error) {
+	conn := tx.conn
+	tx.conn = nil
+	if txErr != nil && !errors.Is(txErr, sql.ErrTxDone) {
+		discardConnection(conn)
+		return
+	}
+	_ = conn.Close()
+}
+
+func discardConnection(conn *sql.Conn) {
+	_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+	_ = conn.Close()
 }
 
 // connectionPragmas are applied by the DRIVER as each connection opens, via the

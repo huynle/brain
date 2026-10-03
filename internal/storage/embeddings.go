@@ -50,7 +50,7 @@ func (s *TenantStore) UpsertNoteEmbeddings(ctx context.Context, records []Embedd
 	}
 
 	// Begin transaction
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
@@ -101,7 +101,7 @@ func (s *TenantStore) UpsertNoteEmbeddings(ctx context.Context, records []Embedd
 
 	// Execute all upserts
 	for _, rec := range records {
-		if err := requireOwnedNote(ctx, tx, scope, rec.NoteID); err != nil {
+		if err := requireOwnedNote(ctx, tx.Tx, scope, rec.NoteID); err != nil {
 			return err
 		}
 		// Validate vector is not empty
@@ -241,12 +241,12 @@ func (s *TenantStore) SyncNoteEmbeddingMetadata(ctx context.Context, note *NoteR
 	if note == nil {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := requireOwnedNote(ctx, tx, scope, note.ID); err != nil {
+	if err := requireOwnedNote(ctx, tx.Tx, scope, note.ID); err != nil {
 		return err
 	}
 	where, args := scope.where("note_id = ?", note.ID)
@@ -271,7 +271,7 @@ func (s *TenantStore) DeleteNoteEmbeddings(ctx context.Context, noteID int64) er
 	}
 	where, args := scope.where("note_id = ?", noteID)
 	// Begin transaction to ensure both deletes succeed or fail together
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginResilientTx(ctx, s.db, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}

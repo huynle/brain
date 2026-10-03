@@ -483,8 +483,8 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	graphCleanup := cleanup
 	var cleanupOnce sync.Once
 	cleanup = func() { cleanupOnce.Do(func() { stopWorkers(); graphCleanup() }) }
-	if cfg.Assistant.Enabled && os.Getenv("BRAIN_ASSISTANT_JOBS") == "true" {
-		stopJobs, err := graph.assistant.StartConversationJobs(tenant.Into(ctx, tenant.Local), filepath.Join(dataDir, "assistant-jobs", "jobs.db"))
+	if cfg.Assistant.Enabled && assistantJobsEnabled(cfg.Assistant.Jobs.Enabled, os.Getenv("BRAIN_ASSISTANT_JOBS")) {
+		stopJobs, err := graph.assistant.StartConversationJobs(tenant.Into(ctx, tenant.Local), filepath.Join(dataDir, "assistant-jobs", "jobs.db"), cfg.Assistant.Jobs.MaxParallel)
 		if err != nil {
 			cleanup()
 			return nil, "", nil, fmt.Errorf("start conversation worker: %w", err)

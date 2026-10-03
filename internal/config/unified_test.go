@@ -12,6 +12,7 @@ func TestDefaultConfig(t *testing.T) {
 	// Clear env vars that affect defaults so we test the built-in fallbacks
 	t.Setenv("BRAIN_DIR", "")
 	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("BRAIN_ASSISTANT_JOBS", "")
 
 	cfg := defaultConfig()
 
@@ -42,6 +43,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.Attachments.MaxUploadSizeBytes != 100*1024*1024 {
 		t.Errorf("Server.Attachments.MaxUploadSizeBytes = %d, want %d", cfg.Server.Attachments.MaxUploadSizeBytes, int64(100*1024*1024))
 	}
+	if cfg.Server.Assistant.Jobs.Enabled != nil {
+		t.Errorf("Assistant.Jobs.Enabled = %v, want nil so the legacy env fallback remains detectable", cfg.Server.Assistant.Jobs.Enabled)
+	}
+	if cfg.Server.Assistant.Jobs.MaxParallel != 3 {
+		t.Errorf("Assistant.Jobs.MaxParallel = %d, want 3", cfg.Server.Assistant.Jobs.MaxParallel)
+	}
 
 	// Runner defaults
 	if cfg.Runner.BrainAPIURL != "http://localhost:3333" {
@@ -68,6 +75,31 @@ func TestDefaultConfig(t *testing.T) {
 	// Plugins defaults
 	if cfg.Plugins.OpencodePath != "opencode" {
 		t.Errorf("Plugins.OpencodePath = %q, want %q", cfg.Plugins.OpencodePath, "opencode")
+	}
+}
+
+func TestValidateAssistantJobsMaxParallel(t *testing.T) {
+	for _, max := range []int{1, 3, 8} {
+		cfg := DefaultConfig()
+		cfg.Server.Assistant.Jobs.MaxParallel = max
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("max_parallel %d should be valid: %v", max, err)
+		}
+	}
+	for _, max := range []int{0, 9} {
+		cfg := DefaultConfig()
+		cfg.Server.Assistant.Jobs.MaxParallel = max
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("max_parallel %d should be rejected", max)
+		}
+	}
+}
+
+func TestDefaultConfigReflectsLegacyAssistantJobsEnv(t *testing.T) {
+	t.Setenv("BRAIN_ASSISTANT_JOBS", "true")
+	cfg := defaultConfig()
+	if cfg.Server.Assistant.Jobs.Enabled == nil || !*cfg.Server.Assistant.Jobs.Enabled {
+		t.Fatalf("Assistant.Jobs.Enabled = %v, want true from legacy env", cfg.Server.Assistant.Jobs.Enabled)
 	}
 }
 

@@ -35,13 +35,14 @@ type conversationJobs struct {
 	wg           sync.WaitGroup
 	turnLocks    sync.Map
 	leaseRequest func(context.Context, assistantjobs.Record, string, any) error
+	maxParallel  int
 }
 
 // StartConversationJobs installs the coordinator and starts a lightweight,
 // registered runner. It reuses Brain's claim and runner registry services but
 // executes the Go model loop without launching a coding-agent subprocess.
 // This composition is explicitly single-tenant, like this server bootstrap.
-func (s *AssistantService) StartConversationJobs(ctx context.Context, path string) (func(), error) {
+func (s *AssistantService) StartConversationJobs(ctx context.Context, path string, maxParallel int) (func(), error) {
 	if t, ok := tenant.From(ctx); !ok || t != tenant.Local {
 		return nil, errors.New("conversation runner needs a tenant-bound bootstrap context")
 	}
@@ -54,7 +55,7 @@ func (s *AssistantService) StartConversationJobs(ctx context.Context, path strin
 		return nil, err
 	}
 	lifetime, cancel := context.WithCancel(ctx)
-	j := &conversationJobs{s: s, store: store, ctx: lifetime, running: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), done: make(chan struct{})}
+	j := &conversationJobs{s: s, store: store, ctx: lifetime, running: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), done: make(chan struct{}), maxParallel: maxParallel}
 	s.jobs = j
 	if recovered, e := store.All(); e == nil {
 		for _, r := range recovered {
@@ -65,6 +66,17 @@ func (s *AssistantService) StartConversationJobs(ctx context.Context, path strin
 	}
 	go j.run()
 	return func() { cancel(); <-j.done; j.wg.Wait(); _ = store.Close() }, nil
+}
+
+func conversationRunnerRegistration(host string, maxParallel int) types.RunnerRegistration {
+	return types.RunnerRegistration{
+		RunnerID:    conversationRunnerID,
+		Hostname:    host,
+		Executors:   []string{"assistant"},
+		Projects:    []string{conversationProject},
+		MaxParallel: maxParallel,
+		Labels:      map[string]string{"role": "conversation-worker", "runtime": "go"},
+	}
 }
 
 func jobOwner(ctx context.Context) (string, error) {
@@ -375,7 +387,7 @@ func (j *conversationJobs) run() {
 		case <-j.wake:
 		}
 		if !registered {
-			_, err := j.s.runners.Register(j.ctx, types.RunnerRegistration{RunnerID: conversationRunnerID, Hostname: host, Executors: []string{"assistant"}, Projects: []string{conversationProject}, MaxParallel: 3, Labels: map[string]string{"role": "conversation-worker", "runtime": "go"}})
+			_, err := j.s.runners.Register(j.ctx, conversationRunnerRegistration(host, j.maxParallel))
 			if err != nil {
 				slog.Error("conversation runner registration failed", "error", err)
 				continue

@@ -233,6 +233,46 @@
     overflow: auto;
     overscroll-behavior: contain;
   }
+  body.mobile .settings-modal .modal-body {
+    padding: 0;
+    overflow: hidden;
+  }
+  body.mobile .settings-shell {
+    display: flex;
+    flex-direction: column;
+  }
+  body.mobile .settings-nav {
+    flex: 0 0 auto;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 8px 10px;
+    border-right: 0;
+    border-bottom: 1px solid #22272c;
+    scrollbar-width: none;
+  }
+  body.mobile .settings-nav::-webkit-scrollbar { display: none; }
+  body.mobile .settings-nav button {
+    display: flex;
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 38px;
+    padding: 8px 11px;
+    white-space: nowrap;
+  }
+  body.mobile .settings-nav button.active {
+    box-shadow: inset 0 -2px #f4b23a;
+  }
+  body.mobile .settings-category-panel { flex: 1; }
+  body.mobile .settings-category-head { padding: 15px 15px 13px; }
+  body.mobile .settings-category-content { padding: 14px 12px 24px; }
+  body.mobile .settings-category-head h3 { font-size: 16px; }
+  body.mobile .setting-field {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 5px;
+    padding: 9px 0;
+  }
+  body.mobile .setting-help { grid-column: 1; }
   body.mobile
     .modal
     :is(.form-grid, .settings-grid, .task-detail-grid, .metadata-grid) {

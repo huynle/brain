@@ -113,6 +113,12 @@ func diffRestartFields(prev, next *config.UnifiedConfig) []string {
 		prev.Server.Embedding.Model != next.Server.Embedding.Model {
 		out = append(out, "server.embedding.*")
 	}
+	if !optionalBoolEqual(prev.Server.Assistant.Jobs.Enabled, next.Server.Assistant.Jobs.Enabled) {
+		out = append(out, "server.assistant.jobs.enabled")
+	}
+	if prev.Server.Assistant.Jobs.MaxParallel != next.Server.Assistant.Jobs.MaxParallel {
+		out = append(out, "server.assistant.jobs.max_parallel")
+	}
 	// The two EnsureBuiltInFeatureCheckout*Automation calls run once, inside
 	// apiserver.Start. Nothing re-runs them, so flipping this in Settings
 	// changed the file and nothing else — the user saw a green "Saved." with
@@ -131,4 +137,11 @@ func diffRestartFields(prev, next *config.UnifiedConfig) []string {
 	}
 
 	return out
+}
+
+func optionalBoolEqual(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }

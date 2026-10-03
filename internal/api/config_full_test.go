@@ -28,6 +28,9 @@ func minimalValidConfig() config.UnifiedConfig {
 			BrainDir:   "/tmp/brain-test",
 			LogLevel:   "info",
 			CORSOrigin: "*",
+			Assistant: config.AssistantConfig{
+				Jobs: config.AssistantJobsConfig{MaxParallel: 3},
+			},
 		},
 		Runner: config.RunnerConfig{
 			BrainAPIURL:            "http://localhost:3333",
@@ -203,7 +206,14 @@ func TestConfigHandler_PutAtomicallyReplacesFile(t *testing.T) {
 		RequiresRestart []string `json:"requires_restart"`
 		BackupPath      string   `json:"backup_path"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if !bytes.Contains(raw, []byte(`"hot_reloaded":[]`)) {
+		t.Fatalf("hot_reloaded must be an array, response=%s", raw)
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if !contains(out.RequiresRestart, "server.port") {
@@ -344,6 +354,19 @@ func TestConfigHandler_GetSchemaEnumeratesFields(t *testing.T) {
 		t.Error("server.log_level missing")
 	} else if len(f.Enum) == 0 {
 		t.Error("server.log_level should have enum values")
+	}
+	for _, path := range []string{"server.assistant.jobs.enabled", "server.assistant.jobs.max_parallel"} {
+		f, ok := byPath[path]
+		if !ok {
+			t.Errorf("%s missing", path)
+			continue
+		}
+		if f.Section != "assistant" {
+			t.Errorf("%s section = %q, want assistant", path, f.Section)
+		}
+		if !f.RequiresRestart {
+			t.Errorf("%s should require restart", path)
+		}
 	}
 }
 

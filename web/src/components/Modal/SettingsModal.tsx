@@ -35,6 +35,7 @@ import { ErrorState } from "../common/ErrorState";
 import { useModal } from "../../store/modal";
 import { useWorkspace, WORKSPACE_STORAGE_KEY } from "../../store/workspace";
 import { useUI } from "../../store/ui";
+import { useIsMobile } from "../../hooks/useIsMobile";
 import {
   getServerConfig,
   getConfigSchema,
@@ -44,6 +45,12 @@ import {
   type ServerConfig,
 } from "../../lib/api";
 import { getByPath, setByPath, deepEqual } from "../../lib/objectPath";
+import {
+  categoryForSection,
+  dirtySettingsCategories,
+  nextSettingsCategory,
+  type SettingsCategory,
+} from "../../lib/settingsNavigation";
 
 // Sentinel the server writes into redacted secret fields on GET
 // responses; we echo it back on PUT to keep the stored value.
@@ -78,10 +85,51 @@ const SECTION_LABELS: Record<string, string> = {
   plugins: "Plugins",
 };
 
+const SETTINGS_CATEGORIES: Array<{
+  id: SettingsCategory;
+  label: string;
+  icon: string;
+  description: string;
+}> = [
+  {
+    id: "general",
+    label: "General",
+    icon: "⌂",
+    description: "Appearance, notifications, and this browser's workspace.",
+  },
+  {
+    id: "assistant",
+    label: "Assistant",
+    icon: "✦",
+    description: "Models, voice, and background conversation work.",
+  },
+  {
+    id: "tasks",
+    label: "Tasks & Automation",
+    icon: "✓",
+    description: "Defaults and automated feature workflows.",
+  },
+  {
+    id: "runner",
+    label: "Runner",
+    icon: "▣",
+    description: "Task execution and OpenCode runtime behavior.",
+  },
+  {
+    id: "advanced",
+    label: "Advanced",
+    icon: "⚙",
+    description: "Server, storage, indexing, integrations, and security.",
+  },
+];
+
 export function SettingsModal(): JSX.Element {
   const close = useModal((s) => s.close);
   const toast = useUI((s) => s.toast);
   const queryClient = useQueryClient();
+  const isMobile = useIsMobile();
+  const [activeCategory, setActiveCategory] =
+    useState<SettingsCategory>("general");
 
   // ─── workspace-only (client) settings ────────────────────────
   // ─── server config (from API) ────────────────────────────────
@@ -119,6 +167,21 @@ export function SettingsModal(): JSX.Element {
     if (!cfgQ.data || !edited) return false;
     return !deepEqual(cfgQ.data.config, edited);
   }, [cfgQ.data, edited]);
+  const dirtyCategories = useMemo(
+    () =>
+      cfgQ.data && edited
+        ? dirtySettingsCategories(cfgQ.data.config, edited)
+        : new Set<SettingsCategory>(),
+    [cfgQ.data, edited],
+  );
+
+  const fieldsBySection = useMemo(() => {
+    const grouped: Record<string, ConfigField[]> = {};
+    for (const field of schemaQ.data?.fields ?? []) {
+      (grouped[field.section] ??= []).push(field);
+    }
+    return grouped;
+  }, [schemaQ.data]);
 
   // Field mutator — deep-set a value into the working copy.
   const setField = (path: string, value: unknown) => {
@@ -175,116 +238,77 @@ export function SettingsModal(): JSX.Element {
     }
   };
 
-  const body = (() => {
-    if (cfgQ.isLoading || schemaQ.isLoading) {
-      return (
-        <>
-          <BrowserSettings />
-          <Loading label="Loading server configuration…" />
-        </>
-      );
-    }
-    if (cfgQ.error) {
-      return (
-        <>
-          <BrowserSettings />
-          <ErrorState
-            error={cfgQ.error}
-            onRetry={() => cfgQ.refetch()}
-            title="Couldn't load server config"
-          />
-        </>
-      );
-    }
-    if (schemaQ.error) {
-      return (
-        <>
-          <BrowserSettings />
-          <ErrorState
-            error={schemaQ.error}
-            onRetry={() => schemaQ.refetch()}
-            title="Couldn't load config schema"
-          />
-        </>
-      );
-    }
-    if (!edited || !schemaQ.data) return null;
+  const activeMeta = SETTINGS_CATEGORIES.find((c) => c.id === activeCategory)!;
+  const orderedSections = [
+    ...SECTION_ORDER.filter((section) => fieldsBySection[section]),
+    ...Object.keys(fieldsBySection).filter(
+      (section) => !SECTION_ORDER.includes(section),
+    ),
+  ];
+  const sections = orderedSections.filter(
+    (section) =>
+      fieldsBySection[section] && categoryForSection(section) === activeCategory,
+  );
 
-    // Group schema by section.
-    const bySection: Record<string, ConfigField[]> = {};
-    for (const f of schemaQ.data.fields) {
-      if (!bySection[f.section]) bySection[f.section] = [];
-      bySection[f.section].push(f);
+  const serverContent = (() => {
+    if (activeCategory === "general") {
+      return (
+        <>
+          <PhoneNotifications />
+          <BrowserSettings />
+        </>
+      );
     }
-    const sections = SECTION_ORDER.filter((s) => bySection[s]);
+    if (cfgQ.isLoading || schemaQ.isLoading)
+      return <Loading label="Loading server configuration…" />;
+    if (cfgQ.error)
+      return (
+        <ErrorState
+          error={cfgQ.error}
+          onRetry={() => cfgQ.refetch()}
+          title="Couldn't load server config"
+        />
+      );
+    if (schemaQ.error)
+      return (
+        <ErrorState
+          error={schemaQ.error}
+          onRetry={() => schemaQ.refetch()}
+          title="Couldn't load config schema"
+        />
+      );
+    if (!edited || !schemaQ.data) return null;
 
     return (
       <>
-        <BrowserSettings />
-
-        {/* Server config sections */}
         {saveResult && saveResult.requires_restart.length > 0 && (
-          <div
-            style={{
-              padding: "8px 10px",
-              background: "#f4b23a22",
-              border: "1px solid #f4b23a",
-              borderRadius: 4,
-              color: "#f4b23a",
-              fontSize: 11,
-            }}
-          >
+          <div className="settings-banner settings-banner-restart">
             <b>Restart required</b> to apply:{" "}
             {saveResult.requires_restart.join(", ")}
           </div>
         )}
         {saveResult && saveResult.hot_reloaded.length > 0 && (
-          <div
-            style={{
-              padding: "8px 10px",
-              background: "#6fca7d22",
-              border: "1px solid #6fca7d55",
-              borderRadius: 4,
-              color: "#6fca7d",
-              fontSize: 11,
-            }}
-          >
+          <div className="settings-banner settings-banner-success">
             Applied live: {saveResult.hot_reloaded.join(", ")}
           </div>
         )}
         {saveError && (
-          <div
-            style={{
-              padding: "8px 10px",
-              background: "#d9606022",
-              border: "1px solid #d96060",
-              borderRadius: 4,
-              color: "#d96060",
-              fontSize: 11,
-            }}
-          >
-            {saveError}
-          </div>
+          <div className="settings-banner settings-banner-error">{saveError}</div>
         )}
-
-        {sections.map((sec) => (
-          <SectionCard
-            key={sec}
-            title={SECTION_LABELS[sec] ?? sec}
-          >
-            {bySection[sec].map((f) => (
+        {sections.map((section) => (
+          <SectionCard key={section} title={SECTION_LABELS[section] ?? section}>
+            {fieldsBySection[section].map((field) => (
               <FieldRow
-                key={f.path}
-                field={f}
-                value={getByPath(edited, f.path)}
-                onChange={(v) => setField(f.path, v)}
+                key={field.path}
+                field={field}
+                value={getByPath(edited, field.path)}
+                onChange={(value) => setField(field.path, value)}
               />
             ))}
           </SectionCard>
         ))}
-
-        {cfgQ.data && (
-          <div style={{ fontSize: 10, color: "#6b757e", padding: "4px 2px" }}>
+        {activeCategory === "advanced" && cfgQ.data && (
+          <div className="settings-config-path">
             Config file: <code>{cfgQ.data.path}</code>
           </div>
         )}
@@ -296,12 +320,18 @@ export function SettingsModal(): JSX.Element {
     <Modal
       title="Settings"
       onClose={close}
-      className="wide"
+      className="wide settings-modal"
       footer={
         <>
-          <button onClick={doReset} title="Clear workspace preferences and reload">
-            Reset workspace
-          </button>
+          {activeCategory === "general" && (
+            <button
+              onClick={doReset}
+              title="Clear workspace preferences and reload"
+            >
+              Reset workspace
+            </button>
+          )}
+          <span className="settings-footer-spacer" />
           <button
             className="primary"
             onClick={doSave}
@@ -320,8 +350,63 @@ export function SettingsModal(): JSX.Element {
         </>
       }
     >
-      <PhoneNotifications />
-      {body}
+      <div className="settings-shell">
+        <nav
+          className="settings-nav"
+          role="tablist"
+          aria-label="Settings categories"
+          aria-orientation={isMobile ? "horizontal" : "vertical"}
+          onKeyDown={(event) => {
+            const next = nextSettingsCategory(
+              SETTINGS_CATEGORIES.map((category) => category.id),
+              activeCategory,
+              event.key,
+            );
+            if (!next) return;
+            event.preventDefault();
+            setActiveCategory(next);
+            document.getElementById(`settings-tab-${next}`)?.focus();
+          }}
+        >
+          {SETTINGS_CATEGORIES.map((category) => (
+            <button
+              key={category.id}
+              id={`settings-tab-${category.id}`}
+              type="button"
+              role="tab"
+              aria-selected={activeCategory === category.id}
+              aria-controls="settings-category-panel"
+              tabIndex={activeCategory === category.id ? 0 : -1}
+              className={activeCategory === category.id ? "active" : ""}
+              onClick={() => setActiveCategory(category.id)}
+            >
+              <span className="settings-nav-icon" aria-hidden="true">
+                {category.icon}
+              </span>
+              <span>{category.label}</span>
+              {dirtyCategories.has(category.id) && (
+                <span
+                  className="settings-dirty-dot"
+                  aria-label="Unsaved changes"
+                />
+              )}
+            </button>
+          ))}
+        </nav>
+        <section
+          id="settings-category-panel"
+          className="settings-category-panel"
+          role="tabpanel"
+          aria-labelledby={`settings-tab-${activeCategory}`}
+        >
+          <header className="settings-category-head">
+            <div className="settings-category-kicker">Settings</div>
+            <h3>{activeMeta.label}</h3>
+            <p>{activeMeta.description}</p>
+          </header>
+          <div className="settings-category-content">{serverContent}</div>
+        </section>
+      </div>
     </Modal>
   );
 }
@@ -535,14 +620,7 @@ function FieldRow({ field, value, onChange }: FieldRowProps): JSX.Element {
       </label>
       <FieldInput field={field} value={value} onChange={onChange} />
       {field.help && (
-        <div
-          style={{
-            width: "100%",
-            fontSize: 10,
-            color: "#6b757e",
-            paddingLeft: 4,
-          }}
-        >
+        <div className="setting-help">
           {field.help}
         </div>
       )}
@@ -578,6 +656,12 @@ function FieldInput({ field, value, onChange }: FieldRowProps): JSX.Element {
         <input
           type="number"
           value={num as number | ""}
+          min={
+            field.path === "server.assistant.jobs.max_parallel" ? 1 : undefined
+          }
+          max={
+            field.path === "server.assistant.jobs.max_parallel" ? 8 : undefined
+          }
           onChange={(e) => {
             const v = e.target.value;
             onChange(v === "" ? 0 : Number(v));

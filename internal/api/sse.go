@@ -147,7 +147,7 @@ func writeSSEEvent(w http.ResponseWriter, event string, data interface{}) {
 // forever, queued behind long-lived SSE streams that never release the
 // socket. This endpoint collapses that fanout to a single socket.
 //
-// Special value: ?projects=all subscribes to every project ListProjects
+// Special value: ?projects=all subscribes to every owner-visible project.
 // returns. Comma-separated lists are validated per-id and deduped.
 func (h *Handler) HandleMultiSSEStream(w http.ResponseWriter, r *http.Request) {
 	raw := strings.TrimSpace(r.URL.Query().Get("projects"))
@@ -162,7 +162,7 @@ func (h *Handler) HandleMultiSSEStream(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusServiceUnavailable, "Service Unavailable", "task service unavailable")
 			return
 		}
-		list, err := h.tasks.ListProjects(r.Context())
+		list, err := h.tasks.ListAllProjects(r.Context())
 		if err != nil {
 			WriteError(w, http.StatusInternalServerError, "Internal Server Error", "failed to list projects")
 			return

@@ -229,8 +229,11 @@ type TaskFilterOptions struct {
 
 // TaskService defines the interface for task queue operations.
 type TaskService interface {
-	// ListProjects returns all project IDs that have tasks.
+	// ListProjects returns task-bearing projects for queue and scheduler operations.
 	ListProjects(ctx context.Context) ([]string, error)
+	// ListAllProjects returns every admitted content-bearing namespace for the
+	// owner-facing project inventory.
+	ListAllProjects(ctx context.Context) ([]string, error)
 
 	// GetTasks returns all tasks for a project with dependency resolution.
 	GetTasks(ctx context.Context, projectId string) (*types.TaskListResponse, error)

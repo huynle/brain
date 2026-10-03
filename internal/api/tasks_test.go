@@ -58,6 +58,13 @@ func (m *mockTaskService) ListProjects(ctx context.Context) ([]string, error) {
 	return nil, fmt.Errorf("listProjectsFunc not set")
 }
 
+func (m *mockTaskService) ListAllProjects(ctx context.Context) ([]string, error) {
+	if m.listProjectsFunc != nil {
+		return m.listProjectsFunc(ctx)
+	}
+	return nil, fmt.Errorf("listProjectsFunc not set")
+}
+
 func (m *mockTaskService) GetTasks(ctx context.Context, projectId string) (*types.TaskListResponse, error) {
 	if m.getTasksFunc != nil {
 		return m.getTasksFunc(ctx, projectId)

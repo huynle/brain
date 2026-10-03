@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useDeferredPreview } from "../../hooks/useDeferredPreview";
 import { useProjects } from "../../hooks/useProjects";
 import { useVisibleProjects } from "../../hooks/useVisibleProjects";
-import { anchoredZoomScrollLeft, dragScrollLeft, filterTimelineByRange, filterTimelineEvents, focusedTimelineRange, horizontalTimelineLayout, TIMELINE_FAMILIES, timelineDestination, timelineFamily, timelineSpatialDetail, timelineTicks, timelineTitle, type TimelineEvent, type TimelineFamily, type TimelineRangeFilter } from "../../lib/timeline";
+import { anchoredZoomScrollLeft, centeredTimelineScrollLeft, dragScrollLeft, filterTimelineByRange, filterTimelineEvents, focusedTimelineRange, horizontalTimelineLayout, TIMELINE_FAMILIES, timelineDayMarkers, timelineDestination, timelineFamily, timelineSpatialDetail, timelineTicks, timelineTitle, timelineZoomTarget, type TimelineEvent, type TimelineFamily, type TimelineRangeFilter } from "../../lib/timeline";
 import { seededTimelineSource } from "../../lib/timelineSeed";
 import { useWorkspace } from "../../store/workspace";
 
@@ -17,6 +17,7 @@ function formatTick(timestamp: number, major: boolean): string {
 }
 
 export function TimelinePage(): JSX.Element {
+  const timelineOrigin = useRef(Date.now()).current;
   const { data: projects } = useProjects();
   const { visible } = useVisibleProjects();
   const [projectScope, setProjectScope] = useState("all");
@@ -27,7 +28,12 @@ export function TimelinePage(): JSX.Element {
   const [range, setRange] = useState({ before: INITIAL_WINDOW_HOURS / 2, after: INITIAL_WINDOW_HOURS / 2 });
   const [timeFilter, setTimeFilter] = useState<TimelineRangeFilter>({ preset: "all" });
   const [focusedRange, setFocusedRange] = useState<{ start: number; end: number } | null>(null);
+  const [clockNow, setClockNow] = useState(timelineOrigin);
+  const [viewportTimestamp, setViewportTimestamp] = useState(timelineOrigin);
+  const [centerRequest, setCenterRequest] = useState({ id: 0, timestamp: timelineOrigin, behavior: "auto" as ScrollBehavior });
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const centeredRequestRef = useRef(-1);
+  const viewportFrameRef = useRef<number | null>(null);
   const extendingRef = useRef(false);
   const dragRef = useRef<{ pointerId: number; x: number; scrollLeft: number; moved: boolean } | null>(null);
   const suppressClickRef = useRef(false);
@@ -39,7 +45,7 @@ export function TimelinePage(): JSX.Element {
   const projectFilter = useMemo(() => projectScope === "all" ? null : new Set(projectScope === "sidebar" ? visible : [projectScope]), [projectScope, visible]);
   const scopedEvents = useMemo(() => filterTimelineEvents(seededTimelineSource.events, { projects: projectFilter, families }), [families, projectFilter]);
   const events = useMemo(() => filterTimelineByRange(scopedEvents, timeFilter), [scopedEvents, timeFilter]);
-  const center = Math.max(...seededTimelineSource.events.map((event) => Date.parse(event.timestamp)));
+  const center = timelineOrigin;
   const start = focusedRange?.start ?? center - range.before * HOUR;
   const end = focusedRange?.end ?? center + range.after * HOUR;
   const pixelsPerHour = fitScale ?? ZOOM_LEVELS[zoomIndex];
@@ -47,13 +53,48 @@ export function TimelinePage(): JSX.Element {
   const laidOut = useMemo(() => horizontalTimelineLayout(events, { start, pixelsPerHour }), [events, start, pixelsPerHour]);
   const tickInterval = pixelsPerHour >= 130 ? 2 : pixelsPerHour >= 80 ? 4 : pixelsPerHour >= 45 ? 8 : 24;
   const ticks = useMemo(() => timelineTicks({ start, end, intervalHours: tickInterval }), [start, end, tickInterval]);
+  const dayMarkers = useMemo(() => timelineDayMarkers(start, end), [start, end]);
+  const dayLabelEvery = Math.max(1, Math.ceil(120 / Math.max(1, 24 * pixelsPerHour)));
+  const nowX = ((clockNow - start) / HOUR) * pixelsPerHour;
+  const nowLabel = useMemo(() => new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(clockNow)), [clockNow]);
+  const viewportDateLabel = useMemo(() => new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" }).format(new Date(viewportTimestamp)), [viewportTimestamp]);
+  const viewportTimeLabel = useMemo(() => new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(viewportTimestamp)), [viewportTimestamp]);
 
   useEffect(() => {
-    const scroller = scrollerRef.current;
-    if (!scroller) return;
-    const centerX = ((center - start) / HOUR) * pixelsPerHour;
-    scroller.scrollLeft = centerX - scroller.clientWidth / 2;
+    const interval = window.setInterval(() => setClockNow(Date.now()), 30_000);
+    return () => {
+      window.clearInterval(interval);
+      if (viewportFrameRef.current !== null) window.cancelAnimationFrame(viewportFrameRef.current);
+    };
   }, []);
+
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller || centeredRequestRef.current === centerRequest.id) return;
+    centeredRequestRef.current = centerRequest.id;
+    scroller.scrollTo({
+      left: centeredTimelineScrollLeft({ timestamp: centerRequest.timestamp, start, pixelsPerHour, viewportWidth: scroller.clientWidth }),
+      behavior: centerRequest.behavior,
+    });
+    setViewportTimestamp(centerRequest.timestamp);
+  }, [centerRequest, pixelsPerHour, start]);
+
+  const updateViewportTimestamp = (scroller: HTMLDivElement) => {
+    if (viewportFrameRef.current !== null) return;
+    viewportFrameRef.current = window.requestAnimationFrame(() => {
+      viewportFrameRef.current = null;
+      const centerX = scroller.scrollWidth <= scroller.clientWidth ? scroller.scrollWidth / 2 : scroller.scrollLeft + scroller.clientWidth / 2;
+      setViewportTimestamp(start + (centerX / pixelsPerHour) * HOUR);
+    });
+  };
+
+  const returnToNow = () => {
+    const timestamp = Date.now();
+    setClockNow(timestamp);
+    setFocusedRange(null);
+    setFitScale(null);
+    setCenterRequest((current) => ({ id: current.id + 1, timestamp, behavior: "auto" }));
+  };
 
   const changeZoom = (next: number) => {
     const scroller = scrollerRef.current;
@@ -97,7 +138,7 @@ export function TimelinePage(): JSX.Element {
 
   const focusEvents = () => {
     const scroller = scrollerRef.current;
-    const bounds = focusedTimelineRange(events, 2);
+    const bounds = focusedTimelineRange(events, 2, [clockNow]);
     if (!scroller || !bounds) return;
     const spanHours = Math.max(1, (bounds.end - bounds.start) / HOUR);
     const targetScale = Math.max(2, Math.min(210, (scroller.clientWidth - 80) / spanHours));
@@ -113,14 +154,47 @@ export function TimelinePage(): JSX.Element {
 
   const stepZoom = (direction: -1 | 1) => {
     if (fitScale === null) {
-      changeZoom(zoomIndex + direction);
+      const target = timelineZoomTarget(zoomIndex, direction, ZOOM_LEVELS.length);
+      if (target === "fit") focusEvents();
+      else if (target !== null) changeZoom(target);
       return;
     }
+    if (direction < 0) return;
     const next = direction > 0
       ? ZOOM_LEVELS.findIndex((scale) => scale > fitScale)
       : ZOOM_LEVELS.findLastIndex((scale) => scale < fitScale);
     if (next >= 0) changeZoom(next);
   };
+
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const handleWheel = (event: WheelEvent) => {
+      if (event.shiftKey) {
+        event.preventDefault();
+        const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+        if (delta === 0) return;
+        const direction: -1 | 1 = delta < 0 ? 1 : -1;
+        const pointerX = event.clientX - scroller.getBoundingClientRect().left;
+        if (fitScale !== null) {
+          if (direction < 0) return;
+          const next = ZOOM_LEVELS.findIndex((scale) => scale > fitScale);
+          if (next >= 0) zoomAt(next, pointerX);
+          return;
+        }
+        const target = timelineZoomTarget(zoomIndexRef.current, direction, ZOOM_LEVELS.length);
+        if (target === "fit") focusEvents();
+        else if (target !== null) zoomAt(target, pointerX);
+        return;
+      }
+      if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+        event.preventDefault();
+        scroller.scrollLeft += event.deltaY;
+      }
+    };
+    scroller.addEventListener("wheel", handleWheel, { passive: false });
+    return () => scroller.removeEventListener("wheel", handleWheel);
+  }, [fitScale, pixelsPerHour]);
 
   const toggleFamily = (family: TimelineFamily) => setFamilies((current) => {
     setFocusedRange(null);
@@ -149,14 +223,19 @@ export function TimelinePage(): JSX.Element {
       <div className="timeline-seed-badge"><span /> Seeded wireframe</div>
     </header>
     <div className="timeline-controls horizontal-controls">
-      <label><span>Project scope</span><select aria-label="Project scope" value={projectScope} onChange={(event) => { setFocusedRange(null); setFitScale(null); setProjectScope(event.target.value); }}><option value="all">All projects</option><option value="sidebar">Sidebar projects</option>{(projects || []).map((project) => <option key={project} value={project}>{project}</option>)}</select></label>
-      <label className="timeline-range-filter"><span>Time range</span><select aria-label="Time range" value={timeFilter.preset} onChange={(event) => { setFocusedRange(null); setFitScale(null); setTimeFilter({ preset: event.target.value as TimelineRangeFilter["preset"] }); }}><option value="all">All time</option><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="custom">Custom range</option></select></label>
+      <div className="timeline-filter-fields">
+        <label><span>Project scope</span><select aria-label="Project scope" value={projectScope} onChange={(event) => { setFocusedRange(null); setFitScale(null); setProjectScope(event.target.value); }}><option value="all">All projects</option><option value="sidebar">Sidebar projects</option>{(projects || []).map((project) => <option key={project} value={project}>{project}</option>)}</select></label>
+        <label className="timeline-range-filter"><span>Time range</span><select aria-label="Time range" value={timeFilter.preset} onChange={(event) => { setFocusedRange(null); setFitScale(null); setTimeFilter({ preset: event.target.value as TimelineRangeFilter["preset"] }); }}><option value="all">All time</option><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="custom">Custom range</option></select></label>
+      </div>
       <div className="timeline-family-filter timeline-legend" aria-label="Event families">{TIMELINE_FAMILIES.map((family) => <button key={family} className={`family-${family} ${families.has(family) ? "active" : ""}`} aria-pressed={families.has(family)} onClick={() => toggleFamily(family)}><span />{FAMILY_LABELS[family]}</button>)}</div>
-      <button className="timeline-focus-button" onClick={focusEvents}>Focus events</button>
-      <div className="timeline-zoom"><button onClick={() => stepZoom(-1)} disabled={fitScale === null ? zoomIndex === 0 : fitScale <= ZOOM_LEVELS[0]} aria-label="Zoom out">−</button><span>{fitScale === null ? `${zoomIndex + 1}×` : "Fit"}</span><button onClick={() => stepZoom(1)} disabled={fitScale === null ? zoomIndex === ZOOM_LEVELS.length - 1 : fitScale >= ZOOM_LEVELS.at(-1)!} aria-label="Zoom in">+</button></div>
+      <div className="timeline-control-actions">
+        <button className="timeline-now-button" onClick={returnToNow} title="Center the timeline on the current time"><span>Today</span><time dateTime={new Date(clockNow).toISOString()}>{nowLabel}</time></button>
+        <button className="timeline-focus-button" onClick={focusEvents}>Focus events</button>
+        <div className="timeline-zoom"><button onClick={() => stepZoom(-1)} disabled={fitScale !== null} aria-label="Zoom out">−</button><span>{fitScale === null ? `${zoomIndex + 1}×` : "Fit"}</span><button onClick={() => stepZoom(1)} disabled={fitScale === null ? zoomIndex === ZOOM_LEVELS.length - 1 : fitScale >= ZOOM_LEVELS.at(-1)!} aria-label="Zoom in">+</button></div>
+      </div>
     </div>
     {timeFilter.preset === "custom" && <div className="timeline-custom-range"><label>From <input type="date" value={timeFilter.start || ""} onChange={(event) => setTimeFilter((current) => ({ ...current, start: event.target.value }))} /></label><label>To <input type="date" value={timeFilter.end || ""} onChange={(event) => setTimeFilter((current) => ({ ...current, end: event.target.value }))} /></label></div>}
-    <div className="timeline-summary"><b>{events.length} events in view</b><span>Drag or wheel to travel · Shift + wheel to zoom · Hover dots for details</span></div>
+    <div className="timeline-summary"><b>{events.length} events in view</b><div className="timeline-viewport-date" aria-live="polite"><small>Viewing</small><strong>{viewportDateLabel}</strong><time dateTime={new Date(viewportTimestamp).toISOString()}>{viewportTimeLabel}</time></div><span className="timeline-help">Drag or wheel to travel · Shift + wheel to zoom · Hover dots for details</span></div>
     <div
       className="timeline-scroll"
       ref={scrollerRef}
@@ -167,7 +246,7 @@ export function TimelinePage(): JSX.Element {
         event.stopPropagation();
       }}
       onDoubleClick={(event) => { if (!(event.target as Element).closest(".timeline-marker")) focusEvents(); }}
-      onScroll={extendAtEdge}
+      onScroll={(event) => { updateViewportTimestamp(event.currentTarget); extendAtEdge(); }}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
         dragRef.current = { pointerId: event.pointerId, x: event.clientX, scrollLeft: event.currentTarget.scrollLeft, moved: false };
@@ -187,22 +266,21 @@ export function TimelinePage(): JSX.Element {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }}
       onPointerCancel={() => { dragRef.current = null; }}
-      onWheel={(event) => {
-        if (event.shiftKey) {
-          event.preventDefault();
-          const bounds = event.currentTarget.getBoundingClientRect();
-          const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
-          if (delta !== 0) zoomAt(zoomIndexRef.current + (delta < 0 ? 1 : -1), event.clientX - bounds.left);
-          return;
-        }
-        if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
-          event.currentTarget.scrollLeft += event.deltaY;
-          event.preventDefault();
-        }
-      }}
     >
       <div className="timeline-canvas" style={{ width: canvasWidth }}>
+        {dayMarkers.map((day, index) => {
+          const nextDay = dayMarkers[index + 1] ?? end;
+          const x = ((day - start) / HOUR) * pixelsPerHour;
+          const width = Math.max(0, ((nextDay - day) / HOUR) * pixelsPerHour);
+          const date = new Date(day);
+          const isToday = date.toDateString() === new Date(clockNow).toDateString();
+          const showLabel = isToday || index % dayLabelEvery === 0;
+          return <div key={day} className={`timeline-day-band ${index % 2 ? "alternate" : ""} ${isToday ? "today" : ""}`} style={{ left: x, width }}>
+            {showLabel && <time dateTime={date.toISOString()}>{new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(date)}</time>}
+          </div>;
+        })}
         <div className="timeline-axis" />
+        {clockNow >= start && clockNow <= end && <div className={`timeline-now-marker ${nowX > canvasWidth - 150 ? "label-left" : ""}`} style={{ left: nowX }} aria-label={`Current time: ${nowLabel}`}><div className="timeline-now-beacon" /><div className="timeline-now-label"><strong>Now</strong><time dateTime={new Date(clockNow).toISOString()}>{nowLabel}</time></div></div>}
         {ticks.map((tick) => {
           const x = ((tick - start) / HOUR) * pixelsPerHour;
           const major = new Date(tick).getHours() === 0;

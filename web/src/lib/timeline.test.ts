@@ -4,8 +4,11 @@ import {
   filterTimelineEvents,
   horizontalTimelineLayout,
   anchoredZoomScrollLeft,
+  centeredTimelineScrollLeft,
   dragScrollLeft,
   timelineTicks,
+  timelineDayMarkers,
+  timelineZoomTarget,
   timelineDetailLevel,
   filterTimelineByRange,
   focusedTimelineRange,
@@ -91,6 +94,15 @@ test("timelineTicks covers the requested infinite-window segment", () => {
   ]);
 });
 
+test("timelineDayMarkers returns local calendar boundaries spanning the window", () => {
+  const markers = timelineDayMarkers(
+    new Date(2026, 9, 3, 13, 20).getTime(),
+    new Date(2026, 9, 6, 1, 15).getTime(),
+  ).map((timestamp) => new Date(timestamp));
+  assert.deepEqual(markers.map((date) => date.getDate()), [3, 4, 5, 6]);
+  assert.ok(markers.every((date) => date.getHours() === 0 && date.getMinutes() === 0));
+});
+
 test("dragScrollLeft pans opposite pointer movement and clamps at zero", () => {
   assert.equal(dragScrollLeft({ initialScrollLeft: 800, pointerStartX: 400, pointerX: 300 }), 900);
   assert.equal(dragScrollLeft({ initialScrollLeft: 20, pointerStartX: 100, pointerX: 180 }), 0);
@@ -99,6 +111,27 @@ test("dragScrollLeft pans opposite pointer movement and clamps at zero", () => {
 test("anchoredZoomScrollLeft preserves the time under the pointer", () => {
   assert.equal(anchoredZoomScrollLeft({ scrollLeft: 1000, pointerX: 250, oldScale: 50, newScale: 100 }), 2250);
   assert.equal(anchoredZoomScrollLeft({ scrollLeft: 20, pointerX: 10, oldScale: 100, newScale: 50 }), 5);
+});
+
+test("timelineZoomTarget exposes Fit below the minimum fixed zoom", () => {
+  assert.equal(timelineZoomTarget(2, -1, 5), 1);
+  assert.equal(timelineZoomTarget(0, -1, 5), "fit");
+  assert.equal(timelineZoomTarget(4, 1, 5), null);
+});
+
+test("centeredTimelineScrollLeft places a timestamp at the viewport center", () => {
+  assert.equal(centeredTimelineScrollLeft({
+    timestamp: Date.parse("2026-10-03T12:00:00Z"),
+    start: Date.parse("2026-10-03T08:00:00Z"),
+    pixelsPerHour: 100,
+    viewportWidth: 300,
+  }), 250);
+  assert.equal(centeredTimelineScrollLeft({
+    timestamp: Date.parse("2026-10-03T08:00:00Z"),
+    start: Date.parse("2026-10-03T08:00:00Z"),
+    pixelsPerHour: 100,
+    viewportWidth: 300,
+  }), 0);
 });
 
 test("timelineDetailLevel progressively reveals event information", () => {
@@ -128,6 +161,14 @@ test("focusedTimelineRange tightly pads all visible events", () => {
   assert.deepEqual(focusedTimelineRange(events, 2), {
     start: Date.parse("2026-09-29T08:00:00Z"),
     end: Date.parse("2026-09-29T16:00:00Z"),
+  });
+});
+
+test("focusedTimelineRange can keep orientation timestamps in the fitted window", () => {
+  const events = [event({ timestamp: "2026-09-29T10:00:00Z" })];
+  assert.deepEqual(focusedTimelineRange(events, 2, [Date.parse("2026-10-03T10:00:00Z")]), {
+    start: Date.parse("2026-09-29T08:00:00Z"),
+    end: Date.parse("2026-10-03T12:00:00Z"),
   });
 });
 

@@ -55,6 +55,18 @@ export function timelineTicks(options: { start: number; end: number; intervalHou
   return ticks;
 }
 
+export function timelineDayMarkers(start: number, end: number): number[] {
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return [];
+  const cursor = new Date(start);
+  cursor.setHours(0, 0, 0, 0);
+  const markers: number[] = [];
+  while (cursor.getTime() <= end) {
+    markers.push(cursor.getTime());
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return markers;
+}
+
 export function dragScrollLeft(options: {
   initialScrollLeft: number;
   pointerStartX: number;
@@ -71,6 +83,24 @@ export function anchoredZoomScrollLeft(options: {
 }): number {
   const anchorHour = (options.scrollLeft + options.pointerX) / options.oldScale;
   return Math.max(0, anchorHour * options.newScale - options.pointerX);
+}
+
+export function timelineZoomTarget(currentIndex: number, direction: -1 | 1, levelCount: number): number | "fit" | null {
+  const next = currentIndex + direction;
+  if (next < 0) return "fit";
+  if (next >= levelCount) return null;
+  return next;
+}
+
+export function centeredTimelineScrollLeft(options: {
+  timestamp: number;
+  start: number;
+  pixelsPerHour: number;
+  viewportWidth: number;
+}): number {
+  const hour = 60 * 60 * 1000;
+  const x = ((options.timestamp - options.start) / hour) * options.pixelsPerHour;
+  return Math.max(0, x - options.viewportWidth / 2);
 }
 
 export function timelineDetailLevel(zoomIndex: number): "dot" | "label" | "title" | "detail" {
@@ -104,9 +134,9 @@ export function filterTimelineByRange(events: TimelineEvent[], range: TimelineRa
   });
 }
 
-export function focusedTimelineRange(events: TimelineEvent[], paddingHours: number): { start: number; end: number } | null {
+export function focusedTimelineRange(events: TimelineEvent[], paddingHours: number, orientationTimestamps: number[] = []): { start: number; end: number } | null {
   if (events.length === 0) return null;
-  const timestamps = events.map((event) => Date.parse(event.timestamp));
+  const timestamps = [...events.map((event) => Date.parse(event.timestamp)), ...orientationTimestamps];
   const padding = paddingHours * 60 * 60 * 1000;
   return { start: Math.min(...timestamps) - padding, end: Math.max(...timestamps) + padding };
 }

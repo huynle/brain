@@ -12,6 +12,7 @@ import {
   timelineDetailLevel,
   filterTimelineByRange,
   focusedTimelineRange,
+  fittedTimelineScale,
   timelineSpatialDetail,
   timelineDestination,
   timelineFamily,
@@ -36,6 +37,11 @@ test("timelineFamily maps modular event namespaces", () => {
   assert.equal(timelineFamily(event({ type: "webhook.received" })), "other");
 });
 
+test("timelineFamily uses the source kind for projected automations and reminders", () => {
+  assert.equal(timelineFamily(event({ type: "automation.projected", temporal_state: "projected", source_kind: "automation" })), "automation");
+  assert.equal(timelineFamily(event({ type: "reminder.projected", temporal_state: "projected", source_kind: "reminder" })), "reminder");
+});
+
 test("filterTimelineEvents scopes projects and enabled families newest first", () => {
   const events = [
     event({ id: "old-feature", type: "feature.completed", timestamp: "2026-09-27T12:00:00Z" }),
@@ -49,6 +55,17 @@ test("filterTimelineEvents scopes projects and enabled families newest first", (
   assert.deepEqual(
     filterTimelineEvents(events, { projects: null, families: new Set(["feature"]) }).map((e) => e.id),
     ["other-project", "old-feature"],
+  );
+});
+
+test("filterTimelineEvents can independently show actual and forecast items", () => {
+  const events = [
+    event({ id: "actual", temporal_state: "actual" }),
+    event({ id: "future", temporal_state: "projected" }),
+  ];
+  assert.deepEqual(
+    filterTimelineEvents(events, { projects: null, families: new Set(["task"]), temporalStates: new Set(["projected"]) }).map((item) => item.id),
+    ["future"],
   );
 });
 
@@ -68,6 +85,10 @@ test("timelineDestination resolves real dock targets and leaves dead entries ine
   assert.equal(
     timelineDestination(event({ type: "entry.deleted", task_id: undefined, task_path: "projects/brain-api/plan/deleted.md" })),
     null,
+  );
+  assert.deepEqual(
+    timelineDestination(event({ type: "automation.projected", task_id: undefined, task_path: undefined, temporal_state: "projected", source_kind: "automation", source_path: "projects/brain-api/automation/daily.md" })),
+    { kind: "entry", target: { path: "projects/brain-api/automation/daily.md" }, title: "daily" },
   );
 });
 
@@ -170,6 +191,10 @@ test("focusedTimelineRange can keep orientation timestamps in the fitted window"
     start: Date.parse("2026-09-29T08:00:00Z"),
     end: Date.parse("2026-10-03T12:00:00Z"),
   });
+});
+
+test("fittedTimelineScale can fit a multi-month forecast below the fixed zoom floor", () => {
+  assert.equal(fittedTimelineScale({ viewportWidth: 1200, spanHours: 60 * 24, horizontalPadding: 80 }), 1120 / (60 * 24));
 });
 
 test("timelineSpatialDetail hides labels when scale or neighbor spacing is tight", () => {

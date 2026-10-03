@@ -30,6 +30,7 @@ type Handler struct {
 	goalService           GoalService
 	reminders             ReminderService
 	attention             AttentionService
+	timeline              TimelineService
 	automationRun         AutomationRunService
 	assistant             *AssistantService
 	placement             ProjectPlacementService
@@ -162,6 +163,11 @@ func WithAttentionService(as AttentionService) HandlerOption {
 	return func(h *Handler) {
 		h.attention = as
 	}
+}
+
+// WithTimelineService enables the read-only unified timeline endpoint.
+func WithTimelineService(ts TimelineService) HandlerOption {
+	return func(h *Handler) { h.timeline = ts }
 }
 
 // WithAutomationRunService sets the manual automation-run service on the Handler.

@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useDeferredPreview } from "../../hooks/useDeferredPreview";
 import { useProjects } from "../../hooks/useProjects";
+import { useTimeline } from "../../hooks/useTimeline";
 import { useVisibleProjects } from "../../hooks/useVisibleProjects";
-import { anchoredZoomScrollLeft, centeredTimelineScrollLeft, dragScrollLeft, filterTimelineByRange, filterTimelineEvents, focusedTimelineRange, horizontalTimelineLayout, TIMELINE_FAMILIES, timelineDayMarkers, timelineDestination, timelineFamily, timelineSpatialDetail, timelineTicks, timelineTitle, timelineZoomTarget, type TimelineEvent, type TimelineFamily, type TimelineRangeFilter } from "../../lib/timeline";
-import { seededTimelineSource } from "../../lib/timelineSeed";
+import { anchoredZoomScrollLeft, centeredTimelineScrollLeft, dragScrollLeft, filterTimelineByRange, filterTimelineEvents, fittedTimelineScale, focusedTimelineRange, horizontalTimelineLayout, TIMELINE_FAMILIES, timelineDayMarkers, timelineDestination, timelineFamily, timelineSpatialDetail, timelineTicks, timelineTitle, timelineZoomTarget, type TimelineEvent, type TimelineFamily, type TimelineRangeFilter } from "../../lib/timeline";
 import { useWorkspace } from "../../store/workspace";
 
-const FAMILY_LABELS: Record<TimelineFamily, string> = { feature: "Features", task: "Tasks", entry: "Entries", session: "Sessions", runner: "Runners", project: "Projects", other: "Other" };
+const FAMILY_LABELS: Record<TimelineFamily, string> = { feature: "Features", task: "Tasks", automation: "Automations", reminder: "Reminders", entry: "Entries", session: "Sessions", runner: "Runners", project: "Projects", other: "Other" };
 const ZOOM_LEVELS = [24, 48, 84, 132, 210];
 const HOUR = 60 * 60 * 1000;
 const INITIAL_WINDOW_HOURS = 24 * 24;
@@ -22,6 +22,7 @@ export function TimelinePage(): JSX.Element {
   const { visible } = useVisibleProjects();
   const [projectScope, setProjectScope] = useState("all");
   const [families, setFamilies] = useState<Set<string>>(() => new Set(TIMELINE_FAMILIES));
+  const [temporalStates, setTemporalStates] = useState<Set<string>>(() => new Set(["actual", "projected"]));
   const [selected, setSelected] = useState<string | null>(null);
   const [zoomIndex, setZoomIndex] = useState(2);
   const [fitScale, setFitScale] = useState<number | null>(null);
@@ -42,8 +43,12 @@ export function TimelinePage(): JSX.Element {
   const openSidebar = useWorkspace((state) => state.openOrReuseInSidebar);
   const openFocus = useWorkspace((state) => state.openInFocus);
 
+  const queryFrom = useMemo(() => new Date(timelineOrigin - 30 * 24 * HOUR).toISOString(), [timelineOrigin]);
+  const queryTo = useMemo(() => new Date(timelineOrigin + 30 * 24 * HOUR).toISOString(), [timelineOrigin]);
+  const timelineQuery = useTimeline(queryFrom, queryTo, projectScope !== "all" && projectScope !== "sidebar" ? projectScope : undefined);
+
   const projectFilter = useMemo(() => projectScope === "all" ? null : new Set(projectScope === "sidebar" ? visible : [projectScope]), [projectScope, visible]);
-  const scopedEvents = useMemo(() => filterTimelineEvents(seededTimelineSource.events, { projects: projectFilter, families }), [families, projectFilter]);
+  const scopedEvents = useMemo(() => filterTimelineEvents(timelineQuery.data?.items || [], { projects: projectFilter, families, temporalStates }), [families, projectFilter, temporalStates, timelineQuery.data?.items]);
   const events = useMemo(() => filterTimelineByRange(scopedEvents, timeFilter), [scopedEvents, timeFilter]);
   const center = timelineOrigin;
   const start = focusedRange?.start ?? center - range.before * HOUR;
@@ -141,7 +146,7 @@ export function TimelinePage(): JSX.Element {
     const bounds = focusedTimelineRange(events, 2, [clockNow]);
     if (!scroller || !bounds) return;
     const spanHours = Math.max(1, (bounds.end - bounds.start) / HOUR);
-    const targetScale = Math.max(2, Math.min(210, (scroller.clientWidth - 80) / spanHours));
+    const targetScale = fittedTimelineScale({ viewportWidth: scroller.clientWidth, spanHours });
     let nextZoom = 0;
     for (let index = 1; index < ZOOM_LEVELS.length; index += 1) {
       if (Math.abs(ZOOM_LEVELS[index] - targetScale) < Math.abs(ZOOM_LEVELS[nextZoom] - targetScale)) nextZoom = index;
@@ -205,12 +210,10 @@ export function TimelinePage(): JSX.Element {
   });
   const previewEvent = (event: TimelineEvent) => {
     setSelected(event.id);
-    if (seededTimelineSource.mode === "seeded") return;
     const destination = timelineDestination(event);
     if (destination) preview.schedule(() => openSidebar(destination.kind, destination.target, destination.title));
   };
   const focusEvent = (event: TimelineEvent) => {
-    if (seededTimelineSource.mode === "seeded") return;
     const destination = timelineDestination(event);
     if (!destination) return;
     preview.cancel();
@@ -219,8 +222,8 @@ export function TimelinePage(): JSX.Element {
 
   return <section className="timeline-page timeline-horizontal">
     <header className="timeline-hero">
-      <div><div className="timeline-eyebrow">Activity observatory</div><h1>Timeline</h1><p>Pan through project history. Zoom from days to hours and identify event families by color.</p></div>
-      <div className="timeline-seed-badge"><span /> Seeded wireframe</div>
+      <div><div className="timeline-eyebrow">Activity observatory</div><h1>Timeline</h1><p>Pan through recorded history and the next 30 days of scheduled work.</p></div>
+      <div className={`timeline-seed-badge ${timelineQuery.isError ? "error" : ""}`}><span />{timelineQuery.isLoading ? "Loading timeline" : timelineQuery.isError ? "Forecast unavailable" : "Live forecast"}</div>
     </header>
     <div className="timeline-controls horizontal-controls">
       <div className="timeline-filter-fields">
@@ -228,6 +231,7 @@ export function TimelinePage(): JSX.Element {
         <label className="timeline-range-filter"><span>Time range</span><select aria-label="Time range" value={timeFilter.preset} onChange={(event) => { setFocusedRange(null); setFitScale(null); setTimeFilter({ preset: event.target.value as TimelineRangeFilter["preset"] }); }}><option value="all">All time</option><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="custom">Custom range</option></select></label>
       </div>
       <div className="timeline-family-filter timeline-legend" aria-label="Event families">{TIMELINE_FAMILIES.map((family) => <button key={family} className={`family-${family} ${families.has(family) ? "active" : ""}`} aria-pressed={families.has(family)} onClick={() => toggleFamily(family)}><span />{FAMILY_LABELS[family]}</button>)}</div>
+      <div className="timeline-state-filter" aria-label="Temporal state">{[["actual", "Actual"], ["projected", "Forecast"]].map(([state, label]) => <button key={state} className={temporalStates.has(state) ? "active" : ""} aria-pressed={temporalStates.has(state)} onClick={() => setTemporalStates((current) => { const next = new Set(current); if (next.has(state)) next.delete(state); else next.add(state); setFocusedRange(null); setFitScale(null); return next; })}>{label}</button>)}</div>
       <div className="timeline-control-actions">
         <button className="timeline-now-button" onClick={returnToNow} title="Center the timeline on the current time"><span>Today</span><time dateTime={new Date(clockNow).toISOString()}>{nowLabel}</time></button>
         <button className="timeline-focus-button" onClick={focusEvents}>Focus events</button>
@@ -235,7 +239,7 @@ export function TimelinePage(): JSX.Element {
       </div>
     </div>
     {timeFilter.preset === "custom" && <div className="timeline-custom-range"><label>From <input type="date" value={timeFilter.start || ""} onChange={(event) => setTimeFilter((current) => ({ ...current, start: event.target.value }))} /></label><label>To <input type="date" value={timeFilter.end || ""} onChange={(event) => setTimeFilter((current) => ({ ...current, end: event.target.value }))} /></label></div>}
-    <div className="timeline-summary"><b>{events.length} events in view</b><div className="timeline-viewport-date" aria-live="polite"><small>Viewing</small><strong>{viewportDateLabel}</strong><time dateTime={new Date(viewportTimestamp).toISOString()}>{viewportTimeLabel}</time></div><span className="timeline-help">Drag or wheel to travel · Shift + wheel to zoom · Hover dots for details</span></div>
+    <div className="timeline-summary"><b>{events.length} events in view</b>{(timelineQuery.data?.warnings.length || 0) > 0 && <span className="timeline-warning">{timelineQuery.data!.warnings.length} schedule warning{timelineQuery.data!.warnings.length === 1 ? "" : "s"}</span>}<div className="timeline-viewport-date" aria-live="polite"><small>Viewing</small><strong>{viewportDateLabel}</strong><time dateTime={new Date(viewportTimestamp).toISOString()}>{viewportTimeLabel}</time></div><span className="timeline-help">Drag or wheel to travel · Shift + wheel to zoom · Hover dots for details</span></div>
     <div
       className="timeline-scroll"
       ref={scrollerRef}
@@ -268,6 +272,7 @@ export function TimelinePage(): JSX.Element {
       onPointerCancel={() => { dragRef.current = null; }}
     >
       <div className="timeline-canvas" style={{ width: canvasWidth }}>
+        {clockNow >= start && clockNow <= end && <div className="timeline-forecast-field" style={{ left: nowX, width: Math.max(0, canvasWidth - nowX) }}><span>Forecast · next 30 days</span></div>}
         {dayMarkers.map((day, index) => {
           const nextDay = dayMarkers[index + 1] ?? end;
           const x = ((day - start) / HOUR) * pixelsPerHour;
@@ -294,9 +299,9 @@ export function TimelinePage(): JSX.Element {
           const detailLevel = timelineSpatialDetail({ pixelsPerHour, nearestDistance: Math.min(previousDistance, nextDistance) });
           const lane = index % 4;
           const above = lane < 2;
-          return <article key={event.id} className={`timeline-marker family-${family} detail-${detailLevel} ${above ? "above" : "below"} lane-${lane} ${selected === event.id ? "selected" : ""} ${destination && seededTimelineSource.mode === "live" ? "navigable" : ""}`} style={{ left: x }} onClick={() => previewEvent(event)} onDoubleClick={(clickEvent) => { clickEvent.stopPropagation(); focusEvent(event); }} onKeyDown={(keyEvent) => { if (keyEvent.key === "Enter" || keyEvent.key === " ") { keyEvent.preventDefault(); if (keyEvent.shiftKey) focusEvent(event); else previewEvent(event); } }} tabIndex={0} aria-label={`${FAMILY_LABELS[family]}: ${timelineTitle(event)}. ${event.summary || event.type}`}>
+          return <article key={event.id} className={`timeline-marker family-${family} detail-${detailLevel} ${event.temporal_state === "projected" ? "projected" : "actual"} ${above ? "above" : "below"} lane-${lane} ${selected === event.id ? "selected" : ""} ${destination ? "navigable" : ""}`} style={{ left: x }} onClick={() => previewEvent(event)} onDoubleClick={(clickEvent) => { clickEvent.stopPropagation(); focusEvent(event); }} onKeyDown={(keyEvent) => { if (keyEvent.key === "Enter" || keyEvent.key === " ") { keyEvent.preventDefault(); if (keyEvent.shiftKey) focusEvent(event); else previewEvent(event); } }} tabIndex={0} aria-label={`${FAMILY_LABELS[family]}: ${timelineTitle(event)}. ${event.summary || event.type}`}>
             <div className="timeline-marker-stem" /><div className="timeline-marker-dot" />
-            {detailLevel !== "dot" && <div className="timeline-marker-card"><div className="marker-meta"><span className="marker-family">{FAMILY_LABELS[family]}</span>{detailLevel === "detail" && <time>{new Date(event.timestamp).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time>}</div>{(detailLevel === "title" || detailLevel === "detail") && <h3>{timelineTitle(event)}</h3>}{detailLevel === "detail" && <><p>{event.summary}</p><footer>{event.project_id || event.runner_id}<code>{event.type}</code></footer></>}</div>}
+            {detailLevel !== "dot" && <div className="timeline-marker-card"><div className="marker-meta"><span className="marker-family">{FAMILY_LABELS[family]}</span>{event.occurrence_count && event.occurrence_count > 1 && <span>{event.occurrence_count}×</span>}{detailLevel === "detail" && <time>{new Date(event.timestamp).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time>}</div>{(detailLevel === "title" || detailLevel === "detail") && <h3>{timelineTitle(event)}</h3>}{detailLevel === "detail" && <><p>{event.summary}</p><footer>{event.project_id || event.runner_id}<code>{event.type}</code></footer></>}</div>}
             <div className="timeline-marker-popover" role="tooltip"><div><span className="marker-family">{FAMILY_LABELS[family]}</span><time>{new Date(event.timestamp).toLocaleString()}</time></div><strong>{timelineTitle(event)}</strong><p>{event.summary || event.type}</p><small>{event.project_id || event.runner_id || event.source} · {event.type}</small></div>
           </article>;
         })}

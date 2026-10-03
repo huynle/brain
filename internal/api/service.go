@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -102,6 +103,11 @@ type BrainService interface {
 
 	// GenerateLink generates a markdown link for a brain entry.
 	GenerateLink(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error)
+}
+
+// TimelineService supplies recorded events and ephemeral schedule projections.
+type TimelineService interface {
+	Timeline(ctx context.Context, from, to time.Time, project string) (*types.TimelineResponse, error)
 }
 
 // EmbeddingService is optionally implemented by BrainService implementations that can generate embeddings.

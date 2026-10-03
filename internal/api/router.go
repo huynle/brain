@@ -135,6 +135,11 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 			// ─── Health & Stats (read:* scope) ──────────────────
 			r.Group(func(r chi.Router) {
 				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+				if o.handler != nil && o.handler.timeline != nil {
+					r.Get("/timeline", o.handler.HandleTimeline)
+				} else {
+					r.Get("/timeline", notImplemented)
+				}
 				if o.handler != nil {
 					r.Get("/stats", o.handler.HandleGetStats)
 					r.Get("/orphans", o.handler.HandleGetOrphans)

@@ -29,6 +29,41 @@ export const ALL_STATUSES: TaskStatus[] = [
 
 export type Priority = "high" | "medium" | "low" | string;
 
+export interface TimelineItem {
+  id: string;
+  type: string;
+  source: string;
+  timestamp: string;
+  project_id?: string;
+  task_id?: string;
+  task_path?: string;
+  task_title?: string;
+  feature_id?: string;
+  runner_id?: string;
+  reason?: string;
+  summary?: string;
+  metadata?: Record<string, string>;
+  temporal_state: "actual" | "projected";
+  temporal_kind?: "execution" | "reminder" | "start" | "deadline" | "expiry";
+  source_kind?: "task" | "automation" | "reminder" | "feature";
+  source_id?: string;
+  source_path?: string;
+  timezone?: string;
+  projection_rule?: string;
+  occurrence_count?: number;
+  window_start?: string;
+  window_end?: string;
+}
+
+export interface TimelineResponse {
+  from: string;
+  to: string;
+  generated_at: string;
+  items: TimelineItem[];
+  warnings: Array<{ source_id?: string; message: string }>;
+  truncated: boolean;
+}
+
 export interface SessionInfo {
   timestamp: string;
   cron_id?: string;

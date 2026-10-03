@@ -57,6 +57,7 @@ import type {
   SearchResponse,
   Task,
   TaskListResponse,
+  TimelineResponse,
   UpdateGoalRequest,
 } from "./types";
 
@@ -164,6 +165,9 @@ export const getProjects = () =>
   offlineAvailable()
     ? cachedSummary().then((summary) => summary.projects)
     : api<ProjectListResponse>("/api/v1/tasks").then((r) => r.projects || []);
+
+export const getTimeline = (params: { from: string; to: string; project?: string }, signal?: AbortSignal) =>
+  api<TimelineResponse>("/api/v1/timeline", { query: params, signal });
 
 export const getTasks = (projectId: string, signal?: AbortSignal) =>
   api<TaskListResponse>(`/api/v1/tasks/${encodeURIComponent(projectId)}`, {

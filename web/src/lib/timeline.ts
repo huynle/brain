@@ -12,6 +12,16 @@ export type TimelineEvent = {
   reason?: string;
   summary?: string;
   metadata?: Record<string, string>;
+  temporal_state?: "actual" | "projected";
+  temporal_kind?: "execution" | "reminder" | "start" | "deadline" | "expiry";
+  source_kind?: "task" | "automation" | "reminder" | "feature";
+  source_id?: string;
+  source_path?: string;
+  timezone?: string;
+  projection_rule?: string;
+  occurrence_count?: number;
+  window_start?: string;
+  window_end?: string;
 };
 
 export type TimelineFamily =
@@ -21,6 +31,8 @@ export type TimelineFamily =
   | "session"
   | "runner"
   | "project"
+  | "automation"
+  | "reminder"
   | "other";
 
 export type TimelineDestination = {
@@ -141,6 +153,11 @@ export function focusedTimelineRange(events: TimelineEvent[], paddingHours: numb
   return { start: Math.min(...timestamps) - padding, end: Math.max(...timestamps) + padding };
 }
 
+export function fittedTimelineScale(options: { viewportWidth: number; spanHours: number; horizontalPadding?: number }): number {
+  const available = Math.max(1, options.viewportWidth - (options.horizontalPadding ?? 80));
+  return Math.max(0.1, Math.min(210, available / Math.max(1, options.spanHours)));
+}
+
 export function timelineSpatialDetail(options: {
   pixelsPerHour: number;
   nearestDistance: number;
@@ -154,6 +171,8 @@ export function timelineSpatialDetail(options: {
 export const TIMELINE_FAMILIES: TimelineFamily[] = [
   "feature",
   "task",
+  "automation",
+  "reminder",
   "entry",
   "session",
   "runner",
@@ -179,6 +198,9 @@ export function timelineTone(event: TimelineEvent): "good" | "warn" | "bad" | "i
 }
 
 export function timelineFamily(event: TimelineEvent): TimelineFamily {
+  if (event.temporal_state === "projected" && (event.source_kind === "automation" || event.source_kind === "reminder")) {
+    return event.source_kind;
+  }
   const namespace = event.type.split(".", 1)[0];
   if (
     namespace === "task" ||
@@ -195,11 +217,12 @@ export function timelineFamily(event: TimelineEvent): TimelineFamily {
 
 export function filterTimelineEvents(
   events: TimelineEvent[],
-  filters: { projects: Set<string> | null; families: Set<string> },
+  filters: { projects: Set<string> | null; families: Set<string>; temporalStates?: Set<string> },
 ): TimelineEvent[] {
   return events
     .filter((event) => !filters.projects || (!!event.project_id && filters.projects.has(event.project_id)))
     .filter((event) => filters.families.has(timelineFamily(event)))
+    .filter((event) => !filters.temporalStates || filters.temporalStates.has(event.temporal_state || "actual"))
     .toSorted((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
 }
 
@@ -216,6 +239,14 @@ export function timelineDestination(event: TimelineEvent): TimelineDestination |
       kind: "feature-detail",
       target: { projectId: event.project_id, featureId: event.feature_id },
       title: event.feature_id,
+    };
+  }
+  if (event.temporal_state === "projected" && event.source_path && (event.source_kind === "automation" || event.source_kind === "reminder")) {
+    const filename = event.source_path.split("/").at(-1) || event.source_path;
+    return {
+      kind: "entry",
+      target: { path: event.source_path },
+      title: filename.replace(/\.md$/, ""),
     };
   }
   if (event.type !== "entry.deleted" && event.type.startsWith("entry.") && event.task_path) {

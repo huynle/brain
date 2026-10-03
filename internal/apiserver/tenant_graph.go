@@ -108,6 +108,7 @@ func newTenantGraph(ctx context.Context, store *storage.TenantStore, roots *tena
 	scheduler := service.NewSchedulerService(tasks, runner, runners, placement, store, hub)
 	eventHub := realtime.NewEventHub()
 	events := service.NewEventService(eventHub)
+	timeline := service.NewTimelineService(brain, events)
 	events.SetFeatureTaskLister(tasks)
 	events.SetFeatureAssignmentCleaner(store)
 	cascade := service.NewFeatureCascadeService(eventHub, scheduler)
@@ -169,6 +170,7 @@ func newTenantGraph(ctx context.Context, store *storage.TenantStore, roots *tena
 		api.WithTokenService(identity.tokens),
 		api.WithHub(hub),
 		api.WithEventService(events),
+		api.WithTimelineService(timeline),
 		api.WithWebhookService(webhooks),
 		api.WithGoalService(goals),
 		api.WithReminderService(reminders),

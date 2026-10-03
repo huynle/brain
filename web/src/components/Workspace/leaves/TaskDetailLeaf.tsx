@@ -14,7 +14,8 @@
  * the Content `<pre>` ARE already shared pieces (with TaskModal), so
  * those are reused verbatim rather than re-duplicated here.
  */
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { KV } from "../../common/KV";
 import { Chip } from "../../common/Chip";
@@ -33,6 +34,11 @@ import { buildTaskActions } from "../../../lib/actions/taskActions";
 import { taskHoldReason } from "../../../lib/pause";
 import { TaskScheduleSection } from "../../Modal/TaskScheduleSection";
 import type { Task, TaskStatus } from "../../../lib/types";
+import { useTaskRunnerCandidates } from "../../../hooks/useRunnerCandidates";
+import { assignmentRunnerIDs } from "../../../lib/runnerCandidates";
+import { assignTaskToRunner, clearTaskAssignment } from "../../../lib/api";
+import { runnerLabel } from "../../../lib/runnerName";
+import { useUI } from "../../../store/ui";
 
 function taskDotVariant(status: TaskStatus): DotVariant {
   switch (status) {
@@ -67,6 +73,15 @@ export function TaskDetailLeaf({
   const taskCtx = useTaskActionContext(projectId);
   const runner = useActionRunner();
   const { pause } = usePauseState();
+	const queryClient = useQueryClient();
+	const toast = useUI((s) => s.toast);
+	const isStandalone = Boolean(task && !task.feature_id);
+	const candidatesQuery = useTaskRunnerCandidates(projectId, taskId, isStandalone);
+	const [assignedRunnerID, setAssignedRunnerID] = useState(task?.assigned_runner_id ?? "");
+	const [assignmentBusy, setAssignmentBusy] = useState(false);
+	useEffect(() => {
+		setAssignedRunnerID(task?.assigned_runner_id ?? candidatesQuery.data?.assigned_runner_id ?? "");
+	}, [task?.assigned_runner_id, candidatesQuery.data?.assigned_runner_id]);
 
   const pairs = useMemo(
     () => (task ? buildKvPairs(task, projectId, openModal) : []),
@@ -93,6 +108,53 @@ export function TaskDetailLeaf({
   }
 
   const hold = taskHoldReason(task, { pause, projectId });
+	const candidates = candidatesQuery.data?.candidates ?? [];
+	const candidateByID = new Map(candidates.map((candidate) => [candidate.runner.runner_id, candidate]));
+	const assignmentIDs = assignmentRunnerIDs(candidates, assignedRunnerID);
+
+	const refreshAssignment = async () => {
+		await Promise.all([
+			candidatesQuery.refetch(),
+			queryClient.invalidateQueries({ queryKey: ["v2", "runner-candidates", projectId, taskId] }),
+		]);
+	};
+
+	const assignRunner = async (runnerID: string) => {
+		if (assignmentBusy || runnerID === assignedRunnerID) return;
+		const previous = assignedRunnerID;
+		setAssignmentBusy(true);
+		setAssignedRunnerID(runnerID);
+		try {
+			await assignTaskToRunner(projectId, taskId, runnerID, {
+				intent: previous ? "reassign" : "assign",
+				force: candidateByID.get(runnerID)?.available === false,
+			});
+			toast(`Assigned ${taskId} → ${runnerID}`, "success");
+			await refreshAssignment();
+		} catch (error) {
+			setAssignedRunnerID(previous);
+			toast(`Assign failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+		} finally {
+			setAssignmentBusy(false);
+		}
+	};
+
+	const clearAssignment = async () => {
+		if (!assignedRunnerID || assignmentBusy) return;
+		const previous = assignedRunnerID;
+		setAssignmentBusy(true);
+		setAssignedRunnerID("");
+		try {
+			await clearTaskAssignment(projectId, taskId);
+			toast(`Cleared runner assignment for ${taskId}`, "success");
+			await refreshAssignment();
+		} catch (error) {
+			setAssignedRunnerID(previous);
+			toast(`Clear failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+		} finally {
+			setAssignmentBusy(false);
+		}
+	};
 
   return (
     <div>
@@ -146,6 +208,31 @@ export function TaskDetailLeaf({
       </div>
 
       <KV pairs={pairs} />
+
+	  {isStandalone && (
+		<section style={{ marginTop: "var(--p2-space-3)" }}>
+		  <h4 className="modal-content-heading">Assign to runner</h4>
+		  {candidatesQuery.isLoading && <div>Checking compatible runners…</div>}
+		  {candidatesQuery.isError && <ErrorState title="Runner compatibility unavailable" error={candidatesQuery.error} />}
+		  {!candidatesQuery.isLoading && !candidatesQuery.isError && assignmentIDs.length === 0 && (
+			<div>No compatible runners.</div>
+		  )}
+		  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+			{assignmentIDs.map((id) => candidateByID.get(id)).filter((candidate) => candidate !== undefined).map((candidate) => {
+			  const selected = candidate.runner.runner_id === assignedRunnerID;
+			  const warning = !candidate.compatible
+				? candidate.reasons.map((reason) => reason.message).join("; ")
+				: !candidate.available ? "runner is temporarily unavailable; assignment will be saved for later" : "";
+			  return (
+				<button key={candidate.runner.runner_id} type="button" disabled={assignmentBusy || selected || !candidate.compatible} onClick={() => void assignRunner(candidate.runner.runner_id)} title={warning || runnerLabel(candidate.runner)}>
+				  {selected ? "✓ " : ""}{runnerLabel(candidate.runner)}{warning ? " ⚠" : ""}
+				</button>
+			  );
+			})}
+			{assignedRunnerID && <button type="button" disabled={assignmentBusy} onClick={() => void clearAssignment()}>Clear assignment</button>}
+		  </div>
+		</section>
+	  )}
 
       {/* "View" opens the session INLINE in the sidebar dock (not the
           full-page session view) — same verb the task's context menu

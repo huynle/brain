@@ -58,6 +58,10 @@ func (s *SchedulerService) DispatchPreview(ctx context.Context, project, taskID 
 	if placement == nil {
 		placement = &types.ProjectPlacement{ProjectID: project, Affinity: types.PlacementAffinitySoft}
 	}
+	runners, err = s.runnersForAssignment(ctx, project, *task, runners)
+	if err != nil {
+		return nil, err
+	}
 	candidates := []map[string]any{}
 	for _, runner := range runners {
 		reason, eligible := runnerEligibleForTask(*task, project, runner, placement)

@@ -114,7 +114,7 @@ internal/service/brain.go:BrainServiceImpl.syncDurableFieldsToFile MergeMetadata
 internal/service/client_context.go:ClientContextServiceImpl.Resolve UpsertBrainClient#1 UpsertBrainClientWorkspace#1
 internal/service/client_context.go:ClientContextServiceImpl.latestDream ListNotes#1
 internal/service/event_service.go:EventServiceImpl.CheckFeatureCompletion ClearFeatureAssignment#1
-internal/service/features.go:TaskServiceImpl.AssignFeatureToRunner AssignFeatureIfEmpty#1 ForceAssignFeature#1 GetFeatureAssignment#1 GetRunner#1
+internal/service/features.go:TaskServiceImpl.AssignFeatureToRunner AssignFeatureIfEmpty#1 ForceAssignFeature#1 GetFeatureAssignment#1
 internal/service/features.go:TaskServiceImpl.ClearFeatureAssignment ClearFeatureAssignment#1 GetFeatureAssignment#1
 internal/service/git_remote.go:validateConfiguredGitRemote ListRunners#1
 internal/service/goal_api.go:GoalService.GoalAuditHistory GetEventsByType#1

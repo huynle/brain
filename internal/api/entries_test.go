@@ -528,6 +528,63 @@ func TestHandleCreateEntry(t *testing.T) {
 	}
 }
 
+func TestHandleCreateEntry_AssignsRunnerAndCompensatesOnFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		assignErr   error
+		wantStatus  int
+		wantDeleted bool
+	}{
+		{name: "assigned", wantStatus: http.StatusCreated},
+		{name: "assignment race compensated", assignErr: ErrConflict, wantStatus: http.StatusConflict, wantDeleted: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deleted := false
+			brain := &mockBrainService{
+				saveFunc: func(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {
+					if len(req.RequiresCapability) != 1 || req.RequiresCapability[0] != "gpu" {
+						t.Fatalf("requires_capability = %#v", req.RequiresCapability)
+					}
+					return &types.CreateEntryResponse{ID: "task-one", Path: "projects/brain/task/task-one.md", Type: "task", Status: "pending"}, nil
+				},
+				deleteFunc: func(ctx context.Context, path string) error {
+					deleted = true
+					if path != "projects/brain/task/task-one.md" {
+						t.Fatalf("delete path = %q", path)
+					}
+					return nil
+				},
+			}
+			tasks := &mockTaskService{
+				proposedCandidatesFunc: func(ctx context.Context, project string, req types.TaskRunnerCandidatesRequest) (*types.RunnerCandidatesResponse, error) {
+					return &types.RunnerCandidatesResponse{ProjectID: project, Candidates: []types.RunnerCandidate{{Runner: types.RunnerInfo{RunnerID: "runner-1"}, Compatible: true}}}, nil
+				},
+				assignTaskFunc: func(ctx context.Context, project, taskID string, req types.TaskAssignmentRequest) (*types.TaskAssignmentResponse, error) {
+					if !req.Force || req.RunnerID != "runner-1" || req.Intent != "assign" {
+						t.Fatalf("assignment request = %+v", req)
+					}
+					if tc.assignErr != nil {
+						return nil, tc.assignErr
+					}
+					return &types.TaskAssignmentResponse{ProjectID: project, TaskID: taskID, RunnerID: req.RunnerID}, nil
+				},
+			}
+			h := NewHandler(brain, WithTaskService(tasks))
+			r := chi.NewRouter()
+			r.Post("/entries", h.HandleCreateEntry)
+			req := httptest.NewRequest(http.MethodPost, "/entries", strings.NewReader(`{"type":"task","title":"GPU task","content":"run","project":"brain","requires_capability":["gpu"],"runner_id":"runner-1","assignment_intent":"assign"}`))
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+			if deleted != tc.wantDeleted {
+				t.Fatalf("deleted=%t want %t", deleted, tc.wantDeleted)
+			}
+		})
+	}
+}
+
 // =============================================================================
 // Get Entry Tests
 // =============================================================================

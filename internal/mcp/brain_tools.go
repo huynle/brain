@@ -129,6 +129,9 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 				"complete_on_idle":      {Type: "boolean", Description: "Mark task as completed when agent becomes idle (default: false). Useful for fire-and-forget tasks."},
 				"checkout_mode":         {Type: "string", Enum: types.CheckoutModes, Description: "Feature checkout automation mode: 'ai' (default) runs the feature-checkout skill; 'simple' triggers a deterministic squash-merge automation. Only meaningful on task entries whose feature completion triggers a checkout automation."},
 				"related_entries":       {Type: "array", Items: &Property{Type: "string"}, Description: "Related brain entries to link, each named by title, path, or 8-char ID. Appended to the entry as a \"## Related\" section of wiki-links."},
+				"requires_capability":   {Type: "array", Items: &Property{Type: "string"}, Description: "Runner capabilities required by this task"},
+				"runner_id":             {Type: "string", Description: "Compatible runner to assign at creation; assigns the whole feature when feature_id is set"},
+				"assignment_intent":     {Type: "string", Enum: []string{"assign", "reassign"}, Description: "Use reassign to replace an existing feature assignment"},
 			},
 			Required: []string{"type", "title", "content"},
 		},
@@ -207,6 +210,9 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 			}
 
 			body["user_original_request"] = args["user_original_request"]
+			body["requires_capability"] = args["requires_capability"]
+			body["runner_id"] = args["runner_id"]
+			body["assignment_intent"] = args["assignment_intent"]
 			body["feature_id"] = args["feature_id"]
 			body["feature_priority"] = args["feature_priority"]
 			body["feature_depends_on"] = args["feature_depends_on"]

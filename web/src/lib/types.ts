@@ -206,6 +206,8 @@ export interface Task {
 
   sessions?: Record<string, SessionInfo>;
   tags?: string[];
+	assigned_runner_id?: string;
+	assignment_scope?: "task" | "feature";
 
   generated?: boolean;
   generated_kind?: string;
@@ -433,6 +435,28 @@ export interface RunnerInfo {
   // Omitted by the API when false. A paused runner stays "online" but the
   // scheduler will not place any dispatch on it.
   paused?: boolean;
+}
+
+export interface RunnerCandidateReason {
+  code: string;
+  message: string;
+  task_ids?: string[];
+}
+
+export interface RunnerCandidate {
+  runner: RunnerInfo;
+  compatible: boolean;
+  available: boolean;
+  reasons: RunnerCandidateReason[];
+}
+
+export interface RunnerCandidatesResponse {
+  project_id: string;
+  feature_id?: string;
+  task_id?: string;
+	assigned_runner_id?: string;
+	assignment_scope?: "task" | "feature";
+  candidates: RunnerCandidate[];
 }
 
 /**

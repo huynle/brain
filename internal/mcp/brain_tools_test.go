@@ -1433,6 +1433,7 @@ func TestBrainSave_SchemaProperties(t *testing.T) {
 		"remote_branch_policy", "open_pr_before_merge", "execution_mode",
 		"complete_on_idle", "executor", "extensions", "trigger", "action", "retry", "related_entries",
 		"checkout_mode",
+		"requires_capability", "runner_id", "assignment_intent",
 	}
 
 	for _, prop := range expectedProps {
@@ -1446,6 +1447,36 @@ func TestBrainSave_SchemaProperties(t *testing.T) {
 		if !strings.Contains(triggerDesc, want) {
 			t.Errorf("brain_save trigger description should mention %q, got %q", want, triggerDesc)
 		}
+	}
+}
+
+func TestBrainSave_TaskRunnerAssignment(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/entries":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			caps, ok := body["requires_capability"].([]any)
+			if !ok || len(caps) != 1 || caps[0] != "gpu" {
+				t.Fatalf("requires_capability body = %#v", body["requires_capability"])
+			}
+			if body["runner_id"] != "runner-1" || body["assignment_intent"] != "assign" {
+				t.Fatalf("assignment fields = %#v/%#v", body["runner_id"], body["assignment_intent"])
+			}
+			json.NewEncoder(w).Encode(map[string]any{"id": "task-one", "path": "projects/brain/task/task-one.md", "title": "Task", "type": "task", "status": "pending"})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient(server.URL))
+	_, err := s.tools["save"].handler(context.Background(), map[string]any{
+		"type": "task", "title": "Task", "content": "Do it", "project": "brain",
+		"requires_capability": []any{"gpu"}, "runner_id": "runner-1", "assignment_intent": "assign",
+	})
+	if err != nil {
+		t.Fatalf("save: %v", err)
 	}
 }
 

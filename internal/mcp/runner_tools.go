@@ -144,7 +144,7 @@ func filterRunners(runners []types.RunnerInfo, args map[string]any) []types.Runn
 		if executor != "" && !containsString(runner.Executors, executor) {
 			continue
 		}
-		if project != "" && !containsString(runner.Projects, project) {
+		if project != "" && len(runner.Projects) > 0 && !containsString(runner.Projects, project) {
 			continue
 		}
 		filtered = append(filtered, runner)

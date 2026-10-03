@@ -18,6 +18,7 @@ import { useFeatureAssignments } from "../../../hooks/useFeatureAssignments";
 import { useLive } from "../../../lib/sse";
 import { useUI } from "../../../store/ui";
 import { useRunners } from "../../../hooks/useRunners";
+import { useFeatureRunnerCandidates } from "../../../hooks/useRunnerCandidates";
 import { useRowActions, type RowActionProps } from "../../../hooks/useRowActions";
 import { useFeatureActionContext } from "../../../hooks/useFeatureActionContext";
 import { usePauseState } from "../../../hooks/usePauseState";
@@ -39,6 +40,7 @@ import { buildGoalActions, goalStatusLabel } from "../../../lib/actions/goalActi
 import { isRangeKey } from "../../../lib/selection";
 import { deriveFeatures } from "../../../lib/features";
 import { runnerLabel, runnerName } from "../../../lib/runnerName";
+import { assignmentRunnerIDs } from "../../../lib/runnerCandidates";
 import { ErrorState } from "../../common/ErrorState";
 import {
   LifecycleBadge,
@@ -134,6 +136,7 @@ export function FeatureDetailLeaf({
   const openModal = useModal((s) => s.open);
   const toast = useUI((s) => s.toast);
   const { runners } = useRunners();
+  const runnerCandidates = useFeatureRunnerCandidates(projectId, featureId);
   const assignFeature = useWorkspace((s) => s.assignFeature);
   const unassignFeature = useWorkspace((s) => s.unassignFeature);
   // Server-resolved (RunnerInfo.feature_assignments), with the local
@@ -191,8 +194,11 @@ export function FeatureDetailLeaf({
   }
 
   const pct = Math.round(feature.progress * 100);
-  const runnerId = featureAssignments[feature.id];
+  const runnerId = featureAssignments[feature.id] ?? runnerCandidates.data?.assigned_runner_id;
   const runner = runners.find((r) => r.runner_id === runnerId);
+	const candidates = runnerCandidates.data?.candidates ?? [];
+	const candidateByID = new Map(candidates.map((candidate) => [candidate.runner.runner_id, candidate]));
+	const assignableRunnerIDs = assignmentRunnerIDs(candidates, runnerId);
   // Archived members fold away, matching the derived feature (which no
   // longer counts them) and the CardTasks archived fold.
   const memberTasks = tasks.filter((t) => t.feature_id === feature.id);
@@ -286,9 +292,11 @@ export function FeatureDetailLeaf({
     assignFeature(feature.id, targetRunnerId);
     try {
       const intent = previous ? "reassign" : "assign";
+	  const force = candidateByID.get(targetRunnerId)?.available === false;
       try {
         await assignFeatureToRunner(projectId, feature.id, targetRunnerId, {
           intent,
+		  force,
         });
       } catch (err) {
         // The local mirror can lag the server. A 409 on "assign" means
@@ -301,6 +309,7 @@ export function FeatureDetailLeaf({
         ) {
           await assignFeatureToRunner(projectId, feature.id, targetRunnerId, {
             intent: "reassign",
+			force,
           });
         } else {
           throw err;
@@ -470,20 +479,27 @@ export function FeatureDetailLeaf({
               back — is keyed by the random-hex id, so dropping either half
               would leave one of those two readings unanswerable. An unnamed
               runner shows the id alone rather than a placeholder name. */}
-          {runners
-            .filter((r) => r.status === "online")
-            .map((r) => {
+          {assignableRunnerIDs
+			.map((id) => candidateByID.get(id))
+			.filter((candidate) => candidate !== undefined)
+			.map((candidate) => {
+				const r = candidate.runner;
               const name = runnerName(r);
               const selected = r.runner_id === runnerId;
+				const warning = !candidate.compatible
+					? candidate.reasons.map((reason) => reason.message).join("; ")
+					: !candidate.available
+						? `runner is temporarily unavailable; assignment will be saved for later`
+						: "";
               return (
                 <button
                   key={r.runner_id}
                   onClick={() => void doAssign(r.runner_id)}
-                  disabled={assignBusy}
+                  disabled={assignBusy || selected || !candidate.compatible}
                   title={
-                    r.hostname
-                      ? `${runnerLabel(r)} — ${r.hostname}`
-                      : runnerLabel(r)
+					warning || (r.hostname
+						? `${runnerLabel(r)} — ${r.hostname}`
+						: runnerLabel(r))
                   }
                   style={{
                     background: selected ? "#f4b23a22" : undefined,
@@ -504,6 +520,11 @@ export function FeatureDetailLeaf({
                 </button>
               );
             })}
+		  {runnerCandidates.isLoading && <span>Checking compatible runners…</span>}
+		  {runnerCandidates.isError && <span>Runner compatibility unavailable.</span>}
+		  {!runnerCandidates.isLoading && !runnerCandidates.isError && assignableRunnerIDs.length === 0 && (
+			<span>No compatible runners.</span>
+		  )}
           {runnerId && (
             <button onClick={() => void doClear()} disabled={assignBusy}>
               Clear

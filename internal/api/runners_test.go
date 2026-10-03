@@ -984,10 +984,90 @@ func newFeatureAssignmentAPITestRouter(taskSvc TaskService) *chi.Mux {
 	h := NewHandler(&mockBrainService{}, WithTaskService(taskSvc), WithHub(realtime.NewHub()))
 	r := chi.NewRouter()
 	r.Route("/tasks/{projectId}/features/{featureId}", func(r chi.Router) {
+		r.Get("/runner-candidates", h.HandleFeatureRunnerCandidates)
 		r.Put("/assignment", h.HandleAssignFeatureToRunner)
 		r.Post("/assignment/clear", h.HandleClearFeatureAssignment)
 	})
+	r.Route("/tasks/{projectId}/{taskId}", func(r chi.Router) {
+		r.Get("/runner-candidates", h.HandleTaskRunnerCandidates)
+		r.Put("/assignment", h.HandleAssignTaskToRunner)
+		r.Post("/assignment/clear", h.HandleClearTaskAssignment)
+	})
+	r.Post("/tasks/{projectId}/runner-candidates", h.HandleProposedTaskRunnerCandidates)
 	return r
+}
+
+func TestFeatureAssignmentAPI_ListsRunnerCandidates(t *testing.T) {
+	taskSvc := &mockTaskService{}
+	taskSvc.featureCandidatesFunc = func(ctx context.Context, projectId, featureId string) (*types.RunnerCandidatesResponse, error) {
+		return &types.RunnerCandidatesResponse{
+			ProjectID: projectId,
+			FeatureID: featureId,
+			Candidates: []types.RunnerCandidate{{
+				Runner: types.RunnerInfo{RunnerID: "runner-1"}, Compatible: true, Available: true,
+			}},
+		}, nil
+	}
+	router := newFeatureAssignmentAPITestRouter(taskSvc)
+	req := httptest.NewRequest(http.MethodGet, "/tasks/brain/features/auth/runner-candidates", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var got types.RunnerCandidatesResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.ProjectID != "brain" || got.FeatureID != "auth" || len(got.Candidates) != 1 || got.Candidates[0].Runner.RunnerID != "runner-1" {
+		t.Fatalf("response = %+v", got)
+	}
+}
+
+func TestTaskAssignmentAPI_CandidatesAssignAndClear(t *testing.T) {
+	taskSvc := &mockTaskService{}
+	taskSvc.taskCandidatesFunc = func(ctx context.Context, projectId, taskId string) (*types.RunnerCandidatesResponse, error) {
+		return &types.RunnerCandidatesResponse{ProjectID: projectId, TaskID: taskId}, nil
+	}
+	taskSvc.assignTaskFunc = func(ctx context.Context, projectId, taskId string, req types.TaskAssignmentRequest) (*types.TaskAssignmentResponse, error) {
+		return &types.TaskAssignmentResponse{ProjectID: projectId, TaskID: taskId, RunnerID: req.RunnerID, Scope: "task", Status: "active"}, nil
+	}
+	taskSvc.clearTaskAssignmentFunc = func(ctx context.Context, projectId, taskId string, req types.ClearFeatureAssignmentRequest) (*types.TaskAssignmentResponse, error) {
+		return &types.TaskAssignmentResponse{ProjectID: projectId, TaskID: taskId, Scope: "task", Status: "cleared"}, nil
+	}
+	router := newFeatureAssignmentAPITestRouter(taskSvc)
+	for _, tc := range []struct {
+		method, path, body string
+		want               int
+	}{
+		{http.MethodGet, "/tasks/brain/task-one/runner-candidates", "", http.StatusOK},
+		{http.MethodPut, "/tasks/brain/task-one/assignment", `{"runner_id":"runner-1","intent":"assign"}`, http.StatusOK},
+		{http.MethodPost, "/tasks/brain/task-one/assignment/clear", `{"intent":"clear"}`, http.StatusOK},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != tc.want {
+			t.Fatalf("%s %s status=%d body=%s", tc.method, tc.path, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestTaskAssignmentAPI_ProposedCandidates(t *testing.T) {
+	taskSvc := &mockTaskService{}
+	taskSvc.proposedCandidatesFunc = func(ctx context.Context, projectId string, req types.TaskRunnerCandidatesRequest) (*types.RunnerCandidatesResponse, error) {
+		if req.Executor != "opencode" || len(req.RequiresCapability) != 1 || req.RequiresCapability[0] != "gpu" {
+			t.Fatalf("request = %+v", req)
+		}
+		return &types.RunnerCandidatesResponse{ProjectID: projectId}, nil
+	}
+	router := newFeatureAssignmentAPITestRouter(taskSvc)
+	req := httptest.NewRequest(http.MethodPost, "/tasks/brain/runner-candidates", strings.NewReader(`{"executor":"opencode","requires_capability":["gpu"]}`))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
 }
 
 func TestFeatureAssignmentAPI_AssignReassignAndClear(t *testing.T) {

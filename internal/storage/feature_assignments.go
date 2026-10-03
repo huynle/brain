@@ -163,7 +163,7 @@ func (s *TenantStore) ListFeatureAssignmentsByRunner(ctx context.Context, runner
 	if err != nil {
 		return nil, err
 	}
-	pred, args := scope.where("runner_id = ?", runnerID)
+	pred, args := scope.where("runner_id = ? AND feature_id NOT LIKE ?", runnerID, taskAssignmentFeaturePrefix+"%")
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT project_id, feature_id, runner_id, source, status, assigned_at, updated_at
 		FROM feature_assignments
@@ -184,7 +184,7 @@ func (s *TenantStore) ListFeatureAssignmentsByProject(ctx context.Context, proje
 	if err != nil {
 		return nil, err
 	}
-	pred, args := scope.where("project_id = ?", projectID)
+	pred, args := scope.where("project_id = ? AND feature_id NOT LIKE ?", projectID, taskAssignmentFeaturePrefix+"%")
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT project_id, feature_id, runner_id, source, status, assigned_at, updated_at
 		FROM feature_assignments

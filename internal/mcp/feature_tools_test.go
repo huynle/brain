@@ -23,6 +23,7 @@ func TestRegisterFeatureTools_CountNamesHandlersDescriptions(t *testing.T) {
 		"feature_checkout",
 		"feature_assign",
 		"feature_clear_assignment",
+		"feature_runner_candidates",
 	}
 	if len(s.tools) != len(expected) {
 		t.Fatalf("expected %d feature tools registered, got %d", len(expected), len(s.tools))
@@ -60,6 +61,7 @@ func TestFeatureToolSchemas(t *testing.T) {
 		{"feature_checkout", []string{"feature_id"}, []string{"project", "feature_id", "execution_branch", "merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "open_pr_before_merge", "execution_mode", "checkout_mode"}},
 		{"feature_assign", []string{"feature_id", "runner_id"}, []string{"project", "feature_id", "runner_id", "intent", "force"}},
 		{"feature_clear_assignment", []string{"feature_id"}, []string{"project", "feature_id", "intent"}},
+		{"feature_runner_candidates", []string{"feature_id"}, []string{"project", "feature_id", "include_rejected"}},
 	}
 
 	for _, tt := range tests {
@@ -85,6 +87,31 @@ func TestFeatureToolSchemas(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestFeatureRunnerCandidates_RequestAndFormatting(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/tasks/test-project/features/auth/runner-candidates" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(types.RunnerCandidatesResponse{
+			ProjectID: "test-project", FeatureID: "auth",
+			Candidates: []types.RunnerCandidate{
+				{Runner: types.RunnerInfo{RunnerID: "runner-good", Hostname: "mac", Capabilities: []string{"go"}, Executors: []string{"opencode"}}, Compatible: true, Available: true},
+				{Runner: types.RunnerInfo{RunnerID: "brain-conversation-worker"}, Compatible: false, Reasons: []types.RunnerCandidateReason{{Code: "project_not_allowed", Message: "wrong project"}}},
+			},
+		})
+	}))
+	defer server.Close()
+	s := NewServer()
+	RegisterFeatureTools(s, NewAPIClient(server.URL))
+	out, err := s.tools["feature_runner_candidates"].handler(context.Background(), map[string]any{"project": "test-project", "feature_id": "auth"})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if !strings.Contains(out, "runner-good") || strings.Contains(out, "brain-conversation-worker") {
+		t.Fatalf("unexpected default output:\n%s", out)
 	}
 }
 

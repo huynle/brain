@@ -45,6 +45,17 @@ func TestRegisterRunnerTools_CountNamesHandlersDescriptions(t *testing.T) {
 	}
 }
 
+func TestFilterRunners_ProjectIncludesEmptyAllowlist(t *testing.T) {
+	got := filterRunners([]types.RunnerInfo{
+		{RunnerID: "all-projects"},
+		{RunnerID: "brain-only", Projects: []string{"brain"}},
+		{RunnerID: "other-only", Projects: []string{"other"}},
+	}, map[string]any{"project": "brain"})
+	if len(got) != 2 || got[0].RunnerID != "all-projects" || got[1].RunnerID != "brain-only" {
+		t.Fatalf("filtered runners = %+v", got)
+	}
+}
+
 func TestRunnerToolSchemas(t *testing.T) {
 	s := NewServer()
 	client := NewAPIClient("http://localhost:3333")

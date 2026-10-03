@@ -439,14 +439,11 @@ func (s *TaskServiceImpl) AssignFeatureToRunner(ctx context.Context, projectID, 
 		return nil, fmt.Errorf("runner_id is required")
 	}
 
-	runner, err := s.storage.GetRunner(ctx, runnerID)
+	candidate, err := s.requireFeatureRunnerCompatibility(ctx, projectID, featureID, runnerID)
 	if err != nil {
-		return nil, fmt.Errorf("get runner: %w", err)
+		return nil, err
 	}
-	if runner == nil {
-		return nil, api.ErrNotFound
-	}
-	if !req.Force && computeRunnerStatus(runner.LastHeartbeat) != types.RunnerStatusOnline {
+	if !req.Force && !candidate.Available {
 		return nil, api.ErrConflict
 	}
 

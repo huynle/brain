@@ -790,6 +790,11 @@ type CreateEntryRequest struct {
 	TargetWorkdir       string   `json:"target_workdir,omitempty"`
 	Executor            string   `json:"executor,omitempty"`
 	Extensions          []string `json:"extensions,omitempty"`
+	RequiresCapability  []string `json:"requires_capability,omitempty"`
+	// RunnerID and AssignmentIntent are create-time orchestration fields. They
+	// are consumed by the API handler and are never written to frontmatter.
+	RunnerID         string `json:"runner_id,omitempty"`
+	AssignmentIntent string `json:"assignment_intent,omitempty"`
 
 	// Origin provenance stamped by the creating client (see BrainEntry).
 	OriginMachineID string `json:"origin_machine_id,omitempty"`
@@ -1329,6 +1334,11 @@ type ResolvedTask struct {
 	// RequiresCapability specifies capabilities a runner must have to claim this task.
 	// Tasks without this field are claimable by any runner (backward compatible).
 	RequiresCapability []string `json:"requires_capability,omitempty"`
+
+	// Effective runner assignment. Feature scope wins for feature tasks;
+	// standalone tasks may carry a task-scoped hard pin.
+	AssignedRunnerID string `json:"assigned_runner_id,omitempty"`
+	AssignmentScope  string `json:"assignment_scope,omitempty"`
 
 	Generated     *bool  `json:"generated,omitempty"`
 	GeneratedKind string `json:"generated_kind,omitempty"`

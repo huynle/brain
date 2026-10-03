@@ -190,6 +190,12 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 			Message: fmt.Sprintf("invalid feature_priority %q", req.FeaturePriority),
 		})
 	}
+	if req.RunnerID != "" && req.Type != "task" {
+		details = append(details, types.ValidationDetail{Field: "runner_id", Message: "runner assignment is only valid for tasks"})
+	}
+	if req.AssignmentIntent != "" && req.AssignmentIntent != "assign" && req.AssignmentIntent != "reassign" {
+		details = append(details, types.ValidationDetail{Field: "assignment_intent", Message: "must be assign or reassign"})
+	}
 
 	// Validate schedule/time fields
 	details = append(details, validateTimezone(req.Timezone, "timezone")...)
@@ -204,6 +210,44 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Type == "task" && (req.RunnerID != "" || req.FeatureID != "") {
+		if h.tasks == nil {
+			if req.RunnerID != "" {
+				WriteError(w, http.StatusServiceUnavailable, "Service Unavailable", "task assignment service unavailable")
+				return
+			}
+		} else {
+			assignmentProject := req.Project
+			if assignmentProject == "" {
+				assignmentProject = "default"
+			}
+			candidates, err := h.tasks.GetProposedTaskRunnerCandidates(r.Context(), assignmentProject, types.TaskRunnerCandidatesRequest{
+				FeatureID: req.FeatureID, Executor: req.Executor, RequiresCapability: req.RequiresCapability,
+				GitRemote: req.GitRemote, MachineAffinity: req.MachineAffinity, OriginMachineID: req.OriginMachineID,
+				ExecutionMode: req.ExecutionMode, TargetWorkdir: req.TargetWorkdir,
+			})
+			if err != nil {
+				WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+				return
+			}
+			selectedRunnerID := req.RunnerID
+			if selectedRunnerID == "" {
+				selectedRunnerID = candidates.AssignedRunnerID
+			}
+			compatible := selectedRunnerID == ""
+			for _, candidate := range candidates.Candidates {
+				if candidate.Runner.RunnerID == selectedRunnerID && candidate.Compatible {
+					compatible = true
+					break
+				}
+			}
+			if !compatible {
+				WriteError(w, http.StatusConflict, "Conflict", "selected runner is not compatible with the proposed task")
+				return
+			}
+		}
+	}
+
 	resp, err := h.brain.Save(r.Context(), req)
 	if err != nil {
 		if errors.Is(err, ErrInvalidInput) {
@@ -212,6 +256,30 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		}
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
+	}
+	if req.RunnerID != "" {
+		assignmentProject := req.Project
+		if assignmentProject == "" {
+			assignmentProject = "default"
+		}
+		intent := req.AssignmentIntent
+		if intent == "" {
+			intent = "assign"
+		}
+		var assignErr error
+		if req.FeatureID != "" {
+			_, assignErr = h.tasks.AssignFeatureToRunner(r.Context(), assignmentProject, req.FeatureID, types.FeatureAssignmentRequest{RunnerID: req.RunnerID, Intent: intent, Force: true})
+		} else {
+			_, assignErr = h.tasks.AssignTaskToRunner(r.Context(), assignmentProject, resp.ID, types.TaskAssignmentRequest{RunnerID: req.RunnerID, Intent: intent, Force: true})
+		}
+		if assignErr != nil {
+			if deleteErr := h.brain.Delete(r.Context(), resp.Path); deleteErr != nil {
+				WriteError(w, http.StatusInternalServerError, "Internal Server Error", fmt.Sprintf("runner assignment failed: %v; compensating task delete failed: %v", assignErr, deleteErr))
+				return
+			}
+			WriteError(w, http.StatusConflict, "Conflict", fmt.Sprintf("runner assignment failed; created task was removed: %v", assignErr))
+			return
+		}
 	}
 
 	// Notify SSE clients about the change

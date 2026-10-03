@@ -77,6 +77,10 @@ type schedulerLeaseStore interface {
 	RecordPlacementReason(ctx context.Context, row *storage.PlacementReasonRow) error
 }
 
+type schedulerAssignmentStore interface {
+	ResolveRunnerAssignment(ctx context.Context, projectID, featureID, taskID string) (*storage.RunnerAssignmentRow, error)
+}
+
 type schedulerLeaseExpirer interface {
 	ExpireDispatchLeases(ctx context.Context, now int64) (int64, error)
 }
@@ -380,7 +384,11 @@ func (s *SchedulerService) ScheduleProject(ctx context.Context, projectID string
 			}
 			continue
 		}
-		candidate, reasons := s.selectCandidate(task, projectID, runners, placement, reservedSlots)
+		assignedRunners, err := s.runnersForAssignment(ctx, projectID, task, runners)
+		if err != nil {
+			return nil, err
+		}
+		candidate, reasons := s.selectCandidate(task, projectID, assignedRunners, placement, reservedSlots)
 		if candidate == nil {
 			result.Skipped++
 			result.SkippedNoCandidate++
@@ -542,6 +550,10 @@ func (s *SchedulerService) RunTaskNow(ctx context.Context, projectID, taskID str
 		placement = &types.ProjectPlacement{ProjectID: projectID, Affinity: types.PlacementAffinitySoft}
 	}
 
+	runners, err = s.runnersForAssignment(ctx, projectID, *task, runners)
+	if err != nil {
+		return nil, err
+	}
 	candidate, reasons := s.selectCandidate(*task, projectID, runners, placement, nil)
 	if candidate == nil {
 		resp.Reason = "no_eligible_runner"
@@ -728,8 +740,11 @@ func (s *SchedulerService) selectCandidate(task types.ResolvedTask, projectID st
 }
 
 func runnerEligibleForTask(task types.ResolvedTask, projectID string, runner types.RunnerInfo, placement *types.ProjectPlacement) (string, bool) {
-	if err := runnerGitRemoteError(task.GitRemote, &runner); err != nil {
-		return err.Error(), false
+	// Keep assignment-time compatibility and dispatch-time eligibility on the
+	// same durable predicate. Candidate discovery deliberately reports the
+	// temporary checks below as availability instead of incompatibility.
+	if reasons := durableRunnerCompatibilityReasons(projectID, []types.ResolvedTask{task}, runner, placement); len(reasons) > 0 {
+		return reasons[0].Message, false
 	}
 	if runner.Status != types.RunnerStatusOnline {
 		return "runner not online", false
@@ -748,35 +763,8 @@ func runnerEligibleForTask(task types.ResolvedTask, projectID string, runner typ
 	if runner.Paused {
 		return "runner paused", false
 	}
-	if !runnerAllowsProject(runner, projectID) {
-		return "project not allowed", false
-	}
-	if task.Executor != "" && !stringSliceContains(runner.Executors, task.Executor) {
-		return "executor not supported", false
-	}
-	if missing := missingStrings(task.RequiresCapability, runner.Capabilities); len(missing) > 0 {
-		return "missing task capabilities: " + strings.Join(missing, ","), false
-	}
-	if missing := missingStrings(placement.RequiredCapabilities, runner.Capabilities); len(missing) > 0 {
-		return "missing project capabilities: " + strings.Join(missing, ","), false
-	}
-	if missing := missingLabels(placement.RequiredLabels, runner.Labels); len(missing) > 0 {
-		return "missing required labels", false
-	}
-	if missing := missingResources(placement.Resources, runner.Resources, runner.Capacity); len(missing) > 0 {
-		return "missing project resources: " + strings.Join(missing, ","), false
-	}
-	if placement.WorkspacePolicy == types.WorkspacePolicyWorktree && len(runner.WorkspaceRoots) == 0 {
-		return "no workspace roots for worktree policy", false
-	}
 	if runner.MaxParallel > 0 && runner.ActiveTasks >= runner.MaxParallel {
 		return "runner at capacity", false
-	}
-	if placement.Affinity == types.PlacementAffinityStrict && !machineAllowedByStrictAffinity(runner.MachineID, placement) {
-		return "strict affinity mismatch", false
-	}
-	if reason, ok := machineAffinitySatisfied(task, runner.MachineID); !ok {
-		return reason, false
 	}
 	return "eligible", true
 }

@@ -304,6 +304,14 @@ type TaskService interface {
 	// AssignFeatureToRunner manually assigns or reassigns a feature to a runner.
 	AssignFeatureToRunner(ctx context.Context, projectId, featureId string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
 
+	// GetFeatureRunnerCandidates evaluates runner compatibility for every unfinished task in a feature.
+	GetFeatureRunnerCandidates(ctx context.Context, projectId, featureId string) (*types.RunnerCandidatesResponse, error)
+
+	GetTaskRunnerCandidates(ctx context.Context, projectId, taskId string) (*types.RunnerCandidatesResponse, error)
+	GetProposedTaskRunnerCandidates(ctx context.Context, projectId string, req types.TaskRunnerCandidatesRequest) (*types.RunnerCandidatesResponse, error)
+	AssignTaskToRunner(ctx context.Context, projectId, taskId string, req types.TaskAssignmentRequest) (*types.TaskAssignmentResponse, error)
+	ClearTaskAssignment(ctx context.Context, projectId, taskId string, req types.ClearFeatureAssignmentRequest) (*types.TaskAssignmentResponse, error)
+
 	// ClearFeatureAssignment manually clears a feature assignment.
 	ClearFeatureAssignment(ctx context.Context, projectId, featureId string, req types.ClearFeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
 

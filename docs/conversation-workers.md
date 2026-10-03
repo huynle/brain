@@ -1,7 +1,19 @@
 # Conversation coordinator and Go workers
 
-Enable `BRAIN_ASSISTANT_JOBS=true` on an Assistant-enabled, single-tenant API
-deployment. The API starts the lightweight Go worker automatically and registers
+Enable conversation jobs on an Assistant-enabled, single-tenant API deployment:
+
+```yaml
+server:
+  assistant:
+    jobs:
+      enabled: true
+      max_parallel: 3 # 1-8
+```
+
+Both settings are available under **Settings → Assistant** and require an API
+server restart. `BRAIN_ASSISTANT_JOBS=true` remains a deprecated fallback when
+`jobs.enabled` is absent; an explicit YAML value wins. The API starts the
+lightweight Go worker automatically and registers
 `brain-conversation-worker` in the normal runner registry. No phone-side process
 or manually launched coding agent is required. The worker is an embedded service
 in the API process, not a separate Pi/OpenCode process.

@@ -97,8 +97,24 @@ type AssistantSpeechConfig struct {
 	Voice     string `yaml:"voice"`
 }
 
+type AssistantJobsConfig struct {
+	// Enabled is a pointer so an omitted value can fall back to the legacy
+	// BRAIN_ASSISTANT_JOBS environment flag during migration.
+	Enabled     *bool `yaml:"enabled"`
+	MaxParallel int   `yaml:"max_parallel"`
+}
+
+func legacyAssistantJobsEnabled() *bool {
+	if os.Getenv("BRAIN_ASSISTANT_JOBS") != "true" {
+		return nil
+	}
+	enabled := true
+	return &enabled
+}
+
 type AssistantConfig struct {
 	Speech    AssistantSpeechConfig `yaml:"speech"`
+	Jobs      AssistantJobsConfig   `yaml:"jobs"`
 	Enabled   bool                  `yaml:"enabled"`
 	Provider  string                `yaml:"provider"`
 	BaseURL   string                `yaml:"base_url"`
@@ -371,6 +387,9 @@ func (c *UnifiedConfig) Validate() error {
 	if c.Server.Assistant.Enabled && c.Server.Assistant.TimeoutMs <= 0 {
 		errs = append(errs, "server.assistant.timeout_ms must be > 0 when assistant is enabled")
 	}
+	if c.Server.Assistant.Jobs.MaxParallel < 1 || c.Server.Assistant.Jobs.MaxParallel > 8 {
+		errs = append(errs, "server.assistant.jobs.max_parallel must be between 1 and 8")
+	}
 
 	// Runner section --------------------------------------------------
 	if strings.TrimSpace(c.Runner.BrainAPIURL) == "" {
@@ -466,6 +485,7 @@ func defaultConfig() UnifiedConfig {
 			},
 			Assistant: AssistantConfig{
 				Enabled:   false,
+				Jobs:      AssistantJobsConfig{Enabled: legacyAssistantJobsEnabled(), MaxParallel: 3},
 				Provider:  "openrouter",
 				BaseURL:   "https://openrouter.ai/api/v1",
 				APIKeyEnv: "OPENROUTER_API_KEY",

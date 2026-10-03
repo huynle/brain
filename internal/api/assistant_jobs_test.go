@@ -49,6 +49,19 @@ func jobTestService(t *testing.T, url string) *AssistantService {
 	}}
 	return s
 }
+
+func TestConversationRunnerRegistrationUsesConfiguredCapacity(t *testing.T) {
+	registration := conversationRunnerRegistration("amos", 6)
+	if registration.RunnerID != conversationRunnerID {
+		t.Fatalf("runner id = %q, want %q", registration.RunnerID, conversationRunnerID)
+	}
+	if registration.MaxParallel != 6 {
+		t.Fatalf("max parallel = %d, want 6", registration.MaxParallel)
+	}
+	if registration.Hostname != "amos" {
+		t.Fatalf("hostname = %q, want amos", registration.Hostname)
+	}
+}
 func TestCoordinatorHasNoBrainTools(t *testing.T) {
 	var seen []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

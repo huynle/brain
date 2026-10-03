@@ -155,6 +155,14 @@ func (h *ConfigHandler) HandlePut(w http.ResponseWriter, r *http.Request) {
 		// requires-restart.
 		result = HotReloadResult{RequiresRestart: allFieldPaths()}
 	}
+	// Keep the JSON contract stable for clients that iterate or inspect length.
+	// Go's nil slices otherwise encode as null rather than an empty array.
+	if result.HotReloaded == nil {
+		result.HotReloaded = []string{}
+	}
+	if result.RequiresRestart == nil {
+		result.RequiresRestart = []string{}
+	}
 
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"hot_reloaded":     result.HotReloaded,

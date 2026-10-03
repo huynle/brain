@@ -107,6 +107,8 @@ func ConfigSchema() []ConfigField {
 		{Path: "server.assistant.api_key_env", Kind: "string", Section: "assistant", Label: "API key env var"},
 		{Path: "server.assistant.model", Kind: "string", Section: "assistant", Label: "Model"},
 		{Path: "server.assistant.timeout_ms", Kind: "int", Section: "assistant", Label: "Request timeout (ms)"},
+		{Path: "server.assistant.jobs.enabled", Kind: "bool", Section: "assistant", Label: "Enable conversation worker", Help: "Start the embedded background worker for Assistant jobs when the API starts.", RequiresRestart: true},
+		{Path: "server.assistant.jobs.max_parallel", Kind: "int", Section: "assistant", Label: "Conversation worker concurrency", Help: "Maximum Assistant background jobs to run at once (1–8).", RequiresRestart: true},
 
 		// ─── attachments ───────────────────────────────────────
 		{Path: "server.attachments.storage_root", Kind: "path", Section: "attachments", Label: "Storage root", RequiresRestart: true},

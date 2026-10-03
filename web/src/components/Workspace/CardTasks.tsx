@@ -33,7 +33,7 @@
  * including the ungrouped "No feature" rows, which previously had no
  * action affordance at all.
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useSelection } from "../../store/selection";
 import { useWorkspace } from "../../store/workspace";
 import { useFeatureAssignments } from "../../hooks/useFeatureAssignments";
@@ -64,6 +64,7 @@ import { flattenDepForest, type DepRow } from "../../lib/depTree";
 import { NO_FEATURE } from "../../lib/taskGroups";
 import { TaskGroupBlock } from "./TaskGroupBlock";
 import type { Task } from "../../lib/types";
+import { TaskCreateModal } from "../Modal/TaskCreateModal";
 import {
   buildFeatureForest,
   isFeatureDone,
@@ -147,6 +148,7 @@ export function CardTasks({
   // mutating verb — a failure becomes a toast rather than an unhandled
   // rejection and a checkbox that silently springs back.
   const autoArchiveRunner = useActionRunner();
+  const [creatingTask, setCreatingTask] = useState(false);
 
   // Subscribed (not getState) so checkboxes and the "marked" tint react
   // to every toggle, from any surface — checkbox, `v` key, or menu.
@@ -298,6 +300,9 @@ export function CardTasks({
           the server (visible in the Automations tab), so it keeps working
           with every browser closed. */}
       <div className="card-toggles">
+	  <button type="button" className="primary" onClick={() => setCreatingTask(true)}>
+		+ New task
+	  </button>
       <label
         className="auto-archive"
         title={
@@ -350,6 +355,13 @@ export function CardTasks({
       </label>
       </div>
       {autoArchiveRunner.dialog}
+	  {creatingTask && (
+		<TaskCreateModal
+		  projectId={projectId}
+		  featureIds={features.map((feature) => feature.id)}
+		  onClose={() => setCreatingTask(false)}
+		/>
+	  )}
 
       {/* Pinned ABOVE the features. Every group that is NOT a feature
           renders through one component: the ungrouped bucket here, and each

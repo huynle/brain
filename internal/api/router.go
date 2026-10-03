@@ -681,6 +681,9 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 
 					if o.handler != nil && o.handler.tasks != nil {
 						r.With(RequireScope("admin:*", "runner:*", "read:*")).Get("/{taskId}/delivery", o.handler.HandleDeliveryGate)
+						r.With(RequireScope("admin:*", "runner:*", "read:*")).Get("/features/{featureId}/runner-candidates", o.handler.HandleFeatureRunnerCandidates)
+						r.With(RequireScope("admin:*", "runner:*", "read:*")).Get("/{taskId}/runner-candidates", o.handler.HandleTaskRunnerCandidates)
+						r.With(RequireScope("admin:*", "runner:*", "read:*")).Post("/runner-candidates", o.handler.HandleProposedTaskRunnerCandidates)
 					}
 					// Log retrieval — read:* scope
 					r.Group(func(r chi.Router) {
@@ -712,6 +715,8 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/{taskId}/delivery", o.handler.HandleDeliveryVerification)
 							r.Post("/{taskId}/resume", o.handler.HandleResumeTask)
 							r.Post("/{taskId}/resume-with-context", o.handler.HandleResumeWithContext)
+							r.Put("/{taskId}/assignment", o.handler.HandleAssignTaskToRunner)
+							r.Post("/{taskId}/assignment/clear", o.handler.HandleClearTaskAssignment)
 							// Project wipe. Lives on the tasks tree because
 							// that is where a project is addressed by name,
 							// but it erases every entry type, not just tasks.

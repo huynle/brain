@@ -163,3 +163,62 @@ type FeatureAssignmentResponse struct {
 	AssignedAt     string `json:"assigned_at,omitempty"`
 	UpdatedAt      string `json:"updated_at,omitempty"`
 }
+
+// RunnerCandidateReason explains one durable compatibility failure.
+type RunnerCandidateReason struct {
+	Code    string   `json:"code"`
+	Message string   `json:"message"`
+	TaskIDs []string `json:"task_ids,omitempty"`
+}
+
+// RunnerCandidate describes assignment compatibility separately from current
+// availability. A compatible runner may be offline, paused, draining, or full.
+type RunnerCandidate struct {
+	Runner     RunnerInfo              `json:"runner"`
+	Compatible bool                    `json:"compatible"`
+	Available  bool                    `json:"available"`
+	Reasons    []RunnerCandidateReason `json:"reasons"`
+}
+
+// RunnerCandidatesResponse lists runners evaluated for one task or feature.
+type RunnerCandidatesResponse struct {
+	ProjectID        string            `json:"project_id"`
+	FeatureID        string            `json:"feature_id,omitempty"`
+	TaskID           string            `json:"task_id,omitempty"`
+	AssignedRunnerID string            `json:"assigned_runner_id,omitempty"`
+	AssignmentScope  string            `json:"assignment_scope,omitempty"`
+	Candidates       []RunnerCandidate `json:"candidates"`
+}
+
+// TaskRunnerCandidatesRequest is the placement-relevant subset of a proposed
+// task used to discover compatible runners before creating it.
+type TaskRunnerCandidatesRequest struct {
+	FeatureID          string   `json:"feature_id,omitempty"`
+	Executor           string   `json:"executor,omitempty"`
+	RequiresCapability []string `json:"requires_capability,omitempty"`
+	GitRemote          string   `json:"git_remote,omitempty"`
+	MachineAffinity    string   `json:"machine_affinity,omitempty"`
+	OriginMachineID    string   `json:"origin_machine_id,omitempty"`
+	ExecutionMode      string   `json:"execution_mode,omitempty"`
+	TargetWorkdir      string   `json:"target_workdir,omitempty"`
+}
+
+// TaskAssignmentRequest assigns or reassigns a standalone task.
+type TaskAssignmentRequest struct {
+	RunnerID string `json:"runner_id"`
+	Intent   string `json:"intent,omitempty"`
+	Force    bool   `json:"force,omitempty"`
+}
+
+// TaskAssignmentResponse describes a standalone task's runner pin.
+type TaskAssignmentResponse struct {
+	ProjectID      string `json:"project_id"`
+	TaskID         string `json:"task_id"`
+	RunnerID       string `json:"runner_id,omitempty"`
+	PreviousRunner string `json:"previous_runner,omitempty"`
+	Scope          string `json:"scope"`
+	Source         string `json:"source"`
+	Status         string `json:"status"`
+	AssignedAt     string `json:"assigned_at,omitempty"`
+	UpdatedAt      string `json:"updated_at,omitempty"`
+}

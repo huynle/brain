@@ -23,8 +23,8 @@ func TestRegisterTaskTools_Count(t *testing.T) {
 	RegisterTaskTools(s, client)
 
 	count := len(s.tools)
-	if count != 15 {
-		t.Errorf("expected 15 task tools registered, got %d", count)
+	if count != 18 {
+		t.Errorf("expected 18 task tools registered, got %d", count)
 	}
 }
 
@@ -47,6 +47,9 @@ func TestRegisterTaskTools_Names(t *testing.T) {
 		"dream_enable",
 		"dream_disable",
 		"resume_task_with_context",
+		"runner_candidates",
+		"task_assign",
+		"task_clear_assignment",
 	}
 
 	for _, name := range expectedTools {
@@ -1826,8 +1829,8 @@ func TestTaskToolsDoNotOverlapBrainTools(t *testing.T) {
 	totalCount := len(s.tools)
 	taskToolCount := totalCount - brainToolCount
 
-	if taskToolCount != 15 {
-		t.Errorf("expected 15 new task tools (no overlap), got %d new tools", taskToolCount)
+	if taskToolCount != 18 {
+		t.Errorf("expected 18 new task tools (no overlap), got %d new tools", taskToolCount)
 	}
 }
 

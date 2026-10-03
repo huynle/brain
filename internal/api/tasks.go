@@ -769,6 +769,111 @@ func (h *Handler) HandleCheckoutFeature(w http.ResponseWriter, r *http.Request) 
 	WriteJSON(w, http.StatusOK, result)
 }
 
+// HandleFeatureRunnerCandidates handles GET
+// /tasks/{projectId}/features/{featureId}/runner-candidates.
+func (h *Handler) HandleFeatureRunnerCandidates(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectId")
+	featureID := chi.URLParam(r, "featureId")
+	resp, err := h.tasks.GetFeatureRunnerCandidates(r.Context(), projectID, featureID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", "feature not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) HandleTaskRunnerCandidates(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectId")
+	taskID := chi.URLParam(r, "taskId")
+	resp, err := h.tasks.GetTaskRunnerCandidates(r.Context(), projectID, taskID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", "task not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) HandleProposedTaskRunnerCandidates(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectId")
+	var req types.TaskRunnerCandidatesRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid runner candidate request")
+		return
+	}
+	resp, err := h.tasks.GetProposedTaskRunnerCandidates(r.Context(), projectID, req)
+	if err != nil {
+		if errors.Is(err, ErrInvalidInput) {
+			WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) HandleAssignTaskToRunner(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectId")
+	taskID := chi.URLParam(r, "taskId")
+	var req types.TaskAssignmentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(req.RunnerID) == "" {
+		WriteValidationError(w, []types.ValidationDetail{{Field: "runner_id", Message: "runner_id is required"}})
+		return
+	}
+	resp, err := h.tasks.AssignTaskToRunner(r.Context(), projectID, taskID, req)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", "task or runner not found")
+			return
+		}
+		if errors.Is(err, ErrConflict) {
+			WriteError(w, http.StatusConflict, "Conflict", err.Error())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) HandleClearTaskAssignment(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectId")
+	taskID := chi.URLParam(r, "taskId")
+	var req types.ClearFeatureAssignmentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+	resp, err := h.tasks.ClearTaskAssignment(r.Context(), projectID, taskID, req)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", "task assignment not found")
+			return
+		}
+		if errors.Is(err, ErrConflict) {
+			WriteError(w, http.StatusConflict, "Conflict", "task assignment conflict")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
 // HandleAssignFeatureToRunner handles PUT /tasks/{projectId}/features/{featureId}/assignment.
 func (h *Handler) HandleAssignFeatureToRunner(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")

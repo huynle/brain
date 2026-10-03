@@ -237,6 +237,7 @@ type Frontmatter struct {
 	TargetWorkdir      string   `yaml:"target_workdir,omitempty" json:"target_workdir,omitempty"`
 	Executor           string   `yaml:"executor,omitempty" json:"executor,omitempty"`
 	Extensions         []string `yaml:"extensions,omitempty" json:"extensions,omitempty"`
+	RequiresCapability []string `yaml:"requires_capability,omitempty" json:"requires_capability,omitempty"`
 	CheckoutMode       string   `yaml:"checkout_mode,omitempty" json:"checkout_mode,omitempty"`
 	DeliveryMode       string   `yaml:"delivery_mode,omitempty" json:"delivery_mode,omitempty"`
 
@@ -333,6 +334,7 @@ type GenerateOptions struct {
 	TargetWorkdir      string
 	Executor           string
 	Extensions         []string
+	RequiresCapability []string
 	CheckoutMode       string
 	DeliveryMode       string
 
@@ -427,6 +429,7 @@ type rawFrontmatter struct {
 	TargetWorkdir       string                     `yaml:"target_workdir"`
 	Executor            string                     `yaml:"executor"`
 	Extensions          []string                   `yaml:"extensions"`
+	RequiresCapability  any                        `yaml:"requires_capability"`
 	CheckoutMode        string                     `yaml:"checkout_mode"`
 	DeliveryMode        string                     `yaml:"delivery_mode"`
 	OriginMachineID     string                     `yaml:"origin_machine_id"`
@@ -453,6 +456,28 @@ type rawFrontmatter struct {
 	// Legacy session fields (normalized into Sessions during parsing)
 	SessionIDs        []string          `yaml:"session_ids"`
 	SessionTimestamps map[string]string `yaml:"session_timestamps"`
+}
+
+func normalizeStringList(value any) []string {
+	switch v := value.(type) {
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if text, ok := item.(string); ok && text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 // knownFields is the set of YAML keys handled by rawFrontmatter.
@@ -617,6 +642,7 @@ func Parse(content string) (*Document, error) {
 		TargetWorkdir:       raw.TargetWorkdir,
 		Executor:            raw.Executor,
 		Extensions:          raw.Extensions,
+		RequiresCapability:  normalizeStringList(raw.RequiresCapability),
 		CheckoutMode:        raw.CheckoutMode,
 		DeliveryMode:        raw.DeliveryMode,
 		OriginMachineID:     raw.OriginMachineID,
@@ -900,6 +926,12 @@ func Serialize(fm *Frontmatter) string {
 			lines = append(lines, "  - "+EscapeYamlValue(ext))
 		}
 	}
+	if len(fm.RequiresCapability) > 0 {
+		lines = append(lines, "requires_capability:")
+		for _, capability := range fm.RequiresCapability {
+			lines = append(lines, "  - "+EscapeYamlValue(capability))
+		}
+	}
 
 	// Multiline fields
 	if fm.UserOriginalRequest != "" {
@@ -1061,6 +1093,7 @@ func Generate(opts *GenerateOptions) string {
 		TargetWorkdir:       opts.TargetWorkdir,
 		Executor:            opts.Executor,
 		Extensions:          opts.Extensions,
+		RequiresCapability:  opts.RequiresCapability,
 		CheckoutMode:        opts.CheckoutMode,
 		DeliveryMode:        opts.DeliveryMode,
 		OriginMachineID:     opts.OriginMachineID,

@@ -111,6 +111,28 @@ func TestTenantFeatureAssignmentsLifecycle(t *testing.T) {
 				t.Fatalf("assign %s: %v %+v %v", s.TenantID(), ok, old, err)
 			}
 		}
+		if snap, err := s.LoadRunnerEligibility(ctx, "shared"); err != nil || len(snap.Runners) < 2 || snap.Placement == nil {
+			t.Fatalf("eligibility snapshot %s: %+v %v", s.TenantID(), snap, err)
+		}
+		if ok, old, err := s.AssignTaskIfEmpty(ctx, "shared", "standalone", "same", "manual", "active"); err != nil || !ok || old != nil {
+			t.Fatalf("task assign %s: %v %+v %v", s.TenantID(), ok, old, err)
+		}
+	}
+	taskBefore, err := b.GetTaskAssignment(ctx, "shared", "standalone")
+	if err != nil || taskBefore == nil || taskBefore.RunnerID != "same" {
+		t.Fatalf("task baseline: %+v %v", taskBefore, err)
+	}
+	if effective, err := a.ResolveRunnerAssignment(ctx, "shared", "", "standalone"); err != nil || effective == nil || effective.RunnerID != "same" || effective.Scope != "task" {
+		t.Fatalf("task effective: %+v %v", effective, err)
+	}
+	if updated, err := a.ForceAssignTask(ctx, "shared", "standalone", "other", "manual", "active"); err != nil || updated == nil || updated.RunnerID != "other" {
+		t.Fatalf("task force: %+v %v", updated, err)
+	}
+	if ok, err := a.ClearTaskAssignment(ctx, "shared", "standalone"); err != nil || !ok {
+		t.Fatalf("task clear: %v %v", ok, err)
+	}
+	if foreign, err := b.GetTaskAssignment(ctx, "shared", "standalone"); err != nil || !reflect.DeepEqual(foreign, taskBefore) {
+		t.Fatalf("foreign task changed: %+v %v", foreign, err)
 	}
 	before, err := b.GetFeatureAssignment(ctx, "shared", "feature")
 	if err != nil || before == nil {

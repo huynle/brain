@@ -30,6 +30,9 @@ func RegisterTaskTools(s *Server, client *APIClient) {
 	registerBrainDreamEnable(s, client)
 	registerBrainDreamDisable(s, client)
 	registerBrainResumeTaskWithContext(s, client)
+	registerBrainRunnerCandidates(s, client)
+	registerBrainTaskAssign(s, client)
+	registerBrainTaskClearAssignment(s, client)
 }
 
 // =============================================================================

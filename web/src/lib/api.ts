@@ -23,6 +23,7 @@ import type {
   GoalAuditResponse,
   GoalListResponse,
   ReminderSummary,
+	RunnerCandidatesResponse,
   ReminderListResponse,
   CreateReminderRequest,
   Attention,
@@ -725,6 +726,64 @@ export const clearFeatureAssignment = (projectId: string, featureId: string) =>
       method: "POST",
       body: { intent: "clear" },
     },
+  );
+
+export const getFeatureRunnerCandidates = (
+  projectId: string,
+  featureId: string,
+) =>
+  api<RunnerCandidatesResponse>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/features/${encodeURIComponent(featureId)}/runner-candidates`,
+  );
+
+export interface TaskAssignmentResponse {
+  project_id: string;
+  task_id: string;
+  runner_id?: string;
+  previous_runner?: string;
+  scope: "task";
+  source: string;
+  status: string;
+  assigned_at?: string;
+  updated_at?: string;
+}
+
+export const getTaskRunnerCandidates = (projectId: string, taskId: string) =>
+  api<RunnerCandidatesResponse>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}/runner-candidates`,
+  );
+
+export const getProposedTaskRunnerCandidates = (
+  projectId: string,
+  spec: Record<string, unknown>,
+) =>
+  api<RunnerCandidatesResponse>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/runner-candidates`,
+    { method: "POST", body: spec },
+  );
+
+export const assignTaskToRunner = (
+  projectId: string,
+  taskId: string,
+  runnerId: string,
+  options: AssignFeatureOptions = {},
+) =>
+  api<TaskAssignmentResponse>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}/assignment`,
+    {
+      method: "PUT",
+      body: {
+        runner_id: runnerId,
+        intent: options.intent ?? "assign",
+        force: options.force ?? false,
+      },
+    },
+  );
+
+export const clearTaskAssignment = (projectId: string, taskId: string) =>
+  api<TaskAssignmentResponse>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}/assignment/clear`,
+    { method: "POST", body: { intent: "clear" } },
   );
 
 // Format a RunFeatureResponse into a toast message. Mirrors

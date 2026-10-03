@@ -19,6 +19,52 @@ func RegisterFeatureTools(s *Server, client *APIClient) {
 	registerBrainFeatureCheckout(s, client)
 	registerBrainFeatureAssign(s, client)
 	registerBrainFeatureClearAssignment(s, client)
+	registerBrainFeatureRunnerCandidates(s, client)
+}
+
+func registerBrainFeatureRunnerCandidates(s *Server, client *APIClient) {
+	props := featureCommonProperties()
+	props["include_rejected"] = Property{Type: "boolean", Description: "Include incompatible runners and rejection reasons"}
+	s.RegisterTool(Tool{
+		Name:        "feature_runner_candidates",
+		Description: "List runners compatible with every unfinished task in a feature. Compatibility is distinct from temporary availability.",
+		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"feature_id"}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		project := ResolveProject(args)
+		featureID := StringArg(args, "feature_id", "")
+		if featureID == "" {
+			return "", fmt.Errorf("provide a 'feature_id'")
+		}
+		var resp types.RunnerCandidatesResponse
+		path := "/tasks/" + url.PathEscape(project) + "/features/" + url.PathEscape(featureID) + "/runner-candidates"
+		if err := client.Request(ctx, http.MethodGet, path, nil, nil, &resp); err != nil {
+			return "", err
+		}
+		return formatRunnerCandidates(resp, BoolArg(args, "include_rejected", false)), nil
+	})
+}
+
+func formatRunnerCandidates(resp types.RunnerCandidatesResponse, includeRejected bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## Runner candidates for %s/%s\n\n", resp.ProjectID, resp.FeatureID)
+	count := 0
+	for _, candidate := range resp.Candidates {
+		if !candidate.Compatible && !includeRejected {
+			continue
+		}
+		count++
+		fmt.Fprintf(&b, "### %s\n", candidate.Runner.RunnerID)
+		fmt.Fprintf(&b, "- Compatible: %t\n- Available now: %t\n", candidate.Compatible, candidate.Available)
+		fmt.Fprintf(&b, "- Executors: %s\n- Capabilities: %s\n", formatStringList(candidate.Runner.Executors), formatStringList(candidate.Runner.Capabilities))
+		for _, reason := range candidate.Reasons {
+			fmt.Fprintf(&b, "- Rejected (%s): %s\n", reason.Code, reason.Message)
+		}
+		b.WriteString("\n")
+	}
+	if count == 0 {
+		b.WriteString("No compatible runners found.\n")
+	}
+	return b.String()
 }
 
 func featureCommonProperties() map[string]Property {
@@ -137,11 +183,11 @@ func registerBrainFeatureCheckout(s *Server, client *APIClient) {
 func registerBrainFeatureAssign(s *Server, client *APIClient) {
 	props := featureCommonProperties()
 	props["runner_id"] = Property{Type: "string", Description: "Runner ID to assign this feature to"}
-	props["intent"] = Property{Type: "string", Description: "Human-readable reason for the assignment"}
-	props["force"] = Property{Type: "boolean", Description: "Reassign even if another runner currently owns the feature"}
+	props["intent"] = Property{Type: "string", Enum: []string{"assign", "reassign"}, Description: "Use reassign to replace an existing feature assignment"}
+	props["force"] = Property{Type: "boolean", Description: "Allow a durably compatible runner that is temporarily unavailable"}
 	s.RegisterTool(Tool{
 		Name:        "feature_assign",
-		Description: "Assign or reassign a feature to a runner.",
+		Description: "Assign or reassign every unfinished task in a feature to a compatible runner.",
 		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"feature_id", "runner_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		project := ResolveProject(args)
@@ -169,7 +215,7 @@ func registerBrainFeatureClearAssignment(s *Server, client *APIClient) {
 	props["intent"] = Property{Type: "string", Description: "Human-readable reason for clearing the assignment"}
 	s.RegisterTool(Tool{
 		Name:        "feature_clear_assignment",
-		Description: "Clear the current runner assignment for a feature.",
+		Description: "Clear the runner assignment covering every unfinished task in a feature.",
 		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"feature_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		project := ResolveProject(args)
@@ -408,7 +454,7 @@ func formatFeatureCheckout(project, featureID string, result types.CheckoutFeatu
 }
 
 func formatFeatureAssignment(resp types.FeatureAssignmentResponse) string {
-	lines := []string{"## Feature assignment", ""}
+	lines := []string{"## Feature assignment", "", "- Scope: all unfinished tasks in the feature"}
 	if resp.ProjectID != "" {
 		lines = append(lines, fmt.Sprintf("- Project: %s", resp.ProjectID))
 	}

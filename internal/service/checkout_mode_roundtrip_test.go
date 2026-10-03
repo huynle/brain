@@ -42,6 +42,25 @@ func newTestBrainAndTaskService(t *testing.T) (*BrainServiceImpl, *TaskServiceIm
 	return NewBrainService(cfg, store, idx, nil, nil), NewTaskService(cfg, store, idx)
 }
 
+func TestRequiresCapability_SurvivesStorageRoundTrip(t *testing.T) {
+	brain, tasks := newTestBrainAndTaskService(t)
+	ctx := context.Background()
+	resp, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type: "task", Title: "GPU task", Content: "run", Project: "proj",
+		Status: "pending", RequiresCapability: []string{"gpu", "docker"},
+	})
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	list, err := tasks.GetTasks(ctx, "proj")
+	if err != nil {
+		t.Fatalf("GetTasks: %v", err)
+	}
+	if len(list.Tasks) != 1 || list.Tasks[0].ID != resp.ID || strings.Join(list.Tasks[0].RequiresCapability, ",") != "gpu,docker" {
+		t.Fatalf("requires_capability round trip = %+v", list.Tasks)
+	}
+}
+
 // TestCheckoutMode_SurvivesStorageRoundTrip is the regression test for the
 // write-only checkout_mode field.
 //

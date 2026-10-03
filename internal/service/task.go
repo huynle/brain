@@ -173,6 +173,9 @@ func (s *TaskServiceImpl) GetTasks(ctx context.Context, projectId string) (*type
 	}
 	result := ResolveDependencies(entries)
 	s.applyTaskDefaults(result.Tasks)
+	if err := s.enrichRunnerAssignments(ctx, projectId, result.Tasks); err != nil {
+		return nil, err
+	}
 	if err := s.enrichDispatchDiagnostics(ctx, projectId, result.Tasks); err != nil {
 		return nil, err
 	}
@@ -183,6 +186,21 @@ func (s *TaskServiceImpl) GetTasks(ctx context.Context, projectId string) (*type
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *TaskServiceImpl) enrichRunnerAssignments(ctx context.Context, projectID string, tasks []types.ResolvedTask) error {
+	for i := range tasks {
+		task := &tasks[i]
+		assignment, err := s.storage.ResolveRunnerAssignment(ctx, projectID, task.FeatureID, task.ID)
+		if err != nil {
+			return fmt.Errorf("get runner assignment for %s: %w", task.ID, err)
+		}
+		if assignment != nil {
+			task.AssignedRunnerID = assignment.RunnerID
+			task.AssignmentScope = assignment.Scope
+		}
+	}
+	return nil
 }
 
 // enrichUndispatchable derives UndispatchableReason for pending tasks whose
@@ -626,6 +644,14 @@ func (s *TaskServiceImpl) filterByRunnerEligibility(ctx context.Context, project
 			if assignment != nil && assignment.RunnerID != runner.RunnerID {
 				continue
 			}
+		} else {
+			assignment, err := s.storage.GetTaskAssignment(ctx, projectID, task.ID)
+			if err != nil {
+				return nil, fmt.Errorf("get task assignment %q/%q: %w", projectID, task.ID, err)
+			}
+			if assignment != nil && assignment.RunnerID != runner.RunnerID {
+				continue
+			}
 		}
 		filtered = append(filtered, task)
 	}
@@ -813,6 +839,15 @@ func (s *TaskServiceImpl) validateClaimAndGetFeatureID(ctx context.Context, proj
 	}
 	entry := NoteRowToBrainEntry(note)
 	task := brainEntryToResolvedTask(&entry)
+	if task.FeatureID == "" {
+		assignment, err := s.storage.GetTaskAssignment(ctx, projectID, taskID)
+		if err != nil {
+			return "", fmt.Errorf("get task assignment: %w", err)
+		}
+		if assignment != nil && assignment.RunnerID != runnerID {
+			return "", fmt.Errorf("%w: task %s is assigned to %s", api.ErrConflict, taskID, assignment.RunnerID)
+		}
+	}
 	if len(entry.DependsOn) > 0 || len(entry.FeatureDependsOn) > 0 {
 		list, err := s.GetTasks(ctx, projectID)
 		if err != nil {

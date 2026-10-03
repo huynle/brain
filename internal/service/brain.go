@@ -250,6 +250,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		Model:               req.Model,
 		Executor:            frontmatter.SanitizeSimpleValue(req.Executor),
 		Extensions:          req.Extensions,
+		RequiresCapability:  req.RequiresCapability,
 		Generated:           req.Generated,
 		GeneratedKind:       req.GeneratedKind,
 		GeneratedKey:        req.GeneratedKey,

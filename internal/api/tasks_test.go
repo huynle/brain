@@ -20,30 +20,35 @@ import (
 // =============================================================================
 
 type mockTaskService struct {
-	listProjectsFunc     func(ctx context.Context) ([]string, error)
-	getTasksFunc         func(ctx context.Context, projectId string) (*types.TaskListResponse, error)
-	getReadyFunc         func(ctx context.Context, projectId string, opts *TaskFilterOptions) ([]types.ResolvedTask, error)
-	getWaitingFunc       func(ctx context.Context, projectId string) ([]types.ResolvedTask, error)
-	getBlockedFunc       func(ctx context.Context, projectId string) ([]types.ResolvedTask, error)
-	getNextFunc          func(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error)
-	claimTaskFunc        func(ctx context.Context, projectId, taskId, runnerId string) (*types.ClaimResponse, error)
-	releaseTaskFunc      func(ctx context.Context, projectId, taskId, runnerId string) error
-	renewClaimFunc       func(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
-	ackDispatchFunc      func(ctx context.Context, projectId, taskId, runnerId, leaseId string) (*types.DispatchAckResponse, error)
-	rejectDispatchFunc   func(ctx context.Context, projectId, taskId, runnerId, leaseId string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error)
-	releaseDispatchFunc  func(ctx context.Context, projectId, taskId, runnerId string) (*types.DispatchReleaseResponse, error)
-	getClaimStatusFunc   func(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)
-	getLiveClaimFunc     func(ctx context.Context, projectId, taskId string) (*types.LiveClaim, error)
-	getMultiTaskStatusFn func(ctx context.Context, projectId string, req types.MultiTaskStatusRequest) (*types.MultiTaskStatusResponse, error)
-	getFeaturesFunc      func(ctx context.Context, projectId string) (*types.FeatureListResponse, error)
-	getReadyFeaturesFunc func(ctx context.Context, projectId string) (*types.FeatureListResponse, error)
-	getFeatureFunc       func(ctx context.Context, projectId, featureId string) (*types.FeatureResponse, error)
-	checkoutFeatureFunc  func(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error)
-	assignFeatureFunc    func(ctx context.Context, projectId, featureId string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
-	clearFeatureFunc     func(ctx context.Context, projectId, featureId string, req types.ClearFeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
-	triggerTaskFunc      func(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error)
-	resumeTaskFunc       func(ctx context.Context, projectId, taskId string, opts *types.ResumeTaskOptions) (*types.ResumeTaskResult, error)
-	resumeFeatureFunc    func(ctx context.Context, projectId, featureId string, opts *types.ResumeTaskOptions) (*types.ResumeFeatureResult, error)
+	listProjectsFunc        func(ctx context.Context) ([]string, error)
+	getTasksFunc            func(ctx context.Context, projectId string) (*types.TaskListResponse, error)
+	getReadyFunc            func(ctx context.Context, projectId string, opts *TaskFilterOptions) ([]types.ResolvedTask, error)
+	getWaitingFunc          func(ctx context.Context, projectId string) ([]types.ResolvedTask, error)
+	getBlockedFunc          func(ctx context.Context, projectId string) ([]types.ResolvedTask, error)
+	getNextFunc             func(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error)
+	claimTaskFunc           func(ctx context.Context, projectId, taskId, runnerId string) (*types.ClaimResponse, error)
+	releaseTaskFunc         func(ctx context.Context, projectId, taskId, runnerId string) error
+	renewClaimFunc          func(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
+	ackDispatchFunc         func(ctx context.Context, projectId, taskId, runnerId, leaseId string) (*types.DispatchAckResponse, error)
+	rejectDispatchFunc      func(ctx context.Context, projectId, taskId, runnerId, leaseId string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error)
+	releaseDispatchFunc     func(ctx context.Context, projectId, taskId, runnerId string) (*types.DispatchReleaseResponse, error)
+	getClaimStatusFunc      func(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)
+	getLiveClaimFunc        func(ctx context.Context, projectId, taskId string) (*types.LiveClaim, error)
+	getMultiTaskStatusFn    func(ctx context.Context, projectId string, req types.MultiTaskStatusRequest) (*types.MultiTaskStatusResponse, error)
+	getFeaturesFunc         func(ctx context.Context, projectId string) (*types.FeatureListResponse, error)
+	getReadyFeaturesFunc    func(ctx context.Context, projectId string) (*types.FeatureListResponse, error)
+	getFeatureFunc          func(ctx context.Context, projectId, featureId string) (*types.FeatureResponse, error)
+	checkoutFeatureFunc     func(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error)
+	assignFeatureFunc       func(ctx context.Context, projectId, featureId string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
+	clearFeatureFunc        func(ctx context.Context, projectId, featureId string, req types.ClearFeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
+	featureCandidatesFunc   func(ctx context.Context, projectId, featureId string) (*types.RunnerCandidatesResponse, error)
+	taskCandidatesFunc      func(ctx context.Context, projectId, taskId string) (*types.RunnerCandidatesResponse, error)
+	proposedCandidatesFunc  func(ctx context.Context, projectId string, req types.TaskRunnerCandidatesRequest) (*types.RunnerCandidatesResponse, error)
+	assignTaskFunc          func(ctx context.Context, projectId, taskId string, req types.TaskAssignmentRequest) (*types.TaskAssignmentResponse, error)
+	clearTaskAssignmentFunc func(ctx context.Context, projectId, taskId string, req types.ClearFeatureAssignmentRequest) (*types.TaskAssignmentResponse, error)
+	triggerTaskFunc         func(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error)
+	resumeTaskFunc          func(ctx context.Context, projectId, taskId string, opts *types.ResumeTaskOptions) (*types.ResumeTaskResult, error)
+	resumeFeatureFunc       func(ctx context.Context, projectId, featureId string, opts *types.ResumeTaskOptions) (*types.ResumeFeatureResult, error)
 
 	resumeTaskWithContextFunc    func(ctx context.Context, projectId, taskId string, opts *types.ResumeWithContextOptions) (*types.ResumeWithContextResult, error)
 	resumeFeatureWithContextFunc func(ctx context.Context, projectId, featureId string, opts *types.ResumeWithContextOptions) (*types.ResumeWithContextFeatureResult, error)
@@ -199,6 +204,41 @@ func (m *mockTaskService) ClearFeatureAssignment(ctx context.Context, projectId,
 		return m.clearFeatureFunc(ctx, projectId, featureId, req)
 	}
 	return nil, fmt.Errorf("clearFeatureFunc not set")
+}
+
+func (m *mockTaskService) GetFeatureRunnerCandidates(ctx context.Context, projectId, featureId string) (*types.RunnerCandidatesResponse, error) {
+	if m.featureCandidatesFunc != nil {
+		return m.featureCandidatesFunc(ctx, projectId, featureId)
+	}
+	return nil, fmt.Errorf("featureCandidatesFunc not set")
+}
+
+func (m *mockTaskService) GetTaskRunnerCandidates(ctx context.Context, projectId, taskId string) (*types.RunnerCandidatesResponse, error) {
+	if m.taskCandidatesFunc != nil {
+		return m.taskCandidatesFunc(ctx, projectId, taskId)
+	}
+	return nil, fmt.Errorf("taskCandidatesFunc not set")
+}
+
+func (m *mockTaskService) GetProposedTaskRunnerCandidates(ctx context.Context, projectId string, req types.TaskRunnerCandidatesRequest) (*types.RunnerCandidatesResponse, error) {
+	if m.proposedCandidatesFunc != nil {
+		return m.proposedCandidatesFunc(ctx, projectId, req)
+	}
+	return nil, fmt.Errorf("proposedCandidatesFunc not set")
+}
+
+func (m *mockTaskService) AssignTaskToRunner(ctx context.Context, projectId, taskId string, req types.TaskAssignmentRequest) (*types.TaskAssignmentResponse, error) {
+	if m.assignTaskFunc != nil {
+		return m.assignTaskFunc(ctx, projectId, taskId, req)
+	}
+	return nil, fmt.Errorf("assignTaskFunc not set")
+}
+
+func (m *mockTaskService) ClearTaskAssignment(ctx context.Context, projectId, taskId string, req types.ClearFeatureAssignmentRequest) (*types.TaskAssignmentResponse, error) {
+	if m.clearTaskAssignmentFunc != nil {
+		return m.clearTaskAssignmentFunc(ctx, projectId, taskId, req)
+	}
+	return nil, fmt.Errorf("clearTaskAssignmentFunc not set")
 }
 
 func (m *mockTaskService) TriggerTask(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error) {

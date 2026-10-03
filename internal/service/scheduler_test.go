@@ -38,6 +38,40 @@ func TestSchedulerDispatchesSoftAffinityPreferredRunner(t *testing.T) {
 	}
 }
 
+func TestSchedulerHonorsStandaloneAndFeatureRunnerAssignments(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "standalone", ProjectID: "proj", Status: "pending", Classification: "ready", Executor: "opencode"},
+		{ID: "feature-task", ProjectID: "proj", FeatureID: "feature-one", Status: "pending", Classification: "ready", Executor: "opencode"},
+	}
+	store.runners = []types.RunnerInfo{
+		{RunnerID: "runner-a", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 4},
+		{RunnerID: "runner-b", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 4},
+	}
+	store.taskAssignments = map[string]*storage.TaskAssignmentRow{
+		"proj/standalone": {ProjectID: "proj", TaskID: "standalone", RunnerID: "runner-b"},
+	}
+	store.featureAssignments = map[string]*storage.FeatureAssignmentRow{
+		"proj/feature-one": {ProjectID: "proj", FeatureID: "feature-one", RunnerID: "runner-a"},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject: %v", err)
+	}
+	if result.Dispatched != 2 || len(store.leases) != 2 {
+		t.Fatalf("result=%+v leases=%+v", result, store.leases)
+	}
+	got := map[string]string{}
+	for _, lease := range store.leases {
+		got[lease.TaskID] = lease.AssignedRunnerID
+	}
+	if got["standalone"] != "runner-b" || got["feature-task"] != "runner-a" {
+		t.Fatalf("assigned runners = %+v", got)
+	}
+}
+
 func TestSchedulerChoosesPreferredMachineBeforeLeastBusyRunner(t *testing.T) {
 	store := newFakeSchedulerStore()
 	store.tasks = []types.ResolvedTask{{ID: "task-1", ProjectID: "proj", Status: "pending", Classification: "ready", Executor: "opencode"}}
@@ -684,6 +718,23 @@ type fakeSchedulerStore struct {
 	// is in while the API restarts under it, or while its SSE connection
 	// is reconnecting. A dispatch published to one of these is lost.
 	unreachableRunners map[string]bool
+	taskAssignments    map[string]*storage.TaskAssignmentRow
+	featureAssignments map[string]*storage.FeatureAssignmentRow
+}
+
+func (f *fakeSchedulerStore) ResolveRunnerAssignment(_ context.Context, projectID, featureID, taskID string) (*storage.RunnerAssignmentRow, error) {
+	if featureID != "" {
+		row := f.featureAssignments[projectID+"/"+featureID]
+		if row == nil {
+			return nil, nil
+		}
+		return &storage.RunnerAssignmentRow{RunnerID: row.RunnerID, Scope: "feature"}, nil
+	}
+	row := f.taskAssignments[projectID+"/"+taskID]
+	if row == nil {
+		return nil, nil
+	}
+	return &storage.RunnerAssignmentRow{RunnerID: row.RunnerID, Scope: "task"}, nil
 }
 
 type fakeRunnerCommand struct {

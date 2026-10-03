@@ -174,7 +174,11 @@ func (s *SchedulerService) RunFeatureWithOptions(ctx context.Context, projectID,
 			continue
 		}
 
-		candidate, reasons := s.selectCandidate(*task, projectID, runners, placement, reservedSlots)
+		assignedRunners, assignmentErr := s.runnersForAssignment(ctx, projectID, *task, runners)
+		if assignmentErr != nil {
+			return nil, assignmentErr
+		}
+		candidate, reasons := s.selectCandidate(*task, projectID, assignedRunners, placement, reservedSlots)
 		if candidate == nil {
 			one.Reason = "no_eligible_runner"
 			if len(reasons) > 0 {

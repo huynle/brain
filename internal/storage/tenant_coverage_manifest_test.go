@@ -42,9 +42,9 @@ var tenantCoverageManifest = []struct {
 	{"project-pause", "SetProjectTaskPaused SetProjectAutomationsPaused setProjectPauseColumn SetAllProjectTasksPaused SetAllProjectAutomationsPaused IsProjectTaskPaused IsProjectAutomationsPaused isProjectPauseColumn ListProjectPauseStates listKnownProjectIDs", []func(*testing.T){TestTenantProjectPolicyIsolation, TestTenantProjectPolicyScopeGuards}},
 	{"feature-pause", "SetFeaturePaused ListPausedFeatures IsFeaturePaused", []func(*testing.T){TestTenantProjectPolicyIsolation, TestTenantProjectPolicyScopeGuards}},
 	{"cascade", "UpsertFeatureCascadeRoot DeleteFeatureCascadeRoot ListFeatureCascadeRoots", []func(*testing.T){TestTenantProjectPolicyIsolation, TestTenantProjectPolicyScopeGuards}},
-	{"placement", "GetProjectPlacement UpsertProjectPlacement", []func(*testing.T){TestTenantProjectPolicyIsolation, TestTenantProjectPolicyScopeGuards}},
+	{"placement", "GetProjectPlacement UpsertProjectPlacement LoadRunnerEligibility", []func(*testing.T){TestTenantProjectPolicyIsolation, TestTenantProjectPolicyScopeGuards, TestTenantFeatureAssignmentsLifecycle}},
 	{"claims", "ClaimTask ReleaseClaim GetClaim GetClaimsByRunner ExpireStaleClaims ReleaseAllByRunner RenewClaim", []func(*testing.T){TestTenantClaimsLifecycle, TestTenantClaimAssignmentContention, TestTenantClaimAssignmentForeignReferences, TestTenantClaimAssignmentScopeGuards}},
-	{"assignments", "AssignFeatureIfEmpty ForceAssignFeature GetFeatureAssignment ClearFeatureAssignment ClearFeatureAssignmentsByRunner ListFeatureAssignmentsByRunner ListFeatureAssignmentsByProject", []func(*testing.T){TestTenantFeatureAssignmentsLifecycle, TestTenantClaimAssignmentForeignReferences}},
+	{"assignments", "AssignFeatureIfEmpty ForceAssignFeature GetFeatureAssignment ClearFeatureAssignment ClearFeatureAssignmentsByRunner ListFeatureAssignmentsByRunner ListFeatureAssignmentsByProject AssignTaskIfEmpty ForceAssignTask GetTaskAssignment ClearTaskAssignment ResolveRunnerAssignment", []func(*testing.T){TestTenantFeatureAssignmentsLifecycle, TestTenantClaimAssignmentForeignReferences}},
 	{"dispatch", "CreateDispatchLease GetDispatchLeaseRow AckDispatchLease RejectDispatchLease ReleaseDispatchLease ClearDispatchLease ExpireDispatchLeases RecordPlacementReason ListPlacementReasonRows ListPlacementReasonRowsLimit PrunePlacementReasonsForTask GetDispatchLease ListPlacementReasons ListPlacementReasonsLimit ListExpiredDispatchLeases", []func(*testing.T){TestTenantDispatchLifecycle, TestTenantDispatchReasons, TestTenantDispatchReferences, TestTenantDispatchScopeGuards}},
 	{"runners", "UpsertRunner GetRunner ListRunners ListRunnersByStatus DeleteRunner UpdateHeartbeat UpdateRunnerDispatchMetadata UpdateRunnerCapabilities UpdateAffinity SetRunnerStatus UpdateRunnerMaxParallel ExpireStaleRunners SetRunnerPaused", []func(*testing.T){TestTenantRegistryCollisions, TestTenantRegistrySweepPauseDurability, TestTenantRegistryScopeGuards}},
 	{"instances", "UpsertInstance DeleteInstance DeleteInstancesByRunner GetInstance ListInstancesByRunner ListAllInstances ReplaceInstancesForRunner", []func(*testing.T){TestTenantRegistryForeignReferencesAndReplacementRollback, TestTenantCollisionReplacementRollback, TestTenantCollisionForeignRelationships}},
@@ -79,8 +79,8 @@ func TestTenantWorkloadMethodInventory(t *testing.T) {
 			want[method] = group.name
 		}
 	}
-	if len(want) != 183 {
-		t.Fatalf("manifest has %d workload methods, want 183", len(want))
+	if len(want) != 189 {
+		t.Fatalf("manifest has %d workload methods, want 189", len(want))
 	}
 	files, err := filepath.Glob("*.go")
 	collisionMust(t, err)

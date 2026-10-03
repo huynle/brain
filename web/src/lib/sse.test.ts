@@ -7,7 +7,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseSSEFrame } from "./sse";
+import { dataChangeFromFrame, parseSSEFrame } from "./sse";
 
 describe("parseSSEFrame", () => {
   it("parses event + data", () => {
@@ -61,5 +61,50 @@ describe("parseSSEFrame", () => {
       event: "log",
       data: "{\"url\":\"http://x/y:z\"}",
     });
+  });
+});
+
+describe("dataChangeFromFrame", () => {
+  it("marks entries stale when a subscribed project becomes dirty", () => {
+    assert.deepEqual(
+      dataChangeFromFrame(
+        {
+          event: "project_dirty",
+          data: JSON.stringify({ projectId: "alpha" }),
+        },
+        ["alpha"],
+      ),
+      { projectId: "alpha", entriesChanged: true, projectsChanged: false },
+    );
+  });
+
+  it("marks projects and entries stale when a new project appears", () => {
+    assert.deepEqual(
+      dataChangeFromFrame(
+        {
+          event: "projects_changed",
+          data: JSON.stringify({ projectId: "brand-new" }),
+        },
+        ["alpha"],
+      ),
+      {
+        projectId: "brand-new",
+        entriesChanged: true,
+        projectsChanged: true,
+      },
+    );
+  });
+
+  it("does not duplicate entry invalidation for a subscribed project", () => {
+    assert.deepEqual(
+      dataChangeFromFrame(
+        {
+          event: "projects_changed",
+          data: JSON.stringify({ projectId: "alpha" }),
+        },
+        ["alpha"],
+      ),
+      { projectId: "alpha", entriesChanged: false, projectsChanged: true },
+    );
   });
 });

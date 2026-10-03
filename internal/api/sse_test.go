@@ -23,6 +23,7 @@ func newSSETestRouter(taskMock *mockTaskService, hub *realtime.Hub) *chi.Mux {
 		WithHub(hub),
 	)
 	r := chi.NewRouter()
+	r.Get("/tasks/stream", h.HandleMultiSSEStream)
 	r.Get("/tasks/{projectId}/stream", h.HandleSSEStream)
 	return r
 }
@@ -266,6 +267,47 @@ func TestSSEHubMessage(t *testing.T) {
 
 	if events[0].Event != "project_dirty" {
 		t.Errorf("event = %q, want %q", events[0].Event, "project_dirty")
+	}
+	var dirty types.SSEProjectDirtyData
+	if err := json.Unmarshal([]byte(events[0].Data), &dirty); err != nil {
+		t.Fatalf("decode project_dirty: %v", err)
+	}
+	if dirty.ProjectID != "my-project" {
+		t.Errorf("projectId = %q, want my-project", dirty.ProjectID)
+	}
+}
+
+func TestMultiSSEAllWithNoProjectsDiscoversFirstProject(t *testing.T) {
+	hub := realtime.NewHub()
+	taskMock := &mockTaskService{
+		listProjectsFunc: func(context.Context) ([]string, error) {
+			return []string{}, nil
+		},
+	}
+	router := newSSETestRouter(taskMock, hub)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/tasks/stream?projects=all", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	hub.PublishProjectsChanged("first-project")
+	events := parseSSEEvents(t, resp, 1, 2*time.Second)
+	if len(events) != 1 || events[0].Event != "projects_changed" {
+		t.Fatalf("events = %+v, want one projects_changed", events)
+	}
+	var changed types.SSEProjectsChangedData
+	if err := json.Unmarshal([]byte(events[0].Data), &changed); err != nil {
+		t.Fatalf("decode projects_changed: %v", err)
+	}
+	if changed.ProjectID != "first-project" {
+		t.Errorf("projectId = %q, want first-project", changed.ProjectID)
 	}
 }
 

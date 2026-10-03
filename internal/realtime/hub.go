@@ -1,7 +1,12 @@
 // Package realtime provides a pub/sub hub for SSE event distribution.
 package realtime
 
-import "sync"
+import (
+	"sync"
+	"time"
+
+	"github.com/huynle/brain-api/internal/types"
+)
 
 // SSEMessage represents a message sent through the hub.
 type SSEMessage struct {
@@ -27,6 +32,11 @@ func NewHub() *Hub {
 // messages; a stream that can burst thousands of frames must ask for its own
 // depth via SubscribeWithCapacity.
 const DefaultSubscriberBuffer = 64
+
+// ProjectCatalogTopic carries project-list changes independently of any one
+// project subscription. This is what lets a long-lived dashboard discover the
+// first entry in a brand-new project without polling.
+const ProjectCatalogTopic = "__project_catalog__"
 
 // Subscribe registers a subscriber for the given projectId.
 // Returns a read-only channel and an unsubscribe function.
@@ -103,6 +113,29 @@ func (h *Hub) publish(projectId string, msg SSEMessage) (delivered, dropped int)
 func (h *Hub) PublishProjectDirty(projectId string) {
 	h.publish(projectId, SSEMessage{
 		Event: "project_dirty",
+		Data: types.SSEProjectDirtyData{SSEEventData: types.SSEEventData{
+			Type:      types.SSEEventProjectDirty,
+			Transport: "sse",
+			Timestamp: types.TimeNowUTC().Format(time.RFC3339),
+			ProjectID: projectId,
+		}},
+	})
+	h.PublishProjectsChanged(projectId)
+}
+
+// PublishProjectsChanged announces that the set of projects may have changed.
+// It intentionally fires for every project mutation: determining whether an
+// entry is the first or last one would require an extra catalog query on every
+// write, while clients can cheaply invalidate their cached project list.
+func (h *Hub) PublishProjectsChanged(projectId string) {
+	h.publish(ProjectCatalogTopic, SSEMessage{
+		Event: "projects_changed",
+		Data: types.SSEProjectsChangedData{SSEEventData: types.SSEEventData{
+			Type:      types.SSEEventProjectsChanged,
+			Transport: "sse",
+			Timestamp: types.TimeNowUTC().Format(time.RFC3339),
+			ProjectID: projectId,
+		}},
 	})
 }
 

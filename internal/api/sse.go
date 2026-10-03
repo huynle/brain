@@ -215,8 +215,8 @@ func (h *Handler) HandleMultiSSEStream(w http.ResponseWriter, r *http.Request) {
 	// topic. All unsubs are collected and deferred so a mid-loop return
 	// (context cancel, closed channel) still tears the subscriptions
 	// down cleanly.
-	channels := make([]<-chan realtime.SSEMessage, 0, len(projects)+1)
-	unsubs := make([]func(), 0, len(projects)+1)
+	channels := make([]<-chan realtime.SSEMessage, 0, len(projects)+2)
+	unsubs := make([]func(), 0, len(projects)+2)
 	defer func() {
 		for _, u := range unsubs {
 			u()
@@ -227,6 +227,9 @@ func (h *Handler) HandleMultiSSEStream(w http.ResponseWriter, r *http.Request) {
 		channels = append(channels, ch)
 		unsubs = append(unsubs, unsub)
 	}
+	catalogCh, catalogUnsub := h.hub.Subscribe(realtime.ProjectCatalogTopic)
+	channels = append(channels, catalogCh)
+	unsubs = append(unsubs, catalogUnsub)
 	runnerCh, runnerUnsub := h.hub.Subscribe(realtime.RunnerLifecycleTopic)
 	channels = append(channels, runnerCh)
 	unsubs = append(unsubs, runnerUnsub)

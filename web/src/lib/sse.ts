@@ -138,6 +138,52 @@ interface SSEFrame {
   data: string;
 }
 
+export interface DataChange {
+  projectId: string;
+  entriesChanged: boolean;
+  projectsChanged: boolean;
+}
+
+const dataChangeListeners = new Set<(change: DataChange) => void>();
+
+/** Subscribe React Query (or another cache) to entry/project invalidations. */
+export function subscribeDataChanges(
+  listener: (change: DataChange) => void,
+): () => void {
+  dataChangeListeners.add(listener);
+  return () => dataChangeListeners.delete(listener);
+}
+
+/**
+ * Translate cache-invalidation SSE frames into one UI-facing change.
+ * A catalog event only invalidates entries when its project was not already
+ * subscribed; subscribed projects also receive project_dirty, so this avoids
+ * duplicate list refetches while still making brand-new projects immediate.
+ */
+export function dataChangeFromFrame(
+  frame: SSEFrame,
+  subscribedProjectIds: readonly string[],
+): DataChange | null {
+  if (frame.event !== "project_dirty" && frame.event !== "projects_changed")
+    return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(frame.data);
+  } catch {
+    return null;
+  }
+  const projectId = projectIdOf(payload);
+  if (!projectId) return null;
+  if (frame.event === "project_dirty") {
+    return { projectId, entriesChanged: true, projectsChanged: false };
+  }
+  return {
+    projectId,
+    entriesChanged: !subscribedProjectIds.includes(projectId),
+    projectsChanged: true,
+  };
+}
+
 /**
  * Parse a single SSE frame block (text between blank lines) into
  * {event, data}. Handles multi-line data (concatenated with \n per the
@@ -238,7 +284,12 @@ class MultiStream {
   }
 
   private url(): string {
-    const qs = this.projectIds.map(encodeURIComponent).join(",");
+    // With no known projects, keep a catalog-only stream open so the first
+    // project can appear live instead of waiting for the polling fallback.
+    const qs =
+      this.projectIds.length === 0
+        ? "all"
+        : this.projectIds.map(encodeURIComponent).join(",");
     return `/api/v1/tasks/stream?projects=${qs}`;
   }
 
@@ -250,6 +301,11 @@ class MultiStream {
    */
   private handleFrame(frame: SSEFrame): void {
     const live = useLive.getState();
+
+    const change = dataChangeFromFrame(frame, this.projectIds);
+    if (change) {
+      for (const listener of dataChangeListeners) listener(change);
+    }
 
     let payload: unknown = null;
     if (frame.data) {
@@ -275,6 +331,11 @@ class MultiStream {
       }
       case "heartbeat":
         // No-op; connection liveness is implicit in the reader loop.
+        break;
+      case "project_dirty":
+      case "projects_changed":
+        // Cache invalidation is dispatched above. These events carry no live
+        // task state of their own.
         break;
       case "tasks_snapshot": {
         const d = payload as SSETasksSnapshot | null;
@@ -328,7 +389,6 @@ class MultiStream {
 
   private async open(): Promise<void> {
     if (this.closed) return;
-    if (this.projectIds.length === 0) return;
 
     const controller = new AbortController();
     this.controller = controller;
@@ -437,10 +497,6 @@ class StreamManager {
 
     this.stream?.stop();
     this.currentIds = wanted;
-    if (wanted.length === 0) {
-      this.stream = null;
-      return;
-    }
     this.stream = new MultiStream(wanted);
     this.stream.start();
   }

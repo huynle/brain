@@ -2268,6 +2268,7 @@ const (
 	SSEEventConnected        SSEEventType = "connected"
 	SSEEventTasksSnapshot    SSEEventType = "tasks_snapshot"
 	SSEEventProjectDirty     SSEEventType = "project_dirty"
+	SSEEventProjectsChanged  SSEEventType = "projects_changed"
 	SSEEventHeartbeat        SSEEventType = "heartbeat"
 	SSEEventError            SSEEventType = "error"
 	SSEEventTasksChanged     SSEEventType = "tasks_changed"
@@ -2304,6 +2305,13 @@ type SSETasksSnapshotData struct {
 
 // SSEProjectDirtyData is the data for a "project_dirty" SSE event.
 type SSEProjectDirtyData struct {
+	SSEEventData
+}
+
+// SSEProjectsChangedData tells dashboard clients to refresh the project
+// catalog. Unlike project_dirty, it is broadcast on a global topic so a client
+// can discover a project that did not exist when its stream was opened.
+type SSEProjectsChangedData struct {
 	SSEEventData
 }
 

@@ -15,6 +15,7 @@
  * drive mobile / sidebar-collapsed layouts.
  */
 import { useEffect, useState, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { withoutNav } from "../lib/navBridge";
 import { Modal } from "../components/common/Modal";
 import { useModal } from "../store/modal";
@@ -29,7 +30,7 @@ import { AssistantPanel } from "../components/AssistantPanel";
 import { MobileNav } from "../components/MobileNav";
 import { useWorkspace } from "../store/workspace";
 import { useProjects } from "../hooks/useProjects";
-import { streams, useLive } from "../lib/sse";
+import { streams, subscribeDataChanges, useLive } from "../lib/sse";
 import { useAuth } from "../lib/auth";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useGlobalKeyboard } from "../hooks/useGlobalKeyboard";
@@ -55,6 +56,7 @@ export function Dashboard(): JSX.Element {
   }, [modalKind, isMobile]);
 
   const { data: projects, isLoading, error, refetch } = useProjects();
+  const queryClient = useQueryClient();
   const token = useAuth((s) => s.token);
 
   const anyConnected = useLive((s) =>
@@ -157,6 +159,18 @@ export function Dashboard(): JSX.Element {
     if (!projects) return;
     streams.sync(projects);
   }, [projects]);
+  useEffect(
+    () =>
+      subscribeDataChanges((change) => {
+        if (change.entriesChanged) {
+          void queryClient.invalidateQueries({ queryKey: ["entries"] });
+        }
+        if (change.projectsChanged) {
+          void queryClient.invalidateQueries({ queryKey: ["projects"] });
+        }
+      }),
+    [queryClient],
+  );
   useEffect(() => () => streams.stopAll(), []);
   useEffect(() => {
     if (token) streams.restartAll();

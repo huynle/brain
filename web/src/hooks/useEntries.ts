@@ -1,9 +1,9 @@
 /**
  * Entries browser data hooks.
  *
- * Entry data doesn't ride SSE (only tasks do), so these follow the
- * react-query polling + focus-refetch pattern from `useProjects` /
- * `useGoals`. The list hook executes the fan-out plan from
+ * Entry bodies don't ride SSE, but project_dirty events invalidate these
+ * React Query caches so lists and open readers refetch after external writes.
+ * Window-focus refetch remains a fallback. The list hook executes the fan-out plan from
  * `lib/entries.ts` (one request per type for the "knowledge"/"all"
  * modes) and merges client-side.
  */

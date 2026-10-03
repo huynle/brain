@@ -4,6 +4,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 func TestNewHub(t *testing.T) {
@@ -26,8 +28,39 @@ func TestSubscribeAndPublish(t *testing.T) {
 		if msg.Event != "project_dirty" {
 			t.Errorf("event = %q, want %q", msg.Event, "project_dirty")
 		}
+		data, ok := msg.Data.(types.SSEProjectDirtyData)
+		if !ok {
+			t.Fatalf("data = %T, want types.SSEProjectDirtyData", msg.Data)
+		}
+		if data.ProjectID != "project-a" {
+			t.Errorf("projectId = %q, want project-a", data.ProjectID)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for message")
+	}
+}
+
+func TestPublishProjectsChangedReachesCatalogSubscribers(t *testing.T) {
+	hub := NewHub()
+	ch, unsub := hub.Subscribe(ProjectCatalogTopic)
+	defer unsub()
+
+	hub.PublishProjectsChanged("brand-new-project")
+
+	select {
+	case msg := <-ch:
+		if msg.Event != "projects_changed" {
+			t.Fatalf("event = %q, want projects_changed", msg.Event)
+		}
+		data, ok := msg.Data.(types.SSEProjectsChangedData)
+		if !ok {
+			t.Fatalf("data = %T, want types.SSEProjectsChangedData", msg.Data)
+		}
+		if data.ProjectID != "brand-new-project" {
+			t.Errorf("projectId = %q, want brand-new-project", data.ProjectID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for projects_changed")
 	}
 }
 

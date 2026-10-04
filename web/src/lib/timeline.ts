@@ -152,6 +152,16 @@ export function continuousTimelineScale(options: {
   return Math.max(minScale, Math.min(maxScale, next));
 }
 
+export function continuedTimelineZoomAnchor(options: {
+  timestamp: number;
+  previousPointerX: number;
+  pointerX: number;
+  pixelsPerHour: number;
+}): number {
+  const hour = 60 * 60 * 1000;
+  return options.timestamp + ((options.pointerX - options.previousPointerX) / options.pixelsPerHour) * hour;
+}
+
 export function timelineResolutionLabel(pixelsPerHour: number): string {
   const secondsPerPixel = 3600 / Math.max(MIN_TIMELINE_SCALE, pixelsPerHour);
   if (secondsPerPixel <= 1) return "1 sec";

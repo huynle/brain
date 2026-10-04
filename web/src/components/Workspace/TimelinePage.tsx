@@ -3,7 +3,7 @@ import { useDeferredPreview } from "../../hooks/useDeferredPreview";
 import { useProjects } from "../../hooks/useProjects";
 import { useTimeline } from "../../hooks/useTimeline";
 import { useVisibleProjects } from "../../hooks/useVisibleProjects";
-import { boundedTimelineRange, centeredTimelineScrollLeft, continuousTimelineScale, dragScrollLeft, filterTimelineByRange, filterTimelineEvents, fittedTimelineScale, focusedTimelineRange, horizontalTimelineLayout, MAX_TIMELINE_SCALE, MIN_TIMELINE_SCALE, TIMELINE_FAMILIES, timelineDayMarkers, timelineDestination, timelineEdgeExtension, timelineFamily, timelineResolutionLabel, timelineScrollLeftForTimestamp, timelineSpatialDetail, timelineTickIntervalHours, timelineTicks, timelineTimestampAtViewportX, timelineTitle, type TimelineEvent, type TimelineFamily, type TimelineRangeFilter } from "../../lib/timeline";
+import { boundedTimelineRange, centeredTimelineScrollLeft, continuedTimelineZoomAnchor, continuousTimelineScale, dragScrollLeft, filterTimelineByRange, filterTimelineEvents, fittedTimelineScale, focusedTimelineRange, horizontalTimelineLayout, MAX_TIMELINE_SCALE, MIN_TIMELINE_SCALE, TIMELINE_FAMILIES, timelineDayMarkers, timelineDestination, timelineEdgeExtension, timelineFamily, timelineResolutionLabel, timelineScrollLeftForTimestamp, timelineSpatialDetail, timelineTickIntervalHours, timelineTicks, timelineTimestampAtViewportX, timelineTitle, type TimelineEvent, type TimelineFamily, type TimelineRangeFilter } from "../../lib/timeline";
 import { useWorkspace } from "../../store/workspace";
 
 const FAMILY_LABELS: Record<TimelineFamily, string> = { feature: "Features", task: "Tasks", automation: "Automations", reminder: "Reminders", entry: "Entries", session: "Sessions", runner: "Runners", project: "Projects", other: "Other" };
@@ -42,6 +42,7 @@ export function TimelinePage(): JSX.Element {
   const viewportFrameRef = useRef<number | null>(null);
   const zoomFrameRef = useRef<number | null>(null);
   const queuedWheelZoomRef = useRef<{ delta: number; pointerX: number } | null>(null);
+  const wheelGestureRef = useRef<{ timestamp: number; pointerX: number; lastAt: number } | null>(null);
   const pendingZoomAnchorRef = useRef<{ timestamp: number; pointerX: number } | null>(null);
   const pendingScrollLeftRef = useRef<number | null>(null);
   const extendingRef = useRef(false);
@@ -156,11 +157,11 @@ export function TimelinePage(): JSX.Element {
     setCenterRequest((current) => ({ id: current.id + 1, timestamp, behavior: "auto" }));
   };
 
-  const zoomAtScale = (nextScale: number, pointerX: number) => {
+  const zoomAtScale = (nextScale: number, pointerX: number, preciseTimestamp?: number) => {
     const scroller = scrollerRef.current;
     const currentScale = scaleRef.current;
     if (!scroller || nextScale === currentScale) return;
-    const timestamp = timelineTimestampAtViewportX({
+    const timestamp = preciseTimestamp ?? timelineTimestampAtViewportX({
       start: startRef.current,
       scrollLeft: scroller.scrollLeft,
       pointerX,
@@ -208,6 +209,7 @@ export function TimelinePage(): JSX.Element {
   const stepZoom = (direction: -1 | 1) => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
+    wheelGestureRef.current = null;
     const nextScale = continuousTimelineScale({ scale: pixelsPerHour, wheelDelta: direction > 0 ? -180 : 180 });
     zoomAtScale(nextScale, scroller.clientWidth / 2);
   };
@@ -229,13 +231,21 @@ export function TimelinePage(): JSX.Element {
             const request = queuedWheelZoomRef.current;
             queuedWheelZoomRef.current = null;
             if (!request) return;
-            const nextScale = continuousTimelineScale({ scale: scaleRef.current, wheelDelta: request.delta });
-            zoomAtScale(nextScale, request.pointerX);
+            const currentScale = scaleRef.current;
+            const now = performance.now();
+            const previous = wheelGestureRef.current;
+            const timestamp = previous && now - previous.lastAt <= 200
+              ? continuedTimelineZoomAnchor({ timestamp: previous.timestamp, previousPointerX: previous.pointerX, pointerX: request.pointerX, pixelsPerHour: currentScale })
+              : timelineTimestampAtViewportX({ start: startRef.current, scrollLeft: scroller.scrollLeft, pointerX: request.pointerX, pixelsPerHour: currentScale });
+            wheelGestureRef.current = { timestamp, pointerX: request.pointerX, lastAt: now };
+            const nextScale = continuousTimelineScale({ scale: currentScale, wheelDelta: request.delta });
+            zoomAtScale(nextScale, request.pointerX, timestamp);
           });
         }
         return;
       }
       if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+        wheelGestureRef.current = null;
         event.preventDefault();
         scroller.scrollLeft += event.deltaY;
       }
@@ -296,6 +306,7 @@ export function TimelinePage(): JSX.Element {
       onScroll={(event) => { updateViewportTimestamp(event.currentTarget); extendAtEdge(); }}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
+        wheelGestureRef.current = null;
         dragRef.current = { pointerId: event.pointerId, x: event.clientX, scrollLeft: event.currentTarget.scrollLeft, moved: false };
         event.currentTarget.setPointerCapture(event.pointerId);
       }}

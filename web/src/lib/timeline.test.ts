@@ -13,6 +13,7 @@ import {
   timelineEdgeExtension,
   timelineDayMarkers,
   continuousTimelineScale,
+  continuedTimelineZoomAnchor,
   timelineResolutionLabel,
   boundedTimelineRange,
   timelineDetailLevel,
@@ -176,6 +177,22 @@ test("continuousTimelineScale uses the full wheel delta and clamps at second-lev
   assert.ok(continuousTimelineScale({ scale: 100, wheelDelta: -240 }) > continuousTimelineScale({ scale: 100, wheelDelta: -120 }));
   assert.equal(continuousTimelineScale({ scale: 3500, wheelDelta: -1000 }), 3600);
   assert.equal(continuousTimelineScale({ scale: 2, wheelDelta: 1000, minScale: 1 }), 1);
+});
+
+test("continuedTimelineZoomAnchor retains precision while following pointer movement", () => {
+  const hour = 60 * 60 * 1000;
+  assert.equal(continuedTimelineZoomAnchor({
+    timestamp: 18 * hour,
+    previousPointerX: 200,
+    pointerX: 200,
+    pixelsPerHour: 100,
+  }), 18 * hour);
+  assert.equal(continuedTimelineZoomAnchor({
+    timestamp: 18 * hour,
+    previousPointerX: 200,
+    pointerX: 250,
+    pixelsPerHour: 100,
+  }), 18.5 * hour);
 });
 
 test("timelineResolutionLabel describes day, hour, minute, and second scales", () => {

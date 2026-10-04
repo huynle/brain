@@ -67,6 +67,25 @@ export function timelineTicks(options: { start: number; end: number; intervalHou
   return ticks;
 }
 
+export function timelineTickIntervalHours(pixelsPerHour: number, minimumSpacing = 96): number | null {
+  const intervalsInSeconds = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 28800, 43200];
+  const interval = intervalsInSeconds.find((seconds) => (seconds / 3600) * pixelsPerHour >= minimumSpacing);
+  return interval === undefined ? null : interval / 3600;
+}
+
+export function timelineEdgeExtension(options: {
+  scrollLeft: number;
+  scrollWidth: number;
+  clientWidth: number;
+  threshold?: number;
+}): "before" | "after" | null {
+  if (options.scrollWidth <= options.clientWidth + 1) return null;
+  const threshold = options.threshold ?? 600;
+  if (options.scrollLeft < threshold) return "before";
+  if (options.scrollWidth - options.clientWidth - options.scrollLeft < threshold) return "after";
+  return null;
+}
+
 export function timelineDayMarkers(start: number, end: number): number[] {
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return [];
   const cursor = new Date(start);
@@ -97,6 +116,27 @@ export function anchoredZoomScrollLeft(options: {
   return Math.max(0, anchorHour * options.newScale - options.pointerX);
 }
 
+export function timelineTimestampAtViewportX(options: {
+  start: number;
+  scrollLeft: number;
+  pointerX: number;
+  pixelsPerHour: number;
+}): number {
+  const hour = 60 * 60 * 1000;
+  return options.start + ((options.scrollLeft + options.pointerX) / options.pixelsPerHour) * hour;
+}
+
+export function timelineScrollLeftForTimestamp(options: {
+  timestamp: number;
+  start: number;
+  pointerX: number;
+  pixelsPerHour: number;
+}): number {
+  const hour = 60 * 60 * 1000;
+  const x = ((options.timestamp - options.start) / hour) * options.pixelsPerHour;
+  return Math.max(0, x - options.pointerX);
+}
+
 export const MIN_TIMELINE_SCALE = 0.1;
 export const MAX_TIMELINE_SCALE = 3600;
 
@@ -125,10 +165,13 @@ export function boundedTimelineRange(options: {
   end: number;
   anchor: number;
   pixelsPerHour: number;
+  minCanvasWidth?: number;
   maxCanvasWidth: number;
 }): { start: number; end: number } {
   const hour = 60 * 60 * 1000;
+  const minSpan = ((options.minCanvasWidth ?? 0) / options.pixelsPerHour) * hour;
   const maxSpan = (options.maxCanvasWidth / options.pixelsPerHour) * hour;
+  if (options.end - options.start < minSpan) return { start: options.anchor - minSpan / 2, end: options.anchor + minSpan / 2 };
   if (options.end - options.start <= maxSpan) return { start: options.start, end: options.end };
   return { start: options.anchor - maxSpan / 2, end: options.anchor + maxSpan / 2 };
 }

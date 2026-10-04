@@ -4,9 +4,13 @@ import {
   filterTimelineEvents,
   horizontalTimelineLayout,
   anchoredZoomScrollLeft,
+  timelineScrollLeftForTimestamp,
+  timelineTimestampAtViewportX,
   centeredTimelineScrollLeft,
   dragScrollLeft,
   timelineTicks,
+  timelineTickIntervalHours,
+  timelineEdgeExtension,
   timelineDayMarkers,
   continuousTimelineScale,
   timelineResolutionLabel,
@@ -117,6 +121,20 @@ test("timelineTicks covers the requested infinite-window segment", () => {
   ]);
 });
 
+test("timelineTickIntervalHours hides fine-grained ticks when zoomed out", () => {
+  assert.equal(timelineTickIntervalHours(0.1), null);
+  assert.equal(timelineTickIntervalHours(2), null);
+  assert.equal(timelineTickIntervalHours(24), 4);
+  assert.equal(timelineTickIntervalHours(84), 2);
+  assert.equal(timelineTickIntervalHours(3600), 2 / 60);
+});
+
+test("timelineEdgeExtension ignores a canvas that already fits the viewport", () => {
+  assert.equal(timelineEdgeExtension({ scrollLeft: 0, scrollWidth: 1200, clientWidth: 1200 }), null);
+  assert.equal(timelineEdgeExtension({ scrollLeft: 200, scrollWidth: 3000, clientWidth: 1200 }), "before");
+  assert.equal(timelineEdgeExtension({ scrollLeft: 1750, scrollWidth: 3000, clientWidth: 1200 }), "after");
+});
+
 test("timelineDayMarkers returns local calendar boundaries spanning the window", () => {
   const markers = timelineDayMarkers(
     new Date(2026, 9, 3, 13, 20).getTime(),
@@ -134,6 +152,23 @@ test("dragScrollLeft pans opposite pointer movement and clamps at zero", () => {
 test("anchoredZoomScrollLeft preserves the time under the pointer", () => {
   assert.equal(anchoredZoomScrollLeft({ scrollLeft: 1000, pointerX: 250, oldScale: 50, newScale: 100 }), 2250);
   assert.equal(anchoredZoomScrollLeft({ scrollLeft: 20, pointerX: 10, oldScale: 100, newScale: 50 }), 5);
+});
+
+test("timeline viewport transforms preserve an anchor when the represented range shifts", () => {
+  const hour = 60 * 60 * 1000;
+  const timestamp = timelineTimestampAtViewportX({
+    start: 10 * hour,
+    scrollLeft: 600,
+    pointerX: 200,
+    pixelsPerHour: 100,
+  });
+  assert.equal(timestamp, 18 * hour);
+  assert.equal(timelineScrollLeftForTimestamp({
+    timestamp,
+    start: 16 * hour,
+    pointerX: 200,
+    pixelsPerHour: 400,
+  }), 600);
 });
 
 test("continuousTimelineScale uses the full wheel delta and clamps at second-level detail", () => {
@@ -166,6 +201,18 @@ test("boundedTimelineRange contracts high-zoom canvases around the anchor", () =
     pixelsPerHour: 100,
     maxCanvasWidth: 7200,
   }), { start: 0, end: hour });
+});
+
+test("boundedTimelineRange expands a zoomed-out canvas to fill the viewport", () => {
+  const hour = 60 * 60 * 1000;
+  assert.deepEqual(boundedTimelineRange({
+    start: 0,
+    end: 10 * hour,
+    anchor: 5 * hour,
+    pixelsPerHour: 10,
+    minCanvasWidth: 200,
+    maxCanvasWidth: 7200,
+  }), { start: -5 * hour, end: 15 * hour });
 });
 
 test("centeredTimelineScrollLeft places a timestamp at the viewport center", () => {

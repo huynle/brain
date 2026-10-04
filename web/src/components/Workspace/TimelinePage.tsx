@@ -3,7 +3,7 @@ import { useDeferredPreview } from "../../hooks/useDeferredPreview";
 import { useProjects } from "../../hooks/useProjects";
 import { useTimeline } from "../../hooks/useTimeline";
 import { useVisibleProjects } from "../../hooks/useVisibleProjects";
-import { anchoredZoomScrollLeft, boundedTimelineRange, centeredTimelineScrollLeft, continuousTimelineScale, dragScrollLeft, filterTimelineByRange, filterTimelineEvents, fittedTimelineScale, focusedTimelineRange, horizontalTimelineLayout, MAX_TIMELINE_SCALE, MIN_TIMELINE_SCALE, TIMELINE_FAMILIES, timelineDayMarkers, timelineDestination, timelineFamily, timelineResolutionLabel, timelineSpatialDetail, timelineTicks, timelineTitle, type TimelineEvent, type TimelineFamily, type TimelineRangeFilter } from "../../lib/timeline";
+import { boundedTimelineRange, centeredTimelineScrollLeft, continuousTimelineScale, dragScrollLeft, filterTimelineByRange, filterTimelineEvents, fittedTimelineScale, focusedTimelineRange, horizontalTimelineLayout, MAX_TIMELINE_SCALE, MIN_TIMELINE_SCALE, TIMELINE_FAMILIES, timelineDayMarkers, timelineDestination, timelineEdgeExtension, timelineFamily, timelineResolutionLabel, timelineScrollLeftForTimestamp, timelineSpatialDetail, timelineTickIntervalHours, timelineTicks, timelineTimestampAtViewportX, timelineTitle, type TimelineEvent, type TimelineFamily, type TimelineRangeFilter } from "../../lib/timeline";
 import { useWorkspace } from "../../store/workspace";
 
 const FAMILY_LABELS: Record<TimelineFamily, string> = { feature: "Features", task: "Tasks", automation: "Automations", reminder: "Reminders", entry: "Entries", session: "Sessions", runner: "Runners", project: "Projects", other: "Other" };
@@ -13,8 +13,10 @@ const EXTENSION_HOURS = 14 * 24;
 const INITIAL_SCALE = 84;
 const MAX_CANVAS_WIDTH = 8_000_000;
 
-function formatTick(timestamp: number, major: boolean): string {
-  return new Intl.DateTimeFormat(undefined, major ? { month: "short", day: "numeric" } : { hour: "numeric" }).format(new Date(timestamp));
+function formatTick(timestamp: number, intervalHours: number): string {
+  if (intervalHours < 1 / 60) return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" }).format(new Date(timestamp));
+  if (intervalHours < 1) return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric" }).format(new Date(timestamp));
 }
 
 export function TimelinePage(): JSX.Element {
@@ -26,6 +28,8 @@ export function TimelinePage(): JSX.Element {
   const [temporalStates, setTemporalStates] = useState<Set<string>>(() => new Set(["actual", "projected"]));
   const [selected, setSelected] = useState<string | null>(null);
   const [pixelsPerHour, setPixelsPerHour] = useState(INITIAL_SCALE);
+  const [rangeAnchor, setRangeAnchor] = useState(timelineOrigin);
+  const [viewportWidth, setViewportWidth] = useState(0);
   const [isFit, setIsFit] = useState(false);
   const [range, setRange] = useState({ before: INITIAL_WINDOW_HOURS / 2, after: INITIAL_WINDOW_HOURS / 2 });
   const [timeFilter, setTimeFilter] = useState<TimelineRangeFilter>({ preset: "all" });
@@ -37,7 +41,9 @@ export function TimelinePage(): JSX.Element {
   const centeredRequestRef = useRef(-1);
   const viewportFrameRef = useRef<number | null>(null);
   const zoomFrameRef = useRef<number | null>(null);
-  const pendingZoomScrollRef = useRef<number | null>(null);
+  const queuedWheelZoomRef = useRef<{ delta: number; pointerX: number } | null>(null);
+  const pendingZoomAnchorRef = useRef<{ timestamp: number; pointerX: number } | null>(null);
+  const pendingScrollLeftRef = useRef<number | null>(null);
   const extendingRef = useRef(false);
   const dragRef = useRef<{ pointerId: number; x: number; scrollLeft: number; moved: boolean } | null>(null);
   const suppressClickRef = useRef(false);
@@ -56,13 +62,15 @@ export function TimelinePage(): JSX.Element {
   const center = timelineOrigin;
   const rawStart = focusedRange?.start ?? center - range.before * HOUR;
   const rawEnd = focusedRange?.end ?? center + range.after * HOUR;
-  const boundedRange = boundedTimelineRange({ start: rawStart, end: rawEnd, anchor: center, pixelsPerHour, maxCanvasWidth: MAX_CANVAS_WIDTH });
+  const boundedRange = boundedTimelineRange({ start: rawStart, end: rawEnd, anchor: rangeAnchor, pixelsPerHour, minCanvasWidth: viewportWidth, maxCanvasWidth: MAX_CANVAS_WIDTH });
   const start = boundedRange.start;
   const end = boundedRange.end;
+  const startRef = useRef(start);
+  startRef.current = start;
   const canvasWidth = ((end - start) / HOUR) * pixelsPerHour;
   const laidOut = useMemo(() => horizontalTimelineLayout(events, { start, pixelsPerHour }), [events, start, pixelsPerHour]);
-  const tickInterval = pixelsPerHour >= 130 ? 2 : pixelsPerHour >= 80 ? 4 : pixelsPerHour >= 45 ? 8 : 24;
-  const ticks = useMemo(() => timelineTicks({ start, end, intervalHours: tickInterval }), [start, end, tickInterval]);
+  const tickInterval = timelineTickIntervalHours(pixelsPerHour);
+  const ticks = useMemo(() => tickInterval === null ? [] : timelineTicks({ start, end, intervalHours: tickInterval }), [start, end, tickInterval]);
   const dayMarkers = useMemo(() => timelineDayMarkers(start, end), [start, end]);
   const dayLabelEvery = Math.max(1, Math.ceil(120 / Math.max(1, 24 * pixelsPerHour)));
   const nowX = ((clockNow - start) / HOUR) * pixelsPerHour;
@@ -78,6 +86,47 @@ export function TimelinePage(): JSX.Element {
       if (zoomFrameRef.current !== null) window.cancelAnimationFrame(zoomFrameRef.current);
     };
   }, []);
+
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const observer = new ResizeObserver(() => {
+      const width = scroller.clientWidth;
+      setViewportWidth((current) => {
+        if (current === width) return current;
+        pendingZoomAnchorRef.current = {
+          timestamp: current === 0 ? timelineOrigin : timelineTimestampAtViewportX({
+            start: startRef.current,
+            scrollLeft: scroller.scrollLeft,
+            pointerX: current / 2,
+            pixelsPerHour: scaleRef.current,
+          }),
+          pointerX: width / 2,
+        };
+        return width;
+      });
+    });
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const zoomAnchor = pendingZoomAnchorRef.current;
+    if (zoomAnchor) {
+      scroller.scrollLeft = timelineScrollLeftForTimestamp({
+        timestamp: zoomAnchor.timestamp,
+        start,
+        pointerX: zoomAnchor.pointerX,
+        pixelsPerHour,
+      });
+      pendingZoomAnchorRef.current = null;
+    } else if (pendingScrollLeftRef.current !== null) {
+      scroller.scrollLeft = pendingScrollLeftRef.current;
+      pendingScrollLeftRef.current = null;
+    }
+  }, [pixelsPerHour, start, viewportWidth]);
 
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
@@ -111,31 +160,31 @@ export function TimelinePage(): JSX.Element {
     const scroller = scrollerRef.current;
     const currentScale = scaleRef.current;
     if (!scroller || nextScale === currentScale) return;
-    const scrollLeft = pendingZoomScrollRef.current ?? scroller.scrollLeft;
-    const nextScroll = anchoredZoomScrollLeft({ scrollLeft, pointerX, oldScale: currentScale, newScale: nextScale });
+    const timestamp = timelineTimestampAtViewportX({
+      start: startRef.current,
+      scrollLeft: scroller.scrollLeft,
+      pointerX,
+      pixelsPerHour: currentScale,
+    });
+    pendingZoomAnchorRef.current = { timestamp, pointerX };
+    setRangeAnchor(timestamp);
     setPixelsPerHour(nextScale);
     scaleRef.current = nextScale;
     setIsFit(false);
-    pendingZoomScrollRef.current = nextScroll;
-    if (zoomFrameRef.current !== null) window.cancelAnimationFrame(zoomFrameRef.current);
-    zoomFrameRef.current = requestAnimationFrame(() => {
-      zoomFrameRef.current = null;
-      if (pendingZoomScrollRef.current !== null) scroller.scrollLeft = pendingZoomScrollRef.current;
-      pendingZoomScrollRef.current = null;
-    });
   };
 
   const extendAtEdge = () => {
     const scroller = scrollerRef.current;
     if (!scroller || extendingRef.current || focusedRange || canvasWidth >= MAX_CANVAS_WIDTH) return;
-    if (scroller.scrollLeft < 600) {
+    const edge = timelineEdgeExtension(scroller);
+    if (edge === "before") {
       extendingRef.current = true;
       setRange((current) => ({ ...current, before: current.before + EXTENSION_HOURS }));
       requestAnimationFrame(() => {
         scroller.scrollLeft += EXTENSION_HOURS * pixelsPerHour;
         extendingRef.current = false;
       });
-    } else if (scroller.scrollWidth - scroller.clientWidth - scroller.scrollLeft < 600) {
+    } else if (edge === "after") {
       extendingRef.current = true;
       setRange((current) => ({ ...current, after: current.after + EXTENSION_HOURS }));
       requestAnimationFrame(() => { extendingRef.current = false; });
@@ -148,11 +197,12 @@ export function TimelinePage(): JSX.Element {
     if (!scroller || !bounds) return;
     const spanHours = Math.max(1, (bounds.end - bounds.start) / HOUR);
     const targetScale = fittedTimelineScale({ viewportWidth: scroller.clientWidth, spanHours });
+    pendingScrollLeftRef.current = 0;
+    setRangeAnchor((bounds.start + bounds.end) / 2);
     setFocusedRange(bounds);
     setPixelsPerHour(targetScale);
     scaleRef.current = targetScale;
     setIsFit(true);
-    requestAnimationFrame(() => { scroller.scrollLeft = 0; });
   };
 
   const stepZoom = (direction: -1 | 1) => {
@@ -171,8 +221,18 @@ export function TimelinePage(): JSX.Element {
         const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
         if (delta === 0) return;
         const pointerX = event.clientX - scroller.getBoundingClientRect().left;
-        const nextScale = continuousTimelineScale({ scale: scaleRef.current, wheelDelta: delta });
-        zoomAtScale(nextScale, pointerX);
+        const queued = queuedWheelZoomRef.current;
+        queuedWheelZoomRef.current = { delta: (queued?.delta ?? 0) + delta, pointerX };
+        if (zoomFrameRef.current === null) {
+          zoomFrameRef.current = requestAnimationFrame(() => {
+            zoomFrameRef.current = null;
+            const request = queuedWheelZoomRef.current;
+            queuedWheelZoomRef.current = null;
+            if (!request) return;
+            const nextScale = continuousTimelineScale({ scale: scaleRef.current, wheelDelta: request.delta });
+            zoomAtScale(nextScale, request.pointerX);
+          });
+        }
         return;
       }
       if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
@@ -182,7 +242,7 @@ export function TimelinePage(): JSX.Element {
     };
     scroller.addEventListener("wheel", handleWheel, { passive: false });
     return () => scroller.removeEventListener("wheel", handleWheel);
-  }, [pixelsPerHour, start, end]);
+  }, []);
 
   const toggleFamily = (family: TimelineFamily) => setFamilies((current) => {
     setFocusedRange(null);
@@ -271,8 +331,8 @@ export function TimelinePage(): JSX.Element {
         {clockNow >= start && clockNow <= end && <div className={`timeline-now-marker ${nowX > canvasWidth - 150 ? "label-left" : ""}`} style={{ left: nowX }} aria-label={`Current time: ${nowLabel}`}><div className="timeline-now-beacon" /><div className="timeline-now-label"><strong>Now</strong><time dateTime={new Date(clockNow).toISOString()}>{nowLabel}</time></div></div>}
         {ticks.map((tick) => {
           const x = ((tick - start) / HOUR) * pixelsPerHour;
-          const major = new Date(tick).getHours() === 0;
-          return <div key={tick} className={`timeline-tick ${major ? "major" : ""}`} style={{ left: x }}><span>{formatTick(tick, major)}</span></div>;
+          const major = new Date(tick).getMinutes() === 0;
+          return <div key={tick} className={`timeline-tick ${major ? "major" : ""}`} style={{ left: x }}><span>{formatTick(tick, tickInterval!)}</span></div>;
         })}
         {laidOut.map(({ event, x }, index) => {
           const family = timelineFamily(event);

@@ -97,11 +97,40 @@ export function anchoredZoomScrollLeft(options: {
   return Math.max(0, anchorHour * options.newScale - options.pointerX);
 }
 
-export function timelineZoomTarget(currentIndex: number, direction: -1 | 1, levelCount: number): number | "fit" | null {
-  const next = currentIndex + direction;
-  if (next < 0) return "fit";
-  if (next >= levelCount) return null;
-  return next;
+export const MIN_TIMELINE_SCALE = 0.1;
+export const MAX_TIMELINE_SCALE = 3600;
+
+export function continuousTimelineScale(options: {
+  scale: number;
+  wheelDelta: number;
+  minScale?: number;
+  maxScale?: number;
+}): number {
+  const minScale = options.minScale ?? MIN_TIMELINE_SCALE;
+  const maxScale = options.maxScale ?? MAX_TIMELINE_SCALE;
+  const next = options.scale * Math.exp(-options.wheelDelta * 0.002);
+  return Math.max(minScale, Math.min(maxScale, next));
+}
+
+export function timelineResolutionLabel(pixelsPerHour: number): string {
+  const secondsPerPixel = 3600 / Math.max(MIN_TIMELINE_SCALE, pixelsPerHour);
+  if (secondsPerPixel <= 1) return "1 sec";
+  if (secondsPerPixel < 60) return `${Math.round(secondsPerPixel)} sec/px`;
+  if (secondsPerPixel < 3600) return `${Math.round(secondsPerPixel / 60)} min/px`;
+  return `${Math.round(secondsPerPixel / 3600)} hr/px`;
+}
+
+export function boundedTimelineRange(options: {
+  start: number;
+  end: number;
+  anchor: number;
+  pixelsPerHour: number;
+  maxCanvasWidth: number;
+}): { start: number; end: number } {
+  const hour = 60 * 60 * 1000;
+  const maxSpan = (options.maxCanvasWidth / options.pixelsPerHour) * hour;
+  if (options.end - options.start <= maxSpan) return { start: options.start, end: options.end };
+  return { start: options.anchor - maxSpan / 2, end: options.anchor + maxSpan / 2 };
 }
 
 export function centeredTimelineScrollLeft(options: {

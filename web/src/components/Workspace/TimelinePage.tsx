@@ -3,14 +3,15 @@ import { useDeferredPreview } from "../../hooks/useDeferredPreview";
 import { useProjects } from "../../hooks/useProjects";
 import { useTimeline } from "../../hooks/useTimeline";
 import { useVisibleProjects } from "../../hooks/useVisibleProjects";
-import { anchoredZoomScrollLeft, centeredTimelineScrollLeft, dragScrollLeft, filterTimelineByRange, filterTimelineEvents, fittedTimelineScale, focusedTimelineRange, horizontalTimelineLayout, TIMELINE_FAMILIES, timelineDayMarkers, timelineDestination, timelineFamily, timelineSpatialDetail, timelineTicks, timelineTitle, timelineZoomTarget, type TimelineEvent, type TimelineFamily, type TimelineRangeFilter } from "../../lib/timeline";
+import { anchoredZoomScrollLeft, boundedTimelineRange, centeredTimelineScrollLeft, continuousTimelineScale, dragScrollLeft, filterTimelineByRange, filterTimelineEvents, fittedTimelineScale, focusedTimelineRange, horizontalTimelineLayout, MAX_TIMELINE_SCALE, MIN_TIMELINE_SCALE, TIMELINE_FAMILIES, timelineDayMarkers, timelineDestination, timelineFamily, timelineResolutionLabel, timelineSpatialDetail, timelineTicks, timelineTitle, type TimelineEvent, type TimelineFamily, type TimelineRangeFilter } from "../../lib/timeline";
 import { useWorkspace } from "../../store/workspace";
 
 const FAMILY_LABELS: Record<TimelineFamily, string> = { feature: "Features", task: "Tasks", automation: "Automations", reminder: "Reminders", entry: "Entries", session: "Sessions", runner: "Runners", project: "Projects", other: "Other" };
-const ZOOM_LEVELS = [24, 48, 84, 132, 210];
 const HOUR = 60 * 60 * 1000;
 const INITIAL_WINDOW_HOURS = 24 * 24;
 const EXTENSION_HOURS = 14 * 24;
+const INITIAL_SCALE = 84;
+const MAX_CANVAS_WIDTH = 8_000_000;
 
 function formatTick(timestamp: number, major: boolean): string {
   return new Intl.DateTimeFormat(undefined, major ? { month: "short", day: "numeric" } : { hour: "numeric" }).format(new Date(timestamp));
@@ -24,8 +25,8 @@ export function TimelinePage(): JSX.Element {
   const [families, setFamilies] = useState<Set<string>>(() => new Set(TIMELINE_FAMILIES));
   const [temporalStates, setTemporalStates] = useState<Set<string>>(() => new Set(["actual", "projected"]));
   const [selected, setSelected] = useState<string | null>(null);
-  const [zoomIndex, setZoomIndex] = useState(2);
-  const [fitScale, setFitScale] = useState<number | null>(null);
+  const [pixelsPerHour, setPixelsPerHour] = useState(INITIAL_SCALE);
+  const [isFit, setIsFit] = useState(false);
   const [range, setRange] = useState({ before: INITIAL_WINDOW_HOURS / 2, after: INITIAL_WINDOW_HOURS / 2 });
   const [timeFilter, setTimeFilter] = useState<TimelineRangeFilter>({ preset: "all" });
   const [focusedRange, setFocusedRange] = useState<{ start: number; end: number } | null>(null);
@@ -35,10 +36,12 @@ export function TimelinePage(): JSX.Element {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const centeredRequestRef = useRef(-1);
   const viewportFrameRef = useRef<number | null>(null);
+  const zoomFrameRef = useRef<number | null>(null);
+  const pendingZoomScrollRef = useRef<number | null>(null);
   const extendingRef = useRef(false);
   const dragRef = useRef<{ pointerId: number; x: number; scrollLeft: number; moved: boolean } | null>(null);
   const suppressClickRef = useRef(false);
-  const zoomIndexRef = useRef(zoomIndex);
+  const scaleRef = useRef(pixelsPerHour);
   const preview = useDeferredPreview();
   const openSidebar = useWorkspace((state) => state.openOrReuseInSidebar);
   const openFocus = useWorkspace((state) => state.openInFocus);
@@ -51,9 +54,11 @@ export function TimelinePage(): JSX.Element {
   const scopedEvents = useMemo(() => filterTimelineEvents(timelineQuery.data?.items || [], { projects: projectFilter, families, temporalStates }), [families, projectFilter, temporalStates, timelineQuery.data?.items]);
   const events = useMemo(() => filterTimelineByRange(scopedEvents, timeFilter), [scopedEvents, timeFilter]);
   const center = timelineOrigin;
-  const start = focusedRange?.start ?? center - range.before * HOUR;
-  const end = focusedRange?.end ?? center + range.after * HOUR;
-  const pixelsPerHour = fitScale ?? ZOOM_LEVELS[zoomIndex];
+  const rawStart = focusedRange?.start ?? center - range.before * HOUR;
+  const rawEnd = focusedRange?.end ?? center + range.after * HOUR;
+  const boundedRange = boundedTimelineRange({ start: rawStart, end: rawEnd, anchor: center, pixelsPerHour, maxCanvasWidth: MAX_CANVAS_WIDTH });
+  const start = boundedRange.start;
+  const end = boundedRange.end;
   const canvasWidth = ((end - start) / HOUR) * pixelsPerHour;
   const laidOut = useMemo(() => horizontalTimelineLayout(events, { start, pixelsPerHour }), [events, start, pixelsPerHour]);
   const tickInterval = pixelsPerHour >= 130 ? 2 : pixelsPerHour >= 80 ? 4 : pixelsPerHour >= 45 ? 8 : 24;
@@ -70,6 +75,7 @@ export function TimelinePage(): JSX.Element {
     return () => {
       window.clearInterval(interval);
       if (viewportFrameRef.current !== null) window.cancelAnimationFrame(viewportFrameRef.current);
+      if (zoomFrameRef.current !== null) window.cancelAnimationFrame(zoomFrameRef.current);
     };
   }, []);
 
@@ -97,36 +103,31 @@ export function TimelinePage(): JSX.Element {
     const timestamp = Date.now();
     setClockNow(timestamp);
     setFocusedRange(null);
-    setFitScale(null);
+    setIsFit(false);
     setCenterRequest((current) => ({ id: current.id + 1, timestamp, behavior: "auto" }));
   };
 
-  const changeZoom = (next: number) => {
+  const zoomAtScale = (nextScale: number, pointerX: number) => {
     const scroller = scrollerRef.current;
-    if (!scroller || next < 0 || next >= ZOOM_LEVELS.length) return;
-    const oldScale = pixelsPerHour;
-    const anchorHour = (scroller.scrollLeft + scroller.clientWidth / 2) / oldScale;
-    setZoomIndex(next);
-    zoomIndexRef.current = next;
-    setFitScale(null);
-    requestAnimationFrame(() => {
-      scroller.scrollLeft = anchorHour * ZOOM_LEVELS[next] - scroller.clientWidth / 2;
+    const currentScale = scaleRef.current;
+    if (!scroller || nextScale === currentScale) return;
+    const scrollLeft = pendingZoomScrollRef.current ?? scroller.scrollLeft;
+    const nextScroll = anchoredZoomScrollLeft({ scrollLeft, pointerX, oldScale: currentScale, newScale: nextScale });
+    setPixelsPerHour(nextScale);
+    scaleRef.current = nextScale;
+    setIsFit(false);
+    pendingZoomScrollRef.current = nextScroll;
+    if (zoomFrameRef.current !== null) window.cancelAnimationFrame(zoomFrameRef.current);
+    zoomFrameRef.current = requestAnimationFrame(() => {
+      zoomFrameRef.current = null;
+      if (pendingZoomScrollRef.current !== null) scroller.scrollLeft = pendingZoomScrollRef.current;
+      pendingZoomScrollRef.current = null;
     });
-  };
-
-  const zoomAt = (next: number, pointerX: number) => {
-    const scroller = scrollerRef.current;
-    if (!scroller || next < 0 || next >= ZOOM_LEVELS.length) return;
-    const nextScroll = anchoredZoomScrollLeft({ scrollLeft: scroller.scrollLeft, pointerX, oldScale: pixelsPerHour, newScale: ZOOM_LEVELS[next] });
-    setZoomIndex(next);
-    zoomIndexRef.current = next;
-    setFitScale(null);
-    requestAnimationFrame(() => { scroller.scrollLeft = nextScroll; });
   };
 
   const extendAtEdge = () => {
     const scroller = scrollerRef.current;
-    if (!scroller || extendingRef.current || focusedRange) return;
+    if (!scroller || extendingRef.current || focusedRange || canvasWidth >= MAX_CANVAS_WIDTH) return;
     if (scroller.scrollLeft < 600) {
       extendingRef.current = true;
       setRange((current) => ({ ...current, before: current.before + EXTENSION_HOURS }));
@@ -147,28 +148,18 @@ export function TimelinePage(): JSX.Element {
     if (!scroller || !bounds) return;
     const spanHours = Math.max(1, (bounds.end - bounds.start) / HOUR);
     const targetScale = fittedTimelineScale({ viewportWidth: scroller.clientWidth, spanHours });
-    let nextZoom = 0;
-    for (let index = 1; index < ZOOM_LEVELS.length; index += 1) {
-      if (Math.abs(ZOOM_LEVELS[index] - targetScale) < Math.abs(ZOOM_LEVELS[nextZoom] - targetScale)) nextZoom = index;
-    }
     setFocusedRange(bounds);
-    setZoomIndex(nextZoom);
-    setFitScale(targetScale);
+    setPixelsPerHour(targetScale);
+    scaleRef.current = targetScale;
+    setIsFit(true);
     requestAnimationFrame(() => { scroller.scrollLeft = 0; });
   };
 
   const stepZoom = (direction: -1 | 1) => {
-    if (fitScale === null) {
-      const target = timelineZoomTarget(zoomIndex, direction, ZOOM_LEVELS.length);
-      if (target === "fit") focusEvents();
-      else if (target !== null) changeZoom(target);
-      return;
-    }
-    if (direction < 0) return;
-    const next = direction > 0
-      ? ZOOM_LEVELS.findIndex((scale) => scale > fitScale)
-      : ZOOM_LEVELS.findLastIndex((scale) => scale < fitScale);
-    if (next >= 0) changeZoom(next);
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const nextScale = continuousTimelineScale({ scale: pixelsPerHour, wheelDelta: direction > 0 ? -180 : 180 });
+    zoomAtScale(nextScale, scroller.clientWidth / 2);
   };
 
   useEffect(() => {
@@ -179,17 +170,9 @@ export function TimelinePage(): JSX.Element {
         event.preventDefault();
         const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
         if (delta === 0) return;
-        const direction: -1 | 1 = delta < 0 ? 1 : -1;
         const pointerX = event.clientX - scroller.getBoundingClientRect().left;
-        if (fitScale !== null) {
-          if (direction < 0) return;
-          const next = ZOOM_LEVELS.findIndex((scale) => scale > fitScale);
-          if (next >= 0) zoomAt(next, pointerX);
-          return;
-        }
-        const target = timelineZoomTarget(zoomIndexRef.current, direction, ZOOM_LEVELS.length);
-        if (target === "fit") focusEvents();
-        else if (target !== null) zoomAt(target, pointerX);
+        const nextScale = continuousTimelineScale({ scale: scaleRef.current, wheelDelta: delta });
+        zoomAtScale(nextScale, pointerX);
         return;
       }
       if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
@@ -199,11 +182,11 @@ export function TimelinePage(): JSX.Element {
     };
     scroller.addEventListener("wheel", handleWheel, { passive: false });
     return () => scroller.removeEventListener("wheel", handleWheel);
-  }, [fitScale, pixelsPerHour]);
+  }, [pixelsPerHour, start, end]);
 
   const toggleFamily = (family: TimelineFamily) => setFamilies((current) => {
     setFocusedRange(null);
-    setFitScale(null);
+    setIsFit(false);
     const next = new Set(current);
     if (next.has(family)) next.delete(family); else next.add(family);
     return next;
@@ -227,15 +210,15 @@ export function TimelinePage(): JSX.Element {
     </header>
     <div className="timeline-controls horizontal-controls">
       <div className="timeline-filter-fields">
-        <label><span>Project scope</span><select aria-label="Project scope" value={projectScope} onChange={(event) => { setFocusedRange(null); setFitScale(null); setProjectScope(event.target.value); }}><option value="all">All projects</option><option value="sidebar">Sidebar projects</option>{(projects || []).map((project) => <option key={project} value={project}>{project}</option>)}</select></label>
-        <label className="timeline-range-filter"><span>Time range</span><select aria-label="Time range" value={timeFilter.preset} onChange={(event) => { setFocusedRange(null); setFitScale(null); setTimeFilter({ preset: event.target.value as TimelineRangeFilter["preset"] }); }}><option value="all">All time</option><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="custom">Custom range</option></select></label>
+        <label><span>Project scope</span><select aria-label="Project scope" value={projectScope} onChange={(event) => { setFocusedRange(null); setIsFit(false); setProjectScope(event.target.value); }}><option value="all">All projects</option><option value="sidebar">Sidebar projects</option>{(projects || []).map((project) => <option key={project} value={project}>{project}</option>)}</select></label>
+        <label className="timeline-range-filter"><span>Time range</span><select aria-label="Time range" value={timeFilter.preset} onChange={(event) => { setFocusedRange(null); setIsFit(false); setTimeFilter({ preset: event.target.value as TimelineRangeFilter["preset"] }); }}><option value="all">All time</option><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="custom">Custom range</option></select></label>
       </div>
       <div className="timeline-family-filter timeline-legend" aria-label="Event families">{TIMELINE_FAMILIES.map((family) => <button key={family} className={`family-${family} ${families.has(family) ? "active" : ""}`} aria-pressed={families.has(family)} onClick={() => toggleFamily(family)}><span />{FAMILY_LABELS[family]}</button>)}</div>
-      <div className="timeline-state-filter" aria-label="Temporal state">{[["actual", "Actual"], ["projected", "Forecast"]].map(([state, label]) => <button key={state} className={temporalStates.has(state) ? "active" : ""} aria-pressed={temporalStates.has(state)} onClick={() => setTemporalStates((current) => { const next = new Set(current); if (next.has(state)) next.delete(state); else next.add(state); setFocusedRange(null); setFitScale(null); return next; })}>{label}</button>)}</div>
+      <div className="timeline-state-filter" aria-label="Temporal state">{[["actual", "Actual"], ["projected", "Forecast"]].map(([state, label]) => <button key={state} className={temporalStates.has(state) ? "active" : ""} aria-pressed={temporalStates.has(state)} onClick={() => setTemporalStates((current) => { const next = new Set(current); if (next.has(state)) next.delete(state); else next.add(state); setFocusedRange(null); setIsFit(false); return next; })}>{label}</button>)}</div>
       <div className="timeline-control-actions">
         <button className="timeline-now-button" onClick={returnToNow} title="Center the timeline on the current time"><span>Today</span><time dateTime={new Date(clockNow).toISOString()}>{nowLabel}</time></button>
         <button className="timeline-focus-button" onClick={focusEvents}>Focus events</button>
-        <div className="timeline-zoom"><button onClick={() => stepZoom(-1)} disabled={fitScale !== null} aria-label="Zoom out">−</button><span>{fitScale === null ? `${zoomIndex + 1}×` : "Fit"}</span><button onClick={() => stepZoom(1)} disabled={fitScale === null ? zoomIndex === ZOOM_LEVELS.length - 1 : fitScale >= ZOOM_LEVELS.at(-1)!} aria-label="Zoom in">+</button></div>
+        <div className="timeline-zoom"><button onClick={() => stepZoom(-1)} disabled={pixelsPerHour <= MIN_TIMELINE_SCALE} aria-label="Zoom out">−</button><span>{isFit ? "Fit" : timelineResolutionLabel(pixelsPerHour)}</span><button onClick={() => stepZoom(1)} disabled={pixelsPerHour >= MAX_TIMELINE_SCALE} aria-label="Zoom in">+</button></div>
       </div>
     </div>
     {timeFilter.preset === "custom" && <div className="timeline-custom-range"><label>From <input type="date" value={timeFilter.start || ""} onChange={(event) => setTimeFilter((current) => ({ ...current, start: event.target.value }))} /></label><label>To <input type="date" value={timeFilter.end || ""} onChange={(event) => setTimeFilter((current) => ({ ...current, end: event.target.value }))} /></label></div>}

@@ -8,7 +8,9 @@ import {
   dragScrollLeft,
   timelineTicks,
   timelineDayMarkers,
-  timelineZoomTarget,
+  continuousTimelineScale,
+  timelineResolutionLabel,
+  boundedTimelineRange,
   timelineDetailLevel,
   filterTimelineByRange,
   focusedTimelineRange,
@@ -134,10 +136,36 @@ test("anchoredZoomScrollLeft preserves the time under the pointer", () => {
   assert.equal(anchoredZoomScrollLeft({ scrollLeft: 20, pointerX: 10, oldScale: 100, newScale: 50 }), 5);
 });
 
-test("timelineZoomTarget exposes Fit below the minimum fixed zoom", () => {
-  assert.equal(timelineZoomTarget(2, -1, 5), 1);
-  assert.equal(timelineZoomTarget(0, -1, 5), "fit");
-  assert.equal(timelineZoomTarget(4, 1, 5), null);
+test("continuousTimelineScale uses the full wheel delta and clamps at second-level detail", () => {
+  assert.ok(continuousTimelineScale({ scale: 100, wheelDelta: -120 }) > 100);
+  assert.ok(continuousTimelineScale({ scale: 100, wheelDelta: -240 }) > continuousTimelineScale({ scale: 100, wheelDelta: -120 }));
+  assert.equal(continuousTimelineScale({ scale: 3500, wheelDelta: -1000 }), 3600);
+  assert.equal(continuousTimelineScale({ scale: 2, wheelDelta: 1000, minScale: 1 }), 1);
+});
+
+test("timelineResolutionLabel describes day, hour, minute, and second scales", () => {
+  assert.equal(timelineResolutionLabel(0.1), "10 hr/px");
+  assert.equal(timelineResolutionLabel(2), "30 min/px");
+  assert.equal(timelineResolutionLabel(240), "15 sec/px");
+  assert.equal(timelineResolutionLabel(3600), "1 sec");
+});
+
+test("boundedTimelineRange contracts high-zoom canvases around the anchor", () => {
+  const hour = 60 * 60 * 1000;
+  assert.deepEqual(boundedTimelineRange({
+    start: 0,
+    end: 24 * hour,
+    anchor: 12 * hour,
+    pixelsPerHour: 3600,
+    maxCanvasWidth: 7200,
+  }), { start: 11 * hour, end: 13 * hour });
+  assert.deepEqual(boundedTimelineRange({
+    start: 0,
+    end: hour,
+    anchor: hour / 2,
+    pixelsPerHour: 100,
+    maxCanvasWidth: 7200,
+  }), { start: 0, end: hour });
 });
 
 test("centeredTimelineScrollLeft places a timestamp at the viewport center", () => {

@@ -6,6 +6,7 @@ import {
   anchoredZoomScrollLeft,
   timelineScrollLeftForTimestamp,
   timelineTimestampAtViewportX,
+  visibleTimelineRenderRange,
   centeredTimelineScrollLeft,
   dragScrollLeft,
   timelineTicks,
@@ -120,6 +121,24 @@ test("timelineTicks covers the requested infinite-window segment", () => {
     "2026-09-29T10:00:00.000Z",
     "2026-09-29T12:00:00.000Z",
   ]);
+});
+
+test("visibleTimelineRenderRange limits rendering to the viewport plus overscan", () => {
+  const hour = 60 * 60 * 1000;
+  assert.deepEqual(visibleTimelineRenderRange({
+    start: 0,
+    end: 100 * hour,
+    center: 50 * hour,
+    pixelsPerHour: 100,
+    viewportWidth: 1000,
+  }), { start: 35 * hour, end: 65 * hour });
+  assert.deepEqual(visibleTimelineRenderRange({
+    start: 0,
+    end: 100 * hour,
+    center: 5 * hour,
+    pixelsPerHour: 100,
+    viewportWidth: 1000,
+  }), { start: 0, end: 20 * hour });
 });
 
 test("timelineTickIntervalHours hides fine-grained ticks when zoomed out", () => {

@@ -67,6 +67,24 @@ export function timelineTicks(options: { start: number; end: number; intervalHou
   return ticks;
 }
 
+export function visibleTimelineRenderRange(options: {
+  start: number;
+  end: number;
+  center: number;
+  pixelsPerHour: number;
+  viewportWidth: number;
+  overscanViewports?: number;
+}): { start: number; end: number } {
+  if (options.viewportWidth <= 0) return { start: options.start, end: options.end };
+  const hour = 60 * 60 * 1000;
+  const viewportSpan = (options.viewportWidth / options.pixelsPerHour) * hour;
+  const halfRenderSpan = viewportSpan * (0.5 + (options.overscanViewports ?? 1));
+  return {
+    start: Math.max(options.start, options.center - halfRenderSpan),
+    end: Math.min(options.end, options.center + halfRenderSpan),
+  };
+}
+
 export function timelineTickIntervalHours(pixelsPerHour: number, minimumSpacing = 96): number | null {
   const intervalsInSeconds = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 28800, 43200];
   const interval = intervalsInSeconds.find((seconds) => (seconds / 3600) * pixelsPerHour >= minimumSpacing);

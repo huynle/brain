@@ -3,7 +3,7 @@ import { useDeferredPreview } from "../../hooks/useDeferredPreview";
 import { useProjects } from "../../hooks/useProjects";
 import { useTimeline } from "../../hooks/useTimeline";
 import { useVisibleProjects } from "../../hooks/useVisibleProjects";
-import { boundedTimelineRange, centeredTimelineScrollLeft, continuedTimelineZoomAnchor, continuousTimelineScale, dragScrollLeft, filterTimelineByRange, filterTimelineEvents, fittedTimelineScale, focusedTimelineRange, horizontalTimelineLayout, MAX_TIMELINE_SCALE, MIN_TIMELINE_SCALE, TIMELINE_FAMILIES, timelineDayMarkers, timelineDestination, timelineEdgeExtension, timelineFamily, timelineResolutionLabel, timelineScrollLeftForTimestamp, timelineSpatialDetail, timelineTickIntervalHours, timelineTicks, timelineTimestampAtViewportX, timelineTitle, type TimelineEvent, type TimelineFamily, type TimelineRangeFilter } from "../../lib/timeline";
+import { boundedTimelineRange, centeredTimelineScrollLeft, continuedTimelineZoomAnchor, continuousTimelineScale, dragScrollLeft, filterTimelineByRange, filterTimelineEvents, fittedTimelineScale, focusedTimelineRange, horizontalTimelineLayout, MAX_TIMELINE_SCALE, MIN_TIMELINE_SCALE, TIMELINE_FAMILIES, timelineDayMarkers, timelineDestination, timelineEdgeExtension, timelineFamily, timelineResolutionLabel, timelineScrollLeftForTimestamp, timelineSpatialDetail, timelineTickIntervalHours, timelineTicks, timelineTimestampAtViewportX, timelineTitle, visibleTimelineRenderRange, type TimelineEvent, type TimelineFamily, type TimelineRangeFilter } from "../../lib/timeline";
 import { useWorkspace } from "../../store/workspace";
 
 const FAMILY_LABELS: Record<TimelineFamily, string> = { feature: "Features", task: "Tasks", automation: "Automations", reminder: "Reminders", entry: "Entries", session: "Sessions", runner: "Runners", project: "Projects", other: "Other" };
@@ -70,9 +70,10 @@ export function TimelinePage(): JSX.Element {
   startRef.current = start;
   const canvasWidth = ((end - start) / HOUR) * pixelsPerHour;
   const laidOut = useMemo(() => horizontalTimelineLayout(events, { start, pixelsPerHour }), [events, start, pixelsPerHour]);
+  const renderRange = useMemo(() => visibleTimelineRenderRange({ start, end, center: viewportTimestamp, pixelsPerHour, viewportWidth }), [end, pixelsPerHour, start, viewportTimestamp, viewportWidth]);
   const tickInterval = timelineTickIntervalHours(pixelsPerHour);
-  const ticks = useMemo(() => tickInterval === null ? [] : timelineTicks({ start, end, intervalHours: tickInterval }), [start, end, tickInterval]);
-  const dayMarkers = useMemo(() => timelineDayMarkers(start, end), [start, end]);
+  const ticks = useMemo(() => tickInterval === null ? [] : timelineTicks({ start: renderRange.start, end: renderRange.end, intervalHours: tickInterval }), [renderRange, tickInterval]);
+  const dayMarkers = useMemo(() => timelineDayMarkers(renderRange.start, renderRange.end), [renderRange]);
   const dayLabelEvery = Math.max(1, Math.ceil(120 / Math.max(1, 24 * pixelsPerHour)));
   const nowX = ((clockNow - start) / HOUR) * pixelsPerHour;
   const nowLabel = useMemo(() => new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(clockNow)), [clockNow]);
@@ -328,10 +329,12 @@ export function TimelinePage(): JSX.Element {
       <div className="timeline-canvas" style={{ width: canvasWidth }}>
         {clockNow >= start && clockNow <= end && <div className="timeline-forecast-field" style={{ left: nowX, width: Math.max(0, canvasWidth - nowX) }}><span>Forecast · next 30 days</span></div>}
         {dayMarkers.map((day, index) => {
-          const nextDay = dayMarkers[index + 1] ?? end;
           const x = ((day - start) / HOUR) * pixelsPerHour;
-          const width = Math.max(0, ((nextDay - day) / HOUR) * pixelsPerHour);
           const date = new Date(day);
+          const followingDate = new Date(day);
+          followingDate.setDate(followingDate.getDate() + 1);
+          const nextDay = dayMarkers[index + 1] ?? Math.min(end, followingDate.getTime());
+          const width = Math.max(0, ((nextDay - day) / HOUR) * pixelsPerHour);
           const isToday = date.toDateString() === new Date(clockNow).toDateString();
           const showLabel = isToday || index % dayLabelEvery === 0;
           return <div key={day} className={`timeline-day-band ${index % 2 ? "alternate" : ""} ${isToday ? "today" : ""}`} style={{ left: x, width }}>

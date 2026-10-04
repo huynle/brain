@@ -9,6 +9,7 @@ import {
   visibleTimelineRenderRange,
   centeredTimelineScrollLeft,
   dragScrollLeft,
+  timelineDragShouldCapture,
   timelineTicks,
   timelineTickIntervalHours,
   timelineEdgeExtension,
@@ -167,6 +168,11 @@ test("timelineDayMarkers returns local calendar boundaries spanning the window",
 test("dragScrollLeft pans opposite pointer movement and clamps at zero", () => {
   assert.equal(dragScrollLeft({ initialScrollLeft: 800, pointerStartX: 400, pointerX: 300 }), 900);
   assert.equal(dragScrollLeft({ initialScrollLeft: 20, pointerStartX: 100, pointerX: 180 }), 0);
+});
+
+test("timelineDragShouldCapture preserves clicks until movement becomes a drag", () => {
+  assert.equal(timelineDragShouldCapture({ pointerStartX: 100, pointerX: 103 }), false);
+  assert.equal(timelineDragShouldCapture({ pointerStartX: 100, pointerX: 105 }), true);
 });
 
 test("anchoredZoomScrollLeft preserves the time under the pointer", () => {

@@ -124,6 +124,14 @@ export function dragScrollLeft(options: {
   return Math.max(0, options.initialScrollLeft + options.pointerStartX - options.pointerX);
 }
 
+export function timelineDragShouldCapture(options: {
+  pointerStartX: number;
+  pointerX: number;
+  threshold?: number;
+}): boolean {
+  return Math.abs(options.pointerX - options.pointerStartX) > (options.threshold ?? 4);
+}
+
 export function anchoredZoomScrollLeft(options: {
   scrollLeft: number;
   pointerX: number;

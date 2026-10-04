@@ -3,7 +3,7 @@ import { useDeferredPreview } from "../../hooks/useDeferredPreview";
 import { useProjects } from "../../hooks/useProjects";
 import { useTimeline } from "../../hooks/useTimeline";
 import { useVisibleProjects } from "../../hooks/useVisibleProjects";
-import { boundedTimelineRange, centeredTimelineScrollLeft, continuedTimelineZoomAnchor, continuousTimelineScale, dragScrollLeft, filterTimelineByRange, filterTimelineEvents, fittedTimelineScale, focusedTimelineRange, horizontalTimelineLayout, MAX_TIMELINE_SCALE, MIN_TIMELINE_SCALE, TIMELINE_FAMILIES, timelineDayMarkers, timelineDestination, timelineEdgeExtension, timelineFamily, timelineResolutionLabel, timelineScrollLeftForTimestamp, timelineSpatialDetail, timelineTickIntervalHours, timelineTicks, timelineTimestampAtViewportX, timelineTitle, visibleTimelineRenderRange, type TimelineEvent, type TimelineFamily, type TimelineRangeFilter } from "../../lib/timeline";
+import { boundedTimelineRange, centeredTimelineScrollLeft, continuedTimelineZoomAnchor, continuousTimelineScale, dragScrollLeft, filterTimelineByRange, filterTimelineEvents, fittedTimelineScale, focusedTimelineRange, horizontalTimelineLayout, MAX_TIMELINE_SCALE, MIN_TIMELINE_SCALE, TIMELINE_FAMILIES, timelineDayMarkers, timelineDestination, timelineDragShouldCapture, timelineEdgeExtension, timelineFamily, timelineResolutionLabel, timelineScrollLeftForTimestamp, timelineSpatialDetail, timelineTickIntervalHours, timelineTicks, timelineTimestampAtViewportX, timelineTitle, visibleTimelineRenderRange, type TimelineEvent, type TimelineFamily, type TimelineRangeFilter } from "../../lib/timeline";
 import { useWorkspace } from "../../store/workspace";
 
 const FAMILY_LABELS: Record<TimelineFamily, string> = { feature: "Features", task: "Tasks", automation: "Automations", reminder: "Reminders", entry: "Entries", session: "Sessions", runner: "Runners", project: "Projects", other: "Other" };
@@ -319,12 +319,15 @@ export function TimelinePage(): JSX.Element {
         if (event.button !== 0) return;
         wheelGestureRef.current = null;
         dragRef.current = { pointerId: event.pointerId, x: event.clientX, scrollLeft: event.currentTarget.scrollLeft, moved: false };
-        event.currentTarget.setPointerCapture(event.pointerId);
       }}
       onPointerMove={(event) => {
         const drag = dragRef.current;
         if (!drag || drag.pointerId !== event.pointerId) return;
-        if (Math.abs(event.clientX - drag.x) > 4) drag.moved = true;
+        if (!drag.moved) {
+          if (!timelineDragShouldCapture({ pointerStartX: drag.x, pointerX: event.clientX })) return;
+          drag.moved = true;
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }
         event.currentTarget.scrollLeft = dragScrollLeft({ initialScrollLeft: drag.scrollLeft, pointerStartX: drag.x, pointerX: event.clientX });
       }}
       onPointerUp={(event) => {
@@ -332,7 +335,7 @@ export function TimelinePage(): JSX.Element {
         if (!drag || drag.pointerId !== event.pointerId) return;
         suppressClickRef.current = drag.moved;
         dragRef.current = null;
-        event.currentTarget.releasePointerCapture(event.pointerId);
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
       }}
       onPointerCancel={() => { dragRef.current = null; }}
     >

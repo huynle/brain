@@ -284,7 +284,17 @@ export function TimelinePage(): JSX.Element {
         <label><span>Project scope</span><select aria-label="Project scope" value={projectScope} onChange={(event) => { setFocusedRange(null); setIsFit(false); setProjectScope(event.target.value); }}><option value="all">All projects</option><option value="sidebar">Sidebar projects</option>{(projects || []).map((project) => <option key={project} value={project}>{project}</option>)}</select></label>
         <label className="timeline-range-filter"><span>Time range</span><select aria-label="Time range" value={timeFilter.preset} onChange={(event) => { setFocusedRange(null); setIsFit(false); setTimeFilter({ preset: event.target.value as TimelineRangeFilter["preset"] }); }}><option value="all">All time</option><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="custom">Custom range</option></select></label>
       </div>
-      <div className="timeline-family-filter timeline-legend" aria-label="Event families">{TIMELINE_FAMILIES.map((family) => <button key={family} className={`family-${family} ${families.has(family) ? "active" : ""}`} aria-pressed={families.has(family)} onClick={() => toggleFamily(family)}><span />{FAMILY_LABELS[family]}</button>)}</div>
+      <details className="timeline-family-menu" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.removeAttribute("open"); }} onKeyDown={(event) => { if (event.key === "Escape") { event.currentTarget.removeAttribute("open"); event.currentTarget.querySelector("summary")?.focus(); } }}>
+        <summary aria-label={`${families.size} of ${TIMELINE_FAMILIES.length} event types selected`}>
+          <span className="timeline-family-preview" aria-hidden="true">{TIMELINE_FAMILIES.map((family) => <i key={family} className={`family-${family} ${families.has(family) ? "active" : ""}`} />)}</span>
+          <span>Event types</span><b>{families.size}/{TIMELINE_FAMILIES.length}</b><i className="timeline-menu-chevron" aria-hidden="true">⌄</i>
+        </summary>
+        <div className="timeline-family-popover">
+          <header><div><strong>Visible activity</strong><small>Choose what appears on the timeline</small></div><span>{families.size} selected</span></header>
+          <div className="timeline-family-filter timeline-legend" aria-label="Event families">{TIMELINE_FAMILIES.map((family) => <button key={family} className={`family-${family} ${families.has(family) ? "active" : ""}`} aria-pressed={families.has(family)} onClick={() => toggleFamily(family)}><span />{FAMILY_LABELS[family]}</button>)}</div>
+          <footer><button onClick={() => { setFocusedRange(null); setIsFit(false); setFamilies(new Set(TIMELINE_FAMILIES)); }}>Select all</button><button onClick={() => { setFocusedRange(null); setIsFit(false); setFamilies(new Set()); }}>Clear</button></footer>
+        </div>
+      </details>
       <div className="timeline-state-filter" aria-label="Temporal state">{[["actual", "Actual"], ["projected", "Forecast"]].map(([state, label]) => <button key={state} className={temporalStates.has(state) ? "active" : ""} aria-pressed={temporalStates.has(state)} onClick={() => setTemporalStates((current) => { const next = new Set(current); if (next.has(state)) next.delete(state); else next.add(state); setFocusedRange(null); setIsFit(false); return next; })}>{label}</button>)}</div>
       <div className="timeline-control-actions">
         <button className="timeline-now-button" onClick={returnToNow} title="Center the timeline on the current time"><span>Today</span><time dateTime={new Date(clockNow).toISOString()}>{nowLabel}</time></button>

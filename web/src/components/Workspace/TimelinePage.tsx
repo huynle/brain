@@ -292,7 +292,7 @@ export function TimelinePage(): JSX.Element {
         event.preventDefault();
         event.stopPropagation();
       }}
-      onDoubleClick={(event) => { if (!(event.target as Element).closest(".timeline-marker")) focusEvents(); }}
+      onDoubleClick={(event) => { if (!(event.target as Element).closest(".timeline-marker")) returnToNow(); }}
       onScroll={(event) => { updateViewportTimestamp(event.currentTarget); extendAtEdge(); }}
       onPointerDown={(event) => {
         if (event.button !== 0) return;

@@ -86,3 +86,48 @@ only fingerprinted intent, **not an implemented dry-run broker**. Fingerprints a
 not receipts or authority; tenant/principal/endpoint scoping and replay/output
 authorization remain integration-owner responsibilities. No HTTP/MCP caller or
 public capability is added by this helper.
+
+## Minimal embedded-runtime investigation (not a worker)
+
+The rejected native Node filter experiment is superseded **only as an experiment**
+by `TestQuickJSNativeConfinementProbe`. QuickJS source is not vendored, linked to
+Brain, automatically downloaded, installed, or selected as a production dependency.
+The opt-in test checks the official `quickjs-2026-06-04.tar.xz` SHA256
+`b376e839b322978313d929fd20663b11ba58b75df5a46c126dd19ea2fa70ad2a` and requires an
+already-present immutable compiler image and local Unix Docker socket:
+
+```
+BRAIN_QUICKJS_PROBE_ARCHIVE=/absolute/path/quickjs-2026-06-04.tar.xz \
+BRAIN_SCRIPT_LINUX_PROTOTYPE_HOST=unix:///absolute/path/docker.sock \
+BRAIN_QUICKJS_PROBE_IMAGE=sha256:<installed-image> \
+CI=1 go test -race ./internal/scriptexec -run TestQuickJSNativeConfinementProbe -count=1 -v
+```
+
+Trusted compilation uses an isolated container with no host mounts, no network,
+read-only root, bounded tmpfs and dropped capabilities. Input copies use stdin
+into tmpfs: Docker `cp` refuses read-only rootfs even for this tmpfs destination;
+tar uses `--no-same-owner` rather than granting CHOWN. The compiled probe runs as
+uid65534 with an empty environment. Only its uniquely named container is removed.
+
+The C harness embeds the core engine **without quickjs-libc**, initializes it before
+sealing, then parses/evaluates async JS after a deny-default architecture-checked
+seccomp TSYNC filter is installed (any nonzero installation result fails closed).
+Reads allow fd0; writes allow fd1/fd2; mmap allows only private anonymous,
+non-executable memory. Arbitrary filesystem opens/writes, socket creation, fork,
+read/pread/readv/dup of a deliberately retained test descriptor, file-backed mmap
+and executable mmap are native probes, not merely missing-JS-API checks.
+The original unsealed harness returned async42 and errno0 for all ten probes;
+the sealed harness returns async42 and EPERM1 for each, on local Linux arm64.
+
+This is **not confinement certification or execution availability**. The retained
+test descriptor is intentional adversarial input, not an approved worker launch
+policy. Real descriptor closure, broker/frame IPC, script API, source/result/log
+budgets, compile and hard CPU/address-space limits, memory pressure, termination/
+reaping, aggregate admission and native-compromise review still need evidence.
+QuickJS heap/stack limits alone do not prove these. The compiler container's 512MiB
+limit is not a claimed per-worker policy. No macOS native-memory proof or D06 VM
+acceptance follows from this Linux test; all script routes remain unavailable.
+
+References: [QuickJS C API](https://bellard.org/quickjs/quickjs.html#QuickJS-C-API),
+[official release](https://bellard.org/quickjs/),
+[seccomp architecture/TSYNC/allowlist semantics](https://man7.org/linux/man-pages/man2/seccomp.2.html).

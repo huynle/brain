@@ -212,6 +212,17 @@ without that deadline firing. This establishes this local Linux blocked-IPC wall
 case only, not production coordinator cancellation, supervisor death, graph/store
 shutdown, stderr/log budgets, fair admission or a macOS launch contract.
 
+The experimental supervisor now installs Linux `PR_SET_PDEATHSIG(SIGKILL)` in
+its child before any source input, checks `getppid()` against the pre-fork parent
+PID to close the installation race, and then seals the child (which cannot clear
+the signal). `TestQuickJSWorkerSupervisorDeathReapedByObserver` uses an external
+native subreaper: it waits for an actual worker call, SIGKILLs only the supervisor,
+keeps worker stdin open, and actually waitpid's the adopted worker. RED hit the
+outer deadline with an orphan still blocked; GREEN repeatedly observed signal9
+and ECHILD after reaping. This proves that Linux fixture, not production init/
+subreaper deployment or macOS parent-death cleanup. Direct unsupervised fixture
+launches do not acquire this guarantee.
+
 References: [QuickJS C API](https://bellard.org/quickjs/quickjs.html#QuickJS-C-API),
 [official release](https://bellard.org/quickjs/),
 [seccomp architecture/TSYNC/allowlist semantics](https://man7.org/linux/man-pages/man2/seccomp.2.html).

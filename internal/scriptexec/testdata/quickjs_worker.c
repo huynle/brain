@@ -143,9 +143,16 @@ int main(int argc, char **argv) {
     action.sa_handler = wall_alarm;
     sigemptyset(&action.sa_mask);
     if (sigaction(SIGALRM, &action, NULL)) return 125;
+    pid_t supervisor = getpid();
     pid_t pid = fork();
     if (pid < 0) return 125;
-    if (pid == 0) _exit(worker_main());
+    if (pid == 0) {
+        /* Install before untrusted input and check the fork/prctl race. The
+         * later deny-default seal prohibits clearing the parent-death signal.
+         * Reaping after supervisor death belongs to init/an external subreaper. */
+        if (prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0) || getppid() != supervisor) _exit(125);
+        _exit(worker_main());
+    }
     supervised_pid = pid;
     alarm(2);
     int status = 0;

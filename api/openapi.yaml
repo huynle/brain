@@ -1343,12 +1343,65 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/WebhookDeliveryResponse'
+  /automations/run:
+    post:
+      operationId: automations.run
+      summary: Run an automation through server task generation
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RunAutomationRequest'}}}}
+      responses:
+        '200': {description: Generated tasks, content: {application/json: {schema: {$ref: '#/components/schemas/RunAutomationResponse'}}}}
+        '409': {description: Generation skipped, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationSkippedResponse'}}}}
+  /automation-runs:
+    get:
+      operationId: automations.runs
+      summary: List automation runs; truncated means the bounded scan was exhausted
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: project, in: query, schema: {type: string}}
+        - {name: status, in: query, schema: {type: string}}
+        - {name: automation_id, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, default: 100}}
+      responses:
+        '200': {description: Run entries, content: {application/json: {schema: {$ref: '#/components/schemas/ListEntriesResponse'}}}}
+  /automation-runs/{runId}:
+    parameters: [{name: runId, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: automations.getRun
+      summary: Read one automation run entry
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200': {description: Run entry, content: {application/json: {schema: {$ref: '#/components/schemas/BrainEntry'}}}}
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
   schemas:
+    RunAutomationRequest:
+      type: object
+      required: [path]
+      properties:
+        path: {type: string}
+        project: {type: string}
+    RunAutomationResponse:
+      type: object
+      required: [task_id, task_ids]
+      properties:
+        task_id: {type: string}
+        task_ids: {type: array, items: {type: string}}
+    AutomationSkippedResponse:
+      type: object
+      required: [skipped, message]
+      properties:
+        skipped: {type: boolean}
+        message: {type: string}
     SuccessResponse:
       type: object
       required:

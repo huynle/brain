@@ -81,6 +81,7 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	defer authed.Close()
 	exerciseNotificationSDK(t, authed)
 	exerciseWebhookSDK(t, authed)
+	exerciseAutomationSDK(t, authed)
 	repo, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)

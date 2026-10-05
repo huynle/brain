@@ -835,10 +835,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/automations/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run an automation through server task generation */
+        post: operations["automations.run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/automation-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List automation runs; truncated means the bounded scan was exhausted */
+        get: operations["automations.runs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/automation-runs/{runId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: string;
+            };
+            cookie?: never;
+        };
+        /** Read one automation run entry */
+        get: operations["automations.getRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        RunAutomationRequest: {
+            path: string;
+            project?: string;
+        };
+        RunAutomationResponse: {
+            task_id: string;
+            task_ids: string[];
+        };
+        AutomationSkippedResponse: {
+            skipped: boolean;
+            message: string;
+        };
         SuccessResponse: {
             success: boolean;
         };
@@ -3227,6 +3292,86 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WebhookDeliveryResponse"];
+                };
+            };
+        };
+    };
+    "automations.run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunAutomationRequest"];
+            };
+        };
+        responses: {
+            /** @description Generated tasks */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunAutomationResponse"];
+                };
+            };
+            /** @description Generation skipped */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationSkippedResponse"];
+                };
+            };
+        };
+    };
+    "automations.runs": {
+        parameters: {
+            query?: {
+                project?: string;
+                status?: string;
+                automation_id?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Run entries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListEntriesResponse"];
+                };
+            };
+        };
+    };
+    "automations.getRun": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Run entry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrainEntry"];
                 };
             };
         };

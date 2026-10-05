@@ -198,6 +198,11 @@ export class BrainClient {
     deliveries: (id: string,limit = 50,options?: RequestOptions): Promise<Schema["ListWebhookDeliveriesResponse"]> => this.#request("GET",`/webhooks/${encodeURIComponent(id)}/deliveries`,undefined,{limit},options),
     test: (id: string,options?: RequestOptions): Promise<Schema["WebhookDeliveryResponse"]> => this.#request("POST",`/webhooks/${encodeURIComponent(id)}/test`,undefined,undefined,options),
   });
+  readonly automations = Object.freeze({
+    run: (request: Schema["RunAutomationRequest"],options?: RequestOptions): Promise<Schema["RunAutomationResponse"]> => this.#request("POST","/automations/run",request,undefined,options),
+    runs: (query?: NonNullable<operations["automations.runs"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["ListEntriesResponse"]> => this.#request("GET","/automation-runs",undefined,query,options),
+    getRun: (id: string,options?: RequestOptions): Promise<Schema["BrainEntry"]> => this.#request("GET",`/automation-runs/${encodeURIComponent(id)}`,undefined,undefined,options),
+  });
   readonly reminders = Object.freeze({
     list: (query?: NonNullable<operations["reminders.list"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["ReminderListResponse"]> => this.#request("GET","/reminders",undefined,query,options),
     get: (id: string,options?: RequestOptions): Promise<Schema["ReminderSummary"]> => this.#request("GET",`/reminders/${encodeURIComponent(id)}`,undefined,undefined,options),

@@ -187,6 +187,12 @@ type AutomationRetry struct {
 	MaxAttempts *int    `json:"max_attempts,omitempty"`
 }
 
+// AutomationSkippedResponse defines model for AutomationSkippedResponse.
+type AutomationSkippedResponse struct {
+	Message string `json:"message"`
+	Skipped bool   `json:"skipped"`
+}
+
 // BacklinkEntry defines model for BacklinkEntry.
 type BacklinkEntry struct {
 	Id    string `json:"id"`
@@ -868,6 +874,18 @@ type ResolvedTask struct {
 	Workdir                 string                  `json:"workdir"`
 }
 
+// RunAutomationRequest defines model for RunAutomationRequest.
+type RunAutomationRequest struct {
+	Path    string  `json:"path"`
+	Project *string `json:"project,omitempty"`
+}
+
+// RunAutomationResponse defines model for RunAutomationResponse.
+type RunAutomationResponse struct {
+	TaskId  string   `json:"task_id"`
+	TaskIds []string `json:"task_ids"`
+}
+
 // RunFinalization defines model for RunFinalization.
 type RunFinalization struct {
 	FinalizedAt string  `json:"finalized_at"`
@@ -1179,6 +1197,14 @@ type AttentionListParams struct {
 	IncludeSnoozed *bool   `form:"include_snoozed,omitempty" json:"include_snoozed,omitempty"`
 }
 
+// AutomationsRunsParams defines parameters for AutomationsRuns.
+type AutomationsRunsParams struct {
+	Project      *string `form:"project,omitempty" json:"project,omitempty"`
+	Status       *string `form:"status,omitempty" json:"status,omitempty"`
+	AutomationId *string `form:"automation_id,omitempty" json:"automation_id,omitempty"`
+	Limit        *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // EntriesListParams defines parameters for EntriesList.
 type EntriesListParams struct {
 	Project   *string `form:"project,omitempty" json:"project,omitempty"`
@@ -1267,6 +1293,9 @@ type AttentionCreateJSONRequestBody = CreateAttentionRequest
 
 // AttentionSnoozeJSONRequestBody defines body for AttentionSnooze for application/json ContentType.
 type AttentionSnoozeJSONRequestBody = SnoozeAttentionRequest
+
+// AutomationsRunJSONRequestBody defines body for AutomationsRun for application/json ContentType.
+type AutomationsRunJSONRequestBody = RunAutomationRequest
 
 // EntriesCreateJSONRequestBody defines body for EntriesCreate for application/json ContentType.
 type EntriesCreateJSONRequestBody = CreateEntryRequest

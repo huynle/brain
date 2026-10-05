@@ -23,8 +23,11 @@ methods are not yet exercised by the installed external Node consumer.
 Webhooks `list/get/create/update/delete/deliveries/test` bring delivered coverage
 to 58. All seven have Go/TS route tests and real Go service integration, including
 one actual HTTP delivery to an isolated local test receiver (not a public target).
+Automations `run/runs/getRun` bring delivered coverage to 61; both SDK route
+tests cover all three, and real Go fixtures check filtered run history/get.
+Automation run submission remains route-only; no runtime/provider is launched.
 `TestDeliveredContractMatchesRouterAndInventory` checks every delivered operation
-against the real Chi route inventory and its table row below (58 currently).
+against the real Chi route inventory and its table row below (61 currently).
 It normalizes parameter names/trailing slashes and explicitly maps legacy entry
 dispatchers to their wildcard routes. It does not certify dispatcher suffix
 semantics, authorization, or completion of pending inventory operations.

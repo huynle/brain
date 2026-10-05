@@ -4,6 +4,111 @@
  */
 
 export interface paths {
+    "/tasks/{projectId}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read requested task statuses and report unresolved IDs
+         * @description taskIds must be nonempty. Legacy waitFor and timeout fields are accepted but do not wait.
+         */
+        post: operations["tasks.status"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/{taskId}/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read execution metadata without task title or content */
+        get: operations["tasks.metadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/{taskId}/claim-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect a task claim without acquiring or renewing it */
+        get: operations["tasks.claimStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/features": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List computed feature groups */
+        get: operations["features.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/features/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List ready feature groups without dispatching work */
+        get: operations["features.ready"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/features/{featureId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a computed feature group */
+        get: operations["features.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks": {
         parameters: {
             query?: never;
@@ -1028,6 +1133,87 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ClaimStatusResponse: {
+            taskId: string;
+            claimed: boolean;
+            isStale: boolean;
+            runnerId?: string;
+            claimedAt?: string;
+        };
+        MultiTaskStatusRequest: {
+            taskIds: string[] | null;
+            timeout?: number;
+            waitFor?: string;
+        };
+        MultiTaskStatusResponse: {
+            tasks: components["schemas"]["ResolvedTask"][] | null;
+            allCompleted: boolean;
+            notFound?: string[] | null;
+        };
+        Feature: {
+            featureId: string;
+            tasks: components["schemas"]["ResolvedTask"][] | null;
+            ready: boolean;
+            stats?: components["schemas"]["TaskStats"] | null;
+            unresolved_feature_deps?: string[] | null;
+        };
+        FeatureListResponse: {
+            features: components["schemas"]["Feature"][] | null;
+        };
+        FeatureResponse: {
+            feature: components["schemas"]["Feature"];
+        };
+        TaskMetadataResponse: {
+            path: string;
+            agent: string;
+            model: string;
+            execution_mode: string;
+            git_branch: string;
+            git_remote: string;
+            merge_policy: string;
+            merge_strategy: string;
+            merge_target_branch: string;
+            remote_branch_policy: string;
+            complete_on_idle: boolean | null;
+            open_pr_before_merge: boolean | null;
+            target_workdir: string;
+            resolved_workdir: string;
+            direct_prompt: string;
+            executor: string;
+            feature_id: string;
+            feature_priority: string;
+            feature_depends_on: string[] | null;
+            depends_on: string[] | null;
+            resolved_deps: string[] | null;
+            unresolved_deps: string[] | null;
+            blocked_by: string[] | null;
+            blocked_by_reason: string;
+            waiting_on: string[] | null;
+            in_cycle: boolean;
+            status: string;
+            priority: string;
+            classification: string;
+            created: string;
+            tags: string[] | null;
+            sessions: {
+                [key: string]: components["schemas"]["SessionInfo"];
+            } | null;
+            env: {
+                [key: string]: string;
+            } | null;
+            extensions: string[] | null;
+            origin_machine_id?: string;
+            origin_client_id?: string;
+            origin_path?: string;
+            machine_affinity?: string;
+            checkout_mode?: string;
+            dispatch_lease?: components["schemas"]["DispatchLease"] | null;
+            placement_reasons?: components["schemas"]["PlacementReason"][] | null;
+            last_placement_reason?: components["schemas"]["PlacementReason"] | null;
+            blocked_by_features?: string[] | null;
+            waiting_on_features?: string[] | null;
+            unresolved_feature_deps?: string[] | null;
+        };
         ProjectListResponse: {
             projects: string[] | null;
         };
@@ -2064,6 +2250,199 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "tasks.status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MultiTaskStatusRequest"];
+            };
+        };
+        responses: {
+            /** @description Requested tasks and completion state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MultiTaskStatusResponse"];
+                };
+            };
+            /** @description Legacy API error adapted by the SDK */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Legacy task execution metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskMetadataResponse"];
+                };
+            };
+            /** @description Legacy API error adapted by the SDK */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.claimStatus": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Claim state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimStatusResponse"];
+                };
+            };
+            /** @description Legacy API error adapted by the SDK */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "features.list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Feature groups */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeatureListResponse"];
+                };
+            };
+            /** @description Legacy API error adapted by the SDK */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "features.ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ready feature groups */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeatureListResponse"];
+                };
+            };
+            /** @description Legacy API error adapted by the SDK */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "features.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                featureId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Feature wrapper */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeatureResponse"];
+                };
+            };
+            /** @description Legacy API error adapted by the SDK */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
     "projects.list": {
         parameters: {
             query?: never;

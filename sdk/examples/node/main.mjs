@@ -8,6 +8,26 @@ try {
   let validation;try{await client.entries.create({});}catch(e){validation=e;}
   if(!(validation instanceof BrainError)||validation.status!==400||!validation.details.length)throw new Error("missing field validation details");
   await client.health();
+  const readProject="sdk-node-reads",readFeature="read-feature";
+  const readTask=await client.entries.create({type:"task",project:readProject,feature_id:readFeature,title:"Read fixture",content:"Private fixture content",status:"pending"});
+  try {
+    const mixed=await client.tasks.status(readProject,{taskIds:[readTask.id,"missing1"]});
+    if(mixed.allCompleted||mixed.tasks.length!==1||mixed.tasks[0].id!==readTask.id||JSON.stringify(mixed.notFound)!=='["missing1"]')throw new Error("mixed status mismatch");
+    let invalid;try{await client.tasks.status(readProject,{taskIds:[]});}catch(e){invalid=e;}
+    if(!(invalid instanceof BrainError)||invalid.status!==400||invalid.details[0]?.field!=="taskIds")throw new Error("empty status validation absent");
+    const metadata=await client.tasks.metadata(readProject,readTask.id);
+    if(metadata.path!==readTask.path||metadata.feature_id!==readFeature||metadata.status!=="pending"||"title" in metadata||"content" in metadata)throw new Error("metadata mismatch");
+    const claim=await client.tasks.claimStatus(readProject,readTask.id);
+    if(claim.claimed||claim.isStale||claim.taskId!==readTask.id)throw new Error("unexpected claim");
+    for(const out of [await client.features.list(readProject),await client.features.ready(readProject)])if(out.features.length!==1||out.features[0].featureId!==readFeature||!out.features[0].ready)throw new Error("feature list mismatch");
+    const group=(await client.features.get(readProject,readFeature)).feature;
+    if(group.featureId!==readFeature||group.tasks.length!==1||group.tasks[0].id!==readTask.id)throw new Error("feature get mismatch");
+    let missing;try{await client.features.get(readProject,"missing1");}catch(e){missing=e;}
+    if(!(missing instanceof BrainError)||missing.status!==404)throw new Error("missing feature was not 404");
+    await client.entries.update(readTask.id,{status:"completed"});
+    if(!(await client.tasks.status(readProject,{taskIds:[readTask.id]})).allCompleted)throw new Error("completed task not reported");
+    if(((await client.features.ready(readProject)).features??[]).length)throw new Error("completed feature still ready");
+  }finally{await client.entries.delete(readTask.id);}
   if(process.env.BRAIN_SDK_EXTRACTION_FIXTURE==="1") {
     const bytes=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=","base64");
     const image=await client.attachments.upload("sdk-node-extraction",{filename:"pixel.png",contentType:"image/png",content:bytes});

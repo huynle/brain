@@ -181,6 +181,9 @@ export class BrainClient {
     download: (project: string, id: string, options?: RequestOptions): Promise<Uint8Array> => this.#request("GET",`/attachments/${encodeURIComponent(id)}/content`,undefined,{project_id:project},options,true,true),
   });
   readonly tasks = Object.freeze({
+    status: (project: string, request: Schema["MultiTaskStatusRequest"], options?: RequestOptions): Promise<Schema["MultiTaskStatusResponse"]> => this.#request("POST", `/tasks/${encodeURIComponent(project)}/status`, request, undefined, options),
+    metadata: (project: string, id: string, options?: RequestOptions): Promise<Schema["TaskMetadataResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/metadata`, undefined, undefined, options),
+    claimStatus: (project: string, id: string, options?: RequestOptions): Promise<Schema["ClaimStatusResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/claim-status`, undefined, undefined, options),
     ready: (project: string, query?: NonNullable<operations["tasks.ready"]["parameters"]["query"]>, options?: RequestOptions): Promise<Schema["TaskSelectionResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/ready`, undefined, query, options),
     next: (project: string, query?: NonNullable<operations["tasks.next"]["parameters"]["query"]>, options?: RequestOptions): Promise<Schema["ResolvedTask"] | null> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/next`, undefined, query, options),
     waiting: (project: string, options?: RequestOptions): Promise<Schema["TaskSelectionResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/waiting`, undefined, undefined, options),
@@ -190,6 +193,11 @@ export class BrainClient {
   });
   readonly projects = Object.freeze({
     list: (options?: RequestOptions): Promise<Schema["ProjectListResponse"]> => this.#request("GET","/tasks",undefined,undefined,options),
+  });
+  readonly features = Object.freeze({
+    list: (project: string, options?: RequestOptions): Promise<Schema["FeatureListResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/features`, undefined, undefined, options),
+    ready: (project: string, options?: RequestOptions): Promise<Schema["FeatureListResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/features/ready`, undefined, undefined, options),
+    get: (project: string, id: string, options?: RequestOptions): Promise<Schema["FeatureResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/features/${encodeURIComponent(id)}`, undefined, undefined, options),
   });
   readonly observability = Object.freeze({
     stats: (query?: NonNullable<operations["observability.stats"]["parameters"]["query"]>, options?: RequestOptions): Promise<Schema["StatsResponse"]> => this.#request("GET","/stats",undefined,query,options),

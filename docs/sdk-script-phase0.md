@@ -13,6 +13,9 @@ Phase 0 inventory/proposals are underway; shared allocations are outstanding.
 - Manual owner: OpenCode `ses_ef3ce56d4ffe5yZrAY1sYfRE8O`. Task is held
   `blocked` with an explicit manual reservation to exclude automatic runner
   dispatch. This is not a runner claim or a completed implementation.
+- Explicit continuation transfer after clean `2f265f3d`: prior writer completed;
+  sole writer is `ses_ef278db2cffexAPrivjgtN64Db`, authorized by the parent/user.
+  Fresh task recall retained blocked reservation; dispatch-lease lookup found none.
 - P5 inspected pin: `421719ef36fa1771506b7489a03201e549b4d9f5`.
 - P6 inspected pin: `c751d0e604e0b58fa95156f3caa9481d009051bc`
   (includes `6077f9e7` credential33 foundation).

@@ -20,6 +20,135 @@ x-brain-write:
   x-brain-script: false
   x-brain-profile: single
 paths:
+  /tasks/{projectId}/status:
+    post:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.status
+      summary: Read requested task statuses and report unresolved IDs
+      description: taskIds must be nonempty. Legacy waitFor and timeout fields are accepted but do not wait.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MultiTaskStatusRequest'}
+      responses:
+        '200':
+          description: Requested tasks and completion state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MultiTaskStatusResponse'}
+        default:
+          description: Legacy API error adapted by the SDK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyErrorResponse'}
+  /tasks/{projectId}/{taskId}/metadata:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.metadata
+      summary: Read execution metadata without task title or content
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Legacy task execution metadata
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TaskMetadataResponse'}
+        default:
+          description: Legacy API error adapted by the SDK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyErrorResponse'}
+  /tasks/{projectId}/{taskId}/claim-status:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.claimStatus
+      summary: Inspect a task claim without acquiring or renewing it
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Claim state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClaimStatusResponse'}
+        default:
+          description: Legacy API error adapted by the SDK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyErrorResponse'}
+  /tasks/{projectId}/features:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.list
+      summary: List computed feature groups
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Feature groups
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FeatureListResponse'}
+        default:
+          description: Legacy API error adapted by the SDK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyErrorResponse'}
+  /tasks/{projectId}/features/ready:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.ready
+      summary: List ready feature groups without dispatching work
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Ready feature groups
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FeatureListResponse'}
+        default:
+          description: Legacy API error adapted by the SDK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyErrorResponse'}
+  /tasks/{projectId}/features/{featureId}:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.get
+      summary: Read a computed feature group
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Feature wrapper
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FeatureResponse'}
+        default:
+          description: Legacy API error adapted by the SDK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyErrorResponse'}
   /tasks:
     get:
       x-brain-effect: read
@@ -1616,6 +1745,97 @@ components:
       type: http
       scheme: bearer
   schemas:
+    ClaimStatusResponse:
+      type: object
+      required: [taskId, claimed, isStale]
+      properties:
+        taskId: {type: string}
+        claimed: {type: boolean}
+        isStale: {type: boolean}
+        runnerId: {type: string}
+        claimedAt: {type: string}
+    MultiTaskStatusRequest:
+      type: object
+      required: [taskIds]
+      properties:
+        taskIds: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        timeout: {type: integer}
+        waitFor: {type: string}
+    MultiTaskStatusResponse:
+      type: object
+      required: [tasks, allCompleted]
+      properties:
+        tasks: {anyOf: [{type: array, items: {$ref: '#/components/schemas/ResolvedTask'}}, {type: 'null'}]}
+        allCompleted: {type: boolean}
+        notFound: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+    Feature:
+      type: object
+      required: [featureId, tasks, ready]
+      properties:
+        featureId: {type: string}
+        tasks: {anyOf: [{type: array, items: {$ref: '#/components/schemas/ResolvedTask'}}, {type: 'null'}]}
+        ready: {type: boolean}
+        stats: {anyOf: [{$ref: '#/components/schemas/TaskStats'}, {type: 'null'}]}
+        unresolved_feature_deps: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+    FeatureListResponse:
+      type: object
+      required: [features]
+      properties:
+        features: {anyOf: [{type: array, items: {$ref: '#/components/schemas/Feature'}}, {type: 'null'}]}
+    FeatureResponse:
+      type: object
+      required: [feature]
+      properties:
+        feature: {$ref: '#/components/schemas/Feature'}
+    TaskMetadataResponse:
+      type: object
+      required: [path, agent, model, execution_mode, git_branch, git_remote, merge_policy, merge_strategy, merge_target_branch, remote_branch_policy, complete_on_idle, open_pr_before_merge, target_workdir, resolved_workdir, direct_prompt, executor, feature_id, feature_priority, feature_depends_on, depends_on, resolved_deps, unresolved_deps, blocked_by, blocked_by_reason, waiting_on, in_cycle, status, priority, classification, created, tags, sessions, env, extensions]
+      properties:
+        path: {type: string}
+        agent: {type: string}
+        model: {type: string}
+        execution_mode: {type: string}
+        git_branch: {type: string}
+        git_remote: {type: string}
+        merge_policy: {type: string}
+        merge_strategy: {type: string}
+        merge_target_branch: {type: string}
+        remote_branch_policy: {type: string}
+        complete_on_idle: {anyOf: [{type: boolean}, {type: 'null'}]}
+        open_pr_before_merge: {anyOf: [{type: boolean}, {type: 'null'}]}
+        target_workdir: {type: string}
+        resolved_workdir: {type: string}
+        direct_prompt: {type: string}
+        executor: {type: string}
+        feature_id: {type: string}
+        feature_priority: {type: string}
+        feature_depends_on: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        depends_on: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        resolved_deps: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        unresolved_deps: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        blocked_by: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        blocked_by_reason: {type: string}
+        waiting_on: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        in_cycle: {type: boolean}
+        status: {type: string}
+        priority: {type: string}
+        classification: {type: string}
+        created: {type: string}
+        tags: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        sessions: {anyOf: [{type: object, additionalProperties: {$ref: '#/components/schemas/SessionInfo'}}, {type: 'null'}]}
+        env: {anyOf: [{type: object, additionalProperties: {type: string}}, {type: 'null'}]}
+        extensions: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        origin_machine_id: {type: string}
+        origin_client_id: {type: string}
+        origin_path: {type: string}
+        machine_affinity: {type: string}
+        checkout_mode: {type: string}
+        dispatch_lease: {anyOf: [{$ref: '#/components/schemas/DispatchLease'}, {type: 'null'}]}
+        placement_reasons: {anyOf: [{type: array, items: {$ref: '#/components/schemas/PlacementReason'}}, {type: 'null'}]}
+        last_placement_reason: {anyOf: [{$ref: '#/components/schemas/PlacementReason'}, {type: 'null'}]}
+        blocked_by_features: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        waiting_on_features: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        unresolved_feature_deps: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
     ProjectListResponse:
       type: object
       required: [projects]

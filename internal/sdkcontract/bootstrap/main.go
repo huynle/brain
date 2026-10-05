@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 
+	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/sdkcontract"
 	"github.com/huynle/brain-api/internal/types"
 	"gopkg.in/yaml.v3"
@@ -19,6 +20,8 @@ func main() {
 		reflect.TypeOf(types.ListEntriesResponse{}), reflect.TypeOf(types.SearchRequest{}),
 		reflect.TypeOf(types.SearchResponse{}), reflect.TypeOf(types.TaskListResponse{}),
 		reflect.TypeOf(types.ResolvedTask{}),
+		reflect.TypeOf(api.TaskMetadataResponse{}), reflect.TypeOf(types.MultiTaskStatusRequest{}), reflect.TypeOf(types.MultiTaskStatusResponse{}), reflect.TypeOf(types.ClaimStatusResponse{}),
+		reflect.TypeOf(types.FeatureListResponse{}), reflect.TypeOf(types.FeatureResponse{}),
 		reflect.TypeOf(types.MoveEntryRequest{}), reflect.TypeOf(types.MoveResult{}),
 		reflect.TypeOf(types.BulkUpdateRequest{}), reflect.TypeOf(types.BulkUpdateResponse{}),
 		reflect.TypeOf(types.BulkDeleteRequest{}), reflect.TypeOf(types.BulkDeleteResponse{}),

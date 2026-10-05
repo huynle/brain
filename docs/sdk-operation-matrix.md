@@ -35,7 +35,15 @@ The installed Node fixture now also submits a task, checks provenance, lists its
 actual run audit and fetches each audit entry. These assertions are checked in,
 not only held in an independent verifier overlay.
 `TestDeliveredContractMatchesRouterAndInventory` checks every delivered operation
-against the real Chi route inventory and its table row below (69 currently).
+against the real Chi route inventory and its table row below (75 currently).
+Task `status/metadata/claimStatus` and feature `list/ready/get` are implemented
+in both SDKs. External Go and installed Node consumers prove mixed found/missing
+status IDs, empty-ID validation, metadata, no claim acquisition, pending-to-completed
+feature readiness, feature wrapper decoding and missing-feature 404. `status`
+accepts legacy `waitFor/timeout` fields but returns immediately; it is not long polling.
+These methods remain script-disabled. Redocly reports one existing-route ambiguity
+between task metadata and feature lookup; Chi gives the literal `features` prefix
+precedence. No lint rule or server routing policy is weakened to hide this warning.
 Projects `list`, graph `orphans`, and observability `stats/stale` have route tests
 in both SDKs plus external Go/Node real-service checks. Stats preserves legacy
 host paths and is not script-safe. Stale means never verified or verified before

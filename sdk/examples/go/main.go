@@ -57,6 +57,62 @@ func exerciseTaskSelection(ctx context.Context, c *brain.Client, project, id str
 	return err
 }
 
+func exerciseTaskReads(ctx context.Context, c *brain.Client) error {
+	project, feature, pending := "sdk-go-reads", "read-feature", "pending"
+	created, err := c.Entries().Create(ctx, brain.CreateEntryRequest{Type: "task", Title: "Read fixture", Content: "Private fixture content", Project: &project, FeatureId: &feature, Status: &pending}, brain.RequestOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = c.Entries().Delete(context.Background(), created.Id, false) }()
+	ids := []string{created.Id, "missing1"}
+	status, err := c.Tasks().Status(ctx, project, brain.MultiTaskStatusRequest{TaskIds: &ids})
+	if err != nil || status.AllCompleted || status.Tasks == nil || len(*status.Tasks) != 1 || status.NotFound == nil || len(*status.NotFound) != 1 || (*status.NotFound)[0] != "missing1" {
+		return fmt.Errorf("mixed status mismatch: %w", err)
+	}
+	_, err = c.Tasks().Status(ctx, project, brain.MultiTaskStatusRequest{})
+	var invalid *brain.Error
+	if !errors.As(err, &invalid) || invalid.Status != 400 || len(invalid.Details) != 1 || invalid.Details[0].Field != "taskIds" {
+		return fmt.Errorf("empty status validation absent")
+	}
+	metadata, err := c.Tasks().Metadata(ctx, project, created.Id)
+	if err != nil || metadata.Path != created.Path || metadata.FeatureId != feature || metadata.Status != "pending" {
+		return fmt.Errorf("metadata mismatch: %w", err)
+	}
+	claim, err := c.Tasks().ClaimStatus(ctx, project, created.Id)
+	if err != nil || claim.TaskId != created.Id || claim.Claimed || claim.IsStale {
+		return fmt.Errorf("unexpected claim: %w", err)
+	}
+	for _, call := range []func(context.Context, string) (*brain.FeatureListResponse, error){c.Features().List, c.Features().Ready} {
+		out, err := call(ctx, project)
+		if err != nil || out.Features == nil || len(*out.Features) != 1 || (*out.Features)[0].FeatureId != feature || !(*out.Features)[0].Ready {
+			return fmt.Errorf("feature list mismatch: %w", err)
+		}
+	}
+	group, err := c.Features().Get(ctx, project, feature)
+	if err != nil || group.Feature.FeatureId != feature || group.Feature.Tasks == nil || len(*group.Feature.Tasks) != 1 || (*group.Feature.Tasks)[0].Id != created.Id {
+		return fmt.Errorf("feature get mismatch: %w", err)
+	}
+	_, err = c.Features().Get(ctx, project, "missing1")
+	var missing *brain.Error
+	if !errors.As(err, &missing) || missing.Status != 404 {
+		return fmt.Errorf("missing feature was not 404")
+	}
+	completed := "completed"
+	if _, err := c.Entries().Update(ctx, created.Id, brain.UpdateEntryRequest{Status: &completed}, brain.RequestOptions{}); err != nil {
+		return err
+	}
+	ids = []string{created.Id}
+	status, err = c.Tasks().Status(ctx, project, brain.MultiTaskStatusRequest{TaskIds: &ids})
+	if err != nil || !status.AllCompleted {
+		return fmt.Errorf("completed task not reported: %w", err)
+	}
+	ready, err := c.Features().Ready(ctx, project)
+	if err != nil || (ready.Features != nil && len(*ready.Features) != 0) {
+		return fmt.Errorf("completed feature still ready: %w", err)
+	}
+	return nil
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -73,6 +129,9 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	project := "sdk-example"
+	if err := exerciseTaskReads(ctx, c); err != nil {
+		return err
+	}
 	_, invalidErr := c.Entries().Create(ctx, brain.CreateEntryRequest{}, brain.RequestOptions{})
 	var validation *brain.Error
 	if !errors.As(invalidErr, &validation) || validation.Status != 400 || len(validation.Details) == 0 {

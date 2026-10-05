@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/types"
 	"gopkg.in/yaml.v3"
 )
@@ -37,6 +38,8 @@ func TestRepositoryContractAndWireParity(t *testing.T) {
 		reflect.TypeOf(types.AttachmentExtractionResult{}),
 		reflect.TypeOf(types.CreateGoalRequest{}), reflect.TypeOf(types.UpdateGoalRequest{}),
 		reflect.TypeOf(types.ProjectListResponse{}), reflect.TypeOf(types.StatsResponse{}),
+		reflect.TypeOf(api.TaskMetadataResponse{}), reflect.TypeOf(types.MultiTaskStatusRequest{}), reflect.TypeOf(types.MultiTaskStatusResponse{}), reflect.TypeOf(types.ClaimStatusResponse{}),
+		reflect.TypeOf(types.FeatureListResponse{}), reflect.TypeOf(types.FeatureResponse{}),
 		reflect.TypeOf(types.GoalSummary{}), reflect.TypeOf(types.GoalProgressResponse{}), reflect.TypeOf(types.GoalReconcileAudit{}),
 		reflect.TypeOf(types.CreateReminderRequest{}), reflect.TypeOf(types.UpdateReminderRequest{}), reflect.TypeOf(types.ReminderSummary{}), reflect.TypeOf(types.ReminderListResponse{}),
 		reflect.TypeOf(types.CreateAttentionRequest{}), reflect.TypeOf(types.Attention{}), reflect.TypeOf(types.AttentionCounts{}),

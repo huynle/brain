@@ -359,6 +359,15 @@ type BulkUpdateResult struct {
 	Title  string  `json:"title"`
 }
 
+// ClaimStatusResponse defines model for ClaimStatusResponse.
+type ClaimStatusResponse struct {
+	Claimed   bool    `json:"claimed"`
+	ClaimedAt *string `json:"claimedAt,omitempty"`
+	IsStale   bool    `json:"isStale"`
+	RunnerId  *string `json:"runnerId,omitempty"`
+	TaskId    string  `json:"taskId"`
+}
+
 // CreateAttachmentResponse defines model for CreateAttachmentResponse.
 type CreateAttachmentResponse struct {
 	Attachment Attachment `json:"attachment"`
@@ -572,6 +581,25 @@ type EmbeddingHealthStatus struct {
 	Status   string  `json:"status"`
 }
 
+// Feature defines model for Feature.
+type Feature struct {
+	FeatureId             string          `json:"featureId"`
+	Ready                 bool            `json:"ready"`
+	Stats                 *TaskStats      `json:"stats,omitempty"`
+	Tasks                 *[]ResolvedTask `json:"tasks"`
+	UnresolvedFeatureDeps *[]string       `json:"unresolved_feature_deps,omitempty"`
+}
+
+// FeatureListResponse defines model for FeatureListResponse.
+type FeatureListResponse struct {
+	Features *[]Feature `json:"features"`
+}
+
+// FeatureResponse defines model for FeatureResponse.
+type FeatureResponse struct {
+	Feature Feature `json:"feature"`
+}
+
 // GoalAuditResponse defines model for GoalAuditResponse.
 type GoalAuditResponse struct {
 	Audit *[]GoalReconcileAudit `json:"audit"`
@@ -715,6 +743,20 @@ type MoveResult struct {
 	Success bool   `json:"success"`
 	Title   string `json:"title"`
 	To      string `json:"to"`
+}
+
+// MultiTaskStatusRequest defines model for MultiTaskStatusRequest.
+type MultiTaskStatusRequest struct {
+	TaskIds *[]string `json:"taskIds"`
+	Timeout *int      `json:"timeout,omitempty"`
+	WaitFor *string   `json:"waitFor,omitempty"`
+}
+
+// MultiTaskStatusResponse defines model for MultiTaskStatusResponse.
+type MultiTaskStatusResponse struct {
+	AllCompleted bool            `json:"allCompleted"`
+	NotFound     *[]string       `json:"notFound,omitempty"`
+	Tasks        *[]ResolvedTask `json:"tasks"`
 }
 
 // PlacementReason defines model for PlacementReason.
@@ -1001,6 +1043,55 @@ type TaskListResponse struct {
 	Cycles *[]*[]string    `json:"cycles,omitempty"`
 	Stats  *TaskStats      `json:"stats,omitempty"`
 	Tasks  *[]ResolvedTask `json:"tasks"`
+}
+
+// TaskMetadataResponse defines model for TaskMetadataResponse.
+type TaskMetadataResponse struct {
+	Agent                 string                  `json:"agent"`
+	BlockedBy             *[]string               `json:"blocked_by"`
+	BlockedByFeatures     *[]string               `json:"blocked_by_features,omitempty"`
+	BlockedByReason       string                  `json:"blocked_by_reason"`
+	CheckoutMode          *string                 `json:"checkout_mode,omitempty"`
+	Classification        string                  `json:"classification"`
+	CompleteOnIdle        *bool                   `json:"complete_on_idle"`
+	Created               string                  `json:"created"`
+	DependsOn             *[]string               `json:"depends_on"`
+	DirectPrompt          string                  `json:"direct_prompt"`
+	DispatchLease         *DispatchLease          `json:"dispatch_lease,omitempty"`
+	Env                   *map[string]string      `json:"env"`
+	ExecutionMode         string                  `json:"execution_mode"`
+	Executor              string                  `json:"executor"`
+	Extensions            *[]string               `json:"extensions"`
+	FeatureDependsOn      *[]string               `json:"feature_depends_on"`
+	FeatureId             string                  `json:"feature_id"`
+	FeaturePriority       string                  `json:"feature_priority"`
+	GitBranch             string                  `json:"git_branch"`
+	GitRemote             string                  `json:"git_remote"`
+	InCycle               bool                    `json:"in_cycle"`
+	LastPlacementReason   *PlacementReason        `json:"last_placement_reason,omitempty"`
+	MachineAffinity       *string                 `json:"machine_affinity,omitempty"`
+	MergePolicy           string                  `json:"merge_policy"`
+	MergeStrategy         string                  `json:"merge_strategy"`
+	MergeTargetBranch     string                  `json:"merge_target_branch"`
+	Model                 string                  `json:"model"`
+	OpenPrBeforeMerge     *bool                   `json:"open_pr_before_merge"`
+	OriginClientId        *string                 `json:"origin_client_id,omitempty"`
+	OriginMachineId       *string                 `json:"origin_machine_id,omitempty"`
+	OriginPath            *string                 `json:"origin_path,omitempty"`
+	Path                  string                  `json:"path"`
+	PlacementReasons      *[]PlacementReason      `json:"placement_reasons,omitempty"`
+	Priority              string                  `json:"priority"`
+	RemoteBranchPolicy    string                  `json:"remote_branch_policy"`
+	ResolvedDeps          *[]string               `json:"resolved_deps"`
+	ResolvedWorkdir       string                  `json:"resolved_workdir"`
+	Sessions              *map[string]SessionInfo `json:"sessions"`
+	Status                string                  `json:"status"`
+	Tags                  *[]string               `json:"tags"`
+	TargetWorkdir         string                  `json:"target_workdir"`
+	UnresolvedDeps        *[]string               `json:"unresolved_deps"`
+	UnresolvedFeatureDeps *[]string               `json:"unresolved_feature_deps,omitempty"`
+	WaitingOn             *[]string               `json:"waiting_on"`
+	WaitingOnFeatures     *[]string               `json:"waiting_on_features,omitempty"`
 }
 
 // TaskSelectionResponse defines model for TaskSelectionResponse.
@@ -1406,6 +1497,9 @@ type RemindersSnoozeJSONRequestBody = SnoozeReminderRequest
 
 // SearchQueryJSONRequestBody defines body for SearchQuery for application/json ContentType.
 type SearchQueryJSONRequestBody = SearchRequest
+
+// TasksStatusJSONRequestBody defines body for TasksStatus for application/json ContentType.
+type TasksStatusJSONRequestBody = MultiTaskStatusRequest
 
 // WebhooksCreateJSONRequestBody defines body for WebhooksCreate for application/json ContentType.
 type WebhooksCreateJSONRequestBody = CreateWebhookRequest

@@ -221,6 +221,25 @@ test("project and observability reads preserve queries",async t=>{
   assert.deepEqual(seen,["/api/v1/tasks","/api/v1/stats?projects=a%2Cb&global=true","/api/v1/stale?project=p+q&type=note&days=7&limit=8","/api/v1/orphans?project=p+q&type=note&limit=9"]);
 });
 
+test("task and feature read routes preserve request and nullable responses",async t=>{
+  const seen=[];let body;
+  const baseUrl=await server(t,async(req,res)=>{
+    seen.push(req.method+" "+req.url);
+    if(req.method==="POST"){let raw="";for await(const chunk of req)raw+=chunk;body=JSON.parse(raw);}
+    res.end('{"tasks":[],"allCompleted":false,"notFound":["missing"],"complete_on_idle":null,"claimed":false,"features":null,"feature":{"featureId":"f & q","tasks":null,"ready":false}}');
+  });
+  const c=new BrainClient({baseUrl});t.after(()=>c.close());
+  const status=await c.tasks.status("p q",{taskIds:["one","missing"]});
+  assert.equal(status.allCompleted,false);assert.deepEqual(status.notFound,["missing"]);
+  assert.deepEqual(body,{taskIds:["one","missing"]});
+  assert.equal((await c.tasks.metadata("p q","one & two")).complete_on_idle,null);
+  assert.equal((await c.tasks.claimStatus("p q","one & two")).claimed,false);
+  assert.equal((await c.features.list("p q")).features,null);
+  assert.equal((await c.features.ready("p q")).features,null);
+  assert.equal((await c.features.get("p q","f & q")).feature.featureId,"f & q");
+  assert.deepEqual(seen,["POST /api/v1/tasks/p%20q/status","GET /api/v1/tasks/p%20q/one%20%26%20two/metadata","GET /api/v1/tasks/p%20q/one%20%26%20two/claim-status","GET /api/v1/tasks/p%20q/features","GET /api/v1/tasks/p%20q/features/ready","GET /api/v1/tasks/p%20q/features/f%20%26%20q"]);
+});
+
 test("query arrays preserve repeated parameter values without comma coercion",async t=>{
   const seen=[];const baseUrl=await server(t,(req,res)=>{seen.push(req.url);res.end('{"entries":[]}');});
   const c=new BrainClient({baseUrl});t.after(()=>c.close());

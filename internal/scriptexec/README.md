@@ -225,7 +225,7 @@ not just flag text. The previous build lacked BIND_NOW and both checked symbols.
 `TestQuickJSExperimentalBuildReproducible` builds in two distinct source/output
 directories, compares complete binary bytes, and records the compiler/image/hash.
 With installed image `sha256:363e1587494626837fa7f9a23bdb453d13b0ff3c67c705c2805cfc69c2d2fad7`
-and Debian GCC `12.2.0-14+deb12u1`, both artifacts had SHA256
+and Debian GCC `12.2.0-14+deb12u1`, the build-policy checkpoint artifacts had SHA256
 `6aaa62426a2e49a2a12bfdcd7e7e65e7a49b619f9a48ce9a177d92bdb6560800`.
 Source archive verification remains mandatory before compilation. This proves
 local relocation reproducibility only, not a second independent builder, complete
@@ -239,9 +239,21 @@ is an actual fresh JS child receiving submitted source over framed stdin, making
 two `brain.entries.get` calls over framed stdout/stdin, then returning async JSON
 result 42. The parent supplies fixture objects only: no Brain service, HTTP,
 credentials, authorization adapter, audit or publication path is connected.
-The source uses explicit `return`; final-expression semantics, a console/log API,
-and a full SDK facade are not implemented. QuickJS remains an experiment input,
+The source may use explicit `return` or a JavaScript completion expression.
+A console/log API and a full SDK facade are not implemented. QuickJS remains an experiment input,
 not a selected production dependency or installed worker command.
+
+`TestQuickJSWorkerCompletionSemantics` exercises actual sealed children with
+top-level await, object/template/comment boundaries, nested return, block completion,
+explicit return/ASI, and final promises/thenables. Compilation first uses QuickJS's
+async global completion grammar; only a **compile-only** rejection tries function
+body grammar for top-level return. Neither parse executes a Brain call. A runtime
+failure after one fixture call never reevaluates the source, and a syntax error
+after a syntactic call executes zero calls. Final values are awaited through a
+retained intrinsic async adapter before JSON serialization; rejected/unresolved
+promises do not silently become `{}`. Undefined completion is refused as before.
+The same existing CPU/heap/wall bounds cover compilation, jobs and serialization.
+This is still fixture-only evaluation, not protected result release or dry-run.
 
 Before receiving/compiling source it closes descriptors 3+ with `close_range`,
 sets hard/soft CPU to one second, and applies the experimental 64MiB address-space

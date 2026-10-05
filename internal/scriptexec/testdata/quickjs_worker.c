@@ -96,6 +96,12 @@ static int worker_main(void) {
      * descriptors and establish irreversible hard CPU plus address-space limits. */
     struct rlimit cpu = {1, 1};
     if (!ctx || syscall(SYS_close_range, 3U, ~0U, 0) || setrlimit(RLIMIT_CPU, &cpu) || seal()) return 125;
+    /* Retain the intrinsic async adapter before submitted code can replace
+     * globals. Final expressions and explicit returns use the same await rules. */
+    const char *await_source = "(async value => await value)";
+    JSValue await_value = JS_Eval(ctx, await_source, strlen(await_source),
+        "completion-adapter", JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(await_value)) return 125;
     JSValue source = receive(ctx, "call", 1);
     size_t size = 0;
     const char *text = JS_IsString(source) ? JS_ToCStringLen(ctx, &size, source) : NULL;
@@ -105,21 +111,50 @@ static int worker_main(void) {
     JS_SetPropertyStr(ctx, brain, "entries", entries);
     JS_SetPropertyStr(ctx, global, "brain", brain);
     JS_FreeValue(ctx, global);
-    const char *prefix = "(async()=>{\n", *suffix = "\n})()";
-    size_t length = strlen(prefix)+size+strlen(suffix);
-    char *program = malloc(length+1);
-    if (!program) return 134;
-    memcpy(program, prefix, strlen(prefix));
-    memcpy(program+strlen(prefix), text, size);
-    memcpy(program+strlen(prefix)+size, suffix, strlen(suffix)+1);
+    /* Ask the engine for JavaScript completion values, including top-level await.
+     * COMPILE_ONLY is essential: fallback must never evaluate an effect twice.
+     * Global eval rejects top-level return; a function-body parse supports that
+     * alternate submission form. No regex/token guessing or runtime-error retry. */
+    int completion_wrapped = 1;
+    JSValue compiled = JS_Eval(ctx, text, size, "submitted",
+        JS_EVAL_TYPE_GLOBAL|JS_EVAL_FLAG_ASYNC|JS_EVAL_FLAG_COMPILE_ONLY);
+    if (JS_IsException(compiled)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        completion_wrapped = 0;
+        const char *prefix = "(async()=>{\n", *suffix = "\n})()";
+        size_t length = strlen(prefix)+size+strlen(suffix);
+        char *program = malloc(length+1);
+        if (!program) return 134;
+        memcpy(program, prefix, strlen(prefix));
+        memcpy(program+strlen(prefix), text, size);
+        memcpy(program+strlen(prefix)+size, suffix, strlen(suffix)+1);
+        compiled = JS_Eval(ctx, program, length, "submitted",
+            JS_EVAL_TYPE_GLOBAL|JS_EVAL_FLAG_COMPILE_ONLY);
+        free(program);
+    }
     JS_FreeCString(ctx, text); JS_FreeValue(ctx, source);
-    JSValue promise = JS_Eval(ctx, program, length, "submitted", JS_EVAL_TYPE_GLOBAL);
-    free(program);
+    if (JS_IsException(compiled)) return 135;
+    JSValue promise = JS_EvalFunction(ctx, compiled);
     if (JS_IsException(promise)) return 135;
     JSContext *jobctx; int job;
     while ((job=JS_ExecutePendingJob(rt, &jobctx))>0) {}
     if (job<0 || JS_PromiseState(ctx, promise)!=JS_PROMISE_FULFILLED) return 136;
     JSValue result = JS_PromiseResult(ctx, promise);
+    if (completion_wrapped) {
+        /* QuickJS's async global eval wraps completion as {value: completion}
+         * to avoid assimilating a returned promise (pinned quickjs.c parser). */
+        JSValue value = JS_GetPropertyStr(ctx, result, "value");
+        JS_FreeValue(ctx, result);
+        result = value;
+    }
+    if (JS_IsException(result)) return 136;
+    JSValue settled = JS_Call(ctx, await_value, JS_UNDEFINED, 1, &result);
+    JS_FreeValue(ctx, result); JS_FreeValue(ctx, await_value);
+    if (JS_IsException(settled)) return 136;
+    while ((job=JS_ExecutePendingJob(rt, &jobctx))>0) {}
+    if (job<0 || JS_PromiseState(ctx, settled)!=JS_PROMISE_FULFILLED) return 136;
+    result = JS_PromiseResult(ctx, settled);
+    JS_FreeValue(ctx, settled);
     if (JS_IsUndefined(result) || send_value(ctx, "result", sequence, result)) return 137;
     JS_FreeValue(ctx, result); JS_FreeValue(ctx, promise);
     JS_FreeContext(ctx); JS_FreeRuntime(rt);

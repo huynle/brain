@@ -240,7 +240,7 @@ two `brain.entries.get` calls over framed stdout/stdin, then returning async JSO
 result 42. The parent supplies fixture objects only: no Brain service, HTTP,
 credentials, authorization adapter, audit or publication path is connected.
 The source may use explicit `return` or a JavaScript completion expression.
-A console/log API and a full SDK facade are not implemented. QuickJS remains an experiment input,
+A full SDK facade is not implemented. QuickJS remains an experiment input,
 not a selected production dependency or installed worker command.
 
 `TestQuickJSWorkerCompletionSemantics` exercises actual sealed children with
@@ -254,6 +254,37 @@ retained intrinsic async adapter before JSON serialization; rejected/unresolved
 promises do not silently become `{}`. Undefined completion is refused as before.
 The same existing CPU/heap/wall bounds cover compilation, jobs and serialization.
 This is still fixture-only evaluation, not protected result release or dry-run.
+
+### Serialization reentrancy and inactive console quarantine
+
+Independent report `va815e0d` rejected `2228f1f1`: terminal sequence was captured
+before JSON serialization, whose getters/toJSON may perform valid brokered calls.
+`TestQuickJSSerializationThroughParent` reproduces those failures through the real
+parent `ProtocolSession`, rather than checking only result bytes. The worker now
+serializes once, drains jobs queued during terminal serialization, then constructs
+the envelope in C with the current sequence. No JS callback runs while assigning
+the envelope sequence or writing it. Getter/toJSON calls remain supported; JSON's
+own synchronous treatment of an async toJSON return (a Promise serializes as `{}`)
+is preserved. Symbol/function/undefined top-level output is refused, not a success
+frame missing `payload`. Tests cover nested calls/logs, exact100/overflow101 calls,
+exception-after-call, deferred async effects and no second terminal outcome.
+
+Experimental `console.debug/info/warn/error/log` sends structured JSON arguments
+through acknowledged `console.log` IPC calls, never stderr/ambient host logging.
+Limits are 32 records, 8192 encoded argument bytes per record, 16384 total; console
+also consumes the conservative100-call protocol budget. Serialization callbacks
+run once. Reentrant logs must satisfy the bounds again after callback completion.
+Native tests cover count/byte floods, cycles and getter CPU loops.
+
+The parent `outputQuarantine` independently validates limits/shape/duplicate keys,
+clones bytes, tracks a bounded trusted-parent-only execution-wide source union,
+redacts ordinary formatting/JSON and overwrites owned byte buffers on retirement.
+It has **no release method**, persistence, logger or authorization callback. Real
+S09/S17 source-wide release remains unavailable; the fixture only inspects its
+private state. Clearing owned buffers is not a promise to erase Go heap copies,
+source-ID strings, kernel pipes or bytes already legitimately released elsewhere.
+Structured source-aware exception delivery is still pending; raw exceptions remain
+discarded and worker exit statuses are not a durable operation outcome journal.
 
 Before receiving/compiling source it closes descriptors 3+ with `close_range`,
 sets hard/soft CPU to one second, and applies the experimental 64MiB address-space

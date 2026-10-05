@@ -10,6 +10,9 @@
 #define SOURCE_LIMIT 32768
 #define OP_LIMIT 100
 static unsigned sequence = 1;
+static unsigned log_count = 0;
+static size_t log_bytes = 0;
+static int terminal_sent = 0;
 
 static int exact_read(void *buf, size_t size) {
     char *p = buf;
@@ -53,37 +56,78 @@ static JSValue receive(JSContext *ctx, const char *kind, unsigned expected) {
     JS_FreeValue(ctx, frame);
     return payload;
 }
-static int send_value(JSContext *ctx, const char *kind, unsigned index, JSValueConst payload) {
-    JSValue frame = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, frame, "version", JS_NewInt32(ctx, 1));
-    JS_SetPropertyStr(ctx, frame, "kind", JS_NewString(ctx, kind));
-    JS_SetPropertyStr(ctx, frame, "sequence", JS_NewInt32(ctx, index));
-    JS_SetPropertyStr(ctx, frame, "payload", JS_DupValue(ctx, payload));
-    JSValue json = JS_JSONStringify(ctx, frame, JS_UNDEFINED, JS_UNDEFINED);
-    JS_FreeValue(ctx, frame);
+/* Payload is already serialized and no JS runs while constructing this envelope.
+ * Sequence is read only here, AFTER all reentrant calls have completed. */
+static int send_json(const char *kind, const char *text, size_t size) {
+    if (terminal_sent || !text || !size || (!strcmp(kind,"call") && sequence>OP_LIMIT)) return -1;
+    char prefix[128];
+    int n = snprintf(prefix,sizeof(prefix),"{\"version\":1,\"kind\":\"%s\",\"sequence\":%u,\"payload\":",kind,sequence);
+    if (n<0 || (size_t)n>=sizeof(prefix) || size>FRAME_LIMIT-(size_t)n-1) return -1;
+    size_t total=(size_t)n+size+1;
+    unsigned char h[4]={total>>24,total>>16,total>>8,total};
+    if (exact_write(h,4) || exact_write(prefix,n) || exact_write(text,size) || exact_write("}",1)) return -1;
+    if (!strcmp(kind,"result")) terminal_sent=1;
+    return 0;
+}
+static int send_value(JSContext *ctx, const char *kind, JSValueConst payload) {
+    JSValue json = JS_JSONStringify(ctx, payload, JS_UNDEFINED, JS_UNDEFINED);
     size_t size = 0;
-    const char *text = JS_IsException(json) ? NULL : JS_ToCStringLen(ctx, &size, json);
+    const char *text = JS_IsString(json) ? JS_ToCStringLen(ctx, &size, json) : NULL;
     int rc = -1;
     if (text && size && size <= FRAME_LIMIT) {
-        unsigned char h[4] = {size>>24, size>>16, size>>8, size};
-        rc = exact_write(h, 4) || exact_write(text, size);
+        /* Serialization may enqueue async effects. Drain them before terminal,
+         * never reserialize the value or execute jobs after terminal output. */
+        int job=0; JSContext *jobctx;
+        if (!strcmp(kind,"result"))
+            while ((job=JS_ExecutePendingJob(JS_GetRuntime(ctx),&jobctx))>0) {}
+        if (job>=0) rc=send_json(kind,text,size);
     }
     JS_FreeCString(ctx, text); JS_FreeValue(ctx, json);
     return rc;
 }
 static JSValue entry_get(JSContext *ctx, JSValueConst self, int argc, JSValueConst *argv) {
     (void)self;
-    if (sequence > OP_LIMIT || argc != 1 || !JS_IsString(argv[0])) _exit(130);
-    JSValue call = JS_NewObject(ctx), args = JS_NewObject(ctx);
+    if (terminal_sent || sequence > OP_LIMIT || argc != 1 || !JS_IsString(argv[0])) _exit(130);
+    JSValue call = JS_NewObjectProto(ctx,JS_NULL), args = JS_NewObjectProto(ctx,JS_NULL);
     JS_SetPropertyStr(ctx, args, "id", JS_DupValue(ctx, argv[0]));
     JS_SetPropertyStr(ctx, call, "operation", JS_NewString(ctx, "entries.get"));
     JS_SetPropertyStr(ctx, call, "arguments", args);
-    int rc = send_value(ctx, "call", sequence, call);
+    int rc = send_value(ctx, "call", call);
     JS_FreeValue(ctx, call);
     if (rc) _exit(131);
     JSValue response = receive(ctx, "result", sequence++);
     if (JS_IsException(response) || JS_IsUndefined(response)) _exit(132);
     return response;
+}
+/* Console is protected IPC, never a host logger. Parent must independently bound
+ * and quarantine these messages. This fixture has no authorized output release. */
+static JSValue console_log(JSContext *ctx, JSValueConst self, int argc, JSValueConst *argv, int level) {
+    (void)self;
+    const char *levels[] = {"debug", "info", "warn", "error", "log"};
+    if (terminal_sent || log_count >= 32 || sequence > OP_LIMIT) _exit(138);
+    JSValue args = JS_NewObjectProto(ctx,JS_NULL), values = JS_NewArray(ctx);
+    for (int i=0; i<argc; i++) JS_SetPropertyUint32(ctx, values, i, JS_DupValue(ctx, argv[i]));
+    JS_SetPropertyStr(ctx, args, "level", JS_NewString(ctx, levels[level]));
+    JS_SetPropertyStr(ctx, args, "values", values);
+    /* Serialize once: callbacks may log recursively or perform brokered calls. */
+    JSValue json = JS_JSONStringify(ctx, args, JS_UNDEFINED, JS_UNDEFINED);
+    size_t size = 0;
+    const char *text = JS_IsException(json) ? NULL : JS_ToCStringLen(ctx, &size, json);
+    if (!text || log_count>=32 || size > 8192 || size > 16384-log_bytes) _exit(138);
+    log_count++; log_bytes += size;
+    const char *prefix="{\"operation\":\"console.log\",\"arguments\":";
+    size_t total=strlen(prefix)+size+1;
+    char *call=malloc(total+1);
+    if (!call) _exit(138);
+    memcpy(call,prefix,strlen(prefix));memcpy(call+strlen(prefix),text,size);
+    call[total-1]='}';call[total]=0;
+    int rc = send_json("call",call,total);
+    free(call);JS_FreeCString(ctx,text);JS_FreeValue(ctx,json);JS_FreeValue(ctx,args);
+    if (rc) _exit(131);
+    JSValue ack = receive(ctx, "result", sequence++);
+    if (!JS_IsNull(ack)) _exit(132);
+    JS_FreeValue(ctx, ack);
+    return JS_UNDEFINED;
 }
 static int worker_main(void) {
     setbuf(stdout, NULL);
@@ -110,6 +154,11 @@ static int worker_main(void) {
     JS_SetPropertyStr(ctx, entries, "get", JS_NewCFunction(ctx, entry_get, "get", 1));
     JS_SetPropertyStr(ctx, brain, "entries", entries);
     JS_SetPropertyStr(ctx, global, "brain", brain);
+    JSValue console = JS_NewObject(ctx);
+    const char *levels[] = {"debug", "info", "warn", "error", "log"};
+    for (int i=0; i<5; i++)
+        JS_SetPropertyStr(ctx, console, levels[i], JS_NewCFunctionMagic(ctx, console_log, levels[i], 0, JS_CFUNC_generic_magic, i));
+    JS_SetPropertyStr(ctx, global, "console", console);
     JS_FreeValue(ctx, global);
     /* Ask the engine for JavaScript completion values, including top-level await.
      * COMPILE_ONLY is essential: fallback must never evaluate an effect twice.
@@ -155,7 +204,7 @@ static int worker_main(void) {
     if (job<0 || JS_PromiseState(ctx, settled)!=JS_PROMISE_FULFILLED) return 136;
     result = JS_PromiseResult(ctx, settled);
     JS_FreeValue(ctx, settled);
-    if (JS_IsUndefined(result) || send_value(ctx, "result", sequence, result)) return 137;
+    if (JS_IsUndefined(result) || send_value(ctx, "result", result)) return 137;
     JS_FreeValue(ctx, result); JS_FreeValue(ctx, promise);
     JS_FreeContext(ctx); JS_FreeRuntime(rt);
     return 0;

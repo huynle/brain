@@ -32,6 +32,22 @@ must decode and validate each approved operation, never dispatch raw JSON.
 A passing codec/fuzz test proves none of OS isolation, worker reaping, provider
 safety, authorization or hosted VM readiness. There is no execution fallback.
 
+### Inactive process lifecycle primitive
+
+`runWorkerProcess` owns one trusted command's Start/Wait, kills on context
+cancellation, preserves cancellation cause, and joins its observer before return.
+It independently counts/discards stderr with a 64KiB aggregate ceiling; overflow
+cancels the child and returns a fixed non-content error. It never retains or
+forwards diagnostics to a logger. Real local subprocess tests prove kill/Wait,
+pre-cancel no-start, start failure, normal exit and diagnostic flooding; these are
+not tests of a confined JS runtime. There is no production caller.
+
+The trusted launch owner must still ensure no descendants can be created, close
+inherited descriptors, sanitize the environment, establish OS resource/confinement
+bounds, supply cancellation-safe bounded stdin/stdout, and arrange supervisor-death
+cleanup. An arbitrary blocking Go reader/writer is not made interruptible by this
+helper. No shell/command input is exposed through HTTP, MCP or a script facade.
+
 ### macOS address-space negative control
 
 `BRAIN_SCRIPT_DARWIN_MEMORY_PROBE=1 go test -race ./internal/scriptexec -run

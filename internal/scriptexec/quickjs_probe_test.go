@@ -16,7 +16,8 @@ import (
 
 // Experimental only: requires an explicitly supplied official source archive
 // and an already installed local image. No downloads, host mounts or services.
-func TestQuickJSNativeConfinementProbe(t *testing.T) {
+func quickJSProbe(t *testing.T, injection string) ([]byte, error) {
+	t.Helper()
 	archive := os.Getenv("BRAIN_QUICKJS_PROBE_ARCHIVE")
 	host := os.Getenv("BRAIN_SCRIPT_LINUX_PROTOTYPE_HOST")
 	image := os.Getenv("BRAIN_QUICKJS_PROBE_IMAGE")
@@ -71,12 +72,44 @@ func TestQuickJSNativeConfinementProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if injection != "" {
+		anchor := []byte("    errno=0; int opened=")
+		if bytes.Count(probe, anchor) != 1 {
+			t.Fatal("native injection anchor changed")
+		}
+		probe = bytes.Replace(probe, anchor, append([]byte(injection), anchor...), 1)
+	}
 	copyInput("/tmp/probe.c", probe)
 	build := `cd /tmp && tar --no-same-owner -xf source.tar.xz && cd quickjs-2026-06-04 && cc -O1 -D_GNU_SOURCE -DCONFIG_VERSION='"2026-06-04"' -I. ../probe.c quickjs.c dtoa.c libregexp.c libunicode.c cutils.c -lm -o /tmp/probe`
 	if out, err := run("exec", name, "/bin/sh", "-c", build); err != nil {
 		t.Fatalf("build probe: %v %s", err, out)
 	}
-	out, err := run("exec", "--user=65534:65534", name, "/usr/bin/env", "-i", "/tmp/probe")
+	return run("exec", "--user=65534:65534", name, "/usr/bin/env", "-i", "/tmp/probe")
+}
+
+func TestQuickJSNativeAddressSpaceProbe(t *testing.T) {
+	out, err := quickJSProbe(t, `
+    errno=0; void *small=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    int small_ok=(small!=MAP_FAILED); if(small_ok)munmap(small,4096);
+    errno=0; void *large=mmap(NULL,128*1024*1024,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    int large_errno=errno; if(large!=MAP_FAILED)munmap(large,128*1024*1024);
+    printf("{\"small_ok\":%d,\"large_errno\":%d}\n",small_ok,large_errno); _exit(0);
+`)
+	if err != nil {
+		t.Fatalf("memory probe failed: %v %s", err, out)
+	}
+	var got map[string]int
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode: %v %s", err, out)
+	}
+	if got["small_ok"] != 1 || got["large_errno"] != 12 {
+		t.Fatalf("native address-space bound absent or memory entirely denied: %s (want small_ok=1 large_errno=ENOMEM12)", out)
+	}
+	t.Logf("actual native allocation bound: %s", out)
+}
+
+func TestQuickJSNativeConfinementProbe(t *testing.T) {
+	out, err := quickJSProbe(t, "")
 	if err != nil {
 		t.Fatalf("probe process: %v %s", err, out)
 	}

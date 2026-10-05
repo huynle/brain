@@ -16,6 +16,7 @@
 #include <linux/seccomp.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
+#include <sys/resource.h>
 
 /* Deliberately local to this experiment, NOT a reviewed production policy. */
 #if defined(__aarch64__)
@@ -30,6 +31,8 @@
 #define DENY BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM)
 #define ALLOW_NR(n) BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_##n,0,1), ALLOW
 static int seal(void) {
+    struct rlimit address_space={64*1024*1024,64*1024*1024};
+    if(setrlimit(RLIMIT_AS,&address_space))return -1;
     struct sock_filter filter[]={
         BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,arch)),
         BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,PROBE_ARCH,1,0),

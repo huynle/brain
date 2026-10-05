@@ -118,11 +118,16 @@ read/pread/readv/dup of a deliberately retained test descriptor, file-backed mma
 and executable mmap are native probes, not merely missing-JS-API checks.
 The original unsealed harness returned async42 and errno0 for all ten probes;
 the sealed harness returns async42 and EPERM1 for each, on local Linux arm64.
+`TestQuickJSNativeAddressSpaceProbe` additionally injects native allocation attempts
+immediately after the same seal: a 4KiB anonymous mapping succeeds, while a 128MiB
+mapping fails with ENOMEM under an irreversible 64MiB `RLIMIT_AS`. Without that
+limit the large mapping succeeds. This tests native address-space enforcement,
+not just the engine's heap accounting, on the observed Linux platform only.
 
 This is **not confinement certification or execution availability**. The retained
 test descriptor is intentional adversarial input, not an approved worker launch
 policy. Real descriptor closure, broker/frame IPC, script API, source/result/log
-budgets, compile and hard CPU/address-space limits, memory pressure, termination/
+budgets, compile and hard CPU limits, broader memory-pressure cases, termination/
 reaping, aggregate admission and native-compromise review still need evidence.
 QuickJS heap/stack limits alone do not prove these. The compiler container's 512MiB
 limit is not a claimed per-worker policy. No macOS native-memory proof or D06 VM

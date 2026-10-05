@@ -74,3 +74,15 @@ not that process confinement passed. No reviewed syscall/exec/descriptor boundar
 JS capability facade or parent broker exists. This image is an experiment input,
 not a selected/published worker runtime. This does not meet D06 hosted VM isolation
 or license/reproducibility/release gates. No container is deployed as a service.
+
+## Pure request preparation (inactive)
+
+`PrepareRequest` checks UTF-8 source byte size and server-supplied timeout and
+operation ceilings, normalizes omitted limits, and hashes the exact source plus
+contract version, normalized limits and dry-run flag. Its returned value contains
+no source text. It performs no compilation, authorization, quota reservation,
+operation validation, provider call or execution. In particular, `DryRun` here is
+only fingerprinted intent, **not an implemented dry-run broker**. Fingerprints are
+not receipts or authority; tenant/principal/endpoint scoping and replay/output
+authorization remain integration-owner responsibilities. No HTTP/MCP caller or
+public capability is added by this helper.

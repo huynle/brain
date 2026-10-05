@@ -189,6 +189,15 @@ export class BrainClient {
     audit: (id: string,limit = 50,options?: RequestOptions): Promise<Schema["GoalAuditResponse"]> => this.#request("GET",`/goals/${encodeURIComponent(id)}/audit`,undefined,{limit},options),
     run: (id: string,options?: RequestOptions): Promise<Schema["GoalReconcileAudit"]> => this.#request("POST",`/goals/${encodeURIComponent(id)}/run`,undefined,undefined,options),
   });
+  readonly webhooks = Object.freeze({
+    list: (enabled = false,options?: RequestOptions): Promise<Schema["ListWebhooksResponse"]> => this.#request("GET","/webhooks",undefined,{enabled},options),
+    get: (id: string,options?: RequestOptions): Promise<Schema["WebhookResponse"]> => this.#request("GET",`/webhooks/${encodeURIComponent(id)}`,undefined,undefined,options),
+    create: (request: Schema["CreateWebhookRequest"],options?: RequestOptions): Promise<Schema["WebhookResponse"]> => this.#request("POST","/webhooks",request,undefined,options),
+    update: (id: string,request: Schema["UpdateWebhookRequest"],options?: RequestOptions): Promise<Schema["WebhookResponse"]> => this.#request("PATCH",`/webhooks/${encodeURIComponent(id)}`,request,undefined,options),
+    delete: (id: string,options?: RequestOptions): Promise<Schema["SuccessResponse"]> => this.#request("DELETE",`/webhooks/${encodeURIComponent(id)}`,undefined,undefined,options),
+    deliveries: (id: string,limit = 50,options?: RequestOptions): Promise<Schema["ListWebhookDeliveriesResponse"]> => this.#request("GET",`/webhooks/${encodeURIComponent(id)}/deliveries`,undefined,{limit},options),
+    test: (id: string,options?: RequestOptions): Promise<Schema["WebhookDeliveryResponse"]> => this.#request("POST",`/webhooks/${encodeURIComponent(id)}/test`,undefined,undefined,options),
+  });
   readonly reminders = Object.freeze({
     list: (query?: NonNullable<operations["reminders.list"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["ReminderListResponse"]> => this.#request("GET","/reminders",undefined,query,options),
     get: (id: string,options?: RequestOptions): Promise<Schema["ReminderSummary"]> => this.#request("GET",`/reminders/${encodeURIComponent(id)}`,undefined,undefined,options),

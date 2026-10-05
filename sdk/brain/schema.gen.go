@@ -479,6 +479,16 @@ type CreateReminderRequest struct {
 	Title     string         `json:"title"`
 }
 
+// CreateWebhookRequest defines model for CreateWebhookRequest.
+type CreateWebhookRequest struct {
+	Enabled *bool              `json:"enabled,omitempty"`
+	Events  *[]string          `json:"events"`
+	Filter  *map[string]string `json:"filter,omitempty"`
+	Name    string             `json:"name"`
+	Secret  *string            `json:"secret,omitempty"`
+	Url     string             `json:"url"`
+}
+
 // CronRun defines model for CronRun.
 type CronRun struct {
 	Completed  *string `json:"completed,omitempty"`
@@ -672,6 +682,16 @@ type ListEntriesResponse struct {
 type ListGoalsResponse struct {
 	Count int            `json:"count"`
 	Goals *[]GoalSummary `json:"goals"`
+}
+
+// ListWebhookDeliveriesResponse defines model for ListWebhookDeliveriesResponse.
+type ListWebhookDeliveriesResponse struct {
+	Deliveries []WebhookDeliveryResponse `json:"deliveries"`
+}
+
+// ListWebhooksResponse defines model for ListWebhooksResponse.
+type ListWebhooksResponse struct {
+	Webhooks []WebhookResponse `json:"webhooks"`
 }
 
 // MoveEntryRequest defines model for MoveEntryRequest.
@@ -931,6 +951,11 @@ type SnoozeReminderRequest struct {
 	RemindAt time.Time `json:"remind_at"`
 }
 
+// SuccessResponse defines model for SuccessResponse.
+type SuccessResponse struct {
+	Success bool `json:"success"`
+}
+
 // TaskListResponse defines model for TaskListResponse.
 type TaskListResponse struct {
 	Count  int             `json:"count"`
@@ -1065,10 +1090,44 @@ type UpdateReminderRequest struct {
 	Title         *string `json:"title,omitempty"`
 }
 
+// UpdateWebhookRequest defines model for UpdateWebhookRequest.
+type UpdateWebhookRequest struct {
+	Enabled *bool              `json:"enabled,omitempty"`
+	Events  *[]string          `json:"events,omitempty"`
+	Filter  *map[string]string `json:"filter,omitempty"`
+	Name    *string            `json:"name,omitempty"`
+	Secret  *string            `json:"secret,omitempty"`
+	Url     *string            `json:"url,omitempty"`
+}
+
 // ValidationDetail defines model for ValidationDetail.
 type ValidationDetail struct {
 	Field   string `json:"field"`
 	Message string `json:"message"`
+}
+
+// WebhookDeliveryResponse defines model for WebhookDeliveryResponse.
+type WebhookDeliveryResponse struct {
+	CreatedAt  string  `json:"created_at"`
+	Error      *string `json:"error,omitempty"`
+	EventType  string  `json:"event_type"`
+	Id         string  `json:"id"`
+	LatencyMs  *int    `json:"latency_ms,omitempty"`
+	StatusCode *int    `json:"status_code,omitempty"`
+	Success    bool    `json:"success"`
+	WebhookId  string  `json:"webhook_id"`
+}
+
+// WebhookResponse defines model for WebhookResponse.
+type WebhookResponse struct {
+	CreatedAt string             `json:"created_at"`
+	Enabled   bool               `json:"enabled"`
+	Events    *[]string          `json:"events"`
+	Filter    *map[string]string `json:"filter,omitempty"`
+	Id        string             `json:"id"`
+	Name      string             `json:"name"`
+	UpdatedAt string             `json:"updated_at"`
+	Url       string             `json:"url"`
 }
 
 // AttachmentsListParams defines parameters for AttachmentsList.
@@ -1187,6 +1246,16 @@ type RemindersListParams struct {
 	State   *string `form:"state,omitempty" json:"state,omitempty"`
 }
 
+// WebhooksListParams defines parameters for WebhooksList.
+type WebhooksListParams struct {
+	Enabled *bool `form:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// WebhooksDeliveriesParams defines parameters for WebhooksDeliveries.
+type WebhooksDeliveriesParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // AttachmentsUploadMultipartRequestBody defines body for AttachmentsUpload for multipart/form-data ContentType.
 type AttachmentsUploadMultipartRequestBody AttachmentsUploadMultipartBody
 
@@ -1234,3 +1303,9 @@ type RemindersSnoozeJSONRequestBody = SnoozeReminderRequest
 
 // SearchQueryJSONRequestBody defines body for SearchQuery for application/json ContentType.
 type SearchQueryJSONRequestBody = SearchRequest
+
+// WebhooksCreateJSONRequestBody defines body for WebhooksCreate for application/json ContentType.
+type WebhooksCreateJSONRequestBody = CreateWebhookRequest
+
+// WebhooksUpdateJSONRequestBody defines body for WebhooksUpdate for application/json ContentType.
+type WebhooksUpdateJSONRequestBody = UpdateWebhookRequest

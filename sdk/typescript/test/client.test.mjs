@@ -52,6 +52,13 @@ test("goal namespace routes",async t=>{
  assert.deepEqual(seen,["GET /api/v1/goals?project=p&status=all","POST /api/v1/goals","PATCH /api/v1/goals/g","GET /api/v1/goals/g/progress","GET /api/v1/goals/g/audit?limit=50","POST /api/v1/goals/g/run","DELETE /api/v1/goals/g"]);
 });
 
+test("webhook namespace routes",async t=>{
+ const seen=[];const baseUrl=await server(t,async(req,res)=>{for await(const _ of req){};seen.push(req.method+" "+req.url);res.end("{}");});
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());
+ await c.webhooks.list(true);await c.webhooks.create({});await c.webhooks.get("w");await c.webhooks.update("w",{});await c.webhooks.deliveries("w");await c.webhooks.test("w");await c.webhooks.delete("w");
+ assert.deepEqual(seen,["GET /api/v1/webhooks?enabled=true","POST /api/v1/webhooks","GET /api/v1/webhooks/w","PATCH /api/v1/webhooks/w","GET /api/v1/webhooks/w/deliveries?limit=50","POST /api/v1/webhooks/w/test","DELETE /api/v1/webhooks/w"]);
+});
+
 test("reminder and attention namespace routes",async t=>{
  const seen=[];const baseUrl=await server(t,async(req,res)=>{for await(const _ of req){};seen.push(req.method+" "+req.url);res.end("{}");});
  const c=new BrainClient({baseUrl});t.after(()=>c.close());

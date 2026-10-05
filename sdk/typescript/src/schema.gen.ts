@@ -758,10 +758,96 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/webhooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List webhook subscriptions */
+        get: operations["webhooks.list"];
+        put?: never;
+        /** Create webhook subscription for future outbound delivery */
+        post: operations["webhooks.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Read webhook subscription */
+        get: operations["webhooks.get"];
+        put?: never;
+        post?: never;
+        /** Delete webhook subscription */
+        delete: operations["webhooks.delete"];
+        options?: never;
+        head?: never;
+        /** Update webhook subscription */
+        patch: operations["webhooks.update"];
+        trace?: never;
+    };
+    "/webhooks/{id}/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List webhook deliveries */
+        get: operations["webhooks.deliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send a synthetic event to the webhook destination */
+        post: operations["webhooks.test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SuccessResponse: {
+            success: boolean;
+        };
+        ListWebhooksResponse: {
+            webhooks: components["schemas"]["WebhookResponse"][];
+        };
+        ListWebhookDeliveriesResponse: {
+            deliveries: components["schemas"]["WebhookDeliveryResponse"][];
+        };
         DeletionResponse: {
             deleted: boolean;
         };
@@ -1705,6 +1791,48 @@ export interface components {
             target_workdir?: string | null;
             timezone?: string | null;
             title?: string | null;
+        };
+        CreateWebhookRequest: {
+            enabled?: boolean | null;
+            events: string[] | null;
+            filter?: {
+                [key: string]: string;
+            } | null;
+            name: string;
+            secret?: string;
+            url: string;
+        };
+        UpdateWebhookRequest: {
+            enabled?: boolean | null;
+            events?: string[] | null;
+            filter?: {
+                [key: string]: string;
+            } | null;
+            name?: string | null;
+            secret?: string | null;
+            url?: string | null;
+        };
+        WebhookDeliveryResponse: {
+            created_at: string;
+            error?: string;
+            event_type: string;
+            id: string;
+            latency_ms?: number | null;
+            status_code?: number | null;
+            success: boolean;
+            webhook_id: string;
+        };
+        WebhookResponse: {
+            created_at: string;
+            enabled: boolean;
+            events: string[] | null;
+            filter?: {
+                [key: string]: string;
+            } | null;
+            id: string;
+            name: string;
+            updated_at: string;
+            url: string;
         };
     };
     responses: never;
@@ -2937,6 +3065,168 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Attention"];
+                };
+            };
+        };
+    };
+    "webhooks.list": {
+        parameters: {
+            query?: {
+                enabled?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Webhooks */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListWebhooksResponse"];
+                };
+            };
+        };
+    };
+    "webhooks.create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateWebhookRequest"];
+            };
+        };
+        responses: {
+            /** @description Created webhook */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookResponse"];
+                };
+            };
+        };
+    };
+    "webhooks.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Webhook */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookResponse"];
+                };
+            };
+        };
+    };
+    "webhooks.delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deletion result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"];
+                };
+            };
+        };
+    };
+    "webhooks.update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateWebhookRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated webhook */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookResponse"];
+                };
+            };
+        };
+    };
+    "webhooks.deliveries": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delivery history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListWebhookDeliveriesResponse"];
+                };
+            };
+        };
+    };
+    "webhooks.test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delivery result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookDeliveryResponse"];
                 };
             };
         };

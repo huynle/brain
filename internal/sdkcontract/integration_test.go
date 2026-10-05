@@ -62,7 +62,8 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	defer inbox.Close()
 	attention := service.NewAttentionService(inbox)
 	reminders := service.NewReminderService(svc, store)
-	h := api.NewHandler(svc, api.WithTaskService(tasks), api.WithAttachmentService(attachments), api.WithGoalService(goals), api.WithReminderService(reminders), api.WithAttentionService(attention))
+	webhooks := service.NewWebhookService(store)
+	h := api.NewHandler(svc, api.WithTaskService(tasks), api.WithAttachmentService(attachments), api.WithGoalService(goals), api.WithReminderService(reminders), api.WithAttentionService(attention), api.WithWebhookService(webhooks))
 	srv := httptest.NewServer(api.NewRouter(cfg, api.WithHandler(h), api.WithTokenValidator(control)))
 	defer srv.Close()
 	c, err := brain.New(brain.Config{BaseURL: srv.URL})
@@ -79,6 +80,7 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	}
 	defer authed.Close()
 	exerciseNotificationSDK(t, authed)
+	exerciseWebhookSDK(t, authed)
 	repo, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)

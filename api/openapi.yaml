@@ -1206,12 +1206,174 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Attention'
+  /webhooks:
+    get:
+      operationId: webhooks.list
+      summary: List webhook subscriptions
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: enabled
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Webhooks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWebhooksResponse'
+    post:
+      operationId: webhooks.create
+      summary: Create webhook subscription for future outbound delivery
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWebhookRequest'
+      responses:
+        '201':
+          description: Created webhook
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookResponse'
+  /webhooks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: webhooks.get
+      summary: Read webhook subscription
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Webhook
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookResponse'
+    patch:
+      operationId: webhooks.update
+      summary: Update webhook subscription
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWebhookRequest'
+      responses:
+        '200':
+          description: Updated webhook
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookResponse'
+    delete:
+      operationId: webhooks.delete
+      summary: Delete webhook subscription
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Deletion result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+  /webhooks/{id}/deliveries:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: webhooks.deliveries
+      summary: List webhook deliveries
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 50
+      responses:
+        '200':
+          description: Delivery history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWebhookDeliveriesResponse'
+  /webhooks/{id}/test:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: webhooks.test
+      summary: Send a synthetic event to the webhook destination
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Delivery result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookDeliveryResponse'
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
   schemas:
+    SuccessResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+    ListWebhooksResponse:
+      type: object
+      required:
+        - webhooks
+      properties:
+        webhooks:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookResponse'
+    ListWebhookDeliveriesResponse:
+      type: object
+      required:
+        - deliveries
+      properties:
+        deliveries:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookDeliveryResponse'
     DeletionResponse:
       type: object
       required:
@@ -3879,4 +4041,128 @@ components:
           anyOf:
             - type: string
             - type: 'null'
+      type: object
+    CreateWebhookRequest:
+      properties:
+        enabled:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        events:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        filter:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        name:
+          type: string
+        secret:
+          type: string
+        url:
+          type: string
+      required:
+        - name
+        - url
+        - events
+      type: object
+    UpdateWebhookRequest:
+      properties:
+        enabled:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        events:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        filter:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        name:
+          anyOf:
+            - type: string
+            - type: 'null'
+        secret:
+          anyOf:
+            - type: string
+            - type: 'null'
+        url:
+          anyOf:
+            - type: string
+            - type: 'null'
+      type: object
+    WebhookDeliveryResponse:
+      properties:
+        created_at:
+          type: string
+        error:
+          type: string
+        event_type:
+          type: string
+        id:
+          type: string
+        latency_ms:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        status_code:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        success:
+          type: boolean
+        webhook_id:
+          type: string
+      required:
+        - id
+        - webhook_id
+        - event_type
+        - success
+        - created_at
+      type: object
+    WebhookResponse:
+      properties:
+        created_at:
+          type: string
+        enabled:
+          type: boolean
+        events:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        filter:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        id:
+          type: string
+        name:
+          type: string
+        updated_at:
+          type: string
+        url:
+          type: string
+      required:
+        - id
+        - name
+        - url
+        - events
+        - enabled
+        - created_at
+        - updated_at
       type: object

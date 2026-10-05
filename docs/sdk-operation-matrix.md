@@ -20,8 +20,11 @@ Both languages have route tests for these 17 methods. The authenticated real-ser
 Go fixture additionally exercises seven reminder methods (not fire) and all nine
 attention methods, including token-name recipient binding. These notification
 methods are not yet exercised by the installed external Node consumer.
+Webhooks `list/get/create/update/delete/deliveries/test` bring delivered coverage
+to 58. All seven have Go/TS route tests and real Go service integration, including
+one actual HTTP delivery to an isolated local test receiver (not a public target).
 `TestDeliveredContractMatchesRouterAndInventory` checks every delivered operation
-against the real Chi route inventory and its table row below (51 currently).
+against the real Chi route inventory and its table row below (58 currently).
 It normalizes parameter names/trailing slashes and explicitly maps legacy entry
 dispatchers to their wildcard routes. It does not certify dispatcher suffix
 semantics, authorization, or completion of pending inventory operations.

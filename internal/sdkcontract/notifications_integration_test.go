@@ -28,6 +28,9 @@ func exerciseNotificationSDK(t *testing.T, c *brain.Client) {
 	if _, err := c.Reminders().Snooze(ctx, reminder.ReminderId, brain.SnoozeReminderRequest{RemindAt: time.Now().Add(24 * time.Hour)}, brain.RequestOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	if fired, err := c.Reminders().Fire(ctx, reminder.ReminderId, brain.RequestOptions{}); err != nil || fired.FiredAt == nil || fired.FireCount == nil || *fired.FireCount != 1 || fired.GeneratedTaskId != nil {
+		t.Fatalf("notify firing=%+v err=%v", fired, err)
+	}
 	if _, err := c.Reminders().Ack(ctx, reminder.ReminderId, brain.RequestOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -65,5 +68,5 @@ func exerciseNotificationSDK(t *testing.T, c *brain.Client) {
 	if _, err := c.Attention().Dismiss(ctx, item.Id, brain.RequestOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	t.Log("real SDK notification parity: seven reminder and nine recipient-bound attention operations")
+	t.Log("real SDK notification parity: eight reminder and nine recipient-bound attention operations; notify fire creates no task")
 }

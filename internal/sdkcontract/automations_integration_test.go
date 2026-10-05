@@ -29,5 +29,27 @@ func exerciseAutomationSDK(t *testing.T, c *brain.Client) {
 	if err := c.Entries().Delete(ctx, entry.Id, false); err != nil {
 		t.Fatal(err)
 	}
-	t.Log("real automation run-history SDK parity: filtered list and typed get; no work submitted")
+	active := "active"
+	prompt := "Do the {{.Project}} thing."
+	schedule := "0 5 * * *"
+	triggerType := "cron"
+	automation, err := c.Entries().Create(ctx, brain.CreateEntryRequest{Project: &project, Type: "automation", Title: "SDK manual automation", Content: "manual trigger fixture", Status: &active, Trigger: &brain.TriggerConfig{Type: &triggerType, Schedule: &schedule}, Action: &brain.AutomationAction{Type: "prompt", DirectPrompt: &prompt}}, brain.RequestOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := c.Automations().Run(ctx, brain.RunAutomationRequest{Path: automation.Id}, brain.RequestOptions{})
+	if err != nil || len(result.TaskIds) != 1 {
+		t.Fatalf("run=%+v err=%v", result, err)
+	}
+	generated, err := c.Entries().Get(ctx, result.TaskId)
+	if err != nil || generated.Type != "task" || generated.GeneratedBy == nil || *generated.GeneratedBy != "automation:"+automation.Id {
+		t.Fatalf("generated=%+v err=%v", generated, err)
+	}
+	if err := c.Entries().Delete(ctx, result.TaskId, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Entries().Delete(ctx, automation.Id, false); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("real automation SDK parity: filtered run history/get and actual manual task generation; no executor started")
 }

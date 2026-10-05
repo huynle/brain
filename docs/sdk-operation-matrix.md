@@ -17,22 +17,26 @@ Goals `list/create/update/delete/progress/audit/run` are also implemented (34 to
 Reminders `list/get/create/update/delete/ack/snooze/fire` and attention
 `list/counts/get/create/read/unread/snooze/resolve/dismiss` bring coverage to 51.
 Both languages have route tests for these 17 methods. The authenticated real-service
-Go fixture additionally exercises seven reminder methods (not fire) and all nine
+Go fixture additionally exercises all eight reminder methods and all nine
 attention methods, including token-name recipient binding. These notification
-methods are not yet exercised by the installed external Node consumer.
+methods now also run through the installed external Node consumer, with unread
+count and state assertions. Reminder fire is notify-only with durable fire-count
+and no-generated-task assertions; this does not prove external notice delivery.
 Webhooks `list/get/create/update/delete/deliveries/test` bring delivered coverage
 to 58. All seven have Go/TS route tests and real Go service integration, including
 one actual HTTP delivery to an isolated local test receiver (not a public target).
 Automations `run/runs/getRun` bring delivered coverage to 61; both SDK route
 tests cover all three, and real Go fixtures check filtered run history/get.
-Automation run submission remains route-only; no runtime/provider is launched.
+Automation run submission now also generates a real task in the Go service fixture,
+with its generated-by provenance checked; no executor/runtime/provider is launched.
 `TestDeliveredContractMatchesRouterAndInventory` checks every delivered operation
 against the real Chi route inventory and its table row below (61 currently).
 It normalizes parameter names/trailing slashes and explicitly maps legacy entry
 dispatchers to their wildcard routes. It does not certify dispatcher suffix
 semantics, authorization, or completion of pending inventory operations.
-The external consumers exercise six goal operations; manual run has route parity
-tests only, avoiding runner/provider submission in consumer examples.
+The Go external consumer exercises six goal operations. Node additionally runs a
+goal after its linked task completes, asserting the completion decision and audit.
+This does not prove goal-driven work generation or live session steering.
 Contract: `api/openapi.yaml`; transport tests: `sdk/brain/client_test.go`
 and `sdk/typescript/test/client.test.mjs`; real stored-token/SQLite/service/router
 and external-module/package evidence:

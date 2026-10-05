@@ -44,8 +44,8 @@ not tests of a confined JS runtime. There is no production caller.
 
 The trusted launch owner must still ensure no descendants can be created, close
 inherited descriptors, sanitize the environment, establish OS resource/confinement
-bounds, supply cancellation-safe bounded stdin/stdout, and arrange supervisor-death
-cleanup. An arbitrary blocking Go reader/writer is not made interruptible by this
+bounds, supply cancellation-safe bounded stdin/stdout, and arrange external reaper
+ownership. An arbitrary blocking Go reader/writer is not made interruptible by this
 helper. No shell/command input is exposed through HTTP, MCP or a script facade.
 
 `frameSink` incrementally assembles stdout frames under a total **wire-byte**
@@ -67,6 +67,18 @@ result42 until successful Wait, and separately cancels after one call and Waits
 the killed child. This is not a Docker CLI PID being mistaken for the worker.
 The inner cross-build is non-race (`CGO_ENABLED=0`); host-side parent primitives
 have separate race coverage. No Brain services, credentials or live output exist.
+
+On Linux `runWorkerProcess` now sets `Pdeathsig=SIGKILL` before exec using Go's
+parent-PID race check. Because Linux binds it to the creating **thread**, that
+thread stays locked until Wait and cancellation-observer join finish. Other OSes
+acquire no parent-death guarantee. A launch must prohibit set-ID execution and
+the sealed native worker must deny changing this signal. External init/subreaper
+ownership remains mandatory: a dead parent cannot reap its own orphan.
+`TestQuickJSManagedParentDeath` actually SIGKILLs the Go parent after its direct
+native worker's first call; an external C subreaper keeps stdin open, reaps signal9
+and verifies ECHILD. Without the change the orphan survives the outer five-second
+deadline. The Linux Go parent remains a non-race cross-build; this is test-fixture
+evidence, not production init/deployment approval or a macOS lifecycle guarantee.
 
 ### macOS address-space negative control
 

@@ -1,7 +1,11 @@
 # SDK/script takeover evidence — incomplete V1
 
 Task `vggevclc`, plan `qfcda7ct` / `SDK-TENANCY-20261005`.
-Sole continuation writer: `ses_ef225e26fffeCnN8Nv0CwBdc3e`.
+Prior continuation writer: `ses_ef225e26fffeCnN8Nv0CwBdc3e`.
+Current sole writer: `ses_ef1eb0e68ffeTB2jTZQYRY189E`, explicitly transferred by
+parent/user at clean `6d15274b`. Fresh dispatch lease absent; transfer persisted
+on task `vggevclc`. Ordinary Brain recall/update restored without credential changes
+(task-list timeout persists). This section preserves the prior writer's evidence.
 Start: clean `9061f351f13ff25688f105d54323ac62ae8de53a`, no dispatch lease.
 The parent explicitly transferred ownership from the completed prior writer.
 No old writer restart, runner dispatch, shared authority/schema/MCP edit,

@@ -36,6 +36,8 @@ func runWorkerProcess(ctx context.Context, cmd *exec.Cmd) error {
 	if err := ctx.Err(); err != nil {
 		return context.Cause(ctx)
 	}
+	releaseThread := prepareWorkerParentDeath(cmd)
+	defer releaseThread()
 	cmd.Stderr = &diagnosticSink{remaining: 64 << 10, cancel: cancel}
 	if err := cmd.Start(); err != nil {
 		return err

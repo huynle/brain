@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -99,6 +100,30 @@ func TestNativeManagedQuickJS(t *testing.T) {
 }
 
 func TestQuickJSManagedParentIntegration(t *testing.T) {
+	runManagedFixture(t, false)
+}
+
+// The external observer owns the input pipe across the Go parent's death; EOF
+// cannot rescue an unprotected orphan. The worker is a direct child of Go.
+func TestNativeManagedOrphanParent(t *testing.T) {
+	worker := os.Getenv("BRAIN_NATIVE_WORKER_FIXTURE")
+	if worker == "" {
+		t.Skip("requires opt-in native Linux worker fixture")
+	}
+	cmd := exec.Command(worker)
+	cmd.Env = []string{}
+	cmd.Stdin, cmd.Stdout = os.Stdin, os.Stdout
+	if err := runWorkerProcess(context.Background(), cmd); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQuickJSManagedParentDeath(t *testing.T) {
+	runManagedFixture(t, true)
+}
+
+func runManagedFixture(t *testing.T, observeDeath bool) {
+	t.Helper()
 	_, err := quickJSProgram(t, "", true, func(host, name string) ([]byte, error) {
 		binary := filepath.Join(t.TempDir(), "managed.test")
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -116,6 +141,35 @@ func TestQuickJSManagedParentIntegration(t *testing.T) {
 		copyCmd.Stdin = bytes.NewReader(data)
 		if out, e := copyCmd.CombinedOutput(); e != nil {
 			return nil, fmt.Errorf("copy native parent: %w %s", e, out)
+		}
+		if observeDeath {
+			observer := strings.Replace(lifecycleObserver, `char *args[]={"probe","--supervise",NULL};
+        _exit(supervised_main(2,args));`, `execl("/tmp/managed.test","managed.test","-test.run=^TestNativeManagedOrphanParent$",NULL);
+        _exit(73);`, 1)
+			if strings.Contains(observer, "supervised_main") {
+				return nil, errors.New("observer launch anchor changed")
+			}
+			headers := "#include <sys/prctl.h>\n#include <sys/wait.h>\n#include <unistd.h>\n#include <signal.h>\n#include <errno.h>\n#include <stdio.h>\n#include <string.h>\n"
+			buildObserver := exec.CommandContext(ctx, "docker", "--host", host, "exec", "-i", name, "/bin/sh", "-c", "cat > /tmp/direct-observer.c && cc -O1 /tmp/direct-observer.c -o /tmp/direct-observer")
+			buildObserver.Stdin = strings.NewReader(headers + observer)
+			if out, e := buildObserver.CombinedOutput(); e != nil {
+				return nil, fmt.Errorf("build direct observer: %w %s", e, out)
+			}
+			deathCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+			defer stop()
+			run := exec.CommandContext(deathCtx, "docker", "--host", host, "exec", "--user=65534:65534", name, "/usr/bin/env", "-i", "BRAIN_NATIVE_WORKER_FIXTURE=/tmp/probe", "/tmp/direct-observer")
+			out, e := run.CombinedOutput()
+			if deathCtx.Err() != nil {
+				return nil, errors.New("direct worker survived Go parent death until outer deadline")
+			}
+			if e != nil {
+				return nil, fmt.Errorf("direct observer: %w %s", e, out)
+			}
+			if !strings.Contains(string(out), `"worker_reaped":true,"signal":9,"no_children":true`) {
+				return nil, fmt.Errorf("incomplete orphan evidence: %s", out)
+			}
+			t.Logf("external native subreaper after direct Go-parent death: %s", out)
+			return nil, nil
 		}
 		run := exec.CommandContext(ctx, "docker", "--host", host, "exec", "--user=65534:65534", name, "/usr/bin/env", "-i", "BRAIN_NATIVE_WORKER_FIXTURE=/tmp/probe", "/tmp/managed.test", "-test.run=^TestNativeManagedQuickJS$", "-test.v", "-test.timeout=10s")
 		out, e := run.CombinedOutput()

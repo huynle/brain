@@ -182,10 +182,19 @@ in 1.04s. The restored four QuickJS experiment tests pass under Go's race detect
 This is not
 macOS proof, D06 VM acceptance or an authorized dry-run broker.
 Compile is inside the OS CPU/AS bounds, but a dedicated adversarial compilation
-corpus, parent-controlled wall cancellation/reaping of a blocked IPC worker,
+corpus, production parent-controlled cancellation/reaping,
 source-aware output fences, aggregate limits and all production launch/descriptor
 review still remain. A compromised worker can forge its own frames; only parent
 validation and authorization may determine operations or release protected output.
+
+`TestQuickJSWorkerWallDeadlineKillsAndReapsBlockedIPC` exercises the additional
+test-only `--supervise` launcher. It forks one fresh child with no service authority,
+sets a two-second wall alarm outside that child, kills it if it blocks waiting for
+a fixture reply, and reports the actual `waitpid` outcome. RED hit the outer
+five-second Go deadline. GREEN reported `timed_out=true,reaped=true,signal=9`
+without that deadline firing. This establishes this local Linux blocked-IPC wall
+case only, not production coordinator cancellation, supervisor death, graph/store
+shutdown, stderr/log budgets, fair admission or a macOS launch contract.
 
 References: [QuickJS C API](https://bellard.org/quickjs/quickjs.html#QuickJS-C-API),
 [official release](https://bellard.org/quickjs/),

@@ -4,6 +4,7 @@
 #define main native_probe_main
 #include "probe.c"
 #undef main
+#include <signal.h>
 
 #define FRAME_LIMIT 65536
 #define SOURCE_LIMIT 32768
@@ -84,7 +85,7 @@ static JSValue entry_get(JSContext *ctx, JSValueConst self, int argc, JSValueCon
     if (JS_IsException(response) || JS_IsUndefined(response)) _exit(132);
     return response;
 }
-int main(void) {
+static int worker_main(void) {
     setbuf(stdout, NULL);
     JSRuntime *rt = JS_NewRuntime();
     if (!rt) return 121;
@@ -123,4 +124,46 @@ int main(void) {
     JS_FreeValue(ctx, result); JS_FreeValue(ctx, promise);
     JS_FreeContext(ctx); JS_FreeRuntime(rt);
     return 0;
+}
+
+/* Trusted, test-only supervisor. It never reads an operation or contains any
+ * service authority. Its hard wall timer covers blocked reads as well as JS.
+ * Production coordinator/graph shutdown and cross-platform launch remain absent. */
+static volatile sig_atomic_t supervised_pid = 0;
+static volatile sig_atomic_t wall_expired = 0;
+static void wall_alarm(int signum) {
+    (void)signum;
+    wall_expired = 1;
+    if (supervised_pid > 0) kill(supervised_pid, SIGKILL);
+}
+int main(int argc, char **argv) {
+    if (argc == 1) return worker_main();
+    if (argc != 2 || strcmp(argv[1], "--supervise")) return 125;
+    struct sigaction action = {0};
+    action.sa_handler = wall_alarm;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGALRM, &action, NULL)) return 125;
+    pid_t pid = fork();
+    if (pid < 0) return 125;
+    if (pid == 0) _exit(worker_main());
+    supervised_pid = pid;
+    alarm(2);
+    int status = 0;
+    /* Observe exit without reaping first: the PID cannot be reused while the
+     * alarm handler still names it. Disarm/clear the target before waitpid. */
+    siginfo_t observed;
+    int observation;
+    do { observation = waitid(P_PID, pid, &observed, WEXITED|WNOWAIT); }
+    while (observation < 0 && errno == EINTR);
+    if (observation < 0) kill(pid, SIGKILL);
+    alarm(0);
+    supervised_pid = 0;
+    pid_t waited;
+    do { waited = waitpid(pid, &status, 0); } while (waited < 0 && errno == EINTR);
+    int reaped = waited == pid;
+    int signal = reaped && WIFSIGNALED(status) ? WTERMSIG(status) : 0;
+    fprintf(stderr, "{\"timed_out\":%s,\"reaped\":%s,\"signal\":%d}\n", wall_expired ? "true" : "false", reaped ? "true" : "false", signal);
+    if (!reaped) return 125;
+    if (wall_expired) return 124;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 128+signal;
 }

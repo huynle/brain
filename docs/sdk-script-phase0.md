@@ -125,6 +125,71 @@ not silently retried.
 
 ## Completion ledger
 
+### Continuation checkpoint — 2026-10-05
+
+- `209a68e7`: 29 remaining inventory operations implemented; 104/104 rows have
+  OpenAPI and Go/TypeScript adapters, with authenticated external Go/installed
+  Node fixtures and bounded non-reconnecting SSE. This does not prove every
+  provider/scheduler success path, hosted authority or the complete V1 contract.
+- `f3b6c991`: legacy error-only conflict explanations preserved for explicit
+  inspection without disclosure in default errors. Node suite 35/35; both SDK
+  race packages with external consumers pass. OpenAPI retains one existing
+  task-suffix/feature-lookup warning; generation hashes are reproducible.
+- `85a63d3d`: actual inactive QuickJS child receives source over framed stdin,
+  makes two fixture-only parent calls, and returns async42. Hard CPU negative
+  control, source/result/heap/syntax/import refusal tests; no Brain operations.
+- `48e1e70c`: parent protocol sequencing/pending/terminal state, message/count/
+  cumulative budgets, nested duplicate/UTF-8/depth checks, concurrent retirement,
+  and actual worker fixture integration. Fuzz: 536,139 executions in 11.368s.
+  This is not an operation registry or authorization/preflight service.
+- macOS negative control disproves the proposed baseline-relative `RLIMIT_AS`
+  resident-memory assumption: 128MiB ordinary small allocations increased RSS
+  by ~136.5MiB despite only ~512KiB new virtual space under a +64MiB VM ceiling.
+  It is retained as `TestDarwinAddressSpaceDoesNotBoundResidentMemory`; PASS
+  means an unsafe gap was reproduced. macOS remains unavailable.
+
+Fresh owner responses still provide no script allocation: S09 `i8aurh42` and
+S10 `ap90gj4e` are draft; the narrower stdio ownership proposal has no reply.
+P6 S03 `yp7llda1` remains blocked; its newer `21d2d1e7` repair is awaiting parent
+review and allocates no script capability/profile. S15's accepted `23664fe4`
+is a private evaluator only, explicitly not live ACL/output/CAS composition.
+No foreign checkpoint has been imported or treated as authority for this feature.
+
+**Exact remaining acceptance checklist (none waived by 104-row coverage):**
+
+- [ ] Parent independent review of the new SDK/error/worker/protocol candidates.
+- [ ] Allocated capability/version route distinguishing compiled/configured/
+  profile/caller availability; explicit `script:execute` credential/trusted-single
+  mapping, without OAuth wildcard escalation or historical schema edits.
+- [ ] Owner-approved stdio SDK migration and S10 hosted trusted adapter; real
+  REST/MCP parity and script multi-operation flow, never loopback impersonation.
+- [ ] Selected/reviewed runtime and certified supported-platform launch policy;
+  macOS enforceable native-memory mechanism; D06 remains separately unaccepted.
+- [ ] Worker full SDK facade, final-expression semantics, bounded logs/errors,
+  production wall/cancel/crash/supervisor-death reaping and graph/store shutdown;
+  adversarial compile/native/descriptor/aggregate-memory/CPU/fairness evidence.
+- [ ] Explicit per-operation registry and reusable side-effect-free service
+  preflight with current resource authorization, CAS/dependencies, provisional
+  dependency handling, source provenance and publication/output fences.
+- [ ] Same-writer mutation/revocation ordering, independently durable security
+  journal composition, dependency-failure denial and source-wide replay checks.
+- [ ] Allocated execution/operation/idempotency/quota schema/profile, exact
+  migration/refusal/foreign-state tests, retention/purge/restore lifecycle.
+- [ ] Concurrent idempotency one-owner, partial success, interrupted/uncertain
+  outcome without rerun, principal/resource-authorized audit and protected replay.
+- [ ] Dry-run domain SQL/files/CAS/blobs/embeddings/events/queues snapshots and
+  provider spies: only enumerated control exceptions may change.
+- [ ] Real authenticated colliding-org/restricted-resource/role/revocation tests,
+  production coordinator/API/MCP composition, operator/release documentation.
+
+**Next independent work:** production-quality lifecycle design remains runnable
+within new owned worker files, but cannot be activated or connected to services.
+Harden parent-controlled cancel/supervisor death, log/stderr budgets, fresh state,
+and adversarial compilation before selecting a runtime. Consume exact owner
+acknowledgements before implementing service validation, persistence, capability
+routes or MCP changes. Do not mark the task complete or change its manual dispatch
+reservation. No merge, push, deployment, installation or execution activation.
+
 No OpenAPI contract, SDK, broker, worker, real script flow, migration, platform
 confinement, restricted-resource integration or hosted release proof is delivered
 by this document. Do not mark `vggevclc` complete from this checkpoint.

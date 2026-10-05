@@ -30,7 +30,11 @@ tests cover all three, and real Go fixtures check filtered run history/get.
 Automation run submission now also generates a real task in the Go service fixture,
 with its generated-by provenance checked; no executor/runtime/provider is launched.
 `TestDeliveredContractMatchesRouterAndInventory` checks every delivered operation
-against the real Chi route inventory and its table row below (65 currently).
+against the real Chi route inventory and its table row below (69 currently).
+Projects `list`, graph `orphans`, and observability `stats/stale` have route tests
+in both SDKs plus external Go/Node real-service checks. Stats preserves legacy
+host paths and is not script-safe. Stale means never verified or verified before
+the cutoff, not simply old creation time; newly created unverified tasks qualify.
 Task `waiting/blocked` have both SDK route tests and installed Node real-service
 checks: a pending dependency produces waiting, then cancelling that dependency
 produces hard-blocked and removes the task from waiting. Empty selections can be

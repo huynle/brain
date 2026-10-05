@@ -36,6 +36,7 @@ func TestRepositoryContractAndWireParity(t *testing.T) {
 		reflect.TypeOf(types.AttachEntryAttachmentResponse{}), reflect.TypeOf(types.AttachmentExtractionRequest{}),
 		reflect.TypeOf(types.AttachmentExtractionResult{}),
 		reflect.TypeOf(types.CreateGoalRequest{}), reflect.TypeOf(types.UpdateGoalRequest{}),
+		reflect.TypeOf(types.ProjectListResponse{}), reflect.TypeOf(types.StatsResponse{}),
 		reflect.TypeOf(types.GoalSummary{}), reflect.TypeOf(types.GoalProgressResponse{}), reflect.TypeOf(types.GoalReconcileAudit{}),
 		reflect.TypeOf(types.CreateReminderRequest{}), reflect.TypeOf(types.UpdateReminderRequest{}), reflect.TypeOf(types.ReminderSummary{}), reflect.TypeOf(types.ReminderListResponse{}),
 		reflect.TypeOf(types.CreateAttentionRequest{}), reflect.TypeOf(types.Attention{}), reflect.TypeOf(types.AttentionCounts{}),

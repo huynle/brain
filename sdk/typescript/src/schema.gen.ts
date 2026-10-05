@@ -4,6 +4,74 @@
  */
 
 export interface paths {
+    "/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List projects visible to the current single-mode service */
+        get: operations["projects.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get legacy single-mode counts and storage paths */
+        get: operations["observability.stats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orphans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List entries without incoming links */
+        get: operations["graph.orphans"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stale": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List never-verified or old-verified entries */
+        get: operations["observability.stale"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{project}/ready": {
         parameters: {
             query?: never;
@@ -960,6 +1028,22 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ProjectListResponse: {
+            projects: string[] | null;
+        };
+        StatsResponse: {
+            brainDir: string;
+            dbPath: string;
+            totalEntries: number;
+            globalEntries: number;
+            projectEntries: number;
+            byType: {
+                [key: string]: number;
+            } | null;
+            orphanCount: number;
+            trackedEntries: number;
+            staleCount: number;
+        };
         TaskFeatureFilter: string[];
         TaskSelectionResponse: {
             tasks: components["schemas"]["ResolvedTask"][] | null;
@@ -1980,6 +2064,102 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "projects.list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Project names */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectListResponse"];
+                };
+            };
+        };
+    };
+    "observability.stats": {
+        parameters: {
+            query?: {
+                project?: string;
+                /** @description Comma-separated scope, superseding project and global */
+                projects?: string;
+                global?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Legacy statistics, including host paths; not script-safe */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatsResponse"];
+                };
+            };
+        };
+    };
+    "graph.orphans": {
+        parameters: {
+            query?: {
+                project?: string;
+                type?: string;
+                /** @description Positive limits are capped at 100 by the handler */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Orphan entries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrainEntry"][] | null;
+                };
+            };
+        };
+    };
+    "observability.stale": {
+        parameters: {
+            query?: {
+                project?: string;
+                type?: string;
+                /** @description Nonpositive or omitted selects 30 days */
+                days?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stale entries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrainEntry"][] | null;
+                };
+            };
+        };
+    };
     "tasks.ready": {
         parameters: {
             query?: {

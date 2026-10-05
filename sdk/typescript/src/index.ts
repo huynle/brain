@@ -188,6 +188,13 @@ export class BrainClient {
     list: (project: string, options?: RequestOptions): Promise<Schema["TaskListResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}`, undefined, undefined, options),
     get: (project: string, id: string, options?: RequestOptions): Promise<Schema["ResolvedTask"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}`, undefined, undefined, options),
   });
+  readonly projects = Object.freeze({
+    list: (options?: RequestOptions): Promise<Schema["ProjectListResponse"]> => this.#request("GET","/tasks",undefined,undefined,options),
+  });
+  readonly observability = Object.freeze({
+    stats: (query?: NonNullable<operations["observability.stats"]["parameters"]["query"]>, options?: RequestOptions): Promise<Schema["StatsResponse"]> => this.#request("GET","/stats",undefined,query,options),
+    stale: (query?: NonNullable<operations["observability.stale"]["parameters"]["query"]>, options?: RequestOptions): Promise<Schema["BrainEntry"][] | null> => this.#request("GET","/stale",undefined,query,options),
+  });
   readonly goals = Object.freeze({
     list: (query?: NonNullable<operations["goals.list"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["ListGoalsResponse"]> => this.#request("GET","/goals",undefined,query,options),
     create: (request: Schema["CreateGoalRequest"],options?: RequestOptions): Promise<Schema["GoalSummary"]> => this.#request("POST","/goals",request,undefined,options),
@@ -237,6 +244,7 @@ export class BrainClient {
     get: (id: string, title: string, includeSubsections = false, options?: RequestOptions): Promise<Schema["SectionContentResponse"]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/sections/${encodeURIComponent(title)}`, undefined, {includeSubsections}, options),
   });
   readonly graph = Object.freeze({
+    orphans: (query?: NonNullable<operations["graph.orphans"]["parameters"]["query"]>, options?: RequestOptions): Promise<Schema["BrainEntry"][] | null> => this.#request("GET","/orphans",undefined,query,options),
     backlinks: (id: string, options?: RequestOptions): Promise<Schema["BrainEntry"][]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/backlinks`, undefined, undefined, options),
     outlinks: (id: string, options?: RequestOptions): Promise<Schema["BrainEntry"][]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/outlinks`, undefined, undefined, options),
     related: (id: string, limit = 10, options?: RequestOptions): Promise<Schema["BrainEntry"][]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/related`, undefined, {limit}, options),

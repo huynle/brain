@@ -20,6 +20,112 @@ x-brain-write:
   x-brain-script: false
   x-brain-profile: single
 paths:
+  /tasks:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: projects.list
+      summary: List projects visible to the current single-mode service
+      responses:
+        '200':
+          description: Project names
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectListResponse'
+  /stats:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: observability.stats
+      summary: Get legacy single-mode counts and storage paths
+      parameters:
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: projects
+          in: query
+          description: Comma-separated scope, superseding project and global
+          schema:
+            type: string
+        - name: global
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Legacy statistics, including host paths; not script-safe
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsResponse'
+  /orphans:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: graph.orphans
+      summary: List entries without incoming links
+      parameters:
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Positive limits are capped at 100 by the handler
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Orphan entries
+          content:
+            application/json:
+              schema:
+                type: [array, 'null']
+                items:
+                  $ref: '#/components/schemas/BrainEntry'
+  /stale:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: observability.stale
+      summary: List never-verified or old-verified entries
+      parameters:
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: days
+          in: query
+          description: Nonpositive or omitted selects 30 days
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Stale entries
+          content:
+            application/json:
+              schema:
+                type: [array, 'null']
+                items:
+                  $ref: '#/components/schemas/BrainEntry'
   /tasks/{project}/ready:
     get:
       x-brain-effect: read
@@ -1510,6 +1616,42 @@ components:
       type: http
       scheme: bearer
   schemas:
+    ProjectListResponse:
+      type: object
+      required: [projects]
+      properties:
+        projects:
+          anyOf:
+            - type: array
+              items:
+                type: string
+            - type: 'null'
+    StatsResponse:
+      type: object
+      required: [brainDir, dbPath, totalEntries, globalEntries, projectEntries, byType, orphanCount, trackedEntries, staleCount]
+      properties:
+        brainDir:
+          type: string
+        dbPath:
+          type: string
+        totalEntries:
+          type: integer
+        globalEntries:
+          type: integer
+        projectEntries:
+          type: integer
+        byType:
+          anyOf:
+            - type: object
+              additionalProperties:
+                type: integer
+            - type: 'null'
+        orphanCount:
+          type: integer
+        trackedEntries:
+          type: integer
+        staleCount:
+          type: integer
     TaskFeatureFilter:
       type: array
       items:

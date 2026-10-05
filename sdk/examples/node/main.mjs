@@ -27,6 +27,11 @@ try {
     if(((await client.tasks.waiting("sdk-example")).tasks??[]).some(t=>t.id===waitingTask.id))throw new Error("hard blocked dependency retained in waiting");
   } finally {await client.entries.delete(waitingTask.id);await client.entries.update(id,{status:"pending"});}
   if (task.id !== id) throw new Error("task identity mismatch");
+  if(!(await client.projects.list()).projects.includes("sdk-example"))throw new Error("project catalog missing created task project");
+  const stats=await client.observability.stats({project:"sdk-example"});
+  if(stats.projectEntries<1||stats.totalEntries<1)throw new Error("scoped statistics missing task");
+  if(!((await client.graph.orphans({project:"sdk-example",type:"task",limit:100}))??[]).some(e=>e.id===id))throw new Error("unlinked task omitted from orphans");
+  if(!((await client.observability.stale({project:"sdk-example",type:"task",days:30}))??[]).some(e=>e.id===id))throw new Error("unverified task omitted from stale results");
   await client.tasks.list("sdk-example");
   await client.entries.list({project:"sdk-example"});
   let found=false;for await(const entry of client.entries.iterate({project:"sdk-example",limit:1}))if(entry.id===id)found=true;

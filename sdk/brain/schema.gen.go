@@ -732,6 +732,11 @@ type PlacementReason struct {
 	TaskId         string  `json:"task_id"`
 }
 
+// ProjectListResponse defines model for ProjectListResponse.
+type ProjectListResponse struct {
+	Projects *[]string `json:"projects"`
+}
+
 // ReminderConfig defines model for ReminderConfig.
 type ReminderConfig struct {
 	Action          *string `json:"action,omitempty"`
@@ -967,6 +972,19 @@ type SnoozeAttentionRequest struct {
 // SnoozeReminderRequest defines model for SnoozeReminderRequest.
 type SnoozeReminderRequest struct {
 	RemindAt time.Time `json:"remind_at"`
+}
+
+// StatsResponse defines model for StatsResponse.
+type StatsResponse struct {
+	BrainDir       string          `json:"brainDir"`
+	ByType         *map[string]int `json:"byType"`
+	DbPath         string          `json:"dbPath"`
+	GlobalEntries  int             `json:"globalEntries"`
+	OrphanCount    int             `json:"orphanCount"`
+	ProjectEntries int             `json:"projectEntries"`
+	StaleCount     int             `json:"staleCount"`
+	TotalEntries   int             `json:"totalEntries"`
+	TrackedEntries int             `json:"trackedEntries"`
 }
 
 // SuccessResponse defines model for SuccessResponse.
@@ -1274,10 +1292,38 @@ type GoalsAuditParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// GraphOrphansParams defines parameters for GraphOrphans.
+type GraphOrphansParams struct {
+	Project *string `form:"project,omitempty" json:"project,omitempty"`
+	Type    *string `form:"type,omitempty" json:"type,omitempty"`
+
+	// Limit Positive limits are capped at 100 by the handler
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // RemindersListParams defines parameters for RemindersList.
 type RemindersListParams struct {
 	Project *string `form:"project,omitempty" json:"project,omitempty"`
 	State   *string `form:"state,omitempty" json:"state,omitempty"`
+}
+
+// ObservabilityStaleParams defines parameters for ObservabilityStale.
+type ObservabilityStaleParams struct {
+	Project *string `form:"project,omitempty" json:"project,omitempty"`
+	Type    *string `form:"type,omitempty" json:"type,omitempty"`
+
+	// Days Nonpositive or omitted selects 30 days
+	Days  *int `form:"days,omitempty" json:"days,omitempty"`
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ObservabilityStatsParams defines parameters for ObservabilityStats.
+type ObservabilityStatsParams struct {
+	Project *string `form:"project,omitempty" json:"project,omitempty"`
+
+	// Projects Comma-separated scope, superseding project and global
+	Projects *string `form:"projects,omitempty" json:"projects,omitempty"`
+	Global   *bool   `form:"global,omitempty" json:"global,omitempty"`
 }
 
 // TasksNextParams defines parameters for TasksNext.

@@ -107,6 +107,51 @@ func run() error {
 	if task.Id != created.Id {
 		return fmt.Errorf("task identity mismatch")
 	}
+	projects, err := c.Projects().List(ctx)
+	if err != nil {
+		return err
+	}
+	foundProject := false
+	if projects.Projects != nil {
+		for _, name := range *projects.Projects {
+			if name == project {
+				foundProject = true
+			}
+		}
+	}
+	if !foundProject {
+		return fmt.Errorf("missing project catalog entry")
+	}
+	stats, err := c.Observability().Stats(ctx, project, "", false)
+	if err != nil || stats.ProjectEntries < 1 {
+		return fmt.Errorf("missing scoped statistics: %w", err)
+	}
+	orphans, err := c.Graph().Orphans(ctx, project, "task", 100)
+	if err != nil {
+		return err
+	}
+	foundOrphan := false
+	for _, e := range *orphans {
+		if e.Id == created.Id {
+			foundOrphan = true
+		}
+	}
+	if !foundOrphan {
+		return fmt.Errorf("unlinked task omitted from orphans")
+	}
+	stale, err := c.Observability().Stale(ctx, project, "task", 30, 100)
+	if err != nil {
+		return err
+	}
+	foundStale := false
+	for _, e := range *stale {
+		if e.Id == created.Id {
+			foundStale = true
+		}
+	}
+	if !foundStale {
+		return fmt.Errorf("unverified task omitted from stale results")
+	}
 	if _, err := c.Tasks().List(ctx, project); err != nil {
 		return err
 	}

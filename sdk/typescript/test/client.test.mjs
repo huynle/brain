@@ -212,6 +212,15 @@ test("task ready and next preserve selection filters",async t=>{
   assert.deepEqual(seen,["/api/v1/tasks/p%20q/ready"+q,"/api/v1/tasks/p%20q/next"+q,"/api/v1/tasks/p/ready","/api/v1/tasks/p/next"]);
 });
 
+test("project and observability reads preserve queries",async t=>{
+  const seen=[];const baseUrl=await server(t,(req,res)=>{seen.push(req.url);res.end('null');});
+  const c=new BrainClient({baseUrl});t.after(()=>c.close());
+  await c.projects.list();await c.observability.stats({projects:"a,b",global:true});
+  assert.equal(await c.observability.stale({project:"p q",type:"note",days:7,limit:8}),null);
+  assert.equal(await c.graph.orphans({project:"p q",type:"note",limit:9}),null);
+  assert.deepEqual(seen,["/api/v1/tasks","/api/v1/stats?projects=a%2Cb&global=true","/api/v1/stale?project=p+q&type=note&days=7&limit=8","/api/v1/orphans?project=p+q&type=note&limit=9"]);
+});
+
 test("query arrays preserve repeated parameter values without comma coercion",async t=>{
   const seen=[];const baseUrl=await server(t,(req,res)=>{seen.push(req.url);res.end('{"entries":[]}');});
   const c=new BrainClient({baseUrl});t.after(()=>c.close());

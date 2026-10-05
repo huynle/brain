@@ -8,7 +8,8 @@ bulk-update/bulk-delete; search; tasks list/get; sections list/get; graph
 backlinks/outlinks/related; attachments upload/list/get/delete/download/text/
 extract/for-entry/attach/detach; goals list/create/update/delete/progress/audit/run
 (34 operations), plus eight reminder, nine attention and seven webhook operations
-(58 total), plus automation run/history/get and task waiting/blocked/ready/next (65 total).
+(58 total), plus automation run/history/get, task waiting/blocked/ready/next,
+project list, graph orphans and observability stats/stale (69 total).
 The remaining inventory is in
 `docs/sdk-operation-matrix.md`. Task creation and dependency updates use typed
 entry requests. No capability route, hosted adapter or script route is added.

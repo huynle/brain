@@ -166,3 +166,35 @@ is inferred from newer unrelated integration acceptance.
 This is a context-capacity handoff, **not exhausted runnable scope**, not a stop
 waiting for independent review, and not V1 completion. Continue the same exclusive
 worktree, preserve these commits and take the next failing test from the queue.
+
+### Final author handoff evidence
+
+Latest implementation is `aeef43a3`, following metadata inventory `57847362`.
+The local admission audit caught a further late-success race: GOMAXPROCS1,
+Close from the running callback, three RED repetitions returned nil before the
+asynchronous cancellation bridge ran. The fixed pool synchronously observes its
+lifetime after the callback as well as before. All six admission tests repeated20
+under race pass (1.416s). Final full45 tested Go packages pass (many cached,
+scriptexec0.257s/storage132.863s), fresh vet/build pass and lint0issues.
+
+Full native evidence at `654752e9`:43 passing top-level test/fuzz roots,8 explicit
+platform/helper skips,243.282s, log `sdk-serialization-fix-native.log` in the approved
+opencode temporary directory. At `66e49fd7` the affected native completion,
+console, hostile compiler and serialization suites55subcases passed62.244s;
+unchanged lifecycle/hardening checks were not unnecessarily repeated afterward.
+Metadata contract races2packages pass4.143s/1.893s. These are author observations;
+no new independent PASS is claimed after `va815e0d`.
+
+All commands completed foreground; no pending checks. Docker's final
+`ps -a --filter name=brain-quickjs-probe-` returned no containers. No shared API,
+auth, storage, config, apiserver, tenant, MCP, command or module files changed
+since `2228f1f1`; all source changes remain owned/inactive. TDD gate exited.
+
+Resume with the **Facade** item above, or regression-first parent review feedback.
+Do not reinterpret the quarantine as authorized release, local slot accounting as
+measured host or durable multi-server quotas, or descriptive policy metadata as
+service preflight. Exact platform and C–G contracts still gate real execution.
+Full facade, structured safe errors, actual aggregate pressure/startup corpus,
+quarantine edge corpus, compatibility decoder, operator/script examples and
+frontend/historical gate checks remain useful runnable work; they are not waived
+by this handoff and are not all externally blocked.

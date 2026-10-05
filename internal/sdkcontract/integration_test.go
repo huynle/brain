@@ -53,7 +53,8 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	attachments := service.NewAttachmentService(store, blobs, svc, 8<<20)
+	extractor, providerCalls := sdkExtractionFixture(t)
+	attachments := service.NewAttachmentService(store, blobs, svc, 8<<20, service.WithAttachmentExtractor(extractor))
 	goals := service.NewGoalService(svc, tasks, store)
 	inbox, err := attentionstore.Open(filepath.Join(root, "attention.db"))
 	if err != nil {
@@ -102,12 +103,15 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "run", "-mod=mod", ".")
 	cmd.Dir = external
-	cmd.Env = append(os.Environ(), "BRAIN_API_URL="+srv.URL, "BRAIN_API_TOKEN="+token)
+	cmd.Env = append(os.Environ(), "BRAIN_API_URL="+srv.URL, "BRAIN_API_TOKEN="+token, "BRAIN_SDK_EXTRACTION_FIXTURE=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("external Go: %v\n%s", err, out)
 	}
 	t.Logf("external Go evidence: %s", out)
+	if providerCalls.Load() != 1 {
+		t.Fatalf("Go extraction/cached read made %d provider requests, want1", providerCalls.Load())
+	}
 	if os.Getenv("BRAIN_SDK_NODE_INTEGRATION") != "1" {
 		t.Log("Node package integration not requested; set BRAIN_SDK_NODE_INTEGRATION=1 after npm ci/build")
 		return
@@ -141,5 +145,8 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 		t.Fatalf("external Node: %v\n%s", err, out)
 	} else {
 		t.Logf("external Node package evidence: %s", out)
+	}
+	if providerCalls.Load() != 2 {
+		t.Fatalf("Go+Node extraction/cached reads made %d provider requests, want2", providerCalls.Load())
 	}
 }

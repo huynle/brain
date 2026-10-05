@@ -7,6 +7,15 @@ try {
   let validation;try{await client.entries.create({});}catch(e){validation=e;}
   if(!(validation instanceof BrainError)||validation.status!==400||!validation.details.length)throw new Error("missing field validation details");
   await client.health();
+  if(process.env.BRAIN_SDK_EXTRACTION_FIXTURE==="1") {
+    const bytes=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=","base64");
+    const image=await client.attachments.upload("sdk-node-extraction",{filename:"pixel.png",contentType:"image/png",content:bytes});
+    try {
+      await client.attachments.extract("sdk-node-extraction",image.attachment.id,{});
+      if(await client.attachments.text("sdk-node-extraction",image.attachment.id)!=="fixture extracted text")throw new Error("stored extraction text mismatch");
+      if(await client.attachments.text("sdk-node-extraction",image.attachment.id)!=="fixture extracted text")throw new Error("repeated stored text mismatch");
+    }finally{await client.attachments.delete("sdk-node-extraction",image.attachment.id);}
+  }
   const created = await client.entries.create({type:"task",title:"Node SDK example",content:"## Details\nCreated through the public package",project:"sdk-example"});
   id = created.id;
   const entry = await client.entries.get(id);

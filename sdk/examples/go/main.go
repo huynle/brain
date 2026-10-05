@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -79,6 +80,29 @@ func run() error {
 	}
 	if _, err := c.Health(ctx); err != nil {
 		return err
+	}
+	if os.Getenv("BRAIN_SDK_EXTRACTION_FIXTURE") == "1" {
+		pixels, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=")
+		if err != nil {
+			return err
+		}
+		image, err := c.Attachments().Upload(ctx, "sdk-go-extraction", brain.UploadRequest{Filename: "pixel.png", ContentType: "image/png", Content: pixels}, brain.RequestOptions{})
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_, _ = c.Attachments().Delete(context.Background(), "sdk-go-extraction", image.Attachment.Id, brain.RequestOptions{})
+		}()
+		if _, err := c.Attachments().Extract(ctx, "sdk-go-extraction", image.Attachment.Id, brain.AttachmentExtractionRequest{}, brain.RequestOptions{}); err != nil {
+			return err
+		}
+		text, err := c.Attachments().Text(ctx, "sdk-go-extraction", image.Attachment.Id)
+		if err != nil || text != "fixture extracted text" {
+			return fmt.Errorf("stored extraction text mismatch: %w", err)
+		}
+		if repeated, err := c.Attachments().Text(ctx, "sdk-go-extraction", image.Attachment.Id); err != nil || repeated != text {
+			return fmt.Errorf("repeated stored text mismatch: %w", err)
+		}
 	}
 	created, err := c.Entries().Create(ctx, brain.CreateEntryRequest{Type: "task", Title: "SDK contract example", Content: "## Details\nCreated through the public SDK", Project: &project}, brain.RequestOptions{})
 	if err != nil {

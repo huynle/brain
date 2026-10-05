@@ -53,8 +53,11 @@ Contract: `api/openapi.yaml`; transport tests: `sdk/brain/client_test.go`
 and `sdk/typescript/test/client.test.mjs`; real stored-token/SQLite/service/router
 and external-module/package evidence:
 `TestExternalClientsAgainstAuthenticatedRealHandler`. That real fixture exercises
-the first 17 operations plus eight attachment operations (real local blob storage;
-successful extraction/stored-derived-text retrieval are excluded), with legacy bulk calls in dry-run mode and search using FTS,
+the first 17 operations plus all ten attachment operations (real local blob storage;
+extraction uses the actual HTTP extractor against a deterministic local provider,
+not a real remote model). Both external consumers assert persisted derived text
+and repeat text reads with exactly one provider call each. Explicit extraction
+is effectful on every call; it is not a cached read. Legacy bulk calls use dry-run mode and search uses FTS,
 plus unauthenticated refusal. It does not prove hosted ACL composition,
 search-provider behavior, real bulk partial outcomes, or script dry-run guarantees.
 

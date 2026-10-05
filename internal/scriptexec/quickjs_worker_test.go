@@ -45,6 +45,11 @@ func TestQuickJSWorkerFramedAsyncCalls(t *testing.T) {
 		if e = WriteFrame(input, Frame{1, "call", 1, source}); e != nil {
 			return nil, e
 		}
+		protocol, e := NewProtocolSession(ProtocolLimits{2, 65536, 200000})
+		if e != nil {
+			return nil, e
+		}
+		defer protocol.Retire()
 		for i, id := range []string{"first", "second"} {
 			f, e := ReadFrame(output)
 			if e != nil {
@@ -59,6 +64,10 @@ func TestQuickJSWorkerFramedAsyncCalls(t *testing.T) {
 			if e = json.Unmarshal(f.Payload, &call); e != nil {
 				return nil, e
 			}
+			admitted, e := protocol.Accept(f)
+			if e != nil || admitted.Call == nil || admitted.Call.Operation != "entries.get" {
+				return nil, fmt.Errorf("parent protocol refused fixture call: %v", e)
+			}
 			if f.Kind != "call" || f.Sequence != uint64(i+1) || call.Operation != "entries.get" || call.Arguments.ID != id {
 				return nil, fmt.Errorf("unexpected worker call: %+v", f)
 			}
@@ -66,7 +75,11 @@ func TestQuickJSWorkerFramedAsyncCalls(t *testing.T) {
 			if i == 1 {
 				response = json.RawMessage(`{"value":22}`)
 			}
-			if e = WriteFrame(input, Frame{1, "result", f.Sequence, response}); e != nil {
+			reply, e := protocol.Reply(response)
+			if e != nil {
+				return nil, e
+			}
+			if e = WriteFrame(input, reply); e != nil {
 				return nil, e
 			}
 		}
@@ -76,6 +89,10 @@ func TestQuickJSWorkerFramedAsyncCalls(t *testing.T) {
 		}
 		if f.Kind != "result" || f.Sequence != 3 || string(f.Payload) != `{"value":42,"globals":["undefined","undefined","undefined","undefined"]}` {
 			return nil, fmt.Errorf("wrong final frame: %+v", f)
+		}
+		final, e := protocol.Accept(f)
+		if e != nil || !final.Done {
+			return nil, fmt.Errorf("parent final state: %v", e)
 		}
 		_ = input.Close()
 		if _, e = ReadFrame(output); e != io.EOF {

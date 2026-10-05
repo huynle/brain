@@ -12,15 +12,38 @@ envelopes are refused. Sequence numbers fit JavaScript's exact integer range.
 An IPC error must retire the stream, never replay its partially written frame.
 No authority is represented by the envelope; payload is untrusted opaque JSON.
 
-Still required before use: message direction/state validation, per-operation
-schema decoding and allowlisting, operation count/log/result budgets, cancellation
+`ProtocolSession` now validates parent-side sequence/direction, pending replies,
+terminal state, call count, payload bytes and cumulative payload bytes. Call
+payloads have exactly `operation` and object `arguments`; UTF-8, duplicate decoded
+keys at every level and nesting beyond 64 are rejected. Every violation retires
+the session, including concurrent duplicate admission; output buffers are copied.
+The actual framed QuickJS fixture uses this state machine. It has **no dispatch
+callbacks or authority**: a syntactically accepted operation name is not a registry
+entry, permission, dry-run validation or output-release decision. The owner must
+retire the session on external I/O failure and must never retry partial frames.
+
+Still required before use: per-operation schema decoding and explicit allowlisting,
+authorized preflight, operation/log/result production policy, cancellation
 and pipe deadlines, aggregate admission, authority/output/publication fences,
 durable audit, worker process lifecycle, selected runtime and Linux/macOS resource
-and confinement proofs. Nested payload keys are deliberately not interpreted by
-the envelope codec. The broker must validate them, not dispatch raw JSON.
+and confinement proofs. Nested arguments remain semantically opaque: the broker
+must decode and validate each approved operation, never dispatch raw JSON.
 
 A passing codec/fuzz test proves none of OS isolation, worker reaping, provider
 safety, authorization or hosted VM readiness. There is no execution fallback.
+
+### macOS address-space negative control
+
+`BRAIN_SCRIPT_DARWIN_MEMORY_PROBE=1 go test -race ./internal/scriptexec -run
+TestDarwinAddressSpaceDoesNotBoundResidentMemory -count=1 -v` compiles/runs a
+bounded native counterexample (128MiB maximum requested allocations, hard CPU
+five seconds). PASS means an **isolation gap** was reproduced, not confinement.
+With baseline+64MiB `RLIMIT_AS`, one million ordinary 128-byte allocations grew
+RSS by 143,163,392 bytes while virtual size grew only 524,288 bytes locally.
+Pre-existing allocator virtual reservations permit this: refusing a new 128MiB
+mapping does not constrain new resident memory. Do not promote the earlier
+baseline-relative mmap observation to macOS memory readiness. A separately
+reviewed enforceable memory/isolation mechanism is still required.
 
 ## Opt-in macOS process-confinement experiment
 

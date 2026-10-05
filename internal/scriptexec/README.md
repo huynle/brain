@@ -234,6 +234,14 @@ and ECHILD after reaping. This proves that Linux fixture, not production init/
 subreaper deployment or macOS parent-death cleanup. Direct unsupervised fixture
 launches do not acquire this guarantee.
 
+The compilation/fresh-state corpus additionally exercises 12,000-level parser
+nesting, runtime `Function` compilation, recursive accessor serialization,
+infinite `toJSON`, and endless promise jobs. Each is refused within the worker's
+existing bounds with no result bytes; no outer five-second deadline is needed.
+A 32,000-byte comment plus `return 42` succeeds, and two actual fresh children
+cannot see each other's global marker. These are concrete adversarial cases,
+not a complete parser/runtime vulnerability audit or a production binary review.
+
 References: [QuickJS C API](https://bellard.org/quickjs/quickjs.html#QuickJS-C-API),
 [official release](https://bellard.org/quickjs/),
 [seccomp architecture/TSYNC/allowlist semantics](https://man7.org/linux/man-pages/man2/seccomp.2.html).

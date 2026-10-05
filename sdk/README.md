@@ -62,6 +62,9 @@ cross-binding retry, cursor transfer, credential refresh or identity migration
 is implemented. Pagination iterators, attachments and broader namespaces remain
 required work; this checkpoint does not claim them.
 
-The TypeScript package currently contains generated types and pinned tooling;
-its ergonomic client is the next increment. Package licensing/publishing requires
-owner disposition: no repository license was found, so no MIT grant is invented.
+The TypeScript package contains matching generated types and an ergonomic ESM
+client. `BRAIN_SDK_NODE_INTEGRATION=1 go test ./internal/sdkcontract -run
+TestExternalClients -v -count=1` tests an offline-installed npm tarball and an
+isolated Go consumer module against the authenticated real handler. Run npm
+build first. Package licensing/publishing requires owner disposition: no repository
+license was found, so no MIT grant is invented.

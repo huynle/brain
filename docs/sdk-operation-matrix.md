@@ -1,12 +1,21 @@
 # SDK operation inventory (work in progress)
 
 Source: `internal/api/router.go` at base `7bea47d1`. This is an explicit
-per-operation inventory, not a claim of SDK delivery or script availability.
+per-operation inventory, not a claim of complete SDK delivery or script availability.
 Paths below are relative to `/api/v1`. IDs are proposed contract IDs until their
-contract is checked in and validated. Every row currently has SDK implementation
-**pending**, profile **single**, script exposure **false**, dry-run validator
-**unimplemented**, and SDK parity evidence **pending**. No table row grants
+contract is checked in and validated. Unless listed below, rows have SDK implementation
+**pending** and SDK parity evidence **pending**. All have profile **single**,
+script exposure **false**, and dry-run validator **unimplemented**. No table row grants
 authority. Tenant routes remain sealed by the existing server allowlist.
+
+Current Go/TypeScript coverage: `health.get`, `entries.list`, `entries.create`,
+`entries.get`, `entries.update`, `entries.delete`, `search.query`, `tasks.list`,
+`tasks.get`. Contract: `api/openapi.yaml`; transport tests: `sdk/brain/client_test.go`
+and `sdk/typescript/test/client.test.mjs`; real stored-token/SQLite/service/router
+and external-module/package evidence:
+`TestExternalClientsAgainstAuthenticatedRealHandler`. That real fixture exercises
+entry create/get/update/list/delete and task get/list plus unauthenticated refusal;
+it does not prove hosted ACL composition, search-provider behavior or scripts.
 
 Legacy scope abbreviations: R = admin/runner/read; A = admin; W = admin/runner;
 Auth = router authentication only (handler checks still apply); Public = no auth.

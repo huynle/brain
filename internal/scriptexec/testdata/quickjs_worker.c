@@ -131,9 +131,15 @@ static int worker_main(void) {
  * Production coordinator/graph shutdown and cross-platform launch remain absent. */
 static volatile sig_atomic_t supervised_pid = 0;
 static volatile sig_atomic_t wall_expired = 0;
+static volatile sig_atomic_t cancelled = 0;
 static void wall_alarm(int signum) {
     (void)signum;
     wall_expired = 1;
+    if (supervised_pid > 0) kill(supervised_pid, SIGKILL);
+}
+static void request_cancel(int signum) {
+    (void)signum;
+    cancelled = 1;
     if (supervised_pid > 0) kill(supervised_pid, SIGKILL);
 }
 int main(int argc, char **argv) {
@@ -143,6 +149,8 @@ int main(int argc, char **argv) {
     action.sa_handler = wall_alarm;
     sigemptyset(&action.sa_mask);
     if (sigaction(SIGALRM, &action, NULL)) return 125;
+    action.sa_handler = request_cancel;
+    if (sigaction(SIGTERM, &action, NULL)) return 125;
     pid_t supervisor = getpid();
     pid_t pid = fork();
     if (pid < 0) return 125;
@@ -154,6 +162,9 @@ int main(int argc, char **argv) {
         _exit(worker_main());
     }
     supervised_pid = pid;
+    /* SIGTERM may arrive after installing the handler but before fork/pid
+     * publication. Do not lose that cancellation request. */
+    if (cancelled) kill(pid, SIGKILL);
     alarm(2);
     int status = 0;
     /* Observe exit without reaping first: the PID cannot be reused while the
@@ -169,8 +180,9 @@ int main(int argc, char **argv) {
     do { waited = waitpid(pid, &status, 0); } while (waited < 0 && errno == EINTR);
     int reaped = waited == pid;
     int signal = reaped && WIFSIGNALED(status) ? WTERMSIG(status) : 0;
-    fprintf(stderr, "{\"timed_out\":%s,\"reaped\":%s,\"signal\":%d}\n", wall_expired ? "true" : "false", reaped ? "true" : "false", signal);
+    fprintf(stderr, "{\"timed_out\":%s,\"cancelled\":%s,\"reaped\":%s,\"signal\":%d}\n", wall_expired ? "true" : "false", cancelled ? "true" : "false", reaped ? "true" : "false", signal);
     if (!reaped) return 125;
+    if (cancelled) return 143;
     if (wall_expired) return 124;
     return WIFEXITED(status) ? WEXITSTATUS(status) : 128+signal;
 }

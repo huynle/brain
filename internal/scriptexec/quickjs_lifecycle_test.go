@@ -63,7 +63,57 @@ int main(void) {
 `
 
 func TestQuickJSWorkerSupervisorDeathReapedByObserver(t *testing.T) {
-	_, err := quickJSProgram(t, "", true, func(host, name string) ([]byte, error) {
+	out := runLifecycleObserver(t, lifecycleObserver)
+	var observed struct {
+		SupervisorKilled bool `json:"supervisor_killed"`
+		WorkerReaped     bool `json:"worker_reaped"`
+		Signal           int  `json:"signal"`
+		NoChildren       bool `json:"no_children"`
+	}
+	if err := json.Unmarshal(out, &observed); err != nil {
+		t.Fatal(err)
+	}
+	if !observed.SupervisorKilled || !observed.WorkerReaped || observed.Signal != 9 || !observed.NoChildren {
+		t.Fatalf("incomplete death/reaping evidence: %s", out)
+	}
+	t.Logf("independent native subreaper: %s", out)
+}
+
+func TestQuickJSWorkerSupervisorCancellationReapsBeforeExit(t *testing.T) {
+	setup, _, ok := strings.Cut(lifecycleObserver, "    if(kill(supervisor,SIGKILL))")
+	if !ok {
+		t.Fatal("observer anchor changed")
+	}
+	out := runLifecycleObserver(t, setup+`
+    if(kill(supervisor,SIGTERM))return 78;
+    int status=0;
+    if(waitpid(supervisor,&status,0)!=supervisor)return 79;
+    if(!WIFEXITED(status) || WEXITSTATUS(status)!=143)return 80;
+    // Cancellation must wait for the worker itself, not orphan it to this observer.
+    int empty=waitpid(-1,NULL,WNOHANG)==-1 && errno==ECHILD;
+    if(!empty)return 81;
+    close(input[1]);close(output[0]);
+    return 0;
+}
+`)
+	var status struct {
+		Cancelled bool `json:"cancelled"`
+		Reaped    bool `json:"reaped"`
+		Signal    int  `json:"signal"`
+		TimedOut  bool `json:"timed_out"`
+	}
+	if err := json.Unmarshal(out, &status); err != nil {
+		t.Fatalf("cancel diagnostic: %v %s", err, out)
+	}
+	if !status.Cancelled || !status.Reaped || status.Signal != 9 || status.TimedOut {
+		t.Fatalf("no cancellation/reap evidence: %s", out)
+	}
+	t.Logf("cancelled supervisor reaped worker before exit: %s", out)
+}
+
+func runLifecycleObserver(t *testing.T, observer string) []byte {
+	t.Helper()
+	out, err := quickJSProgram(t, "", true, func(host, name string) ([]byte, error) {
 		buildCtx, cancelBuild := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancelBuild()
 		build := exec.CommandContext(buildCtx, "docker", "--host", host, "exec", "-i", name, "/bin/sh", "-c", `cat > /tmp/observer.c && cd /tmp/quickjs-2026-06-04 && cc -O1 -D_GNU_SOURCE -DCONFIG_VERSION='"2026-06-04"' -I. ../observer.c quickjs.c dtoa.c libregexp.c libunicode.c cutils.c -lm -o /tmp/observer`)
@@ -76,7 +126,7 @@ func TestQuickJSWorkerSupervisorDeathReapedByObserver(t *testing.T) {
 		if strings.Count(string(worker), entry) != 1 {
 			return nil, fmt.Errorf("worker entry anchor changed")
 		}
-		build.Stdin = strings.NewReader(strings.Replace(string(worker), entry, "int supervised_main(int argc, char **argv)", 1) + lifecycleObserver)
+		build.Stdin = strings.NewReader(strings.Replace(string(worker), entry, "int supervised_main(int argc, char **argv)", 1) + observer)
 		if out, e := build.CombinedOutput(); e != nil {
 			return nil, fmt.Errorf("build observer: %w %s", e, out)
 		}
@@ -91,22 +141,10 @@ func TestQuickJSWorkerSupervisorDeathReapedByObserver(t *testing.T) {
 		if e != nil {
 			return nil, fmt.Errorf("observer: %w %s", e, out)
 		}
-		var observed struct {
-			SupervisorKilled bool `json:"supervisor_killed"`
-			WorkerReaped     bool `json:"worker_reaped"`
-			Signal           int  `json:"signal"`
-			NoChildren       bool `json:"no_children"`
-		}
-		if e = json.Unmarshal(out, &observed); e != nil {
-			return nil, e
-		}
-		if !observed.SupervisorKilled || !observed.WorkerReaped || observed.Signal != 9 || !observed.NoChildren {
-			return nil, fmt.Errorf("incomplete death/reaping evidence: %s", out)
-		}
-		t.Logf("independent native subreaper: %s", out)
-		return nil, nil
+		return out, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	return out
 }

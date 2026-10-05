@@ -234,6 +234,12 @@ and ECHILD after reaping. This proves that Linux fixture, not production init/
 subreaper deployment or macOS parent-death cleanup. Direct unsupervised fixture
 launches do not acquire this guarantee.
 
+SIGTERM to the experimental supervisor requests cancellation, kills the worker,
+and waits before exiting143. An external subreaper test confirms no worker was
+orphaned to it; supervisor diagnostics report `cancelled=true,reaped=true,signal=9`
+without wall timeout. The handler records cancellation even before the forked
+PID is published. This is still test-only Linux behavior, not graph shutdown.
+
 The compilation/fresh-state corpus additionally exercises 12,000-level parser
 nesting, runtime `Function` compilation, recursive accessor serialization,
 infinite `toJSON`, and endless promise jobs. Each is refused within the worker's

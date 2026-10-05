@@ -181,6 +181,8 @@ export class BrainClient {
     download: (project: string, id: string, options?: RequestOptions): Promise<Uint8Array> => this.#request("GET",`/attachments/${encodeURIComponent(id)}/content`,undefined,{project_id:project},options,true,true),
   });
   readonly tasks = Object.freeze({
+    ready: (project: string, query?: NonNullable<operations["tasks.ready"]["parameters"]["query"]>, options?: RequestOptions): Promise<Schema["TaskSelectionResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/ready`, undefined, query, options),
+    next: (project: string, query?: NonNullable<operations["tasks.next"]["parameters"]["query"]>, options?: RequestOptions): Promise<Schema["ResolvedTask"] | null> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/next`, undefined, query, options),
     waiting: (project: string, options?: RequestOptions): Promise<Schema["TaskSelectionResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/waiting`, undefined, undefined, options),
     blocked: (project: string, options?: RequestOptions): Promise<Schema["TaskSelectionResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/blocked`, undefined, undefined, options),
     list: (project: string, options?: RequestOptions): Promise<Schema["TaskListResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}`, undefined, undefined, options),

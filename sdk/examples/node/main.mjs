@@ -17,6 +17,10 @@ try {
   const waitingTask=await client.entries.create({type:"task",project:"sdk-example",title:"Node dependency selection",content:"Dependency selection fixture",status:"pending",depends_on:[id]});
   try {
     await client.entries.update(id,{status:"pending"});
+    const selection={executors:"opencode",feature_id:["", "not-present"]};
+    if(!((await client.tasks.ready("sdk-example",selection)).tasks??[]).some(t=>t.id===id))throw new Error("ready prerequisite missing");
+    if((await client.tasks.next("sdk-example",selection)).id!==id)throw new Error("next selected waiting task");
+    if(await client.tasks.next("sdk-example",{feature_id:["not-present"]})!==null)throw new Error("missing next did not return null");
     if(!((await client.tasks.waiting("sdk-example")).tasks??[]).some(t=>t.id===waitingTask.id))throw new Error("pending dependency omitted from waiting");
     await client.entries.update(id,{status:"cancelled"});
     if(!((await client.tasks.blocked("sdk-example")).tasks??[]).some(t=>t.id===waitingTask.id))throw new Error("cancelled dependency omitted from blocked");

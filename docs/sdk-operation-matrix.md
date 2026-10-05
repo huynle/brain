@@ -30,11 +30,15 @@ tests cover all three, and real Go fixtures check filtered run history/get.
 Automation run submission now also generates a real task in the Go service fixture,
 with its generated-by provenance checked; no executor/runtime/provider is launched.
 `TestDeliveredContractMatchesRouterAndInventory` checks every delivered operation
-against the real Chi route inventory and its table row below (63 currently).
+against the real Chi route inventory and its table row below (65 currently).
 Task `waiting/blocked` have both SDK route tests and installed Node real-service
 checks: a pending dependency produces waiting, then cancelling that dependency
 produces hard-blocked and removes the task from waiting. Empty selections can be
-null, matching the existing wire behavior. Ready/next remain pending.
+null, matching the existing wire behavior. Ready/next now have both SDK route
+tests and real external Go/Node selection fixtures, including repeated feature
+filters, executor filtering, and no-ready results. `next` returns HTTP200 null
+when no task qualifies; neither method claims a task. Runner/provenance filter
+encoding is route-tested, not real runner-admission evidence.
 It normalizes parameter names/trailing slashes and explicitly maps legacy entry
 dispatchers to their wildcard routes. It does not certify dispatcher suffix
 semantics, authorization, or completion of pending inventory operations.

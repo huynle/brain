@@ -202,6 +202,16 @@ test("task waiting and blocked routes",async t=>{
   assert.deepEqual(seen,["GET /api/v1/tasks/p%20q/waiting","GET /api/v1/tasks/p%20q/blocked"]);
 });
 
+test("task ready and next preserve selection filters",async t=>{
+  const seen=[];const baseUrl=await server(t,(req,res)=>{seen.push(req.url);res.end('{"tasks":[],"id":"one"}');});
+  const c=new BrainClient({baseUrl});t.after(()=>c.close());
+  const filters={feature_id:["a,b","c & d"],executors:"opencode,pi",runner_id:"r one",generated_by_prefix:"automation:foo"};
+  await c.tasks.ready("p q",filters);assert.equal((await c.tasks.next("p q",filters)).id,"one");
+  await c.tasks.ready("p");await c.tasks.next("p");
+  const q="?feature_id=a%2Cb&feature_id=c+%26+d&executors=opencode%2Cpi&runner_id=r+one&generated_by_prefix=automation%3Afoo";
+  assert.deepEqual(seen,["/api/v1/tasks/p%20q/ready"+q,"/api/v1/tasks/p%20q/next"+q,"/api/v1/tasks/p/ready","/api/v1/tasks/p/next"]);
+});
+
 test("query arrays preserve repeated parameter values without comma coercion",async t=>{
   const seen=[];const baseUrl=await server(t,(req,res)=>{seen.push(req.url);res.end('{"entries":[]}');});
   const c=new BrainClient({baseUrl});t.after(()=>c.close());

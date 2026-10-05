@@ -12,6 +12,50 @@ import (
 	"github.com/huynle/brain-api/sdk/brain"
 )
 
+func exerciseTaskSelection(ctx context.Context, c *brain.Client, project, id string) error {
+	pending := "pending"
+	deps := []string{id}
+	dependent, err := c.Entries().Create(ctx, brain.CreateEntryRequest{Type: "task", Title: "Go selection fixture", Content: "Dependency selection", Project: &project, Status: &pending, DependsOn: &deps}, brain.RequestOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = c.Entries().Delete(context.Background(), dependent.Id, false) }()
+	if _, err := c.Entries().Update(ctx, id, brain.UpdateEntryRequest{Status: &pending}, brain.RequestOptions{}); err != nil {
+		return err
+	}
+	features := brain.TaskFeatureFilter{"", "not-present"}
+	executors := "opencode"
+	ready, err := c.Tasks().Ready(ctx, project, &brain.TasksReadyParams{FeatureId: &features, Executors: &executors})
+	if err != nil {
+		return err
+	}
+	if ready.Tasks == nil || len(*ready.Tasks) != 1 || (*ready.Tasks)[0].Id != id {
+		return fmt.Errorf("ready dependency selection mismatch")
+	}
+	next, err := c.Tasks().Next(ctx, project, &brain.TasksNextParams{FeatureId: &features, Executors: &executors})
+	if err != nil || next.Id != id {
+		return fmt.Errorf("next dependency selection mismatch: %w", err)
+	}
+	waiting, err := c.Tasks().Waiting(ctx, project)
+	if err != nil || waiting.Tasks == nil || len(*waiting.Tasks) != 1 || (*waiting.Tasks)[0].Id != dependent.Id {
+		return fmt.Errorf("waiting dependency selection mismatch: %w", err)
+	}
+	cancelled := "cancelled"
+	if _, err := c.Entries().Update(ctx, id, brain.UpdateEntryRequest{Status: &cancelled}, brain.RequestOptions{}); err != nil {
+		return err
+	}
+	blocked, err := c.Tasks().Blocked(ctx, project)
+	if err != nil || blocked.Tasks == nil || len(*blocked.Tasks) != 1 || (*blocked.Tasks)[0].Id != dependent.Id {
+		return fmt.Errorf("blocked dependency selection mismatch: %w", err)
+	}
+	next, err = c.Tasks().Next(ctx, project, nil)
+	if err != nil || next != nil {
+		return fmt.Errorf("no ready tasks did not return null: %w", err)
+	}
+	_, err = c.Entries().Update(ctx, id, brain.UpdateEntryRequest{Status: &pending}, brain.RequestOptions{})
+	return err
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -64,6 +108,9 @@ func run() error {
 		return fmt.Errorf("task identity mismatch")
 	}
 	if _, err := c.Tasks().List(ctx, project); err != nil {
+		return err
+	}
+	if err := exerciseTaskSelection(ctx, c, project, created.Id); err != nil {
 		return err
 	}
 	if _, err := c.Entries().List(ctx, &brain.EntriesListParams{Project: &project}); err != nil {

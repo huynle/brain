@@ -20,6 +20,92 @@ x-brain-write:
   x-brain-script: false
   x-brain-profile: single
 paths:
+  /tasks/{project}/ready:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.ready
+      summary: List ready tasks without claiming them
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: feature_id
+          in: query
+          style: form
+          explode: true
+          schema:
+            $ref: '#/components/schemas/TaskFeatureFilter'
+        - name: executors
+          in: query
+          description: Comma-separated executor names
+          schema:
+            type: string
+        - name: runner_id
+          in: query
+          schema:
+            type: string
+        - name: generated_by_prefix
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Ready tasks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskSelectionResponse'
+  /tasks/{project}/next:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.next
+      summary: Get next ready task without claiming it
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: feature_id
+          in: query
+          style: form
+          explode: true
+          schema:
+            $ref: '#/components/schemas/TaskFeatureFilter'
+        - name: executors
+          in: query
+          description: Comma-separated executor names
+          schema:
+            type: string
+        - name: runner_id
+          in: query
+          schema:
+            type: string
+        - name: generated_by_prefix
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Next ready task, or null when no task is ready
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/ResolvedTask'
+                  - type: 'null'
+        '404':
+          description: No ready tasks available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegacyErrorResponse'
   /tasks/{project}/waiting:
     get:
       x-brain-effect: read
@@ -1424,6 +1510,10 @@ components:
       type: http
       scheme: bearer
   schemas:
+    TaskFeatureFilter:
+      type: array
+      items:
+        type: string
     TaskSelectionResponse:
       type: object
       required: [tasks]

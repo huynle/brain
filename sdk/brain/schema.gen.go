@@ -974,6 +974,9 @@ type SuccessResponse struct {
 	Success bool `json:"success"`
 }
 
+// TaskFeatureFilter defines model for TaskFeatureFilter.
+type TaskFeatureFilter = []string
+
 // TaskListResponse defines model for TaskListResponse.
 type TaskListResponse struct {
 	Count  int             `json:"count"`
@@ -1275,6 +1278,26 @@ type GoalsAuditParams struct {
 type RemindersListParams struct {
 	Project *string `form:"project,omitempty" json:"project,omitempty"`
 	State   *string `form:"state,omitempty" json:"state,omitempty"`
+}
+
+// TasksNextParams defines parameters for TasksNext.
+type TasksNextParams struct {
+	FeatureId *TaskFeatureFilter `form:"feature_id,omitempty" json:"feature_id,omitempty"`
+
+	// Executors Comma-separated executor names
+	Executors         *string `form:"executors,omitempty" json:"executors,omitempty"`
+	RunnerId          *string `form:"runner_id,omitempty" json:"runner_id,omitempty"`
+	GeneratedByPrefix *string `form:"generated_by_prefix,omitempty" json:"generated_by_prefix,omitempty"`
+}
+
+// TasksReadyParams defines parameters for TasksReady.
+type TasksReadyParams struct {
+	FeatureId *TaskFeatureFilter `form:"feature_id,omitempty" json:"feature_id,omitempty"`
+
+	// Executors Comma-separated executor names
+	Executors         *string `form:"executors,omitempty" json:"executors,omitempty"`
+	RunnerId          *string `form:"runner_id,omitempty" json:"runner_id,omitempty"`
+	GeneratedByPrefix *string `form:"generated_by_prefix,omitempty" json:"generated_by_prefix,omitempty"`
 }
 
 // WebhooksListParams defines parameters for WebhooksList.

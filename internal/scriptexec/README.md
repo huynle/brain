@@ -48,6 +48,17 @@ bounds, supply cancellation-safe bounded stdin/stdout, and arrange supervisor-de
 cleanup. An arbitrary blocking Go reader/writer is not made interruptible by this
 helper. No shell/command input is exposed through HTTP, MCP or a script facade.
 
+`frameSink` incrementally assembles stdout frames under a total **wire-byte**
+budget (including envelope padding), before forwarding to a trusted parsing/
+quarantine callback. Real malicious-child flooding tests compose it with
+`ProtocolSession` and `runWorkerProcess`: one call is admitted, the unsolicited
+duplicate retires the protocol, cancels and reaps the child without the outer
+deadline. Hostile length headers, packet boundaries, budget exhaustion and
+truncated EOF are covered, including fuzzing. The single writer must be joined
+before `finish`; terminal-result presence and current output authority are
+separate required checks. No callback is an operation grant or permission to
+release result bytes, and no untrusted callback is made interruptible here.
+
 ### macOS address-space negative control
 
 `BRAIN_SCRIPT_DARWIN_MEMORY_PROBE=1 go test -race ./internal/scriptexec -run

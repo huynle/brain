@@ -19,6 +19,10 @@ func TestProcessFixture(t *testing.T) {
 		fmt.Fprint(os.Stderr, strings.Repeat("secret-content", 10000))
 	case "success":
 		os.Exit(0)
+	case "frames":
+		for i := 0; i < 10000; i++ {
+			_ = WriteFrame(os.Stdout, Frame{1, "call", 1, []byte(`{"operation":"entries.get","arguments":{}}`)})
+		}
 	default:
 		return
 	}

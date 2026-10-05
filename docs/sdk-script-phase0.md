@@ -16,6 +16,10 @@ Phase 0 inventory/proposals are underway; shared allocations are outstanding.
 - Explicit continuation transfer after clean `2f265f3d`: prior writer completed;
   sole writer is `ses_ef278db2cffexAPrivjgtN64Db`, authorized by the parent/user.
   Fresh task recall retained blocked reservation; dispatch-lease lookup found none.
+- Explicit next continuation transfer at clean `9061f351f13ff25688f105d54323ac62ae8de53a`:
+  prior writer completed; sole writer `ses_ef225e26fffeCnN8Nv0CwBdc3e` was authorized
+  by parent/user. Fresh lease lookup again found none; transfer was persisted on
+  task `vggevclc` before edits. See [takeover evidence](sdk-script-takeover-20261005.md).
 - P5 inspected pin: `421719ef36fa1771506b7489a03201e549b4d9f5`.
 - P6 inspected pin: `c751d0e604e0b58fa95156f3caa9481d009051bc`
   (includes `6077f9e7` credential33 foundation).
@@ -189,6 +193,24 @@ and adversarial compilation before selecting a runtime. Consume exact owner
 acknowledgements before implementing service validation, persistence, capability
 routes or MCP changes. Do not mark the task complete or change its manual dispatch
 reservation. No merge, push, deployment, installation or execution activation.
+
+### Follow-on takeover checkpoint
+
+`ea28dd9f` fixes independent report `xswoha7x`'s real Go buffered-SSE retirement
+defect, with real HTTP Go/Node regressions. `8196463b`, `12d13088`, `8cfd3855`,
+`bed8b3aa`, `973a3359`, and `4b3dbb5b` add inactive parent cancellation/reaping,
+discard-only diagnostic limits, hostile framed-output cancellation, Linux native
+supervisor cancellation/death reaping, compile/fresh-state corpus and actual Go
+parent-to-sealed-child exchange/cancellation. These do NOT check off production
+coordinator, selected runtime, protected log/output or graph shutdown acceptance.
+macOS's alternative memorystatus self-limit also returned EPERM; no memory proof.
+
+Latest successful S10 recall still had no allocation acknowledgement. The next
+Brain recall (`yp7llda1`) failed `Invalid authentication token`; no replacement
+identity/credentials or subsequent Brain write was attempted. Later evidence is
+committed locally in the takeover report for the parent to relay. Shared owner
+approvals remain absent, not inferred. Runnable next steps and external gates
+are separately enumerated there; V1 remains incomplete.
 
 No OpenAPI contract, SDK, broker, worker, real script flow, migration, platform
 confinement, restricted-resource integration or hosted release proof is delivered

@@ -12,11 +12,13 @@ Current Go/TypeScript coverage: `health.get`, `entries.list`, `entries.create`,
 `entries.get`, `entries.update`, `entries.delete`, `search.query`, `tasks.list`,
 `tasks.get`, `entries.move`, `entries.bulkUpdate`, `entries.bulkDelete`,
 `sections.list`, `sections.get`, `graph.backlinks`, `graph.outlinks`,
-`graph.related`. Contract: `api/openapi.yaml`; transport tests: `sdk/brain/client_test.go`
+`graph.related`, plus `attachments.list/get/delete/upload/download/text/extract/forEntry/attach/detach`.
+Contract: `api/openapi.yaml`; transport tests: `sdk/brain/client_test.go`
 and `sdk/typescript/test/client.test.mjs`; real stored-token/SQLite/service/router
 and external-module/package evidence:
 `TestExternalClientsAgainstAuthenticatedRealHandler`. That real fixture exercises
-all 17 operations, with legacy bulk calls in dry-run mode and search using FTS,
+the first 17 operations plus eight attachment operations (real local blob storage;
+successful extraction/stored-derived-text retrieval are excluded), with legacy bulk calls in dry-run mode and search using FTS,
 plus unauthenticated refusal. It does not prove hosted ACL composition,
 search-provider behavior, real bulk partial outcomes, or script dry-run guarantees.
 

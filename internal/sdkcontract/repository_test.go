@@ -30,7 +30,11 @@ func TestRepositoryContractAndWireParity(t *testing.T) {
 		reflect.TypeOf(types.MoveEntryRequest{}), reflect.TypeOf(types.MoveResult{}),
 		reflect.TypeOf(types.BulkUpdateRequest{}), reflect.TypeOf(types.BulkUpdateResponse{}),
 		reflect.TypeOf(types.BulkDeleteRequest{}), reflect.TypeOf(types.BulkDeleteResponse{}),
-		reflect.TypeOf(types.SectionsResponse{}), reflect.TypeOf(types.SectionContentResponse{}))
+		reflect.TypeOf(types.SectionsResponse{}), reflect.TypeOf(types.SectionContentResponse{}),
+		reflect.TypeOf(types.Attachment{}), reflect.TypeOf(types.CreateAttachmentResponse{}),
+		reflect.TypeOf(types.ListAttachmentsResponse{}), reflect.TypeOf(types.AttachEntryAttachmentRequest{}),
+		reflect.TypeOf(types.AttachEntryAttachmentResponse{}), reflect.TypeOf(types.AttachmentExtractionRequest{}),
+		reflect.TypeOf(types.AttachmentExtractionResult{}))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,6 +22,37 @@ func (e EntriesDeleteParamsConfirm) Valid() bool {
 	}
 }
 
+// AttachEntryAttachmentRequest defines model for AttachEntryAttachmentRequest.
+type AttachEntryAttachmentRequest struct {
+	Attachment AttachmentReference `json:"attachment"`
+}
+
+// AttachEntryAttachmentResponse defines model for AttachEntryAttachmentResponse.
+type AttachEntryAttachmentResponse struct {
+	Attachments *[]AttachmentReference `json:"attachments"`
+	EntryId     string                 `json:"entry_id"`
+	Path        string                 `json:"path"`
+}
+
+// Attachment defines model for Attachment.
+type Attachment struct {
+	ContentType string               `json:"content_type"`
+	Created     *string              `json:"created,omitempty"`
+	Derived     *[]AttachmentDerived `json:"derived,omitempty"`
+	Filename    string               `json:"filename"`
+	Id          string               `json:"id"`
+	Metadata    *map[string]string   `json:"metadata,omitempty"`
+	Modified    *string              `json:"modified,omitempty"`
+	Sha256      *string              `json:"sha256,omitempty"`
+	Size        int64                `json:"size"`
+	StorageKey  *string              `json:"storage_key,omitempty"`
+}
+
+// AttachmentDeletionResponse defines model for AttachmentDeletionResponse.
+type AttachmentDeletionResponse struct {
+	Deleted bool `json:"deleted"`
+}
+
 // AttachmentDerived defines model for AttachmentDerived.
 type AttachmentDerived struct {
 	ContentType *string `json:"content_type,omitempty"`
@@ -43,6 +74,30 @@ type AttachmentDerivedText struct {
 	Modified    *string            `json:"modified,omitempty"`
 	Status      string             `json:"status"`
 	Text        *string            `json:"text,omitempty"`
+}
+
+// AttachmentExtractionRequest defines model for AttachmentExtractionRequest.
+type AttachmentExtractionRequest struct {
+	AttachmentId string             `json:"attachment_id"`
+	ContentType  string             `json:"content_type"`
+	EntryId      *string            `json:"entry_id,omitempty"`
+	Filename     *string            `json:"filename,omitempty"`
+	Metadata     *map[string]string `json:"metadata,omitempty"`
+	ProjectId    *string            `json:"project_id,omitempty"`
+	Size         *int64             `json:"size,omitempty"`
+}
+
+// AttachmentExtractionResult defines model for AttachmentExtractionResult.
+type AttachmentExtractionResult struct {
+	Attachment    Attachment               `json:"attachment"`
+	DerivedText   AttachmentDerivedText    `json:"derived_text"`
+	LinkedEntries *[]AttachmentLinkedEntry `json:"linked_entries,omitempty"`
+}
+
+// AttachmentLinkedEntry defines model for AttachmentLinkedEntry.
+type AttachmentLinkedEntry struct {
+	Path string  `json:"path"`
+	Role *string `json:"role,omitempty"`
 }
 
 // AttachmentReference defines model for AttachmentReference.
@@ -251,6 +306,11 @@ type BulkUpdateResult struct {
 	Title  string  `json:"title"`
 }
 
+// CreateAttachmentResponse defines model for CreateAttachmentResponse.
+type CreateAttachmentResponse struct {
+	Attachment Attachment `json:"attachment"`
+}
+
 // CreateEntryRequest defines model for CreateEntryRequest.
 type CreateEntryRequest struct {
 	Action              *AutomationAction           `json:"action,omitempty"`
@@ -422,6 +482,12 @@ type HealthResponse struct {
 	Embedding EmbeddingHealthStatus `json:"embedding"`
 	Status    string                `json:"status"`
 	Timestamp time.Time             `json:"timestamp"`
+}
+
+// ListAttachmentsResponse defines model for ListAttachmentsResponse.
+type ListAttachmentsResponse struct {
+	Attachments *[]Attachment `json:"attachments"`
+	Total       int           `json:"total"`
 }
 
 // ListEntriesResponse defines model for ListEntriesResponse.
@@ -751,6 +817,45 @@ type UpdateEntryRequest struct {
 	Workdir             *string                     `json:"workdir,omitempty"`
 }
 
+// AttachmentsListParams defines parameters for AttachmentsList.
+type AttachmentsListParams struct {
+	ProjectId string `form:"project_id" json:"project_id"`
+}
+
+// AttachmentsUploadMultipartBody defines parameters for AttachmentsUpload.
+type AttachmentsUploadMultipartBody struct {
+	File []byte `json:"file"`
+
+	// Metadata JSON-encoded object with string values
+	Metadata  *string `json:"metadata,omitempty"`
+	ProjectId string  `json:"project_id"`
+}
+
+// AttachmentsDeleteParams defines parameters for AttachmentsDelete.
+type AttachmentsDeleteParams struct {
+	ProjectId string `form:"project_id" json:"project_id"`
+}
+
+// AttachmentsGetParams defines parameters for AttachmentsGet.
+type AttachmentsGetParams struct {
+	ProjectId string `form:"project_id" json:"project_id"`
+}
+
+// AttachmentsDownloadParams defines parameters for AttachmentsDownload.
+type AttachmentsDownloadParams struct {
+	ProjectId string `form:"project_id" json:"project_id"`
+}
+
+// AttachmentsExtractParams defines parameters for AttachmentsExtract.
+type AttachmentsExtractParams struct {
+	ProjectId string `form:"project_id" json:"project_id"`
+}
+
+// AttachmentsTextParams defines parameters for AttachmentsText.
+type AttachmentsTextParams struct {
+	ProjectId string `form:"project_id" json:"project_id"`
+}
+
 // EntriesListParams defines parameters for EntriesList.
 type EntriesListParams struct {
 	Project   *string `form:"project,omitempty" json:"project,omitempty"`
@@ -774,6 +879,22 @@ type EntriesDeleteParams struct {
 // EntriesDeleteParamsConfirm defines parameters for EntriesDelete.
 type EntriesDeleteParamsConfirm bool
 
+// AttachmentsForEntryParams defines parameters for AttachmentsForEntry.
+type AttachmentsForEntryParams struct {
+	ProjectId string `form:"project_id" json:"project_id"`
+}
+
+// AttachmentsAttachParams defines parameters for AttachmentsAttach.
+type AttachmentsAttachParams struct {
+	ProjectId string `form:"project_id" json:"project_id"`
+}
+
+// AttachmentsDetachParams defines parameters for AttachmentsDetach.
+type AttachmentsDetachParams struct {
+	Role      string `form:"role" json:"role"`
+	ProjectId string `form:"project_id" json:"project_id"`
+}
+
 // GraphRelatedParams defines parameters for GraphRelated.
 type GraphRelatedParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
@@ -783,6 +904,12 @@ type GraphRelatedParams struct {
 type SectionsGetParams struct {
 	IncludeSubsections *bool `form:"includeSubsections,omitempty" json:"includeSubsections,omitempty"`
 }
+
+// AttachmentsUploadMultipartRequestBody defines body for AttachmentsUpload for multipart/form-data ContentType.
+type AttachmentsUploadMultipartRequestBody AttachmentsUploadMultipartBody
+
+// AttachmentsExtractJSONRequestBody defines body for AttachmentsExtract for application/json ContentType.
+type AttachmentsExtractJSONRequestBody = AttachmentExtractionRequest
 
 // EntriesCreateJSONRequestBody defines body for EntriesCreate for application/json ContentType.
 type EntriesCreateJSONRequestBody = CreateEntryRequest
@@ -795,6 +922,9 @@ type EntriesBulkUpdateJSONRequestBody = BulkUpdateRequest
 
 // EntriesUpdateJSONRequestBody defines body for EntriesUpdate for application/json ContentType.
 type EntriesUpdateJSONRequestBody = UpdateEntryRequest
+
+// AttachmentsAttachJSONRequestBody defines body for AttachmentsAttach for application/json ContentType.
+type AttachmentsAttachJSONRequestBody = AttachEntryAttachmentRequest
 
 // EntriesMoveJSONRequestBody defines body for EntriesMove for application/json ContentType.
 type EntriesMoveJSONRequestBody = MoveEntryRequest

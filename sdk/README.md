@@ -5,7 +5,8 @@
 The reviewed public protocol lives in `api/openapi.yaml` (OpenAPI 3.1).
 Current typed operations: health get; entries list/create/get/update/delete/move/
 bulk-update/bulk-delete; search; tasks list/get; sections list/get; graph
-backlinks/outlinks/related (17 operations). The remaining inventory is in
+backlinks/outlinks/related; attachments upload/list/get/delete/download/text/
+extract/for-entry/attach/detach (27 operations). The remaining inventory is in
 `docs/sdk-operation-matrix.md`. Task creation and dependency updates use typed
 entry requests. No capability route, hosted adapter or script route is added.
 
@@ -65,7 +66,15 @@ their filters and stay bound to their original client. They do not interpret the
 legacy page-local `total` as a collection count. They stop at an empty page, fail
 on `truncated` or inconsistent offsets/limits, and cap a walk at 10,000 pages.
 Concurrent server changes can move entries between offset pages; no snapshot or
-server-cursor guarantee is claimed. Attachments and broader namespaces remain work.
+server-cursor guarantee is claimed. Broader namespaces remain work.
+
+Attachment upload takes bytes, never a filesystem path. Filenames cannot contain
+path separators or CR/LF/NUL. Uploads (including multipart overhead) and downloads
+use the configured response-byte limit; these are bounded-buffer methods, not
+unbounded streaming APIs. Link and unlink require a non-empty role. Extraction
+invokes the existing provider path; transport tests do not prove provider success.
+The real local integration covers eight attachment operations with actual blob
+storage, excluding successful extraction and stored-derived-text retrieval.
 
 The TypeScript package contains matching generated types and an ergonomic ESM
 client. `BRAIN_SDK_NODE_INTEGRATION=1 go test ./internal/sdkcontract -run

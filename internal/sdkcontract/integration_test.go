@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/blobstore"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/service"
@@ -47,7 +48,12 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	idx := indexer.NewIndexer(root, store)
 	svc := service.NewBrainService(&cfg, store, idx, nil, nil)
 	tasks := service.NewTaskService(&cfg, store, idx)
-	h := api.NewHandler(svc, api.WithTaskService(tasks))
+	blobs, err := blobstore.NewFilesystemStore(filepath.Join(root, "attachments"), 8<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachments := service.NewAttachmentService(store, blobs, svc, 8<<20)
+	h := api.NewHandler(svc, api.WithTaskService(tasks), api.WithAttachmentService(attachments))
 	srv := httptest.NewServer(api.NewRouter(cfg, api.WithHandler(h), api.WithTokenValidator(control)))
 	defer srv.Close()
 	c, err := brain.New(brain.Config{BaseURL: srv.URL})

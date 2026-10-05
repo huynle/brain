@@ -429,12 +429,273 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/BrainEntry'
+  /attachments:
+    get:
+      operationId: attachments.list
+      summary: List project attachment metadata
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: project_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Attachment metadata list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAttachmentsResponse'
+    post:
+      operationId: attachments.upload
+      summary: Upload attachment bytes without local path interpretation
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - project_id
+                - file
+              properties:
+                project_id:
+                  type: string
+                metadata:
+                  type: string
+                  description: JSON-encoded object with string values
+                file:
+                  type: string
+                  format: binary
+                  x-go-type: '[]byte'
+      responses:
+        '201':
+          description: Stored attachment metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAttachmentResponse'
+  /attachments/{attachmentID}:
+    parameters:
+      - name: attachmentID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: attachments.get
+      summary: Get project attachment metadata
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Attachment metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+    delete:
+      operationId: attachments.delete
+      summary: Delete an unreferenced attachment
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Deletion result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentDeletionResponse'
+  /attachments/{attachmentID}/content:
+    parameters:
+      - name: attachmentID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: attachments.download
+      summary: Download bounded attachment bytes
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Raw content; actual media type follows stored metadata
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+                x-go-type: '[]byte'
+  /attachments/{attachmentID}/text:
+    parameters:
+      - name: attachmentID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: attachments.text
+      summary: Download already-extracted text without invoking extraction
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Stored derived text
+          content:
+            text/plain:
+              schema:
+                type: string
+  /attachments/{attachmentID}/extract:
+    parameters:
+      - name: attachmentID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: attachments.extract
+      summary: Run extraction and persist derived text
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachmentExtractionRequest'
+      responses:
+        '200':
+          description: Derived text and linked-entry outcomes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentExtractionResult'
+  /entries/{id}/attachments:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: attachments.forEntry
+      summary: List entry attachment references
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Entry references
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachEntryAttachmentResponse'
+    post:
+      operationId: attachments.attach
+      summary: Attach an existing project attachment to an entry
+      description: attachment.role must be non-empty; metadata DTO omission does not waive service validation.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachEntryAttachmentRequest'
+      responses:
+        '200':
+          description: Updated entry references
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachEntryAttachmentResponse'
+  /entries/{id}/attachments/{attachmentID}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: attachmentID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: string
+    delete:
+      operationId: attachments.detach
+      summary: Remove an attachment reference from an entry
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: role
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: Updated entry references
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachEntryAttachmentResponse'
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
   schemas:
+    AttachmentDeletionResponse:
+      type: object
+      required:
+        - deleted
+      properties:
+        deleted:
+          type: boolean
     HealthResponse:
       type: object
       required:
@@ -2368,4 +2629,136 @@ components:
       required:
         - sections
         - path
+      type: object
+    AttachEntryAttachmentRequest:
+      properties:
+        attachment:
+          $ref: '#/components/schemas/AttachmentReference'
+      required:
+        - attachment
+      type: object
+    AttachEntryAttachmentResponse:
+      properties:
+        attachments:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttachmentReference'
+              type: array
+            - type: 'null'
+        entry_id:
+          type: string
+        path:
+          type: string
+      required:
+        - entry_id
+        - path
+        - attachments
+      type: object
+    Attachment:
+      properties:
+        content_type:
+          type: string
+        created:
+          type: string
+        derived:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttachmentDerived'
+              type: array
+            - type: 'null'
+        filename:
+          type: string
+        id:
+          type: string
+        metadata:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        modified:
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+        storage_key:
+          type: string
+      required:
+        - id
+        - filename
+        - content_type
+        - size
+      type: object
+    AttachmentExtractionRequest:
+      properties:
+        attachment_id:
+          type: string
+        content_type:
+          type: string
+        entry_id:
+          type: string
+        filename:
+          type: string
+        metadata:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        project_id:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - attachment_id
+        - content_type
+      type: object
+    AttachmentExtractionResult:
+      properties:
+        attachment:
+          $ref: '#/components/schemas/Attachment'
+        derived_text:
+          $ref: '#/components/schemas/AttachmentDerivedText'
+        linked_entries:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttachmentLinkedEntry'
+              type: array
+            - type: 'null'
+      required:
+        - attachment
+        - derived_text
+      type: object
+    AttachmentLinkedEntry:
+      properties:
+        path:
+          type: string
+        role:
+          type: string
+      required:
+        - path
+      type: object
+    CreateAttachmentResponse:
+      properties:
+        attachment:
+          $ref: '#/components/schemas/Attachment'
+      required:
+        - attachment
+      type: object
+    ListAttachmentsResponse:
+      properties:
+        attachments:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/Attachment'
+              type: array
+            - type: 'null'
+        total:
+          type: integer
+      required:
+        - attachments
+        - total
       type: object

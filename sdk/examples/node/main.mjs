@@ -20,6 +20,12 @@ try {
   await client.search({query:"Node SDK updated",strategy:"fts"});
   await client.sections.list(id); await client.sections.get(id,"Details",true);
   await client.graph.backlinks(id); await client.graph.outlinks(id); await client.graph.related(id,5);
+  const file=await client.attachments.upload("sdk-example",{filename:"example.txt",content:new TextEncoder().encode("sdk attachment"),contentType:"text/plain"});
+  const attachmentID=file.attachment.id;
+  await client.attachments.get("sdk-example",attachmentID);await client.attachments.list("sdk-example");
+  if(new TextDecoder().decode(await client.attachments.download("sdk-example",attachmentID))!=="sdk attachment")throw new Error("attachment bytes mismatch");
+  await client.attachments.attach("sdk-example",id,{attachment:{id:attachmentID,role:"source"}});await client.attachments.forEntry("sdk-example",id);
+  await client.attachments.detach("sdk-example",id,attachmentID,"source");await client.attachments.delete("sdk-example",attachmentID);
   await client.entries.bulkUpdate({entries:[{path:updated.path,updates:{title:"Node SDK updated"}}],dry_run:true});
   await client.entries.bulkDelete({paths:[updated.path],dry_run:true});
   await client.entries.move(id,{project:"sdk-example-moved"});

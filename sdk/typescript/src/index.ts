@@ -58,7 +58,7 @@ export class BrainClient {
     return next;
   }
 
-  async #request<T>(method: string, path: string, body?: unknown, query?: object, options: RequestOptions = {}, expectBody = true): Promise<T> {
+  async #request<T>(method: string, path: string, body?: unknown, query?: object, options: RequestOptions = {}, expectBody = true, binary = false): Promise<T> {
     const signals = [this.#lifetime.signal, AbortSignal.timeout(this.#config.timeoutMs)];
     if (options.signal) signals.push(options.signal);
     const signal = AbortSignal.any(signals);
@@ -67,7 +67,7 @@ export class BrainClient {
     for (const [key, value] of Object.entries(query ?? {})) if (value !== undefined) q.set(key, String(value));
     const suffix = q.size ? `?${q}` : "";
     const headers = new Headers({Accept: "application/json"});
-    if (body !== undefined) headers.set("Content-Type", "application/json");
+    if (body !== undefined && !(body instanceof FormData)) headers.set("Content-Type", "application/json");
     if (this.#config.token) headers.set("Authorization", `Bearer ${this.#config.token}`);
     if (this.#config.tenant) headers.set("X-Brain-Tenant", this.#config.tenant);
     if (options.requestId) headers.set("X-Request-ID", options.requestId);
@@ -75,7 +75,7 @@ export class BrainClient {
     let response: Response;
     try {
       response = await (this.#config.fetch ?? globalThis.fetch)(`${this.#config.baseUrl}/api/v1${path}${suffix}`, {
-        method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal, redirect: "manual",
+        method, headers, body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body), signal, redirect: "manual",
       });
     } catch {
       signal.throwIfAborted();
@@ -115,6 +115,7 @@ export class BrainClient {
         typeof wire.message === "string" ? wire.message : "", [429,503].includes(response.status));
     }
     if (!expectBody) return undefined as T;
+    if (binary) return data as T;
     try { return JSON.parse(text) as T; }
     catch { throw new BrainError("invalid_response", response.status, requestId); }
   }
@@ -132,6 +133,28 @@ export class BrainClient {
     create: (request: Schema["CreateEntryRequest"], options?: RequestOptions): Promise<Schema["CreateEntryResponse"]> => this.#request("POST", "/entries", request, undefined, options),
     update: (id: string, request: Schema["UpdateEntryRequest"], options?: RequestOptions): Promise<Schema["BrainEntry"]> => this.#request("PATCH", `/entries/${encodeURIComponent(id)}`, request, undefined, options),
     delete: (id: string, force = false, options?: RequestOptions): Promise<void> => this.#request("DELETE", `/entries/${encodeURIComponent(id)}`, undefined, {confirm:true,...(force ? {force:true} : {})}, options, false),
+  });
+  readonly attachments = Object.freeze({
+    list: (project: string, options?: RequestOptions): Promise<Schema["ListAttachmentsResponse"]> => this.#request("GET","/attachments",undefined,{project_id:project},options),
+    get: (project: string,id: string, options?: RequestOptions): Promise<Schema["Attachment"]> => this.#request("GET",`/attachments/${encodeURIComponent(id)}`,undefined,{project_id:project},options),
+    delete: (project: string,id: string, options?: RequestOptions): Promise<Schema["AttachmentDeletionResponse"]> => this.#request("DELETE",`/attachments/${encodeURIComponent(id)}`,undefined,{project_id:project},options),
+    extract: (project: string,id: string, request: Schema["AttachmentExtractionRequest"], options?: RequestOptions): Promise<Schema["AttachmentExtractionResult"]> => this.#request("POST",`/attachments/${encodeURIComponent(id)}/extract`,request,{project_id:project},options),
+    text: async (project: string,id: string, options?: RequestOptions): Promise<string> => new TextDecoder().decode(await this.#request<Uint8Array>("GET",`/attachments/${encodeURIComponent(id)}/text`,undefined,{project_id:project},options,true,true)),
+    forEntry: (project: string,id: string, options?: RequestOptions): Promise<Schema["AttachEntryAttachmentResponse"]> => this.#request("GET",`/entries/${encodeURIComponent(id)}/attachments`,undefined,{project_id:project},options),
+    attach: (project: string,id: string,request: Schema["AttachEntryAttachmentRequest"], options?: RequestOptions): Promise<Schema["AttachEntryAttachmentResponse"]> => this.#request("POST",`/entries/${encodeURIComponent(id)}/attachments`,request,{project_id:project},options),
+    detach: (project: string,id: string,attachmentID: string,role: string, options?: RequestOptions): Promise<Schema["AttachEntryAttachmentResponse"]> => this.#request("DELETE",`/entries/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentID)}`,undefined,{project_id:project,role},options),
+    upload: async (project: string, request: {filename: string; content: Uint8Array; contentType?: string; metadata?: Record<string,string>}, options?: RequestOptions): Promise<Schema["CreateAttachmentResponse"]> => {
+      if (!request.filename || [".",".."].includes(request.filename) || /[/\\\r\n\0]/.test(request.filename) || /[\r\n\0]/.test(request.contentType ?? "")) throw new BrainError("invalid_request");
+      if (request.content.byteLength > this.#config.maxResponseBytes) throw new BrainError("request_too_large");
+      const form = new FormData();form.set("project_id",project);
+      if (request.metadata) form.set("metadata",JSON.stringify(request.metadata));
+      form.set("file",new Blob([new Uint8Array(request.content)],{type:request.contentType ?? "application/octet-stream"}),request.filename);
+      // Materialize once to enforce the encoded multipart bound, including metadata.
+      const encoded = new Request("http://localhost",{method:"POST",body:form});
+      if ((await encoded.arrayBuffer()).byteLength > this.#config.maxResponseBytes) throw new BrainError("request_too_large");
+      return this.#request("POST","/attachments",form,undefined,options);
+    },
+    download: (project: string, id: string, options?: RequestOptions): Promise<Uint8Array> => this.#request("GET",`/attachments/${encodeURIComponent(id)}/content`,undefined,{project_id:project},options,true,true),
   });
   readonly tasks = Object.freeze({
     list: (project: string, options?: RequestOptions): Promise<Schema["TaskListResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}`, undefined, undefined, options),

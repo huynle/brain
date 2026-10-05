@@ -4,6 +4,35 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { BrainClient, BrainError } from "../dist/index.js";
 
+test("attachment binary bodies and bounds",async t=>{
+ let posts=0;
+ const baseUrl=await server(t,async(req,res)=>{
+  if(req.method==="POST"){
+   posts++; const chunks=[];for await(const chunk of req)chunks.push(chunk);
+   const request=new Request("http://localhost",{method:"POST",headers:req.headers,body:Buffer.concat(chunks)});
+   const form=await request.formData();assert.equal(form.get("project_id"),"p");assert.equal(form.get("metadata"),'{"source":"sdk"}');
+   const file=form.get("file");assert.equal(file.name,"bytes.bin");assert.deepEqual(new Uint8Array(await file.arrayBuffer()),new Uint8Array([0,255,1,2]));
+   res.writeHead(201).end('{"attachment":{"id":"a"}}');return;
+  }
+  res.end(Buffer.from([0,255,1,2]));
+ });
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());assert.equal(typeof c.attachments,"object");
+ const result=await c.attachments.upload("p",{filename:"bytes.bin",content:new Uint8Array([0,255,1,2]),metadata:{source:"sdk"}});assert.equal(result.attachment.id,"a");
+ assert.deepEqual(await c.attachments.download("p","a"),new Uint8Array([0,255,1,2]));
+ await assert.rejects(c.attachments.upload("p",{filename:"../secret",content:new Uint8Array()}),e=>e.code==="invalid_request");
+ const bounded=new BrainClient({baseUrl,maxResponseBytes:3});t.after(()=>bounded.close());
+ await assert.rejects(bounded.attachments.upload("p",{filename:"x",content:new Uint8Array(4)}),e=>e.code==="request_too_large");
+ await assert.rejects(bounded.attachments.download("p","a"),e=>e.code==="response_too_large");assert.equal(posts,1);
+});
+
+test("attachment extraction and stored text routes",async t=>{
+ const seen=[];const baseUrl=await server(t,async(req,res)=>{for await(const _ of req){};seen.push([req.method,req.url]);res.end(req.method==="GET"?"derived text":"{}");});
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());
+ await c.attachments.extract("p","a",{attachment_id:"a",content_type:"text/plain"});
+ assert.equal(await c.attachments.text("p","a"),"derived text");
+ assert.deepEqual(seen,[["POST","/api/v1/attachments/a/extract?project_id=p"],["GET","/api/v1/attachments/a/text?project_id=p"]]);
+});
+
 async function server(t, handler) {
   const s = createServer(handler);
   s.listen(0, "127.0.0.1"); await once(s, "listening");

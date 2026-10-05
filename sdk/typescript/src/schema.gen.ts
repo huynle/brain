@@ -268,10 +268,163 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List project attachment metadata */
+        get: operations["attachments.list"];
+        put?: never;
+        /** Upload attachment bytes without local path interpretation */
+        post: operations["attachments.upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attachments/{attachmentID}": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path: {
+                attachmentID: string;
+            };
+            cookie?: never;
+        };
+        /** Get project attachment metadata */
+        get: operations["attachments.get"];
+        put?: never;
+        post?: never;
+        /** Delete an unreferenced attachment */
+        delete: operations["attachments.delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attachments/{attachmentID}/content": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path: {
+                attachmentID: string;
+            };
+            cookie?: never;
+        };
+        /** Download bounded attachment bytes */
+        get: operations["attachments.download"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attachments/{attachmentID}/text": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path: {
+                attachmentID: string;
+            };
+            cookie?: never;
+        };
+        /** Download already-extracted text without invoking extraction */
+        get: operations["attachments.text"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attachments/{attachmentID}/extract": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path: {
+                attachmentID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run extraction and persist derived text */
+        post: operations["attachments.extract"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entries/{id}/attachments": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List entry attachment references */
+        get: operations["attachments.forEntry"];
+        put?: never;
+        /**
+         * Attach an existing project attachment to an entry
+         * @description attachment.role must be non-empty; metadata DTO omission does not waive service validation.
+         */
+        post: operations["attachments.attach"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entries/{id}/attachments/{attachmentID}": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+                attachmentID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove an attachment reference from an entry */
+        delete: operations["attachments.detach"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AttachmentDeletionResponse: {
+            deleted: boolean;
+        };
         HealthResponse: {
             status: string;
             /** Format: date-time */
@@ -949,6 +1102,57 @@ export interface components {
             path: string;
             sections: components["schemas"]["SectionHeader"][] | null;
         };
+        AttachEntryAttachmentRequest: {
+            attachment: components["schemas"]["AttachmentReference"];
+        };
+        AttachEntryAttachmentResponse: {
+            attachments: components["schemas"]["AttachmentReference"][] | null;
+            entry_id: string;
+            path: string;
+        };
+        Attachment: {
+            content_type: string;
+            created?: string;
+            derived?: components["schemas"]["AttachmentDerived"][] | null;
+            filename: string;
+            id: string;
+            metadata?: {
+                [key: string]: string;
+            } | null;
+            modified?: string;
+            sha256?: string;
+            /** Format: int64 */
+            size: number;
+            storage_key?: string;
+        };
+        AttachmentExtractionRequest: {
+            attachment_id: string;
+            content_type: string;
+            entry_id?: string;
+            filename?: string;
+            metadata?: {
+                [key: string]: string;
+            } | null;
+            project_id?: string;
+            /** Format: int64 */
+            size?: number;
+        };
+        AttachmentExtractionResult: {
+            attachment: components["schemas"]["Attachment"];
+            derived_text: components["schemas"]["AttachmentDerivedText"];
+            linked_entries?: components["schemas"]["AttachmentLinkedEntry"][] | null;
+        };
+        AttachmentLinkedEntry: {
+            path: string;
+            role?: string;
+        };
+        CreateAttachmentResponse: {
+            attachment: components["schemas"]["Attachment"];
+        };
+        ListAttachmentsResponse: {
+            attachments: components["schemas"]["Attachment"][] | null;
+            total: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -1358,6 +1562,260 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BrainEntry"][];
+                };
+            };
+        };
+    };
+    "attachments.list": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attachment metadata list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAttachmentsResponse"];
+                };
+            };
+        };
+    };
+    "attachments.upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    project_id: string;
+                    /** @description JSON-encoded object with string values */
+                    metadata?: string;
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Stored attachment metadata */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateAttachmentResponse"];
+                };
+            };
+        };
+    };
+    "attachments.get": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path: {
+                attachmentID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attachment metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attachment"];
+                };
+            };
+        };
+    };
+    "attachments.delete": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path: {
+                attachmentID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deletion result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachmentDeletionResponse"];
+                };
+            };
+        };
+    };
+    "attachments.download": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path: {
+                attachmentID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Raw content; actual media type follows stored metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+        };
+    };
+    "attachments.text": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path: {
+                attachmentID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stored derived text */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    "attachments.extract": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path: {
+                attachmentID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["AttachmentExtractionRequest"];
+            };
+        };
+        responses: {
+            /** @description Derived text and linked-entry outcomes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachmentExtractionResult"];
+                };
+            };
+        };
+    };
+    "attachments.forEntry": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Entry references */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachEntryAttachmentResponse"];
+                };
+            };
+        };
+    };
+    "attachments.attach": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttachEntryAttachmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated entry references */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachEntryAttachmentResponse"];
+                };
+            };
+        };
+    };
+    "attachments.detach": {
+        parameters: {
+            query: {
+                project_id: string;
+                role: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+                attachmentID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated entry references */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachEntryAttachmentResponse"];
                 };
             };
         };

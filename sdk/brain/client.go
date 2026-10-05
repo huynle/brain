@@ -87,7 +87,11 @@ func (c *Client) request(ctx context.Context, method, path string, body any, q u
 	stop := context.AfterFunc(c.ctx, cancel)
 	defer stop()
 	var input io.Reader
-	if body != nil {
+	contentType := "application/json"
+	if raw, ok := body.(rawBody); ok {
+		input = bytes.NewReader(raw.data)
+		contentType = raw.contentType
+	} else if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
 			return &Error{Code: "invalid_request"}
@@ -110,7 +114,7 @@ func (c *Client) request(ctx context.Context, method, path string, body any, q u
 	}
 	req.Header.Set("Accept", "application/json")
 	if input != nil {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -169,7 +173,9 @@ func (c *Client) request(ctx context.Context, method, path string, body any, q u
 		e.Retryable = resp.StatusCode == 429 || resp.StatusCode == 503
 		return e
 	}
-	if out != nil {
+	if raw, ok := out.(*[]byte); ok {
+		*raw = data
+	} else if out != nil {
 		if err := json.Unmarshal(data, out); err != nil {
 			e.Code = "invalid_response"
 			return e

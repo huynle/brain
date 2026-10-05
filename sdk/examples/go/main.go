@@ -95,6 +95,33 @@ func run() error {
 	if _, err := c.Graph().Related(ctx, created.Id, 5); err != nil {
 		return err
 	}
+	file, err := c.Attachments().Upload(ctx, project, brain.UploadRequest{Filename: "example.txt", Content: []byte("sdk attachment"), ContentType: "text/plain"}, brain.RequestOptions{})
+	if err != nil {
+		return err
+	}
+	attachmentID := file.Attachment.Id
+	if _, err := c.Attachments().Get(ctx, project, attachmentID); err != nil {
+		return err
+	}
+	if _, err := c.Attachments().List(ctx, project); err != nil {
+		return err
+	}
+	if b, err := c.Attachments().Download(ctx, project, attachmentID); err != nil || string(b) != "sdk attachment" {
+		return fmt.Errorf("attachment bytes mismatch: %v", err)
+	}
+	role := "source"
+	if _, err := c.Attachments().Attach(ctx, project, created.Id, brain.AttachEntryAttachmentRequest{Attachment: brain.AttachmentReference{Id: attachmentID, Role: &role}}, brain.RequestOptions{}); err != nil {
+		return err
+	}
+	if _, err := c.Attachments().ForEntry(ctx, project, created.Id); err != nil {
+		return err
+	}
+	if _, err := c.Attachments().Detach(ctx, project, created.Id, attachmentID, role, brain.RequestOptions{}); err != nil {
+		return err
+	}
+	if _, err := c.Attachments().Delete(ctx, project, attachmentID, brain.RequestOptions{}); err != nil {
+		return err
+	}
 	dry := true
 	entries := []brain.BulkUpdateEntry{{Path: updated.Path, Updates: brain.UpdateEntryRequest{Title: &title}}}
 	if _, err := c.Entries().BulkUpdate(ctx, brain.BulkUpdateRequest{Entries: &entries, DryRun: &dry}, brain.RequestOptions{}); err != nil {

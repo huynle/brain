@@ -392,6 +392,16 @@ type CreateEntryResponse struct {
 	Type   string    `json:"type"`
 }
 
+// CreateGoalRequest defines model for CreateGoalRequest.
+type CreateGoalRequest struct {
+	Action    AutomationAction `json:"action"`
+	Config    GoalConfig       `json:"config"`
+	Content   *string          `json:"content,omitempty"`
+	FeatureId *string          `json:"feature_id,omitempty"`
+	Project   string           `json:"project"`
+	Title     string           `json:"title"`
+}
+
 // CronRun defines model for CronRun.
 type CronRun struct {
 	Completed  *string `json:"completed,omitempty"`
@@ -402,6 +412,12 @@ type CronRun struct {
 	Started    string  `json:"started"`
 	Status     string  `json:"status"`
 	Tasks      *int    `json:"tasks,omitempty"`
+}
+
+// DeleteGoalResponse defines model for DeleteGoalResponse.
+type DeleteGoalResponse struct {
+	GoalId  string `json:"goal_id"`
+	Success bool   `json:"success"`
 }
 
 // DeliveryEvidence defines model for DeliveryEvidence.
@@ -458,6 +474,12 @@ type EmbeddingHealthStatus struct {
 	Status   string  `json:"status"`
 }
 
+// GoalAuditResponse defines model for GoalAuditResponse.
+type GoalAuditResponse struct {
+	Audit *[]GoalReconcileAudit `json:"audit"`
+	Count int                   `json:"count"`
+}
+
 // GoalConfig defines model for GoalConfig.
 type GoalConfig struct {
 	BlockedStatuses  *[]string     `json:"blocked_statuses,omitempty"`
@@ -471,10 +493,56 @@ type GoalConfig struct {
 	Workdir          *string       `json:"workdir,omitempty"`
 }
 
+// GoalProgressResponse defines model for GoalProgressResponse.
+type GoalProgressResponse struct {
+	Blocked       int                   `json:"blocked"`
+	Completed     int                   `json:"completed"`
+	EntryId       string                `json:"entry_id"`
+	FeatureId     *string               `json:"feature_id,omitempty"`
+	FeatureStatus *string               `json:"feature_status,omitempty"`
+	GoalId        string                `json:"goal_id"`
+	GoalStatus    string                `json:"goal_status"`
+	InProgress    int                   `json:"in_progress"`
+	Pending       int                   `json:"pending"`
+	Project       *string               `json:"project,omitempty"`
+	TaskId        *string               `json:"task_id,omitempty"`
+	Tasks         *[]LinkedTaskSnapshot `json:"tasks"`
+	Total         int                   `json:"total"`
+}
+
+// GoalReconcileAudit defines model for GoalReconcileAudit.
+type GoalReconcileAudit struct {
+	Decision        string                `json:"decision"`
+	EventId         *string               `json:"event_id,omitempty"`
+	FeatureId       *string               `json:"feature_id,omitempty"`
+	GeneratedTaskId *string               `json:"generated_task_id,omitempty"`
+	GoalId          string                `json:"goal_id"`
+	LinkedTasks     *[]LinkedTaskSnapshot `json:"linked_tasks"`
+	Project         *string               `json:"project,omitempty"`
+	Reason          string                `json:"reason"`
+	SessionsSkipped *int                  `json:"sessions_skipped,omitempty"`
+	SessionsSteered *int                  `json:"sessions_steered,omitempty"`
+	Timestamp       string                `json:"timestamp"`
+	TriggeringEvent string                `json:"triggering_event"`
+}
+
 // GoalSteering defines model for GoalSteering.
 type GoalSteering struct {
 	CooldownMinutes *int  `json:"cooldown_minutes,omitempty"`
 	Enabled         *bool `json:"enabled,omitempty"`
+}
+
+// GoalSummary defines model for GoalSummary.
+type GoalSummary struct {
+	Action    *AutomationAction `json:"action,omitempty"`
+	Config    *GoalConfig       `json:"config,omitempty"`
+	EntryId   string            `json:"entry_id"`
+	FeatureId *string           `json:"feature_id,omitempty"`
+	GoalId    string            `json:"goal_id"`
+	Project   *string           `json:"project,omitempty"`
+	Status    string            `json:"status"`
+	Title     string            `json:"title"`
+	Trigger   *TriggerConfig    `json:"trigger,omitempty"`
 }
 
 // HealthResponse defines model for HealthResponse.
@@ -496,6 +564,13 @@ type LegacyErrorResponse struct {
 	RequestId *string `json:"request_id,omitempty"`
 }
 
+// LinkedTaskSnapshot defines model for LinkedTaskSnapshot.
+type LinkedTaskSnapshot struct {
+	Id     string `json:"id"`
+	Status string `json:"status"`
+	Title  string `json:"title"`
+}
+
 // ListAttachmentsResponse defines model for ListAttachmentsResponse.
 type ListAttachmentsResponse struct {
 	Attachments *[]Attachment `json:"attachments"`
@@ -509,6 +584,12 @@ type ListEntriesResponse struct {
 	Offset    int           `json:"offset"`
 	Total     int           `json:"total"`
 	Truncated *bool         `json:"truncated,omitempty"`
+}
+
+// ListGoalsResponse defines model for ListGoalsResponse.
+type ListGoalsResponse struct {
+	Count int            `json:"count"`
+	Goals *[]GoalSummary `json:"goals"`
 }
 
 // MoveEntryRequest defines model for MoveEntryRequest.
@@ -829,6 +910,23 @@ type UpdateEntryRequest struct {
 	Workdir             *string                     `json:"workdir,omitempty"`
 }
 
+// UpdateGoalRequest defines model for UpdateGoalRequest.
+type UpdateGoalRequest struct {
+	Action           *AutomationAction `json:"action,omitempty"`
+	BlockedStatuses  *[]string         `json:"blocked_statuses,omitempty"`
+	CompleteStatuses *[]string         `json:"complete_statuses,omitempty"`
+	Content          *string           `json:"content,omitempty"`
+	Criteria         *string           `json:"criteria,omitempty"`
+	FeatureId        *string           `json:"feature_id,omitempty"`
+	Status           *string           `json:"status,omitempty"`
+	Steering         *GoalSteering     `json:"steering,omitempty"`
+	TaskId           *string           `json:"task_id,omitempty"`
+	Title            *string           `json:"title,omitempty"`
+	TriggerSource    *string           `json:"trigger_source,omitempty"`
+	Validation       *string           `json:"validation,omitempty"`
+	Workdir          *string           `json:"workdir,omitempty"`
+}
+
 // ValidationDetail defines model for ValidationDetail.
 type ValidationDetail struct {
 	Field   string `json:"field"`
@@ -923,6 +1021,18 @@ type SectionsGetParams struct {
 	IncludeSubsections *bool `form:"includeSubsections,omitempty" json:"includeSubsections,omitempty"`
 }
 
+// GoalsListParams defines parameters for GoalsList.
+type GoalsListParams struct {
+	Project   *string `form:"project,omitempty" json:"project,omitempty"`
+	FeatureId *string `form:"feature_id,omitempty" json:"feature_id,omitempty"`
+	Status    *string `form:"status,omitempty" json:"status,omitempty"`
+}
+
+// GoalsAuditParams defines parameters for GoalsAudit.
+type GoalsAuditParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // AttachmentsUploadMultipartRequestBody defines body for AttachmentsUpload for multipart/form-data ContentType.
 type AttachmentsUploadMultipartRequestBody AttachmentsUploadMultipartBody
 
@@ -946,6 +1056,12 @@ type AttachmentsAttachJSONRequestBody = AttachEntryAttachmentRequest
 
 // EntriesMoveJSONRequestBody defines body for EntriesMove for application/json ContentType.
 type EntriesMoveJSONRequestBody = MoveEntryRequest
+
+// GoalsCreateJSONRequestBody defines body for GoalsCreate for application/json ContentType.
+type GoalsCreateJSONRequestBody = CreateGoalRequest
+
+// GoalsUpdateJSONRequestBody defines body for GoalsUpdate for application/json ContentType.
+type GoalsUpdateJSONRequestBody = UpdateGoalRequest
 
 // SearchQueryJSONRequestBody defines body for SearchQuery for application/json ContentType.
 type SearchQueryJSONRequestBody = SearchRequest

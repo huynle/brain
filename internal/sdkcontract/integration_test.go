@@ -53,7 +53,8 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	attachments := service.NewAttachmentService(store, blobs, svc, 8<<20)
-	h := api.NewHandler(svc, api.WithTaskService(tasks), api.WithAttachmentService(attachments))
+	goals := service.NewGoalService(svc, tasks, store)
+	h := api.NewHandler(svc, api.WithTaskService(tasks), api.WithAttachmentService(attachments), api.WithGoalService(goals))
 	srv := httptest.NewServer(api.NewRouter(cfg, api.WithHandler(h), api.WithTokenValidator(control)))
 	defer srv.Close()
 	c, err := brain.New(brain.Config{BaseURL: srv.URL})

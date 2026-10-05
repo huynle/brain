@@ -103,22 +103,24 @@ paths:
         content:
           application/json:
             schema:
-                $ref: '#/components/schemas/CreateEntryRequest'
+              $ref: '#/components/schemas/CreateEntryRequest'
       responses:
-        default:
-          description: Legacy REST error, normalized by the SDK transport
-          headers:
-            X-Request-ID:
-              schema: {type: string}
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/LegacyErrorResponse'}
         '201':
           description: Persisted entry
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/CreateEntryResponse'
+        default:
+          description: Legacy REST error, normalized by the SDK transport
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegacyErrorResponse'
   /entries/{id}:
     parameters:
       - name: id
@@ -637,7 +639,9 @@ paths:
     post:
       operationId: attachments.attach
       summary: Attach an existing project attachment to an entry
-      description: attachment.role must be non-empty; metadata DTO omission does not waive service validation.
+      description: >-
+        attachment.role must be non-empty; metadata DTO omission does not waive
+        service validation.
       x-brain-effect: write
       x-brain-profile: single
       x-brain-script: false
@@ -691,30 +695,238 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AttachEntryAttachmentResponse'
+  /goals:
+    get:
+      operationId: goals.list
+      summary: List visible goals by project, feature and status
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: feature_id
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Goal summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListGoalsResponse'
+    post:
+      operationId: goals.create
+      summary: Create a goal automation
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGoalRequest'
+      responses:
+        '201':
+          description: Created goal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalSummary'
+  /goals/{goalId}:
+    parameters:
+      - name: goalId
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      operationId: goals.update
+      summary: Update a goal automation
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateGoalRequest'
+      responses:
+        '200':
+          description: Updated goal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalSummary'
+    delete:
+      operationId: goals.delete
+      summary: Delete a goal automation
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Goal deletion result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteGoalResponse'
+  /goals/{goalId}/progress:
+    parameters:
+      - name: goalId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: goals.progress
+      summary: Read goal-scoped linked-task progress
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Goal progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalProgressResponse'
+  /goals/{goalId}/audit:
+    parameters:
+      - name: goalId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: goals.audit
+      summary: Read bounded goal reconcile audit history
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 50
+      responses:
+        '200':
+          description: Goal audit history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalAuditResponse'
+  /goals/{goalId}/run:
+    parameters:
+      - name: goalId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: goals.run
+      summary: Reconcile a goal; may submit work or steer a session
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Reconcile decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalReconcileAudit'
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
   schemas:
+    ListGoalsResponse:
+      type: object
+      required:
+        - goals
+        - count
+      properties:
+        goals:
+          type:
+            - array
+            - 'null'
+          items:
+            $ref: '#/components/schemas/GoalSummary'
+        count:
+          type: integer
+    DeleteGoalResponse:
+      type: object
+      required:
+        - success
+        - goal_id
+      properties:
+        success:
+          type: boolean
+        goal_id:
+          type: string
+    GoalAuditResponse:
+      type: object
+      required:
+        - audit
+        - count
+      properties:
+        audit:
+          type:
+            - array
+            - 'null'
+          items:
+            $ref: '#/components/schemas/GoalReconcileAudit'
+        count:
+          type: integer
     LegacyErrorResponse:
       type: object
-      description: Existing REST error envelope; SDKs adapt HTTP status to a machine code and preserve field details without changing the server wire format.
-      required: [error, message]
+      description: >-
+        Existing REST error envelope; SDKs adapt HTTP status to a machine code
+        and preserve field details without changing the server wire format.
+      required:
+        - error
+        - message
       properties:
-        error: {type: string}
-        message: {type: string}
+        error:
+          type: string
+        message:
+          type: string
         details:
           type: array
-          items: {$ref: '#/components/schemas/ValidationDetail'}
-        code: {type: string, description: Optional future-compatible machine code; legacy endpoints usually omit it.}
-        request_id: {type: string, description: Optional fallback when X-Request-ID is absent.}
+          items:
+            $ref: '#/components/schemas/ValidationDetail'
+        code:
+          type: string
+          description: >-
+            Optional future-compatible machine code; legacy endpoints usually
+            omit it.
+        request_id:
+          type: string
+          description: Optional fallback when X-Request-ID is absent.
     ValidationDetail:
       type: object
-      required: [field, message]
+      required:
+        - field
+        - message
       properties:
-        field: {type: string}
-        message: {type: string}
+        field:
+          type: string
+        message:
+          type: string
     AttachmentDeletionResponse:
       type: object
       required:
@@ -2787,4 +2999,213 @@ components:
       required:
         - attachments
         - total
+      type: object
+    CreateGoalRequest:
+      properties:
+        action:
+          $ref: '#/components/schemas/AutomationAction'
+        config:
+          $ref: '#/components/schemas/GoalConfig'
+        content:
+          type: string
+        feature_id:
+          type: string
+        project:
+          type: string
+        title:
+          type: string
+      required:
+        - project
+        - title
+        - config
+        - action
+      type: object
+    GoalProgressResponse:
+      properties:
+        blocked:
+          type: integer
+        completed:
+          type: integer
+        entry_id:
+          type: string
+        feature_id:
+          type: string
+        feature_status:
+          type: string
+        goal_id:
+          type: string
+        goal_status:
+          type: string
+        in_progress:
+          type: integer
+        pending:
+          type: integer
+        project:
+          type: string
+        task_id:
+          type: string
+        tasks:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/LinkedTaskSnapshot'
+              type: array
+            - type: 'null'
+        total:
+          type: integer
+      required:
+        - goal_id
+        - entry_id
+        - goal_status
+        - total
+        - pending
+        - in_progress
+        - completed
+        - blocked
+        - tasks
+      type: object
+    GoalReconcileAudit:
+      properties:
+        decision:
+          type: string
+        event_id:
+          type: string
+        feature_id:
+          type: string
+        generated_task_id:
+          type: string
+        goal_id:
+          type: string
+        linked_tasks:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/LinkedTaskSnapshot'
+              type: array
+            - type: 'null'
+        project:
+          type: string
+        reason:
+          type: string
+        sessions_skipped:
+          type: integer
+        sessions_steered:
+          type: integer
+        timestamp:
+          type: string
+        triggering_event:
+          type: string
+      required:
+        - timestamp
+        - goal_id
+        - triggering_event
+        - decision
+        - reason
+        - linked_tasks
+      type: object
+    GoalSummary:
+      properties:
+        action:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationAction'
+            - type: 'null'
+        config:
+          anyOf:
+            - $ref: '#/components/schemas/GoalConfig'
+            - type: 'null'
+        entry_id:
+          type: string
+        feature_id:
+          type: string
+        goal_id:
+          type: string
+        project:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+        trigger:
+          anyOf:
+            - $ref: '#/components/schemas/TriggerConfig'
+            - type: 'null'
+      required:
+        - entry_id
+        - goal_id
+        - title
+        - status
+      type: object
+    LinkedTaskSnapshot:
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+      required:
+        - id
+        - title
+        - status
+      type: object
+    UpdateGoalRequest:
+      properties:
+        action:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationAction'
+            - type: 'null'
+        blocked_statuses:
+          anyOf:
+            - anyOf:
+                - items:
+                    type: string
+                  type: array
+                - type: 'null'
+            - type: 'null'
+        complete_statuses:
+          anyOf:
+            - anyOf:
+                - items:
+                    type: string
+                  type: array
+                - type: 'null'
+            - type: 'null'
+        content:
+          anyOf:
+            - type: string
+            - type: 'null'
+        criteria:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+        status:
+          anyOf:
+            - type: string
+            - type: 'null'
+        steering:
+          anyOf:
+            - $ref: '#/components/schemas/GoalSteering'
+            - type: 'null'
+        task_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+        title:
+          anyOf:
+            - type: string
+            - type: 'null'
+        trigger_source:
+          anyOf:
+            - type: string
+            - type: 'null'
+        validation:
+          anyOf:
+            - type: string
+            - type: 'null'
+        workdir:
+          anyOf:
+            - type: string
+            - type: 'null'
       type: object

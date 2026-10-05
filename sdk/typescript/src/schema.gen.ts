@@ -418,10 +418,117 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/goals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List visible goals by project, feature and status */
+        get: operations["goals.list"];
+        put?: never;
+        /** Create a goal automation */
+        post: operations["goals.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/goals/{goalId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goalId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a goal automation */
+        delete: operations["goals.delete"];
+        options?: never;
+        head?: never;
+        /** Update a goal automation */
+        patch: operations["goals.update"];
+        trace?: never;
+    };
+    "/goals/{goalId}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goalId: string;
+            };
+            cookie?: never;
+        };
+        /** Read goal-scoped linked-task progress */
+        get: operations["goals.progress"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/goals/{goalId}/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goalId: string;
+            };
+            cookie?: never;
+        };
+        /** Read bounded goal reconcile audit history */
+        get: operations["goals.audit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/goals/{goalId}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goalId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reconcile a goal; may submit work or steer a session */
+        post: operations["goals.run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ListGoalsResponse: {
+            goals: components["schemas"]["GoalSummary"][] | null;
+            count: number;
+        };
+        DeleteGoalResponse: {
+            success: boolean;
+            goal_id: string;
+        };
+        GoalAuditResponse: {
+            audit: components["schemas"]["GoalReconcileAudit"][] | null;
+            count: number;
+        };
         /** @description Existing REST error envelope; SDKs adapt HTTP status to a machine code and preserve field details without changing the server wire format. */
         LegacyErrorResponse: {
             error: string;
@@ -1167,6 +1274,74 @@ export interface components {
             attachments: components["schemas"]["Attachment"][] | null;
             total: number;
         };
+        CreateGoalRequest: {
+            action: components["schemas"]["AutomationAction"];
+            config: components["schemas"]["GoalConfig"];
+            content?: string;
+            feature_id?: string;
+            project: string;
+            title: string;
+        };
+        GoalProgressResponse: {
+            blocked: number;
+            completed: number;
+            entry_id: string;
+            feature_id?: string;
+            feature_status?: string;
+            goal_id: string;
+            goal_status: string;
+            in_progress: number;
+            pending: number;
+            project?: string;
+            task_id?: string;
+            tasks: components["schemas"]["LinkedTaskSnapshot"][] | null;
+            total: number;
+        };
+        GoalReconcileAudit: {
+            decision: string;
+            event_id?: string;
+            feature_id?: string;
+            generated_task_id?: string;
+            goal_id: string;
+            linked_tasks: components["schemas"]["LinkedTaskSnapshot"][] | null;
+            project?: string;
+            reason: string;
+            sessions_skipped?: number;
+            sessions_steered?: number;
+            timestamp: string;
+            triggering_event: string;
+        };
+        GoalSummary: {
+            action?: components["schemas"]["AutomationAction"] | null;
+            config?: components["schemas"]["GoalConfig"] | null;
+            entry_id: string;
+            feature_id?: string;
+            goal_id: string;
+            project?: string;
+            status: string;
+            title: string;
+            trigger?: components["schemas"]["TriggerConfig"] | null;
+        };
+        LinkedTaskSnapshot: {
+            id: string;
+            status: string;
+            title: string;
+        };
+        UpdateGoalRequest: {
+            action?: components["schemas"]["AutomationAction"] | null;
+            blocked_statuses?: (string[] | null) | null;
+            complete_statuses?: (string[] | null) | null;
+            content?: string | null;
+            criteria?: string | null;
+            feature_id?: string | null;
+            status?: string | null;
+            steering?: components["schemas"]["GoalSteering"] | null;
+            task_id?: string | null;
+            title?: string | null;
+            trigger_source?: string | null;
+            validation?: string | null;
+            workdir?: string | null;
+        };
     };
     responses: never;
     parameters: never;
@@ -1840,6 +2015,170 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AttachEntryAttachmentResponse"];
+                };
+            };
+        };
+    };
+    "goals.list": {
+        parameters: {
+            query?: {
+                project?: string;
+                feature_id?: string;
+                status?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Goal summaries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListGoalsResponse"];
+                };
+            };
+        };
+    };
+    "goals.create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateGoalRequest"];
+            };
+        };
+        responses: {
+            /** @description Created goal */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalSummary"];
+                };
+            };
+        };
+    };
+    "goals.delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goalId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Goal deletion result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteGoalResponse"];
+                };
+            };
+        };
+    };
+    "goals.update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goalId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateGoalRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated goal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalSummary"];
+                };
+            };
+        };
+    };
+    "goals.progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goalId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Goal progress */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalProgressResponse"];
+                };
+            };
+        };
+    };
+    "goals.audit": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                goalId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Goal audit history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalAuditResponse"];
+                };
+            };
+        };
+    };
+    "goals.run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goalId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reconcile decision */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalReconcileAudit"];
                 };
             };
         };

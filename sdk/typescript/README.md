@@ -3,7 +3,7 @@
 Node 22+ ESM package with generated OpenAPI 3.1 DTOs and a bound HTTP client.
 This checkpoint covers health, entry CRUD/list/move/bulk, search, task get/list,
 sections list/get, graph backlinks/outlinks/related, and ten attachment operations
-(27 operations). Upload takes Uint8Array, never a path, and bounds encoded multipart
+and seven goal operations (34 total). Upload takes Uint8Array, never a path, and bounds encoded multipart
 size using maxResponseBytes. Download returns bounded Uint8Array. Link/unlink
 require a non-empty role. Extraction success depends on server provider configuration.
 It does not expose script execution or hosted authority.

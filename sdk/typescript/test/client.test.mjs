@@ -45,6 +45,13 @@ test("unsafe machine codes cannot disclose content in default error formatting",
  await assert.rejects(c.health(),e=>e.code==="forbidden"&&!e.message.includes("secret"));
 });
 
+test("goal namespace routes",async t=>{
+ const seen=[];const baseUrl=await server(t,async(req,res)=>{for await(const _ of req){};seen.push(req.method+" "+req.url);res.end("{}");});
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());
+ await c.goals.list({project:"p",status:"all"});await c.goals.create({});await c.goals.update("g",{});await c.goals.progress("g");await c.goals.audit("g");await c.goals.run("g");await c.goals.delete("g");
+ assert.deepEqual(seen,["GET /api/v1/goals?project=p&status=all","POST /api/v1/goals","PATCH /api/v1/goals/g","GET /api/v1/goals/g/progress","GET /api/v1/goals/g/audit?limit=50","POST /api/v1/goals/g/run","DELETE /api/v1/goals/g"]);
+});
+
 async function server(t, handler) {
   const s = createServer(handler);
   s.listen(0, "127.0.0.1"); await once(s, "listening");

@@ -128,6 +128,25 @@ func run() error {
 	if _, err := c.Attachments().Delete(ctx, project, attachmentID, brain.RequestOptions{}); err != nil {
 		return err
 	}
+	goal, err := c.Goals().Create(ctx, brain.CreateGoalRequest{Project: project, Title: "SDK goal example", Config: brain.GoalConfig{TaskId: &created.Id}, Action: brain.AutomationAction{Type: "create_task"}}, brain.RequestOptions{})
+	if err != nil {
+		return err
+	}
+	if _, err := c.Goals().Update(ctx, goal.GoalId, brain.UpdateGoalRequest{Title: &title}, brain.RequestOptions{}); err != nil {
+		return err
+	}
+	if _, err := c.Goals().List(ctx, &brain.GoalsListParams{Project: &project}); err != nil {
+		return err
+	}
+	if _, err := c.Goals().Progress(ctx, goal.GoalId); err != nil {
+		return err
+	}
+	if _, err := c.Goals().Audit(ctx, goal.GoalId, 10); err != nil {
+		return err
+	}
+	if _, err := c.Goals().Delete(ctx, goal.GoalId, brain.RequestOptions{}); err != nil {
+		return err
+	}
 	dry := true
 	entries := []brain.BulkUpdateEntry{{Path: updated.Path, Updates: brain.UpdateEntryRequest{Title: &title}}}
 	if _, err := c.Entries().BulkUpdate(ctx, brain.BulkUpdateRequest{Entries: &entries, DryRun: &dry}, brain.RequestOptions{}); err != nil {

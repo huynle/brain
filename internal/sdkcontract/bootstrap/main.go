@@ -27,6 +27,8 @@ func main() {
 		reflect.TypeOf(types.ListAttachmentsResponse{}), reflect.TypeOf(types.AttachEntryAttachmentRequest{}),
 		reflect.TypeOf(types.AttachEntryAttachmentResponse{}), reflect.TypeOf(types.AttachmentExtractionRequest{}),
 		reflect.TypeOf(types.AttachmentExtractionResult{}),
+		reflect.TypeOf(types.CreateGoalRequest{}), reflect.TypeOf(types.UpdateGoalRequest{}),
+		reflect.TypeOf(types.GoalSummary{}), reflect.TypeOf(types.GoalProgressResponse{}), reflect.TypeOf(types.GoalReconcileAudit{}),
 	)
 	if err != nil {
 		log.Fatal(err)

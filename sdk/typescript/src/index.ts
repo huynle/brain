@@ -163,6 +163,15 @@ export class BrainClient {
     list: (project: string, options?: RequestOptions): Promise<Schema["TaskListResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}`, undefined, undefined, options),
     get: (project: string, id: string, options?: RequestOptions): Promise<Schema["ResolvedTask"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}`, undefined, undefined, options),
   });
+  readonly goals = Object.freeze({
+    list: (query?: NonNullable<operations["goals.list"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["ListGoalsResponse"]> => this.#request("GET","/goals",undefined,query,options),
+    create: (request: Schema["CreateGoalRequest"],options?: RequestOptions): Promise<Schema["GoalSummary"]> => this.#request("POST","/goals",request,undefined,options),
+    update: (id: string,request: Schema["UpdateGoalRequest"],options?: RequestOptions): Promise<Schema["GoalSummary"]> => this.#request("PATCH",`/goals/${encodeURIComponent(id)}`,request,undefined,options),
+    delete: (id: string,options?: RequestOptions): Promise<Schema["DeleteGoalResponse"]> => this.#request("DELETE",`/goals/${encodeURIComponent(id)}`,undefined,undefined,options),
+    progress: (id: string,options?: RequestOptions): Promise<Schema["GoalProgressResponse"]> => this.#request("GET",`/goals/${encodeURIComponent(id)}/progress`,undefined,undefined,options),
+    audit: (id: string,limit = 50,options?: RequestOptions): Promise<Schema["GoalAuditResponse"]> => this.#request("GET",`/goals/${encodeURIComponent(id)}/audit`,undefined,{limit},options),
+    run: (id: string,options?: RequestOptions): Promise<Schema["GoalReconcileAudit"]> => this.#request("POST",`/goals/${encodeURIComponent(id)}/run`,undefined,undefined,options),
+  });
   readonly sections = Object.freeze({
     list: (id: string, options?: RequestOptions): Promise<Schema["SectionsResponse"]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/sections`, undefined, undefined, options),
     get: (id: string, title: string, includeSubsections = false, options?: RequestOptions): Promise<Schema["SectionContentResponse"]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/sections/${encodeURIComponent(title)}`, undefined, {includeSubsections}, options),

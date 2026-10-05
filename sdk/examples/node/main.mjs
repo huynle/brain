@@ -28,6 +28,9 @@ try {
   if(new TextDecoder().decode(await client.attachments.download("sdk-example",attachmentID))!=="sdk attachment")throw new Error("attachment bytes mismatch");
   await client.attachments.attach("sdk-example",id,{attachment:{id:attachmentID,role:"source"}});await client.attachments.forEntry("sdk-example",id);
   await client.attachments.detach("sdk-example",id,attachmentID,"source");await client.attachments.delete("sdk-example",attachmentID);
+  const goal=await client.goals.create({project:"sdk-example",title:"Node SDK goal example",config:{id:"",task_id:id},action:{type:"create_task"}});
+  await client.goals.update(goal.goal_id,{title:"Node SDK goal updated"});await client.goals.list({project:"sdk-example"});
+  await client.goals.progress(goal.goal_id);await client.goals.audit(goal.goal_id,10);await client.goals.delete(goal.goal_id);
   await client.entries.bulkUpdate({entries:[{path:updated.path,updates:{title:"Node SDK updated"}}],dry_run:true});
   await client.entries.bulkDelete({paths:[updated.path],dry_run:true});
   await client.entries.move(id,{project:"sdk-example-moved"});

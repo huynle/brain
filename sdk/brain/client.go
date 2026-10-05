@@ -85,6 +85,19 @@ func (c *Client) Rebind(cfg Config) (*Client, error) {
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body any, q url.Values, opts RequestOptions, out any) error {
+	// Validate before any URL parser or intermediary can normalize segments.
+	for decoded := path; ; {
+		for _, segment := range strings.FieldsFunc(decoded, func(r rune) bool { return r == '/' || r == '\\' }) {
+			if segment == "." || segment == ".." {
+				return &Error{Code: "invalid_request"}
+			}
+		}
+		next, err := url.PathUnescape(decoded)
+		if err != nil || next == decoded {
+			break
+		}
+		decoded = next
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -120,6 +133,13 @@ func (c *Client) request(ctx context.Context, method, path string, body any, q u
 	// into the transport's implicit retry after a lost response.
 	if method != http.MethodGet && method != http.MethodHead {
 		req.GetBody = nil
+		// A nil/NoBody remains replayable when Idempotency-Key is present.
+		// Use a non-rewindable empty stream as well for bodyless mutations.
+		// Its unknown length also prevents the transport's nothing-written retry.
+		if req.Body == nil || req.Body == http.NoBody {
+			req.Body = io.NopCloser(strings.NewReader(""))
+			req.ContentLength = -1
+		}
 	}
 	req.Header.Set("Accept", "application/json")
 	if input != nil {

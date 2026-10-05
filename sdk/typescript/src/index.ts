@@ -31,7 +31,12 @@ export class BrainError extends Error {
   ) {
     super(`brain: request failed (HTTP ${status})`);
     this.name = "BrainError";
+    // Wire-derived fields require explicit access, never ordinary logging.
+    for (const key of ["code", "requestId", "serverMessage", "details"]) {
+      Object.defineProperty(this, key, {enumerable: false});
+    }
   }
+  [Symbol.for("nodejs.util.inspect.custom")](): string { return this.toString(); }
 }
 
 export class BrainClient {
@@ -61,6 +66,14 @@ export class BrainClient {
   }
 
   async #request<T>(method: string, path: string, body?: unknown, query?: object, options: RequestOptions = {}, expectBody = true, binary = false): Promise<T> {
+    // Reject before WHATWG URL normalization, including encoded path segments.
+    for (let decoded = path;;) {
+      if (decoded.split(/[/\\]/).some(segment => segment === "." || segment === "..")) throw new BrainError("invalid_request");
+      let next: string;
+      try { next = decodeURIComponent(decoded); } catch { break; }
+      if (next === decoded) break;
+      decoded = next;
+    }
     const signals = [this.#lifetime.signal, AbortSignal.timeout(this.#config.timeoutMs)];
     if (options.signal) signals.push(options.signal);
     const signal = AbortSignal.any(signals);
@@ -103,6 +116,10 @@ export class BrainClient {
         }
         chunks.push(value);
       }
+    } catch (error) {
+      signal.throwIfAborted();
+      if (error instanceof BrainError) throw error;
+      throw new BrainError("response_read_failed", response.status, requestId);
     } finally { reader?.releaseLock(); }
     signal.throwIfAborted();
     const data = new Uint8Array(total);

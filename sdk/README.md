@@ -58,6 +58,9 @@ available to applications that deliberately inspect server errors. The legacy
 `error`/`message`/`details` wire envelope is adapted without REST changes. A
 well-formed optional machine code is retained; otherwise HTTP status determines
 the stable SDK code. X-Request-ID takes precedence over optional body request_id.
+If the legacy response omits a nonempty `message`, a string `error` supplies the
+explicitly inspected message (including dispatch conflicts); it is still excluded
+from default formatting. Non-string error values are not coerced into content.
 
 No SDK write retry is performed, including after uncertain transport outcomes.
 The Go transport's implicit buffered-POST replay is disabled. An idempotency

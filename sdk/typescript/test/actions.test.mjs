@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {BrainClient} from '../dist/index.js';
+import {BrainClient,BrainError} from '../dist/index.js';
+import {inspect} from 'node:util';
+
+test('legacy error-only conflict preserves explicit message without default disclosure',async()=>{
+ for(const [body,want] of [[{success:false,error:'private claim holder'},'private claim holder'],[{error:'private fallback',message:'private primary'},'private primary'],[{error:'private fallback',message:''},'private fallback'],[{error:{secret:'private'}},'']]){
+  const c=new BrainClient({baseUrl:'https://example.test',fetch:async()=>Response.json(body,{status:409,headers:{'X-Request-ID':'conflict-request'}})});
+  await assert.rejects(c.tasks.dispatch('p','t',{targetRunnerId:'r'}),e=>{
+   assert.ok(e instanceof BrainError);assert.equal(e.code,'conflict');assert.equal(e.serverMessage,want);assert.equal(e.requestId,'conflict-request');assert.ok(!String(e).includes('private'));assert.ok(!inspect(e).includes('private'));return true;
+  });c.close();
+ }
+});
 
 test('metadata, deletion, delivery and finite event routes retain wire semantics',async()=>{
  const cases=[

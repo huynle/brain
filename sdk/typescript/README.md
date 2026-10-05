@@ -1,11 +1,10 @@
 # @huynle/brain-sdk (checkpoint)
 
 Node 22+ ESM package with generated OpenAPI 3.1 DTOs and a bound HTTP client.
-This checkpoint covers health, entry CRUD/list/move/bulk, search, task get/list,
-sections list/get, graph backlinks/outlinks/related, and ten attachment operations
-and seven goal operations, eight reminder operations and nine attention operations
-and seven webhook operations plus automation run/history/get, task waiting/blocked/ready/next,
-project list, graph orphans and observability stats/stale (69 total).
+This checkpoint covers all 104 operations in `docs/sdk-operation-matrix.md`,
+including metadata, task/feature actions, project placement/deletion, delivery
+state, finite event reads, timeline and bounded SSE. That inventory coverage
+does not imply full SDK/V1 or isolation acceptance.
 Upload takes Uint8Array, never a path, and bounds encoded multipart
 size using maxResponseBytes. Download returns bounded Uint8Array. Link/unlink
 require a non-empty role. Extraction success depends on server provider configuration.
@@ -26,6 +25,17 @@ an 8 MiB response bound (up to 64 MiB configurable). Redirects are refused and
 writes are never automatically retried. Legacy endpoints may ignore idempotency
 headers; a key is not a deduplication guarantee. Default error text omits server
 content; `BrainError.serverMessage` exposes it only for deliberate use.
+Legacy string `error` is used when no nonempty `message` is present. Structured
+error objects are not coerced into message text.
+
+`events.stream(filters, callback, {lastEventId, signal})` bounds each SSE frame
+using `maxResponseBytes`. The client timeout/lifetime also bounds the stream.
+Callback errors stop it and close the response; there is no automatic reconnect.
+Replay uses the server's volatile buffer and is not durable or gap-free.
+Task actions may return HTTP 200 with a no-op/partial result; inspect outcome
+fields rather than assuming work started. Feature cancel does not stop running
+tasks. Checkout creates work: explicitly select `merge_policy: "prompt_only"`
+and `delivery_mode: "none"` when no Git delivery is intended.
 
 ```sh
 npm ci --ignore-scripts

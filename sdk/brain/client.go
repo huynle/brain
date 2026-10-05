@@ -198,11 +198,15 @@ func (c *Client) request(ctx context.Context, method, path string, body any, q u
 		var wire struct {
 			Code      string           `json:"code"`
 			Message   string           `json:"message"`
+			Error     string           `json:"error"`
 			RequestID string           `json:"request_id"`
 			Details   []FieldViolation `json:"details"`
 		}
 		_ = json.Unmarshal(data, &wire)
 		e.Message = wire.Message
+		if e.Message == "" {
+			e.Message = wire.Error
+		}
 		e.Code = wire.Code
 		e.Details = wire.Details
 		if e.RequestID == "" {

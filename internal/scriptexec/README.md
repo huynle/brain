@@ -268,6 +268,10 @@ own synchronous treatment of an async toJSON return (a Promise serializes as `{}
 is preserved. Symbol/function/undefined top-level output is refused, not a success
 frame missing `payload`. Tests cover nested calls/logs, exact100/overflow101 calls,
 exception-after-call, deferred async effects and no second terminal outcome.
+An outstanding unhandled Promise rejection also refuses terminal success (without
+retaining its reason); a rejection handled during the job turn is allowed. This
+uses the pinned engine's rejection/handled notifications, not only the pending-job
+return code, which can report success while a callback's Promise was rejected.
 
 Experimental `console.debug/info/warn/error/log` sends structured JSON arguments
 through acknowledged `console.log` IPC calls, never stderr/ambient host logging.

@@ -13,6 +13,23 @@ static unsigned sequence = 1;
 static unsigned log_count = 0;
 static size_t log_bytes = 0;
 static int terminal_sent = 0;
+static unsigned unhandled_rejections = 0;
+
+/* Pinned QuickJS calls false once on unhandled rejection and true once when a
+ * handler is subsequently attached. Count without retaining/formatting secrets.
+ * A caught rejection in this job turn is permitted; any outstanding rejection
+ * prevents a successful terminal frame. */
+static void track_rejection(JSContext *ctx, JSValueConst promise,
+                            JSValueConst reason, JS_BOOL handled, void *opaque) {
+    (void)ctx; (void)promise; (void)reason; (void)opaque;
+    if (handled) {
+        if (!unhandled_rejections) _exit(139);
+        unhandled_rejections--;
+    } else {
+        if (unhandled_rejections == ~0U) _exit(139);
+        unhandled_rejections++;
+    }
+}
 
 static int exact_read(void *buf, size_t size) {
     char *p = buf;
@@ -80,7 +97,8 @@ static int send_value(JSContext *ctx, const char *kind, JSValueConst payload) {
         int job=0; JSContext *jobctx;
         if (!strcmp(kind,"result"))
             while ((job=JS_ExecutePendingJob(JS_GetRuntime(ctx),&jobctx))>0) {}
-        if (job>=0) rc=send_json(kind,text,size);
+        if (job>=0 && (strcmp(kind,"result") || !unhandled_rejections))
+            rc=send_json(kind,text,size);
     }
     JS_FreeCString(ctx, text); JS_FreeValue(ctx, json);
     return rc;
@@ -133,6 +151,7 @@ static int worker_main(void) {
     setbuf(stdout, NULL);
     JSRuntime *rt = JS_NewRuntime();
     if (!rt) return 121;
+    JS_SetHostPromiseRejectionTracker(rt,track_rejection,NULL);
     JS_SetMemoryLimit(rt, 16*1024*1024);
     JS_SetMaxStackSize(rt, 512*1024);
     JSContext *ctx = JS_NewContext(rt);

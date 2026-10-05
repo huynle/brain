@@ -19,6 +19,7 @@ func TestQuickJSBoundedConsole(t *testing.T) {
 			{"structured", `console.log("secret",{value:42});console.warn("warning");42;`, 2, false},
 			{"levels", `for(const k of ["debug","info","warn","error","log"])console[k](k);42;`, 5, false},
 			{"count", `for(let i=0;i<33;i++)console.log(i);42;`, 32, true},
+			{"nested count", `console.log({toJSON(){for(let i=0;i<32;i++)console.info(i);return 42}});42;`, 32, true},
 			{"single bytes", `console.log("x".repeat(8192));42;`, 0, true},
 			{"total bytes", `for(let i=0;i<3;i++)console.log("x".repeat(6000));42;`, 2, true},
 			{"cycle", `const x={};x.x=x;console.log(x);42;`, 0, true},

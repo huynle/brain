@@ -1,7 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
 import {BrainClient,BrainError} from '../dist/index.js';
 const event={id:'e1',type:'entry.created',source:'api',timestamp:'2026-10-05T12:00:00Z'};
+
+test('real buffered streams discard old-binding output after retirement',async()=>{
+ for(const mode of ['close','rebind','caller']) for(const tail of ['buffered','EOF','incomplete']){
+  let requests=0;
+  const frame='data: '+JSON.stringify(event)+'\n\n';
+  const server=createServer((req,res)=>{
+   requests++;assert.equal(req.headers.authorization,'Bearer old');assert.equal(req.headers['last-event-id'],'old-cursor');
+   res.writeHead(200,{'Content-Type':'text/event-stream'});
+   res.end(tail==='buffered'?frame.repeat(3):frame+(tail==='incomplete'?'data: '+JSON.stringify(event):''));
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const baseUrl=`http://127.0.0.1:${server.address().port}`;
+  const c=new BrainClient({baseUrl,token:'old'}), controller=new AbortController(), reason=new Error('caller retired');
+  let calls=0;
+  try{
+   await assert.rejects(c.events.stream({},()=>{
+    calls++;
+    if(mode==='caller')controller.abort(reason);
+    else if(mode==='close')c.close();
+    else c.rebind({baseUrl,token:'new'}).close();
+   },{signal:controller.signal,lastEventId:'old-cursor'}),e=>mode==='caller'?e===reason:e.name==='AbortError');
+   assert.equal(calls,1,`${mode}/${tail}`);assert.equal(requests,1,'no reconnect or migrated cursor');
+  }finally{c.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+ }
+});
 
 test('stream caller abort, close, rebind and timeout cancel pending reads',async()=>{
  for(const mode of ['caller','close','rebind','timeout']){

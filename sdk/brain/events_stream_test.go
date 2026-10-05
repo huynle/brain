@@ -7,12 +7,61 @@ import (
 	"github.com/huynle/brain-api/sdk/brain"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
 const streamEvent = `{"id":"e1","type":"entry.created","source":"api","timestamp":"2026-10-05T12:00:00Z"}`
+
+func TestEventStreamBufferedRetirement(t *testing.T) {
+	previous := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(previous)
+	for _, mode := range []string{"close", "rebind", "caller"} {
+		for _, tail := range []string{"buffered", "EOF", "incomplete"} {
+			t.Run(mode+"/"+tail, func(t *testing.T) {
+				body := "data: " + streamEvent + "\n\n"
+				if tail == "buffered" {
+					body = strings.Repeat(body, 3)
+				} else if tail == "incomplete" {
+					body += "data: " + streamEvent
+				}
+				c := client(t, func(w http.ResponseWriter, r *http.Request) {
+					if r.Header.Get("Authorization") != "Bearer old" || r.Header.Get("Last-Event-ID") != "old-cursor" {
+						t.Error("old binding or cursor changed")
+					}
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprint(w, body)
+				}, brain.Config{Token: "old"})
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				calls := 0
+				err := c.Events().Stream(ctx, nil, "old-cursor", func(brain.Event) error {
+					calls++
+					if calls == 1 {
+						switch mode {
+						case "close":
+							c.Close()
+						case "rebind":
+							next, err := c.Rebind(brain.Config{BaseURL: "http://example.test", Token: "new"})
+							if err != nil {
+								t.Fatal(err)
+							}
+							next.Close()
+						case "caller":
+							cancel()
+						}
+					}
+					return nil
+				}, brain.RequestOptions{})
+				if calls != 1 || !errors.Is(err, context.Canceled) {
+					t.Fatalf("retired stream: callbacks=%d err=%v; want 1 then cancellation", calls, err)
+				}
+			})
+		}
+	}
+}
 
 func TestEventStreamFramesAndStop(t *testing.T) {
 	stop := errors.New("consumer stopped")

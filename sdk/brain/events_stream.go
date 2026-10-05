@@ -24,7 +24,18 @@ type eventStream struct {
 	onEvent     func(Event) error
 }
 
-func (s *eventStream) read(ctx context.Context, resp *http.Response, limit int64) error {
+func (s *eventStream) read(ctx, lifetime context.Context, resp *http.Response, limit int64) error {
+	// AfterFunc still interrupts blocked network reads, but its asynchronous
+	// propagation cannot fence already-buffered output from a retired binding.
+	canceled := func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return lifetime.Err()
+	}
+	if err := canceled(); err != nil {
+		return err
+	}
 	failure := func(code string) error {
 		return &Error{Code: code, Status: resp.StatusCode, RequestID: resp.Header.Get("X-Request-ID")}
 	}
@@ -36,8 +47,14 @@ func (s *eventStream) read(ctx context.Context, resp *http.Response, limit int64
 	scanner.Buffer(make([]byte, min(4096, int(limit)+1)), int(limit)+1)
 	var data strings.Builder
 	size := 0
-	for scanner.Scan() {
-		if err := ctx.Err(); err != nil {
+	for {
+		if err := canceled(); err != nil {
+			return err
+		}
+		if !scanner.Scan() {
+			break
+		}
+		if err := canceled(); err != nil {
 			return err
 		}
 		line := scanner.Text()
@@ -51,11 +68,15 @@ func (s *eventStream) read(ctx context.Context, resp *http.Response, limit int64
 				if json.Unmarshal([]byte(data.String()), &event) != nil || event.Id == "" || event.Type == "" || event.Source == "" || event.Timestamp.IsZero() {
 					return failure("invalid_response")
 				}
-				if err := ctx.Err(); err != nil {
+				if err := canceled(); err != nil {
 					return err
 				}
-				if err := s.onEvent(event); err != nil {
+				callbackErr := s.onEvent(event)
+				if err := canceled(); err != nil {
 					return err
+				}
+				if callbackErr != nil {
+					return callbackErr
 				}
 			}
 			data.Reset()
@@ -66,7 +87,7 @@ func (s *eventStream) read(ctx context.Context, resp *http.Response, limit int64
 			data.WriteByte('\n')
 		}
 	}
-	if err := ctx.Err(); err != nil {
+	if err := canceled(); err != nil {
 		return err
 	}
 	if errors.Is(scanner.Err(), bufio.ErrTooLong) {

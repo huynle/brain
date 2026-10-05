@@ -177,7 +177,7 @@ func (c *Client) request(ctx context.Context, method, path string, body any, q u
 		return e
 	}
 	if stream, ok := out.(*eventStream); ok && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return stream.read(ctx, resp, c.limit)
+		return stream.read(ctx, c.ctx, resp, c.limit)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, c.limit+1))
 	if ctx.Err() != nil {

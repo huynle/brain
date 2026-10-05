@@ -2,9 +2,10 @@
 
 Source: `internal/api/router.go` at base `7bea47d1`. This is an explicit
 per-operation inventory, not a claim of complete SDK delivery or script availability.
-Paths below are relative to `/api/v1`. IDs are proposed contract IDs until their
-contract is checked in and validated. Unless listed below, rows have SDK implementation
-**pending** and SDK parity evidence **pending**. All have profile **single**,
+Paths below are relative to `/api/v1`. All 104 IDs are now checked-in contract IDs
+with Go/TypeScript adapters; evidence and specific exclusions are stated below.
+This is not a claim that every effect/provider success path has been exercised.
+All have profile **single**,
 script exposure **false**, and dry-run validator **unimplemented**. No table row grants
 authority. Tenant routes remain sealed by the existing server allowlist.
 
@@ -57,6 +58,18 @@ unregistered target (403, no claim), not an actual remote executor. Delivery ver
 external-provider path is route/decoding-tested, not a live provider verification.
 The metadata key contract has an exact server allowlist guard; embedded resume and
 nullable timestamp DTOs have real JSON round-trip parity tests.
+
+`api/operation-policy.yaml` now records all104 operations' legacy scope, required
+future resource checks, preconditions, conservative effects and provider class.
+`TestOperationPolicyInventoryIsCompleteAndUnavailable` checks contract/matrix
+coverage and scope agreement, including read-scoped attention writes and provider
+operations. Global profile/scripting/preflight/telemetry fields apply to every row.
+This is descriptive inventory, **not an authorization registry**: all script
+exposure is false, all dry-run validators are unimplemented and inherited request
+telemetry is unreviewed. Provider `none` excludes inherited auth/request telemetry;
+it does not prove zero domain effects. Resource checks name required composition,
+not legacy rights already enforced. Per-handler positive/negative preflight proofs
+remain mandatory before any row can become script-supported.
 
 All 104 operation declarations now name the legacy default JSON error response.
 `TestEveryOperationDeclaresLegacyErrorBehavior` guards coverage. The shared error
@@ -127,8 +140,8 @@ are conservative and need per-handler proof before any script allowlisting.
 | entries.get | GET /entries/{id} | R | immutable ID or legacy path; entry read |
 | entries.create | POST /entries | A | content; destination edit, separate work/automation permission for runnable types |
 | entries.update | PATCH /entries/{id} | A | expected_revision; content; source/destination edit, runnable-field checks |
-| entries.updateMetadata | PATCH /entries/{id}/metadata | A | metadata validation; content/work-sensitive keys; verify revision behavior |
-| entries.move | POST /entries/{id}/move | A | source/destination authorization; content; verify revision behavior |
+| entries.updateMetadata | PATCH /entries/{id}/metadata | A | optional expected_revision and exact metadata allowlist; tested CAS; content/work-sensitive keys |
+| entries.move | POST /entries/{id}/move | A | request carries project only, no revision precondition; source/destination rights required for future scripts; content |
 | entries.delete | DELETE /entries/{id} | A | confirm=true required, force overrides live-claim guard; 204 empty; no revision input; content deletion |
 | entries.bulkUpdate | POST /entries/bulk-update | A | nonempty bounded filter; per-entry edit/work checks; partial outcomes |
 | entries.bulkDelete | POST /entries/bulk-delete | A | nonempty bounded filter; per-entry delete; partial outcomes |
@@ -229,8 +242,12 @@ are conservative and need per-handler proof before any script allowlisting.
 
 Task creation/update/dependency changes and automation CRUD are typed aliases of
 entry operations with type-specific validation, not invented REST routes.
-Pagination, exact DTOs, errors, request IDs and revision semantics remain to be
-encoded and verified per operation; this inventory does not satisfy that gate.
+The checked-in OpenAPI defines the current DTO/query/error shapes and the SDKs
+carry request IDs and optional idempotency headers. These headers do not grant
+server idempotency. Only the explicitly documented revision inputs provide CAS;
+no uniform revision or cursor guarantee is inferred for legacy actions. Full
+service-backed resource/preflight/provider validation is still pending;
+see [the current acceptance ledger](sdk-script-acceptance-ledger.md).
 
 Explicitly outside the script facade: `/control/**`, `/tokens/**`, `/auth/**`,
 `/runners/**`, `/instances`, `/config/**`, `/push/**`, `/assistant/**`,

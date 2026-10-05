@@ -89,3 +89,80 @@ script interfaces**. Newer unrelated acceptance is not approval of this request.
 
 Runnable scope is **not exhausted** at this ledger's creation. Independent review
 of immutable `2228f1f1` is running with the parent and does not block this work.
+
+## Subsequent execution and precise remaining queue
+
+Independent `va815e0d` **FAILED** `2228f1f1`: serialization callbacks advanced the
+call sequence after terminal sequence capture. That verdict supersedes any
+suggestion that the initial completion tests proved serialization generally.
+
+- `654752e9`: observed native RED then GREEN with actual `ProtocolSession`;
+  serialization occurs once before C envelope construction, queued serializer
+  jobs drain before terminal, unsupported top-level JSON values refuse. Added
+  bounded native console and parent-only source-union quarantine. It deliberately
+  has no protected release method; S09/S17 remains necessary.
+- `66e49fd7`: additional observed RED/GREEN for queued/async Promise rejection;
+  engine rejection/handled count prevents false successful terminal output while
+  allowing caught rejection. Four affected native suites: 55 subcases pass,
+  62.244s. Full 45 tested Go packages pass (many cached), vet/build/lint0issues.
+- `3b166b75`: inactive local fixed-policy capacity and bounded queue, tenant then
+  principal selection, cancellation and shutdown join. Five admission tests
+  repeated20 under race pass; one actually kills/Waits a helper process before
+  Close returns. Full45 tested packages pass (many cached; storage142.513s),
+  vet/build/lint0issues. This is **not** a measured host aggregate cgroup/CPU
+  budget, cross-server quota or production graph/store shutdown proof.
+
+### Runnable next steps (not external blockers)
+
+1. **Facade:** current native `brain` still implements only `entries.get`.
+   Implement a closed, explicit JS binding inventory mirroring actual TS public
+   names (note `brain.health()`, `brain.search()`, `brain.inject()` differ from
+   operation IDs), argument/default/JSON behavior and stable unsupported errors.
+   Do not equate all104SDK methods with script support; provider/stream/binary or
+   writes without preflight must remain explicitly unsupported. No raw HTTP or
+   exposed generic RPC. Test both method/argument parity and real native bounded
+   IPC; parent performs independent registry validation. The exact supported
+   service subset awaits E, but descriptor/binding/denial mechanics are runnable.
+2. **Structured errors:** console quarantine is implemented, but safe fixed-code
+   worker error outcomes plus bounded source-location metadata are not. Never
+   stringify arbitrary thrown objects into an ambient error/log; callbacks during
+   exception inspection can reenter. Add real native regressions and parent
+   sequencing/terminal/duplicate-outcome tests; retain raw-content suppression.
+3. **Aggregate/lifecycle evidence:** add actual simultaneous sealed-child fixed
+   memory/CPU pressure, cancellation during launch/prefork and independent-owner
+   progress tests around the local pool. Existing callback/barrier tests do not
+   prove OS aggregate budgets. No production graph leasing/reaper claims without D/G.
+4. **Quarantine boundary corpus:** expand exact source-count/source-byte/result
+   bounds, deep/invalid UTF8 JSON, cancellation during formatting/retirement and
+   malformed native log frames. Live release/revocation still requires D/E.
+5. **Metadata:** `api/operation-policy.yaml` now makes the104-row conservative
+   inventory machine-readable with contract/matrix coverage, legacy-scope parity,
+   precondition/effect/provider fields and global script-off/unimplemented-preflight
+   guards. It is not a broker allowlist or proof of per-handler current resource
+   enforcement. Capability client parser/old-server refusal can be tested without
+   adding an unallocated endpoint; do not invent server availability.
+6. **Docs/examples/checks:** add tested script reference/examples, precise operator
+   disabled/incident/limit guidance and compatibility notes. Run frontend checks
+   (this checkout currently has no web/node_modules), package checks and historical
+   tenant gate against a reviewed actual base. Existing full Go suites are not
+   fresh frontend or newly integrated tenant-profile evidence. Public publishing
+   and licensing disposition are not authorized by a package build.
+7. **Pure plans/journals:** ordered-plan/provisional-reference and journal-state
+   validation may be built without services, but cannot satisfy actual dry-run,
+   partial commit, durable idempotency or replay requirements. Prefer existing
+   operation contracts; do not design a rival transaction/authority interface.
+
+### Remaining external decisions (unchanged after fresh recall)
+
+A/B: actual discovery/stdio file allocation and exact composition sites. C: exact
+schema/profile, permission/trusted-single binding, quota and retention allocation.
+D: same-writer mutation/security-journal and source-wide protected output protocol.
+E: live current resource/source/publication adapter. F: provider/work delegation,
+reservation/outbox and reusable side-effect-free service validation ownership.
+G: supported production launch/reaper/topology, macOS enforceable memory decision,
+separate hosted D06 VM gate. Concrete owner IDs/files/proposals are above; no reply
+is inferred from newer unrelated integration acceptance.
+
+This is a context-capacity handoff, **not exhausted runnable scope**, not a stop
+waiting for independent review, and not V1 completion. Continue the same exclusive
+worktree, preserve these commits and take the next failing test from the queue.

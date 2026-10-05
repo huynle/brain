@@ -10,12 +10,15 @@ authority. Tenant routes remain sealed by the existing server allowlist.
 
 Current Go/TypeScript coverage: `health.get`, `entries.list`, `entries.create`,
 `entries.get`, `entries.update`, `entries.delete`, `search.query`, `tasks.list`,
-`tasks.get`. Contract: `api/openapi.yaml`; transport tests: `sdk/brain/client_test.go`
+`tasks.get`, `entries.move`, `entries.bulkUpdate`, `entries.bulkDelete`,
+`sections.list`, `sections.get`, `graph.backlinks`, `graph.outlinks`,
+`graph.related`. Contract: `api/openapi.yaml`; transport tests: `sdk/brain/client_test.go`
 and `sdk/typescript/test/client.test.mjs`; real stored-token/SQLite/service/router
 and external-module/package evidence:
 `TestExternalClientsAgainstAuthenticatedRealHandler`. That real fixture exercises
-entry create/get/update/list/delete and task get/list plus unauthenticated refusal;
-it does not prove hosted ACL composition, search-provider behavior or scripts.
+all 17 operations, with legacy bulk calls in dry-run mode and search using FTS,
+plus unauthenticated refusal. It does not prove hosted ACL composition,
+search-provider behavior, real bulk partial outcomes, or script dry-run guarantees.
 
 Legacy scope abbreviations: R = admin/runner/read; A = admin; W = admin/runner;
 Auth = router authentication only (handler checks still apply); Public = no auth.

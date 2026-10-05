@@ -123,6 +123,9 @@ export class BrainClient {
   search(request: Schema["SearchRequest"], options?: RequestOptions): Promise<Schema["SearchResponse"]> { return this.#request("POST", "/search", request, undefined, options); }
 
   readonly entries = Object.freeze({
+    move: (id: string, request: Schema["MoveEntryRequest"], options?: RequestOptions): Promise<Schema["MoveResult"]> => this.#request("POST", `/entries/${encodeURIComponent(id)}/move`, request, undefined, options),
+    bulkUpdate: (request: Schema["BulkUpdateRequest"], options?: RequestOptions): Promise<Schema["BulkUpdateResponse"]> => this.#request("POST", "/entries/bulk-update", request, undefined, options),
+    bulkDelete: (request: Schema["BulkDeleteRequest"], options?: RequestOptions): Promise<Schema["BulkDeleteResponse"]> => this.#request("POST", "/entries/bulk-delete", request, undefined, options),
     get: (id: string, options?: RequestOptions): Promise<Schema["BrainEntry"]> => this.#request("GET", `/entries/${encodeURIComponent(id)}`, undefined, undefined, options),
     list: (query?: EntriesListParams, options?: RequestOptions): Promise<Schema["ListEntriesResponse"]> => this.#request("GET", "/entries", undefined, query, options),
     create: (request: Schema["CreateEntryRequest"], options?: RequestOptions): Promise<Schema["CreateEntryResponse"]> => this.#request("POST", "/entries", request, undefined, options),
@@ -132,5 +135,14 @@ export class BrainClient {
   readonly tasks = Object.freeze({
     list: (project: string, options?: RequestOptions): Promise<Schema["TaskListResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}`, undefined, undefined, options),
     get: (project: string, id: string, options?: RequestOptions): Promise<Schema["ResolvedTask"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}`, undefined, undefined, options),
+  });
+  readonly sections = Object.freeze({
+    list: (id: string, options?: RequestOptions): Promise<Schema["SectionsResponse"]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/sections`, undefined, undefined, options),
+    get: (id: string, title: string, includeSubsections = false, options?: RequestOptions): Promise<Schema["SectionContentResponse"]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/sections/${encodeURIComponent(title)}`, undefined, {includeSubsections}, options),
+  });
+  readonly graph = Object.freeze({
+    backlinks: (id: string, options?: RequestOptions): Promise<Schema["BrainEntry"][]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/backlinks`, undefined, undefined, options),
+    outlinks: (id: string, options?: RequestOptions): Promise<Schema["BrainEntry"][]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/outlinks`, undefined, undefined, options),
+    related: (id: string, limit = 10, options?: RequestOptions): Promise<Schema["BrainEntry"][]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/related`, undefined, {limit}, options),
   });
 }

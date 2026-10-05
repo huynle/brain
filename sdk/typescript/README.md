@@ -1,7 +1,8 @@
 # @huynle/brain-sdk (checkpoint)
 
 Node 22+ ESM package with generated OpenAPI 3.1 DTOs and a bound HTTP client.
-This checkpoint covers health, entry CRUD/list, search and task get/list only.
+This checkpoint covers health, entry CRUD/list/move/bulk, search, task get/list,
+sections list/get, and graph backlinks/outlinks/related (17 operations).
 It does not expose script execution or hosted authority.
 
 ```js

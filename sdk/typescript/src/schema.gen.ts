@@ -119,6 +119,155 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/entries/{id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move an entry between projects */
+        post: operations["entries.move"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entries/bulk-update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Update a bounded set of entries */
+        post: operations["entries.bulkUpdate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entries/bulk-delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete a bounded set of entries */
+        post: operations["entries.bulkDelete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entries/{id}/sections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List section headings */
+        get: operations["sections.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entries/{id}/sections/{title}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                title: string;
+            };
+            cookie?: never;
+        };
+        /** Get a section by heading title */
+        get: operations["sections.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entries/{id}/backlinks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get entries linking to this entry */
+        get: operations["graph.backlinks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entries/{id}/outlinks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get entries linked from this entry */
+        get: operations["graph.outlinks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entries/{id}/related": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get related entries */
+        get: operations["graph.related"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -716,6 +865,90 @@ export interface components {
             user_original_request?: string | null;
             workdir?: string | null;
         };
+        BulkDeleteRequest: {
+            dry_run?: boolean;
+            filter?: components["schemas"]["BulkUpdateFilter"] | null;
+            force?: boolean;
+            limit?: number;
+            paths?: string[] | null;
+        };
+        BulkDeleteResponse: {
+            deleted: number;
+            dry_run: boolean;
+            failed: number;
+            matched_total?: number;
+            results: components["schemas"]["BulkUpdateResult"][] | null;
+            total: number;
+            truncated?: boolean;
+        };
+        BulkUpdateEntry: {
+            path: string;
+            updates: components["schemas"]["UpdateEntryRequest"];
+        };
+        BulkUpdateFilter: {
+            agent?: string | null;
+            execution_mode?: string | null;
+            executor?: string | null;
+            feature_id?: string | null;
+            generated_by?: string | null;
+            generated_key?: string | null;
+            priority?: string | null;
+            project?: string | null;
+            status?: string | null;
+            tags?: string[] | null;
+            type?: string | null;
+        };
+        BulkUpdateRequest: {
+            dry_run?: boolean;
+            entries?: components["schemas"]["BulkUpdateEntry"][] | null;
+            filter?: components["schemas"]["BulkUpdateFilter"] | null;
+            force?: boolean;
+            limit?: number;
+            updates?: components["schemas"]["UpdateEntryRequest"] | null;
+        };
+        BulkUpdateResponse: {
+            dry_run: boolean;
+            failed: number;
+            matched_total?: number;
+            results: components["schemas"]["BulkUpdateResult"][] | null;
+            total: number;
+            truncated?: boolean;
+            updated: number;
+        };
+        BulkUpdateResult: {
+            error?: string;
+            id: string;
+            path: string;
+            status: string;
+            title: string;
+        };
+        MoveEntryRequest: {
+            project: string;
+        };
+        MoveResult: {
+            from: string;
+            id: string;
+            newPath: string;
+            oldPath: string;
+            project: string;
+            success: boolean;
+            title: string;
+            to: string;
+        };
+        SectionContentResponse: {
+            content: string;
+            includeSubsections: boolean;
+            path: string;
+            title: string;
+        };
+        SectionHeader: {
+            level: number;
+            title: string;
+        };
+        SectionsResponse: {
+            path: string;
+            sections: components["schemas"]["SectionHeader"][] | null;
+        };
     };
     responses: never;
     parameters: never;
@@ -936,6 +1169,195 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResolvedTask"];
+                };
+            };
+        };
+    };
+    "entries.move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveEntryRequest"];
+            };
+        };
+        responses: {
+            /** @description Move result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MoveResult"];
+                };
+            };
+        };
+    };
+    "entries.bulkUpdate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Per-entry outcomes; inspect failed and truncated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkUpdateResponse"];
+                };
+            };
+        };
+    };
+    "entries.bulkDelete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Per-entry outcomes; inspect failed and truncated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkDeleteResponse"];
+                };
+            };
+        };
+    };
+    "sections.list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Section headings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectionsResponse"];
+                };
+            };
+        };
+    };
+    "sections.get": {
+        parameters: {
+            query?: {
+                includeSubsections?: boolean;
+            };
+            header?: never;
+            path: {
+                id: string;
+                title: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Section content */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectionContentResponse"];
+                };
+            };
+        };
+    };
+    "graph.backlinks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Entry array */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrainEntry"][];
+                };
+            };
+        };
+    };
+    "graph.outlinks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Entry array */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrainEntry"][];
+                };
+            };
+        };
+    };
+    "graph.related": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Entry array */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrainEntry"][];
                 };
             };
         };

@@ -26,7 +26,11 @@ func TestRepositoryContractAndWireParity(t *testing.T) {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-	schemas, err := Schemas(reflect.TypeOf(types.BrainEntry{}), reflect.TypeOf(types.CreateEntryRequest{}), reflect.TypeOf(types.CreateEntryResponse{}), reflect.TypeOf(types.UpdateEntryRequest{}), reflect.TypeOf(types.ListEntriesResponse{}), reflect.TypeOf(types.SearchRequest{}), reflect.TypeOf(types.SearchResponse{}), reflect.TypeOf(types.TaskListResponse{}), reflect.TypeOf(types.ResolvedTask{}))
+	schemas, err := Schemas(reflect.TypeOf(types.BrainEntry{}), reflect.TypeOf(types.CreateEntryRequest{}), reflect.TypeOf(types.CreateEntryResponse{}), reflect.TypeOf(types.UpdateEntryRequest{}), reflect.TypeOf(types.ListEntriesResponse{}), reflect.TypeOf(types.SearchRequest{}), reflect.TypeOf(types.SearchResponse{}), reflect.TypeOf(types.TaskListResponse{}), reflect.TypeOf(types.ResolvedTask{}),
+		reflect.TypeOf(types.MoveEntryRequest{}), reflect.TypeOf(types.MoveResult{}),
+		reflect.TypeOf(types.BulkUpdateRequest{}), reflect.TypeOf(types.BulkUpdateResponse{}),
+		reflect.TypeOf(types.BulkDeleteRequest{}), reflect.TypeOf(types.BulkDeleteResponse{}),
+		reflect.TypeOf(types.SectionsResponse{}), reflect.TypeOf(types.SectionContentResponse{}))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -239,6 +239,196 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ResolvedTask'
+  /entries/{id}/move:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: entries.move
+      summary: Move an entry between projects
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MoveEntryRequest'
+      responses:
+        '200':
+          description: Move result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MoveResult'
+  /entries/bulk-update:
+    post:
+      operationId: entries.bulkUpdate
+      summary: Update a bounded set of entries
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkUpdateRequest'
+      responses:
+        '200':
+          description: Per-entry outcomes; inspect failed and truncated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkUpdateResponse'
+  /entries/bulk-delete:
+    post:
+      operationId: entries.bulkDelete
+      summary: Delete a bounded set of entries
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkDeleteRequest'
+      responses:
+        '200':
+          description: Per-entry outcomes; inspect failed and truncated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkDeleteResponse'
+  /entries/{id}/sections:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: sections.list
+      summary: List section headings
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Section headings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SectionsResponse'
+  /entries/{id}/sections/{title}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: title
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: sections.get
+      summary: Get a section by heading title
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: includeSubsections
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Section content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SectionContentResponse'
+  /entries/{id}/backlinks:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: graph.backlinks
+      summary: Get entries linking to this entry
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Entry array
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BrainEntry'
+  /entries/{id}/outlinks:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: graph.outlinks
+      summary: Get entries linked from this entry
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Entry array
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BrainEntry'
+  /entries/{id}/related:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: graph.related
+      summary: Get related entries
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+      responses:
+        '200':
+          description: Entry array
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BrainEntry'
 components:
   securitySchemes:
     bearerAuth:
@@ -1930,4 +2120,252 @@ components:
           anyOf:
             - type: string
             - type: 'null'
+      type: object
+    BulkDeleteRequest:
+      properties:
+        dry_run:
+          type: boolean
+        filter:
+          anyOf:
+            - $ref: '#/components/schemas/BulkUpdateFilter'
+            - type: 'null'
+        force:
+          type: boolean
+        limit:
+          type: integer
+        paths:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+      type: object
+    BulkDeleteResponse:
+      properties:
+        deleted:
+          type: integer
+        dry_run:
+          type: boolean
+        failed:
+          type: integer
+        matched_total:
+          type: integer
+        results:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/BulkUpdateResult'
+              type: array
+            - type: 'null'
+        total:
+          type: integer
+        truncated:
+          type: boolean
+      required:
+        - deleted
+        - failed
+        - total
+        - dry_run
+        - results
+      type: object
+    BulkUpdateEntry:
+      properties:
+        path:
+          type: string
+        updates:
+          $ref: '#/components/schemas/UpdateEntryRequest'
+      required:
+        - path
+        - updates
+      type: object
+    BulkUpdateFilter:
+      properties:
+        agent:
+          anyOf:
+            - type: string
+            - type: 'null'
+        execution_mode:
+          anyOf:
+            - type: string
+            - type: 'null'
+        executor:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+        generated_by:
+          anyOf:
+            - type: string
+            - type: 'null'
+        generated_key:
+          anyOf:
+            - type: string
+            - type: 'null'
+        priority:
+          anyOf:
+            - type: string
+            - type: 'null'
+        project:
+          anyOf:
+            - type: string
+            - type: 'null'
+        status:
+          anyOf:
+            - type: string
+            - type: 'null'
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        type:
+          anyOf:
+            - type: string
+            - type: 'null'
+      type: object
+    BulkUpdateRequest:
+      properties:
+        dry_run:
+          type: boolean
+        entries:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/BulkUpdateEntry'
+              type: array
+            - type: 'null'
+        filter:
+          anyOf:
+            - $ref: '#/components/schemas/BulkUpdateFilter'
+            - type: 'null'
+        force:
+          type: boolean
+        limit:
+          type: integer
+        updates:
+          anyOf:
+            - $ref: '#/components/schemas/UpdateEntryRequest'
+            - type: 'null'
+      type: object
+    BulkUpdateResponse:
+      properties:
+        dry_run:
+          type: boolean
+        failed:
+          type: integer
+        matched_total:
+          type: integer
+        results:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/BulkUpdateResult'
+              type: array
+            - type: 'null'
+        total:
+          type: integer
+        truncated:
+          type: boolean
+        updated:
+          type: integer
+      required:
+        - updated
+        - failed
+        - total
+        - dry_run
+        - results
+      type: object
+    BulkUpdateResult:
+      properties:
+        error:
+          type: string
+        id:
+          type: string
+        path:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+      required:
+        - path
+        - id
+        - title
+        - status
+      type: object
+    MoveEntryRequest:
+      properties:
+        project:
+          type: string
+      required:
+        - project
+      type: object
+    MoveResult:
+      properties:
+        from:
+          type: string
+        id:
+          type: string
+        newPath:
+          type: string
+        oldPath:
+          type: string
+        project:
+          type: string
+        success:
+          type: boolean
+        title:
+          type: string
+        to:
+          type: string
+      required:
+        - success
+        - from
+        - to
+        - oldPath
+        - newPath
+        - project
+        - id
+        - title
+      type: object
+    SectionContentResponse:
+      properties:
+        content:
+          type: string
+        includeSubsections:
+          type: boolean
+        path:
+          type: string
+        title:
+          type: string
+      required:
+        - title
+        - content
+        - path
+        - includeSubsections
+      type: object
+    SectionHeader:
+      properties:
+        level:
+          type: integer
+        title:
+          type: string
+      required:
+        - title
+        - level
+      type: object
+    SectionsResponse:
+      properties:
+        path:
+          type: string
+        sections:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/SectionHeader'
+              type: array
+            - type: 'null'
+      required:
+        - sections
+        - path
       type: object

@@ -3,8 +3,9 @@
 **Partial implementation, not V1 completion. Scripts are unavailable.**
 
 The reviewed public protocol lives in `api/openapi.yaml` (OpenAPI 3.1).
-Current typed operations: health get; entries list/create/get/update/delete;
-search; tasks list/get. The remaining inventory is in
+Current typed operations: health get; entries list/create/get/update/delete/move/
+bulk-update/bulk-delete; search; tasks list/get; sections list/get; graph
+backlinks/outlinks/related (17 operations). The remaining inventory is in
 `docs/sdk-operation-matrix.md`. Task creation and dependency updates use typed
 entry requests. No capability route, hosted adapter or script route is added.
 

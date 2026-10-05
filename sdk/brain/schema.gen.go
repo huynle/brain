@@ -180,6 +180,77 @@ type BrainEntry struct {
 	Workdir                 *string                     `json:"workdir,omitempty"`
 }
 
+// BulkDeleteRequest defines model for BulkDeleteRequest.
+type BulkDeleteRequest struct {
+	DryRun *bool             `json:"dry_run,omitempty"`
+	Filter *BulkUpdateFilter `json:"filter,omitempty"`
+	Force  *bool             `json:"force,omitempty"`
+	Limit  *int              `json:"limit,omitempty"`
+	Paths  *[]string         `json:"paths,omitempty"`
+}
+
+// BulkDeleteResponse defines model for BulkDeleteResponse.
+type BulkDeleteResponse struct {
+	Deleted      int                 `json:"deleted"`
+	DryRun       bool                `json:"dry_run"`
+	Failed       int                 `json:"failed"`
+	MatchedTotal *int                `json:"matched_total,omitempty"`
+	Results      *[]BulkUpdateResult `json:"results"`
+	Total        int                 `json:"total"`
+	Truncated    *bool               `json:"truncated,omitempty"`
+}
+
+// BulkUpdateEntry defines model for BulkUpdateEntry.
+type BulkUpdateEntry struct {
+	Path    string             `json:"path"`
+	Updates UpdateEntryRequest `json:"updates"`
+}
+
+// BulkUpdateFilter defines model for BulkUpdateFilter.
+type BulkUpdateFilter struct {
+	Agent         *string   `json:"agent,omitempty"`
+	ExecutionMode *string   `json:"execution_mode,omitempty"`
+	Executor      *string   `json:"executor,omitempty"`
+	FeatureId     *string   `json:"feature_id,omitempty"`
+	GeneratedBy   *string   `json:"generated_by,omitempty"`
+	GeneratedKey  *string   `json:"generated_key,omitempty"`
+	Priority      *string   `json:"priority,omitempty"`
+	Project       *string   `json:"project,omitempty"`
+	Status        *string   `json:"status,omitempty"`
+	Tags          *[]string `json:"tags,omitempty"`
+	Type          *string   `json:"type,omitempty"`
+}
+
+// BulkUpdateRequest defines model for BulkUpdateRequest.
+type BulkUpdateRequest struct {
+	DryRun  *bool               `json:"dry_run,omitempty"`
+	Entries *[]BulkUpdateEntry  `json:"entries,omitempty"`
+	Filter  *BulkUpdateFilter   `json:"filter,omitempty"`
+	Force   *bool               `json:"force,omitempty"`
+	Limit   *int                `json:"limit,omitempty"`
+	Updates *UpdateEntryRequest `json:"updates,omitempty"`
+}
+
+// BulkUpdateResponse defines model for BulkUpdateResponse.
+type BulkUpdateResponse struct {
+	DryRun       bool                `json:"dry_run"`
+	Failed       int                 `json:"failed"`
+	MatchedTotal *int                `json:"matched_total,omitempty"`
+	Results      *[]BulkUpdateResult `json:"results"`
+	Total        int                 `json:"total"`
+	Truncated    *bool               `json:"truncated,omitempty"`
+	Updated      int                 `json:"updated"`
+}
+
+// BulkUpdateResult defines model for BulkUpdateResult.
+type BulkUpdateResult struct {
+	Error  *string `json:"error,omitempty"`
+	Id     string  `json:"id"`
+	Path   string  `json:"path"`
+	Status string  `json:"status"`
+	Title  string  `json:"title"`
+}
+
 // CreateEntryRequest defines model for CreateEntryRequest.
 type CreateEntryRequest struct {
 	Action              *AutomationAction           `json:"action,omitempty"`
@@ -362,6 +433,23 @@ type ListEntriesResponse struct {
 	Truncated *bool         `json:"truncated,omitempty"`
 }
 
+// MoveEntryRequest defines model for MoveEntryRequest.
+type MoveEntryRequest struct {
+	Project string `json:"project"`
+}
+
+// MoveResult defines model for MoveResult.
+type MoveResult struct {
+	From    string `json:"from"`
+	Id      string `json:"id"`
+	NewPath string `json:"newPath"`
+	OldPath string `json:"oldPath"`
+	Project string `json:"project"`
+	Success bool   `json:"success"`
+	Title   string `json:"title"`
+	To      string `json:"to"`
+}
+
 // PlacementReason defines model for PlacementReason.
 type PlacementReason struct {
 	CreatedAt      int64   `json:"created_at"`
@@ -532,6 +620,26 @@ type SearchResult struct {
 	Type        string                 `json:"type"`
 }
 
+// SectionContentResponse defines model for SectionContentResponse.
+type SectionContentResponse struct {
+	Content            string `json:"content"`
+	IncludeSubsections bool   `json:"includeSubsections"`
+	Path               string `json:"path"`
+	Title              string `json:"title"`
+}
+
+// SectionHeader defines model for SectionHeader.
+type SectionHeader struct {
+	Level int    `json:"level"`
+	Title string `json:"title"`
+}
+
+// SectionsResponse defines model for SectionsResponse.
+type SectionsResponse struct {
+	Path     string           `json:"path"`
+	Sections *[]SectionHeader `json:"sections"`
+}
+
 // SessionInfo defines model for SessionInfo.
 type SessionInfo struct {
 	CronId    *string `json:"cron_id,omitempty"`
@@ -666,11 +774,30 @@ type EntriesDeleteParams struct {
 // EntriesDeleteParamsConfirm defines parameters for EntriesDelete.
 type EntriesDeleteParamsConfirm bool
 
+// GraphRelatedParams defines parameters for GraphRelated.
+type GraphRelatedParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// SectionsGetParams defines parameters for SectionsGet.
+type SectionsGetParams struct {
+	IncludeSubsections *bool `form:"includeSubsections,omitempty" json:"includeSubsections,omitempty"`
+}
+
 // EntriesCreateJSONRequestBody defines body for EntriesCreate for application/json ContentType.
 type EntriesCreateJSONRequestBody = CreateEntryRequest
 
+// EntriesBulkDeleteJSONRequestBody defines body for EntriesBulkDelete for application/json ContentType.
+type EntriesBulkDeleteJSONRequestBody = BulkDeleteRequest
+
+// EntriesBulkUpdateJSONRequestBody defines body for EntriesBulkUpdate for application/json ContentType.
+type EntriesBulkUpdateJSONRequestBody = BulkUpdateRequest
+
 // EntriesUpdateJSONRequestBody defines body for EntriesUpdate for application/json ContentType.
 type EntriesUpdateJSONRequestBody = UpdateEntryRequest
+
+// EntriesMoveJSONRequestBody defines body for EntriesMove for application/json ContentType.
+type EntriesMoveJSONRequestBody = MoveEntryRequest
 
 // SearchQueryJSONRequestBody defines body for SearchQuery for application/json ContentType.
 type SearchQueryJSONRequestBody = SearchRequest

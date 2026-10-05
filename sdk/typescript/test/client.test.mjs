@@ -81,3 +81,16 @@ test("configuration rejects credential-bearing URLs and invalid limits",()=>{
     assert.throws(()=>new BrainClient(config),e=>e instanceof BrainError&&e.code==="invalid_configuration");
   }
 });
+
+test("content namespace routes and graph array decoding",async t=>{
+  const seen=[];
+  const baseUrl=await server(t,async(req,res)=>{
+    for await(const _chunk of req) { /* drain */ }
+    seen.push([req.method,req.url]);res.end(/backlinks|outlinks|related/.test(req.url)?'[{"id":"linked"}]':'{}');
+  });
+  const c=new BrainClient({baseUrl});t.after(()=>c.close());
+  await c.entries.move("a",{project:"next"});await c.entries.bulkUpdate({});await c.entries.bulkDelete({});
+  await c.sections.list("p/a.md");await c.sections.get("p/a.md","Hello world",true);
+  assert.equal((await c.graph.backlinks("a"))[0].id,"linked");await c.graph.outlinks("a");await c.graph.related("a",5);
+  assert.deepEqual(seen,[["POST","/api/v1/entries/a/move"],["POST","/api/v1/entries/bulk-update"],["POST","/api/v1/entries/bulk-delete"],["GET","/api/v1/entries/p%2Fa.md/sections"],["GET","/api/v1/entries/p%2Fa.md/sections/Hello%20world?includeSubsections=true"],["GET","/api/v1/entries/a/backlinks"],["GET","/api/v1/entries/a/outlinks"],["GET","/api/v1/entries/a/related?limit=5"]]);
+});

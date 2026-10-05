@@ -309,7 +309,10 @@ Construction starts no goroutine/process/scan. Close refuses waiting/new work,
 cancels active work and joins it; a timed-out Close retains occupancy and a later
 Close can finish joining. Tests include a real subprocess killed and Waited before
 Close returns, canceled queued work, exact capacity, independent tenants, rotation
-and ten repeated race runs. The callback must own process/scratch/lease cleanup.
+and repeated race runs. A GOMAXPROCS1 regression closes the pool from a running
+callback before AfterFunc can run: retirement is checked synchronously after the
+callback too, so this cannot return late success. The callback must own
+process/scratch/lease cleanup.
 
 No production caller, graph lease adapter, cross-server reservation, rate limiter
 or principal resolver is connected. Those require the ledger's C/D/G allocations;

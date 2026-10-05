@@ -96,6 +96,9 @@ func (p *localWorkerPool) run(ctx context.Context, b workerBinding, runAndWait f
 		return context.Cause(work)
 	}
 	err := runAndWait(work)
+	if p.lifetime.Err() != nil {
+		cancel(errWorkerAdmission)
+	}
 	if work.Err() != nil {
 		return context.Cause(work)
 	}

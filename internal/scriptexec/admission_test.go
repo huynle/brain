@@ -222,3 +222,28 @@ func TestLocalWorkerAdmissionShutdownActuallyWaitsProcess(t *testing.T) {
 		t.Fatal("outer deadline used instead of shutdown")
 	}
 }
+
+func TestLocalWorkerAdmissionCloseCannotReturnLateSuccess(t *testing.T) {
+	old := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(old)
+	p, err := newLocalWorkerPool(workerAdmissionLimits{1, 1, 1, 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = p.run(context.Background(), workerBinding{"A", "one"}, func(context.Context) error {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		// Retire synchronously while the current callback owns the slot. The
+		// AfterFunc bridge is deliberately not allowed a scheduling turn here.
+		if err := p.close(ctx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("close while held: %v", err)
+		}
+		return nil
+	})
+	if !errors.Is(err, errWorkerAdmission) {
+		t.Fatalf("closed pool released late success: %v", err)
+	}
+	if err := p.close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}

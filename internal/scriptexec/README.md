@@ -133,6 +133,37 @@ QuickJS heap/stack limits alone do not prove these. The compiler container's 512
 limit is not a claimed per-worker policy. No macOS native-memory proof or D06 VM
 acceptance follows from this Linux test; all script routes remain unavailable.
 
+## Inactive framed embedded worker experiment
+
+`TestQuickJSWorkerFramedAsyncCalls` builds `testdata/quickjs_worker.c` against the
+same checksum-pinned source in the same opt-in isolated compiler container. This
+is an actual fresh JS child receiving submitted source over framed stdin, making
+two `brain.entries.get` calls over framed stdout/stdin, then returning async JSON
+result 42. The parent supplies fixture objects only: no Brain service, HTTP,
+credentials, authorization adapter, audit or publication path is connected.
+The source uses explicit `return`; final-expression semantics, a console/log API,
+and a full SDK facade are not implemented. QuickJS remains an experiment input,
+not a selected production dependency or installed worker command.
+
+Before receiving/compiling source it closes descriptors 3+ with `close_range`,
+sets hard/soft CPU to one second, and applies the experimental 64MiB address-space
+and syscall seal. Worker framing/source/result ceilings are 64KiB/32KiB/64KiB;
+its defensive call ceiling is 100 (the parent must independently enforce all
+budgets and authority). Tests observe normal EOF/Wait and refusal of oversized
+source/result, cyclic result, syntax errors, heap exhaustion and dynamic import.
+An infinite JS loop exits 137 around one second without requiring the outer
+five-second test deadline. This is local Linux evidence, not native-compromise
+certification. Negative control: removing only the worker's CPU `setrlimit` made
+that case fail at the outer five-second deadline; restoring it returned exit137
+in 1.04s. The restored four QuickJS experiment tests pass under Go's race detector.
+This is not
+macOS proof, D06 VM acceptance or an authorized dry-run broker.
+Compile is inside the OS CPU/AS bounds, but a dedicated adversarial compilation
+corpus, parent-controlled wall cancellation/reaping of a blocked IPC worker,
+source-aware output fences, aggregate limits and all production launch/descriptor
+review still remain. A compromised worker can forge its own frames; only parent
+validation and authorization may determine operations or release protected output.
+
 References: [QuickJS C API](https://bellard.org/quickjs/quickjs.html#QuickJS-C-API),
 [official release](https://bellard.org/quickjs/),
 [seccomp architecture/TSYNC/allowlist semantics](https://man7.org/linux/man-pages/man2/seccomp.2.html).

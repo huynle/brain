@@ -17,6 +17,10 @@ import (
 // Experimental only: requires an explicitly supplied official source archive
 // and an already installed local image. No downloads, host mounts or services.
 func quickJSProbe(t *testing.T, injection string) ([]byte, error) {
+	return quickJSProgram(t, injection, false, nil)
+}
+
+func quickJSProgram(t *testing.T, injection string, worker bool, exercise func(string, string) ([]byte, error)) ([]byte, error) {
 	t.Helper()
 	archive := os.Getenv("BRAIN_QUICKJS_PROBE_ARCHIVE")
 	host := os.Getenv("BRAIN_SCRIPT_LINUX_PROTOTYPE_HOST")
@@ -80,9 +84,21 @@ func quickJSProbe(t *testing.T, injection string) ([]byte, error) {
 		probe = bytes.Replace(probe, anchor, append([]byte(injection), anchor...), 1)
 	}
 	copyInput("/tmp/probe.c", probe)
-	build := `cd /tmp && tar --no-same-owner -xf source.tar.xz && cd quickjs-2026-06-04 && cc -O1 -D_GNU_SOURCE -DCONFIG_VERSION='"2026-06-04"' -I. ../probe.c quickjs.c dtoa.c libregexp.c libunicode.c cutils.c -lm -o /tmp/probe`
+	entry := "../probe.c"
+	if worker {
+		content, err := os.ReadFile("testdata/quickjs_worker.c")
+		if err != nil {
+			t.Fatal(err)
+		}
+		copyInput("/tmp/worker.c", content)
+		entry = "../worker.c"
+	}
+	build := `cd /tmp && tar --no-same-owner -xf source.tar.xz && cd quickjs-2026-06-04 && cc -O1 -D_GNU_SOURCE -DCONFIG_VERSION='"2026-06-04"' -I. ` + entry + ` quickjs.c dtoa.c libregexp.c libunicode.c cutils.c -lm -o /tmp/probe`
 	if out, err := run("exec", name, "/bin/sh", "-c", build); err != nil {
 		t.Fatalf("build probe: %v %s", err, out)
+	}
+	if exercise != nil {
+		return exercise(host, name)
 	}
 	return run("exec", "--user=65534:65534", name, "/usr/bin/env", "-i", "/tmp/probe")
 }

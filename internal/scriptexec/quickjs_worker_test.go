@@ -1,0 +1,139 @@
+package scriptexec
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os/exec"
+	"strings"
+	"testing"
+	"time"
+)
+
+// Actual JS child + actual framed pipes. Parent answers fixture data only:
+// this is neither an authorized broker nor a service/publication integration.
+func TestQuickJSWorkerFramedAsyncCalls(t *testing.T) {
+	_, err := quickJSProgram(t, "", true, func(host, name string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "docker", "--host", host, "exec", "-i", "--user=65534:65534", name, "/usr/bin/env", "-i", "/tmp/probe")
+		cmd.WaitDelay = time.Second
+		input, e := cmd.StdinPipe()
+		if e != nil {
+			return nil, e
+		}
+		output, e := cmd.StdoutPipe()
+		if e != nil {
+			return nil, e
+		}
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if e = cmd.Start(); e != nil {
+			return nil, e
+		}
+		waited := false
+		defer func() {
+			_ = input.Close()
+			if !waited {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+			}
+		}()
+		source, _ := json.Marshal(`const a = await brain.entries.get("first"); const b = await brain.entries.get(a.next); return {value:a.value+b.value, globals:[typeof fetch,typeof process,typeof require,typeof WebSocket]};`)
+		if e = WriteFrame(input, Frame{1, "call", 1, source}); e != nil {
+			return nil, e
+		}
+		for i, id := range []string{"first", "second"} {
+			f, e := ReadFrame(output)
+			if e != nil {
+				return nil, fmt.Errorf("call %d absent: %w", i, e)
+			}
+			var call struct {
+				Operation string `json:"operation"`
+				Arguments struct {
+					ID string `json:"id"`
+				} `json:"arguments"`
+			}
+			if e = json.Unmarshal(f.Payload, &call); e != nil {
+				return nil, e
+			}
+			if f.Kind != "call" || f.Sequence != uint64(i+1) || call.Operation != "entries.get" || call.Arguments.ID != id {
+				return nil, fmt.Errorf("unexpected worker call: %+v", f)
+			}
+			response := json.RawMessage(`{"next":"second","value":20}`)
+			if i == 1 {
+				response = json.RawMessage(`{"value":22}`)
+			}
+			if e = WriteFrame(input, Frame{1, "result", f.Sequence, response}); e != nil {
+				return nil, e
+			}
+		}
+		f, e := ReadFrame(output)
+		if e != nil {
+			return nil, fmt.Errorf("final result: %w", e)
+		}
+		if f.Kind != "result" || f.Sequence != 3 || string(f.Payload) != `{"value":42,"globals":["undefined","undefined","undefined","undefined"]}` {
+			return nil, fmt.Errorf("wrong final frame: %+v", f)
+		}
+		_ = input.Close()
+		if _, e = ReadFrame(output); e != io.EOF {
+			return nil, fmt.Errorf("worker emitted trailing output: %v", e)
+		}
+		e = cmd.Wait()
+		waited = true
+		if e != nil {
+			return nil, fmt.Errorf("worker exit: %w stderr=%s", e, stderr.String())
+		}
+		t.Log("actual sealed child: two framed calls, async result 42, no ambient JS APIs, EOF and Wait observed")
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatalf("framed worker behavior absent: %v", err)
+	}
+}
+
+func TestQuickJSWorkerBoundedFailures(t *testing.T) {
+	_, err := quickJSProgram(t, "", true, func(host, name string) ([]byte, error) {
+		cases := []struct {
+			name, source string
+			exit         int
+		}{
+			{"CPU infinite loop", "for (;;) {}", 137},
+			{"oversized source", strings.Repeat(" ", 32769), 133},
+			{"oversized result", `return "x".repeat(100000);`, 137},
+			{"cyclic result", `const x={};x.self=x;return x;`, 137},
+			{"syntax error", `return (`, 135},
+			{"heap exhaustion", `const x=[];while(true)x.push(new Array(10000).fill(42));`, 136},
+			{"dynamic import", `return await import("node:fs");`, 136},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				cmd := exec.CommandContext(ctx, "docker", "--host", host, "exec", "-i", "--user=65534:65534", name, "/usr/bin/env", "-i", "/tmp/probe")
+				cmd.WaitDelay = time.Second
+				var input bytes.Buffer
+				source, _ := json.Marshal(tc.source)
+				if e := WriteFrame(&input, Frame{1, "call", 1, source}); e != nil {
+					t.Fatal(e)
+				}
+				cmd.Stdin = &input
+				out, e := cmd.CombinedOutput()
+				if ctx.Err() != nil {
+					t.Fatalf("worker required outer wall timeout instead of own bound: %v", ctx.Err())
+				}
+				exit, ok := e.(*exec.ExitError)
+				if !ok || exit.ExitCode() != tc.exit || len(out) != 0 {
+					t.Fatalf("exit=%v want=%d output bytes=%d", e, tc.exit, len(out))
+				}
+				t.Logf("actual worker waited/reaped, exit=%d, no result bytes", exit.ExitCode())
+			})
+		}
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

@@ -116,7 +116,7 @@ func runLifecycleObserver(t *testing.T, observer string) []byte {
 	out, err := quickJSProgram(t, "", true, func(host, name string) ([]byte, error) {
 		buildCtx, cancelBuild := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancelBuild()
-		build := exec.CommandContext(buildCtx, "docker", "--host", host, "exec", "-i", name, "/bin/sh", "-c", `cat > /tmp/observer.c && cd /tmp/quickjs-2026-06-04 && cc -O1 -D_GNU_SOURCE -DCONFIG_VERSION='"2026-06-04"' -I. ../observer.c quickjs.c dtoa.c libregexp.c libunicode.c cutils.c -lm -o /tmp/observer`)
+		build := exec.CommandContext(buildCtx, "docker", "--host", host, "exec", "-i", name, "/bin/sh", "-c", `cat > /tmp/observer.c && /bin/sh /tmp/build-probe.sh /tmp observer.c /tmp/observer`)
 		worker, e := os.ReadFile("testdata/quickjs_worker.c")
 		if e != nil {
 			return nil, e

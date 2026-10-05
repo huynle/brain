@@ -84,16 +84,21 @@ func quickJSProgram(t *testing.T, injection string, worker bool, exercise func(s
 		probe = bytes.Replace(probe, anchor, append([]byte(injection), anchor...), 1)
 	}
 	copyInput("/tmp/probe.c", probe)
-	entry := "../probe.c"
+	entry := "probe.c"
 	if worker {
 		content, err := os.ReadFile("testdata/quickjs_worker.c")
 		if err != nil {
 			t.Fatal(err)
 		}
 		copyInput("/tmp/worker.c", content)
-		entry = "../worker.c"
+		entry = "worker.c"
 	}
-	build := `cd /tmp && tar --no-same-owner -xf source.tar.xz && cd quickjs-2026-06-04 && cc -O1 -D_GNU_SOURCE -DCONFIG_VERSION='"2026-06-04"' -I. ` + entry + ` quickjs.c dtoa.c libregexp.c libunicode.c cutils.c -lm -o /tmp/probe`
+	recipe, err := os.ReadFile("testdata/build-quickjs-probe.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyInput("/tmp/build-probe.sh", recipe)
+	build := `cd /tmp && tar --no-same-owner -xf source.tar.xz && /bin/sh /tmp/build-probe.sh /tmp ` + entry + ` /tmp/probe`
 	if out, err := run("exec", name, "/bin/sh", "-c", build); err != nil {
 		t.Fatalf("build probe: %v %s", err, out)
 	}

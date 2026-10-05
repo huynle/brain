@@ -74,9 +74,9 @@ int main(void) {
     errno=0; int written=open("/tmp/native-write",O_CREAT|O_WRONLY,0600); int ewrite=errno; if(written>=0)close(written);
     errno=0; int sock=socket(AF_INET,SOCK_STREAM,0); int esocket=errno; if(sock>=0)close(sock);
     errno=0; pid_t pid=fork(); int efork=errno; if(pid==0)_exit(0); if(pid>0)waitpid(pid,NULL,0);
-    char buf[8]; errno=0; (void)read(fd,buf,sizeof(buf)); int eread=errno;
-    errno=0; (void)pread(fd,buf,sizeof(buf),0); int epread=errno;
-    struct iovec v={buf,sizeof(buf)}; errno=0; (void)readv(fd,&v,1); int ereadv=errno;
+    char buf[8]; errno=0; ssize_t nread=read(fd,buf,sizeof(buf)); int eread=errno; (void)nread;
+    errno=0; ssize_t npread=pread(fd,buf,sizeof(buf),0); int epread=errno; (void)npread;
+    struct iovec v={buf,sizeof(buf)}; errno=0; ssize_t nreadv=readv(fd,&v,1); int ereadv=errno; (void)nreadv;
     errno=0; int dupped=dup(fd); int edup=errno; if(dupped>=0)close(dupped);
     errno=0; void *mapped=mmap(NULL,4096,PROT_READ,MAP_PRIVATE,fd,0); int emmap=errno; if(mapped!=MAP_FAILED)munmap(mapped,4096);
     errno=0; mapped=mmap(NULL,4096,PROT_READ|PROT_EXEC,MAP_PRIVATE|MAP_ANONYMOUS,-1,0); int eexec=errno; if(mapped!=MAP_FAILED)munmap(mapped,4096);

@@ -214,6 +214,23 @@ QuickJS heap/stack limits alone do not prove these. The compiler container's 512
 limit is not a claimed per-worker policy. No macOS native-memory proof or D06 VM
 acceptance follows from this Linux test; all script routes remain unavailable.
 
+### Experimental build provenance (not production runtime approval)
+
+`testdata/build-quickjs-probe.sh` fixes the trusted compiler command, locale,
+source-date epoch and flags for both probe and worker (including the native
+supervisor fixture). It enables PIE, full RELRO/BIND_NOW, non-executable stack,
+strong stack protector and FORTIFY_SOURCE=3. `TestQuickJSExperimentalBuildHardening`
+checks the **actual ELF** headers/dynamic flags and referenced stack/fortify symbols,
+not just flag text. The previous build lacked BIND_NOW and both checked symbols.
+`TestQuickJSExperimentalBuildReproducible` builds in two distinct source/output
+directories, compares complete binary bytes, and records the compiler/image/hash.
+With installed image `sha256:363e1587494626837fa7f9a23bdb453d13b0ff3c67c705c2805cfc69c2d2fad7`
+and Debian GCC `12.2.0-14+deb12u1`, both artifacts had SHA256
+`6aaa62426a2e49a2a12bfdcd7e7e65e7a49b619f9a48ce9a177d92bdb6560800`.
+Source archive verification remains mandatory before compilation. This proves
+local relocation reproducibility only, not a second independent builder, complete
+supply-chain audit, a reviewed runtime version or native-compromise resistance.
+
 ## Inactive framed embedded worker experiment
 
 `TestQuickJSWorkerFramedAsyncCalls` builds `testdata/quickjs_worker.c` against the

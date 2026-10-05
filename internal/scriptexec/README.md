@@ -290,6 +290,31 @@ source-ID strings, kernel pipes or bytes already legitimately released elsewhere
 Structured source-aware exception delivery is still pending; raw exceptions remain
 discarded and worker exit statuses are not a durable operation outcome journal.
 
+### Inactive local aggregate admission
+
+`localWorkerPool` bounds active workers globally (maximum64), per tenant and per
+tenant/principal binding, plus a bounded waiting queue (maximum1024). Each slot
+reserves the **same fixed launch policy** until its owning callback has completed
+Wait; cancellation/timeout does not refund capacity while that callback is still
+joining. With the current experimental policy N slots account for at most N ×
+64MiB worker address-space ceilings and N simultaneously running CPU consumers;
+this excludes parent/launcher/container overhead and is not a host cgroup budget.
+No per-request variable weights or unproven worker limit is admitted by this claim.
+
+Selection rotates eligible tenants, then principals, preserving FIFO among equal
+choices; a saturated binding does not block another eligible binding. Fairness is
+for requests admitted to this bounded local queue, not an anti-abuse admission
+guarantee if one caller fills it. Key strings are descriptive, not authority.
+Construction starts no goroutine/process/scan. Close refuses waiting/new work,
+cancels active work and joins it; a timed-out Close retains occupancy and a later
+Close can finish joining. Tests include a real subprocess killed and Waited before
+Close returns, canceled queued work, exact capacity, independent tenants, rotation
+and ten repeated race runs. The callback must own process/scratch/lease cleanup.
+
+No production caller, graph lease adapter, cross-server reservation, rate limiter
+or principal resolver is connected. Those require the ledger's C/D/G allocations;
+local counters must never be presented as authoritative multi-server quota.
+
 Before receiving/compiling source it closes descriptors 3+ with `close_range`,
 sets hard/soft CPU to one second, and applies the experimental 64MiB address-space
 and syscall seal. Worker framing/source/result ceilings are 64KiB/32KiB/64KiB;

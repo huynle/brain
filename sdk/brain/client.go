@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -31,10 +32,18 @@ type Error struct {
 	Code, Message, RequestID string
 	Status                   int
 	Retryable                bool
+	Details                  []FieldViolation
 }
 
+type FieldViolation struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
+}
+
+var machineCode = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
 // Error deliberately omits response content from default formatting.
-func (e *Error) Error() string { return fmt.Sprintf("brain: %s (HTTP %d)", e.Code, e.Status) }
+func (e *Error) Error() string { return fmt.Sprintf("brain: request failed (HTTP %d)", e.Status) }
 
 // New fixes the origin, credentials and optional organization selector for the
 // lifetime of this client. A selector is not a grant. Transport is trusted code.
@@ -158,12 +167,21 @@ func (c *Client) request(ctx context.Context, method, path string, body any, q u
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var wire struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
+			Code      string           `json:"code"`
+			Message   string           `json:"message"`
+			RequestID string           `json:"request_id"`
+			Details   []FieldViolation `json:"details"`
 		}
 		_ = json.Unmarshal(data, &wire)
 		e.Message = wire.Message
 		e.Code = wire.Code
+		e.Details = wire.Details
+		if e.RequestID == "" {
+			e.RequestID = wire.RequestID
+		}
+		if !machineCode.MatchString(e.Code) {
+			e.Code = ""
+		}
 		if e.Code == "" {
 			e.Code = map[int]string{400: "invalid_request", 401: "unauthorized", 403: "forbidden", 404: "not_found", 409: "conflict", 429: "rate_limited", 501: "unsupported_operation", 503: "unavailable"}[resp.StatusCode]
 			if e.Code == "" {

@@ -14,6 +14,40 @@ import (
 	"github.com/huynle/brain-api/sdk/brain"
 )
 
+func TestValidationDetailsAndBodyRequestID(t *testing.T) {
+	c := client(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(400)
+		_, _ = w.Write([]byte(`{"error":"Validation Error","message":"Invalid request","request_id":"body-id","details":[{"field":"title","message":"required"}]}`))
+	}, brain.Config{})
+	_, err := c.Entries().Create(context.Background(), brain.CreateEntryRequest{}, brain.RequestOptions{})
+	var e *brain.Error
+	if !errors.As(err, &e) {
+		t.Fatalf("%v", err)
+	}
+	details := e.Details
+	if len(details) != 1 {
+		t.Fatalf("validation details lost: %+v", e)
+	}
+	if e.RequestID != "body-id" {
+		t.Fatalf("request ID lost: %q", e.RequestID)
+	}
+	if details[0].Field != "title" || details[0].Message != "required" {
+		t.Fatalf("details changed: %v", details)
+	}
+}
+
+func TestErrorFormattingRejectsUnsafeMachineCode(t *testing.T) {
+	c := client(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte(`{"code":"secret credential value","message":"sensitive content"}`))
+	}, brain.Config{})
+	_, err := c.Health(context.Background())
+	var e *brain.Error
+	if !errors.As(err, &e) || e.Code != "forbidden" || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("unsafe error formatting: %v", err)
+	}
+}
+
 func TestAmbiguousWriteIsNotReplayedByHTTPTransport(t *testing.T) {
 	var writes atomic.Int32
 	c := client(t, func(w http.ResponseWriter, r *http.Request) {

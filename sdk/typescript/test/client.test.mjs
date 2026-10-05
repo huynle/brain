@@ -33,6 +33,18 @@ test("attachment extraction and stored text routes",async t=>{
  assert.deepEqual(seen,[["POST","/api/v1/attachments/a/extract?project_id=p"],["GET","/api/v1/attachments/a/text?project_id=p"]]);
 });
 
+test("legacy validation details and body request ID are preserved",async t=>{
+ const baseUrl=await server(t,(_req,res)=>res.writeHead(400).end('{"error":"Validation Error","message":"Invalid request","request_id":"body-id","details":[{"field":"title","message":"required"}]}'));
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());
+ await assert.rejects(c.health(),e=>{assert.equal(e.code,"invalid_request");assert.equal(e.requestId,"body-id");assert.deepEqual(e.details,[{field:"title",message:"required"}]);return true;});
+});
+
+test("unsafe machine codes cannot disclose content in default error formatting",async t=>{
+ const baseUrl=await server(t,(_req,res)=>res.writeHead(403).end('{"code":"secret credential value","message":"sensitive content"}'));
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());
+ await assert.rejects(c.health(),e=>e.code==="forbidden"&&!e.message.includes("secret"));
+});
+
 async function server(t, handler) {
   const s = createServer(handler);
   s.listen(0, "127.0.0.1"); await once(s, "listening");

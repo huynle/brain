@@ -1,9 +1,11 @@
 // Install the built SDK package before running this external application.
-import { BrainClient } from "@huynle/brain-sdk";
+import { BrainClient, BrainError } from "@huynle/brain-sdk";
 
 const client = new BrainClient({baseUrl:process.env.BRAIN_API_URL, token:process.env.BRAIN_API_TOKEN});
 let id;
 try {
+  let validation;try{await client.entries.create({});}catch(e){validation=e;}
+  if(!(validation instanceof BrainError)||validation.status!==400||!validation.details.length)throw new Error("missing field validation details");
   await client.health();
   const created = await client.entries.create({type:"task",title:"Node SDK example",content:"## Details\nCreated through the public package",project:"sdk-example"});
   id = created.id;

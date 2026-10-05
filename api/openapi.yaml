@@ -103,8 +103,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateEntryRequest'
+                $ref: '#/components/schemas/CreateEntryRequest'
       responses:
+        default:
+          description: Legacy REST error, normalized by the SDK transport
+          headers:
+            X-Request-ID:
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyErrorResponse'}
         '201':
           description: Persisted entry
           content:
@@ -689,6 +697,24 @@ components:
       type: http
       scheme: bearer
   schemas:
+    LegacyErrorResponse:
+      type: object
+      description: Existing REST error envelope; SDKs adapt HTTP status to a machine code and preserve field details without changing the server wire format.
+      required: [error, message]
+      properties:
+        error: {type: string}
+        message: {type: string}
+        details:
+          type: array
+          items: {$ref: '#/components/schemas/ValidationDetail'}
+        code: {type: string, description: Optional future-compatible machine code; legacy endpoints usually omit it.}
+        request_id: {type: string, description: Optional fallback when X-Request-ID is absent.}
+    ValidationDetail:
+      type: object
+      required: [field, message]
+      properties:
+        field: {type: string}
+        message: {type: string}
     AttachmentDeletionResponse:
       type: object
       required:

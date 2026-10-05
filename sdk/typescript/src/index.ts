@@ -18,6 +18,7 @@ export interface RequestOptions {
   idempotencyKey?: string;
 }
 export type EntriesListParams = NonNullable<operations["entries.list"]["parameters"]["query"]>;
+export interface FieldViolation {field: string; message: string}
 
 export class BrainError extends Error {
   constructor(
@@ -26,8 +27,9 @@ export class BrainError extends Error {
     readonly requestId = "",
     readonly serverMessage = "",
     readonly retryable = false,
+    readonly details: readonly FieldViolation[] = [],
   ) {
-    super(`brain: ${code} (HTTP ${status})`);
+    super(`brain: request failed (HTTP ${status})`);
     this.name = "BrainError";
   }
 }
@@ -108,11 +110,12 @@ export class BrainClient {
     for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.byteLength; }
     const text = new TextDecoder().decode(data);
     if (!response.ok) {
-      let wire: {code?: unknown; message?: unknown} = {};
+      let wire: {code?: unknown; message?: unknown; request_id?: unknown; details?: unknown} = {};
       try { const parsed: unknown = JSON.parse(text); if (parsed && typeof parsed === "object") wire = parsed; } catch { /* Legacy non-JSON errors retain their HTTP code. */ }
       const codes: Record<number, string> = {400:"invalid_request",401:"unauthorized",403:"forbidden",404:"not_found",409:"conflict",429:"rate_limited",501:"unsupported_operation",503:"unavailable"};
-      throw new BrainError(typeof wire.code === "string" ? wire.code : codes[response.status] ?? "http_error", response.status, requestId,
-        typeof wire.message === "string" ? wire.message : "", [429,503].includes(response.status));
+      const details = Array.isArray(wire.details) ? wire.details.filter((v): v is FieldViolation => !!v && typeof v === "object" && typeof v.field === "string" && typeof v.message === "string").map(v=>({field:v.field,message:v.message})) : [];
+      throw new BrainError(typeof wire.code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(wire.code) ? wire.code : codes[response.status] ?? "http_error", response.status, requestId || (typeof wire.request_id === "string" ? wire.request_id : ""),
+        typeof wire.message === "string" ? wire.message : "", [429,503].includes(response.status), details);
     }
     if (!expectBody) return undefined as T;
     if (binary) return data as T;

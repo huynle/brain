@@ -422,6 +422,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Existing REST error envelope; SDKs adapt HTTP status to a machine code and preserve field details without changing the server wire format. */
+        LegacyErrorResponse: {
+            error: string;
+            message: string;
+            details?: components["schemas"]["ValidationDetail"][];
+            /** @description Optional future-compatible machine code; legacy endpoints usually omit it. */
+            code?: string;
+            /** @description Optional fallback when X-Request-ID is absent. */
+            request_id?: string;
+        };
+        ValidationDetail: {
+            field: string;
+            message: string;
+        };
         AttachmentDeletionResponse: {
             deleted: boolean;
         };
@@ -1233,6 +1247,16 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CreateEntryResponse"];
+                };
+            };
+            /** @description Legacy REST error, normalized by the SDK transport */
+            default: {
+                headers: {
+                    "X-Request-ID"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };

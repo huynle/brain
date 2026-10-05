@@ -484,6 +484,18 @@ type HealthResponse struct {
 	Timestamp time.Time             `json:"timestamp"`
 }
 
+// LegacyErrorResponse Existing REST error envelope; SDKs adapt HTTP status to a machine code and preserve field details without changing the server wire format.
+type LegacyErrorResponse struct {
+	// Code Optional future-compatible machine code; legacy endpoints usually omit it.
+	Code    *string             `json:"code,omitempty"`
+	Details *[]ValidationDetail `json:"details,omitempty"`
+	Error   string              `json:"error"`
+	Message string              `json:"message"`
+
+	// RequestId Optional fallback when X-Request-ID is absent.
+	RequestId *string `json:"request_id,omitempty"`
+}
+
 // ListAttachmentsResponse defines model for ListAttachmentsResponse.
 type ListAttachmentsResponse struct {
 	Attachments *[]Attachment `json:"attachments"`
@@ -815,6 +827,12 @@ type UpdateEntryRequest struct {
 	Trigger             *TriggerConfig              `json:"trigger,omitempty"`
 	UserOriginalRequest *string                     `json:"user_original_request,omitempty"`
 	Workdir             *string                     `json:"workdir,omitempty"`
+}
+
+// ValidationDetail defines model for ValidationDetail.
+type ValidationDetail struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
 }
 
 // AttachmentsListParams defines parameters for AttachmentsList.

@@ -53,8 +53,12 @@ HTTPS is recommended; HTTP remains supported for existing local installations.
 
 Responses are bounded (8 MiB default, configurable up to 64 MiB), requests have
 a 30-second default timeout, and redirects are refused. Default error formatting
-does not include response content or credentials. `Error.Message` is separately
-available to applications that deliberately display server errors.
+does not include server code/content or credentials. `Error.Code`, `Error.Message`
+and `Error.Details` (TypeScript: `code`, `serverMessage`, `details`) are separately
+available to applications that deliberately inspect server errors. The legacy
+`error`/`message`/`details` wire envelope is adapted without REST changes. A
+well-formed optional machine code is retained; otherwise HTTP status determines
+the stable SDK code. X-Request-ID takes precedence over optional body request_id.
 
 No SDK write retry is performed, including after uncertain transport outcomes.
 The Go transport's implicit buffered-POST replay is disabled. An idempotency

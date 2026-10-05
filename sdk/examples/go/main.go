@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -27,6 +28,11 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	project := "sdk-example"
+	_, invalidErr := c.Entries().Create(ctx, brain.CreateEntryRequest{}, brain.RequestOptions{})
+	var validation *brain.Error
+	if !errors.As(invalidErr, &validation) || validation.Status != 400 || len(validation.Details) == 0 {
+		return fmt.Errorf("missing field validation details")
+	}
 	if _, err := c.Health(ctx); err != nil {
 		return err
 	}

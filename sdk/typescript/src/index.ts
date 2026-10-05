@@ -189,6 +189,27 @@ export class BrainClient {
     audit: (id: string,limit = 50,options?: RequestOptions): Promise<Schema["GoalAuditResponse"]> => this.#request("GET",`/goals/${encodeURIComponent(id)}/audit`,undefined,{limit},options),
     run: (id: string,options?: RequestOptions): Promise<Schema["GoalReconcileAudit"]> => this.#request("POST",`/goals/${encodeURIComponent(id)}/run`,undefined,undefined,options),
   });
+  readonly reminders = Object.freeze({
+    list: (query?: NonNullable<operations["reminders.list"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["ReminderListResponse"]> => this.#request("GET","/reminders",undefined,query,options),
+    get: (id: string,options?: RequestOptions): Promise<Schema["ReminderSummary"]> => this.#request("GET",`/reminders/${encodeURIComponent(id)}`,undefined,undefined,options),
+    create: (request: Schema["CreateReminderRequest"],options?: RequestOptions): Promise<Schema["ReminderSummary"]> => this.#request("POST","/reminders",request,undefined,options),
+    update: (id: string,request: Schema["UpdateReminderRequest"],options?: RequestOptions): Promise<Schema["ReminderSummary"]> => this.#request("PATCH",`/reminders/${encodeURIComponent(id)}`,request,undefined,options),
+    delete: (id: string,options?: RequestOptions): Promise<Schema["DeletionResponse"]> => this.#request("DELETE",`/reminders/${encodeURIComponent(id)}`,undefined,undefined,options),
+    ack: (id: string,options?: RequestOptions): Promise<Schema["ReminderSummary"]> => this.#request("POST",`/reminders/${encodeURIComponent(id)}/ack`,undefined,undefined,options),
+    snooze: (id: string,request: Schema["SnoozeReminderRequest"],options?: RequestOptions): Promise<Schema["ReminderSummary"]> => this.#request("POST",`/reminders/${encodeURIComponent(id)}/snooze`,request,undefined,options),
+    fire: (id: string,options?: RequestOptions): Promise<Schema["ReminderSummary"]> => this.#request("POST",`/reminders/${encodeURIComponent(id)}/fire`,undefined,undefined,options),
+  });
+  readonly attention = Object.freeze({
+    list: (query?: NonNullable<operations["attention.list"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["AttentionListResponse"]> => this.#request("GET","/attention",undefined,query,options),
+    counts: (options?: RequestOptions): Promise<Schema["AttentionCounts"]> => this.#request("GET","/attention/counts",undefined,undefined,options),
+    get: (id: string,options?: RequestOptions): Promise<Schema["Attention"]> => this.#request("GET",`/attention/${encodeURIComponent(id)}`,undefined,undefined,options),
+    create: (request: Schema["CreateAttentionRequest"],options?: RequestOptions): Promise<Schema["Attention"]> => this.#request("POST","/attention",request,undefined,options),
+    read: (id: string,options?: RequestOptions): Promise<Schema["Attention"]> => this.#request("POST",`/attention/${encodeURIComponent(id)}/read`,undefined,undefined,options),
+    unread: (id: string,options?: RequestOptions): Promise<Schema["Attention"]> => this.#request("POST",`/attention/${encodeURIComponent(id)}/unread`,undefined,undefined,options),
+    snooze: (id: string,request: Schema["SnoozeAttentionRequest"],options?: RequestOptions): Promise<Schema["Attention"]> => this.#request("POST",`/attention/${encodeURIComponent(id)}/snooze`,request,undefined,options),
+    resolve: (id: string,options?: RequestOptions): Promise<Schema["Attention"]> => this.#request("POST",`/attention/${encodeURIComponent(id)}/resolve`,undefined,undefined,options),
+    dismiss: (id: string,options?: RequestOptions): Promise<Schema["Attention"]> => this.#request("POST",`/attention/${encodeURIComponent(id)}/dismiss`,undefined,undefined,options),
+  });
   readonly sections = Object.freeze({
     list: (id: string, options?: RequestOptions): Promise<Schema["SectionsResponse"]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/sections`, undefined, undefined, options),
     get: (id: string, title: string, includeSubsections = false, options?: RequestOptions): Promise<Schema["SectionContentResponse"]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/sections/${encodeURIComponent(title)}`, undefined, {includeSubsections}, options),

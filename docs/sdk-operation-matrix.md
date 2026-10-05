@@ -14,6 +14,12 @@ Current Go/TypeScript coverage: `health.get`, `entries.list`, `entries.create`,
 `sections.list`, `sections.get`, `graph.backlinks`, `graph.outlinks`,
 `graph.related`, plus `attachments.list/get/delete/upload/download/text/extract/forEntry/attach/detach`.
 Goals `list/create/update/delete/progress/audit/run` are also implemented (34 total).
+Reminders `list/get/create/update/delete/ack/snooze/fire` and attention
+`list/counts/get/create/read/unread/snooze/resolve/dismiss` bring coverage to 51.
+Both languages have route tests for these 17 methods. The authenticated real-service
+Go fixture additionally exercises seven reminder methods (not fire) and all nine
+attention methods, including token-name recipient binding. These notification
+methods are not yet exercised by the installed external Node consumer.
 The external consumers exercise six goal operations; manual run has route parity
 tests only, avoiding runner/provider submission in consumer examples.
 Contract: `api/openapi.yaml`; transport tests: `sdk/brain/client_test.go`

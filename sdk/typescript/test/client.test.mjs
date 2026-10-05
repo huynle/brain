@@ -52,6 +52,14 @@ test("goal namespace routes",async t=>{
  assert.deepEqual(seen,["GET /api/v1/goals?project=p&status=all","POST /api/v1/goals","PATCH /api/v1/goals/g","GET /api/v1/goals/g/progress","GET /api/v1/goals/g/audit?limit=50","POST /api/v1/goals/g/run","DELETE /api/v1/goals/g"]);
 });
 
+test("reminder and attention namespace routes",async t=>{
+ const seen=[];const baseUrl=await server(t,async(req,res)=>{for await(const _ of req){};seen.push(req.method+" "+req.url);res.end("{}");});
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());
+ await c.reminders.list({project:"p",state:"active"});await c.reminders.get("r");await c.reminders.create({});await c.reminders.update("r",{});await c.reminders.ack("r");await c.reminders.snooze("r",{remind_at:"2030-01-01T00:00:00Z"});await c.reminders.fire("r");await c.reminders.delete("r");
+ await c.attention.list({include_snoozed:true,project:"p"});await c.attention.counts();await c.attention.get("a");await c.attention.create({});await c.attention.read("a");await c.attention.unread("a");await c.attention.snooze("a",{snoozed_until:"2030-01-01T00:00:00Z"});await c.attention.resolve("a");await c.attention.dismiss("a");
+ assert.deepEqual(seen,["GET /api/v1/reminders?project=p&state=active","GET /api/v1/reminders/r","POST /api/v1/reminders","PATCH /api/v1/reminders/r","POST /api/v1/reminders/r/ack","POST /api/v1/reminders/r/snooze","POST /api/v1/reminders/r/fire","DELETE /api/v1/reminders/r","GET /api/v1/attention?include_snoozed=true&project=p","GET /api/v1/attention/counts","GET /api/v1/attention/a","POST /api/v1/attention","POST /api/v1/attention/a/read","POST /api/v1/attention/a/unread","POST /api/v1/attention/a/snooze","POST /api/v1/attention/a/resolve","POST /api/v1/attention/a/dismiss"]);
+});
+
 async function server(t, handler) {
   const s = createServer(handler);
   s.listen(0, "127.0.0.1"); await once(s, "listening");

@@ -848,12 +848,405 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GoalReconcileAudit'
+  /reminders:
+    get:
+      operationId: reminders.list
+      summary: List reminders
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Reminder summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderListResponse'
+    post:
+      operationId: reminders.create
+      summary: Create a reminder
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReminderRequest'
+      responses:
+        '201':
+          description: Created reminder
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderSummary'
+  /reminders/{reminderId}:
+    parameters:
+      - name: reminderId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: reminders.get
+      summary: Get a reminder
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Reminder
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderSummary'
+    patch:
+      operationId: reminders.update
+      summary: Update a reminder
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReminderRequest'
+      responses:
+        '200':
+          description: Updated reminder
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderSummary'
+    delete:
+      operationId: reminders.delete
+      summary: Delete a reminder
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Deletion outcome
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletionResponse'
+  /reminders/{reminderId}/ack:
+    parameters:
+      - name: reminderId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: reminders.ack
+      summary: Acknowledge a reminder
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Reminder state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderSummary'
+  /reminders/{reminderId}/snooze:
+    parameters:
+      - name: reminderId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: reminders.snooze
+      summary: Snooze a reminder until a new timestamp
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SnoozeReminderRequest'
+      responses:
+        '200':
+          description: Reminder state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderSummary'
+  /reminders/{reminderId}/fire:
+    parameters:
+      - name: reminderId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: reminders.fire
+      summary: Fire a reminder now; may publish notices or submit work
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Reminder state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderSummary'
+  /attention:
+    get:
+      operationId: attention.list
+      summary: List attention for the authenticated recipient
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: kind
+          in: query
+          schema:
+            type: string
+        - name: severity
+          in: query
+          schema:
+            type: string
+        - name: source_type
+          in: query
+          schema:
+            type: string
+        - name: include_snoozed
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Attention items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttentionListResponse'
+    post:
+      operationId: attention.create
+      summary: Create attention under existing publication policy
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAttentionRequest'
+      responses:
+        '201':
+          description: Created attention
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attention'
+  /attention/counts:
+    get:
+      operationId: attention.counts
+      summary: Get authenticated recipient attention counts
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttentionCounts'
+  /attention/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: attention.get
+      summary: Get authenticated recipient attention item
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Attention item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attention'
+  /attention/{id}/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: attention.read
+      summary: Mark attention read
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Attention state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attention'
+  /attention/{id}/unread:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: attention.unread
+      summary: Mark attention unread
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Attention state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attention'
+  /attention/{id}/snooze:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: attention.snooze
+      summary: Snooze attention until a timestamp
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SnoozeAttentionRequest'
+      responses:
+        '200':
+          description: Attention state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attention'
+  /attention/{id}/resolve:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: attention.resolve
+      summary: Resolve attention
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Attention state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attention'
+  /attention/{id}/dismiss:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: attention.dismiss
+      summary: Dismiss attention
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        '200':
+          description: Attention state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attention'
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
   schemas:
+    DeletionResponse:
+      type: object
+      required:
+        - deleted
+      properties:
+        deleted:
+          type: boolean
+    SnoozeReminderRequest:
+      type: object
+      required:
+        - remind_at
+      properties:
+        remind_at:
+          type: string
+          format: date-time
+    SnoozeAttentionRequest:
+      type: object
+      required:
+        - snoozed_until
+      properties:
+        snoozed_until:
+          type: string
+          format: date-time
+    AttentionListResponse:
+      type: object
+      required:
+        - attention
+        - count
+      properties:
+        attention:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attention'
+        count:
+          type: integer
     ListGoalsResponse:
       type: object
       required:
@@ -3205,6 +3598,284 @@ components:
             - type: string
             - type: 'null'
         workdir:
+          anyOf:
+            - type: string
+            - type: 'null'
+      type: object
+    Attention:
+      properties:
+        actions:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttentionAction'
+              type: array
+            - type: 'null'
+        body:
+          type: string
+        created_at:
+          type: string
+        dedup_key:
+          type: string
+        feature_id:
+          type: string
+        id:
+          type: string
+        instance_id:
+          type: string
+        kind:
+          type: string
+        project:
+          type: string
+        read_at:
+          type: string
+        recipient:
+          type: string
+        resolved_at:
+          type: string
+        revision:
+          type: integer
+        runner_id:
+          type: string
+        session_id:
+          type: string
+        severity:
+          type: string
+        snoozed_until:
+          type: string
+        source_id:
+          type: string
+        source_type:
+          type: string
+        state:
+          type: string
+        task_id:
+          type: string
+        title:
+          type: string
+        updated_at:
+          type: string
+      required:
+        - id
+        - recipient
+        - kind
+        - severity
+        - title
+        - state
+        - created_at
+        - updated_at
+        - revision
+      type: object
+    AttentionAction:
+      properties:
+        kind:
+          type: string
+        label:
+          type: string
+        params:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+      required:
+        - kind
+        - label
+      type: object
+    AttentionCounts:
+      properties:
+        critical:
+          type: integer
+        total:
+          type: integer
+        unread:
+          type: integer
+      required:
+        - unread
+        - total
+        - critical
+      type: object
+    CreateAttentionRequest:
+      properties:
+        actions:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttentionAction'
+              type: array
+            - type: 'null'
+        body:
+          type: string
+        dedup_key:
+          type: string
+        feature_id:
+          type: string
+        instance_id:
+          type: string
+        kind:
+          type: string
+        project:
+          type: string
+        recipient:
+          type: string
+        runner_id:
+          type: string
+        session_id:
+          type: string
+        severity:
+          type: string
+        source_id:
+          type: string
+        source_type:
+          type: string
+        task_id:
+          type: string
+        title:
+          type: string
+      required:
+        - kind
+        - title
+      type: object
+    CreateReminderRequest:
+      properties:
+        config:
+          $ref: '#/components/schemas/ReminderConfig'
+        content:
+          type: string
+        feature_id:
+          type: string
+        global:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        project:
+          type: string
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        title:
+          type: string
+      required:
+        - title
+        - config
+      type: object
+    ReminderListResponse:
+      properties:
+        count:
+          type: integer
+        reminders:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/ReminderSummary'
+              type: array
+            - type: 'null'
+      required:
+        - reminders
+        - count
+      type: object
+    ReminderSummary:
+      properties:
+        action:
+          type: string
+        entry_id:
+          type: string
+        feature_id:
+          type: string
+        fire_count:
+          type: integer
+        fired_at:
+          type: string
+        generated_task_id:
+          type: string
+        late_by_seconds:
+          format: int64
+          type: integer
+        path:
+          type: string
+        project:
+          type: string
+        prompt:
+          type: string
+        remind_at:
+          type: string
+        reminder_id:
+          type: string
+        repeat:
+          type: string
+        repeat_until:
+          type: string
+        state:
+          type: string
+        status:
+          type: string
+        timezone:
+          type: string
+        title:
+          type: string
+      required:
+        - entry_id
+        - reminder_id
+        - title
+        - status
+        - state
+        - action
+      type: object
+    UpdateReminderRequest:
+      properties:
+        action:
+          anyOf:
+            - type: string
+            - type: 'null'
+        agent:
+          anyOf:
+            - type: string
+            - type: 'null'
+        content:
+          anyOf:
+            - type: string
+            - type: 'null'
+        execution_mode:
+          anyOf:
+            - type: string
+            - type: 'null'
+        executor:
+          anyOf:
+            - type: string
+            - type: 'null'
+        model:
+          anyOf:
+            - type: string
+            - type: 'null'
+        prompt:
+          anyOf:
+            - type: string
+            - type: 'null'
+        remind_at:
+          anyOf:
+            - type: string
+            - type: 'null'
+        repeat:
+          anyOf:
+            - type: string
+            - type: 'null'
+        repeat_until:
+          anyOf:
+            - type: string
+            - type: 'null'
+        status:
+          anyOf:
+            - type: string
+            - type: 'null'
+        target_workdir:
+          anyOf:
+            - type: string
+            - type: 'null'
+        timezone:
+          anyOf:
+            - type: string
+            - type: 'null'
+        title:
           anyOf:
             - type: string
             - type: 'null'

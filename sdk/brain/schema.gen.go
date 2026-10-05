@@ -116,6 +116,53 @@ type AttachmentReference struct {
 	TextUrl     *string                `json:"text_url,omitempty"`
 }
 
+// Attention defines model for Attention.
+type Attention struct {
+	Actions      *[]AttentionAction `json:"actions,omitempty"`
+	Body         *string            `json:"body,omitempty"`
+	CreatedAt    string             `json:"created_at"`
+	DedupKey     *string            `json:"dedup_key,omitempty"`
+	FeatureId    *string            `json:"feature_id,omitempty"`
+	Id           string             `json:"id"`
+	InstanceId   *string            `json:"instance_id,omitempty"`
+	Kind         string             `json:"kind"`
+	Project      *string            `json:"project,omitempty"`
+	ReadAt       *string            `json:"read_at,omitempty"`
+	Recipient    string             `json:"recipient"`
+	ResolvedAt   *string            `json:"resolved_at,omitempty"`
+	Revision     int                `json:"revision"`
+	RunnerId     *string            `json:"runner_id,omitempty"`
+	SessionId    *string            `json:"session_id,omitempty"`
+	Severity     string             `json:"severity"`
+	SnoozedUntil *string            `json:"snoozed_until,omitempty"`
+	SourceId     *string            `json:"source_id,omitempty"`
+	SourceType   *string            `json:"source_type,omitempty"`
+	State        string             `json:"state"`
+	TaskId       *string            `json:"task_id,omitempty"`
+	Title        string             `json:"title"`
+	UpdatedAt    string             `json:"updated_at"`
+}
+
+// AttentionAction defines model for AttentionAction.
+type AttentionAction struct {
+	Kind   string             `json:"kind"`
+	Label  string             `json:"label"`
+	Params *map[string]string `json:"params,omitempty"`
+}
+
+// AttentionCounts defines model for AttentionCounts.
+type AttentionCounts struct {
+	Critical int `json:"critical"`
+	Total    int `json:"total"`
+	Unread   int `json:"unread"`
+}
+
+// AttentionListResponse defines model for AttentionListResponse.
+type AttentionListResponse struct {
+	Attention []Attention `json:"attention"`
+	Count     int         `json:"count"`
+}
+
 // AutomationAction defines model for AutomationAction.
 type AutomationAction struct {
 	Agent              *string `json:"agent,omitempty"`
@@ -311,6 +358,25 @@ type CreateAttachmentResponse struct {
 	Attachment Attachment `json:"attachment"`
 }
 
+// CreateAttentionRequest defines model for CreateAttentionRequest.
+type CreateAttentionRequest struct {
+	Actions    *[]AttentionAction `json:"actions,omitempty"`
+	Body       *string            `json:"body,omitempty"`
+	DedupKey   *string            `json:"dedup_key,omitempty"`
+	FeatureId  *string            `json:"feature_id,omitempty"`
+	InstanceId *string            `json:"instance_id,omitempty"`
+	Kind       string             `json:"kind"`
+	Project    *string            `json:"project,omitempty"`
+	Recipient  *string            `json:"recipient,omitempty"`
+	RunnerId   *string            `json:"runner_id,omitempty"`
+	SessionId  *string            `json:"session_id,omitempty"`
+	Severity   *string            `json:"severity,omitempty"`
+	SourceId   *string            `json:"source_id,omitempty"`
+	SourceType *string            `json:"source_type,omitempty"`
+	TaskId     *string            `json:"task_id,omitempty"`
+	Title      string             `json:"title"`
+}
+
 // CreateEntryRequest defines model for CreateEntryRequest.
 type CreateEntryRequest struct {
 	Action              *AutomationAction           `json:"action,omitempty"`
@@ -402,6 +468,17 @@ type CreateGoalRequest struct {
 	Title     string           `json:"title"`
 }
 
+// CreateReminderRequest defines model for CreateReminderRequest.
+type CreateReminderRequest struct {
+	Config    ReminderConfig `json:"config"`
+	Content   *string        `json:"content,omitempty"`
+	FeatureId *string        `json:"feature_id,omitempty"`
+	Global    *bool          `json:"global,omitempty"`
+	Project   *string        `json:"project,omitempty"`
+	Tags      *[]string      `json:"tags,omitempty"`
+	Title     string         `json:"title"`
+}
+
 // CronRun defines model for CronRun.
 type CronRun struct {
 	Completed  *string `json:"completed,omitempty"`
@@ -418,6 +495,11 @@ type CronRun struct {
 type DeleteGoalResponse struct {
 	GoalId  string `json:"goal_id"`
 	Success bool   `json:"success"`
+}
+
+// DeletionResponse defines model for DeletionResponse.
+type DeletionResponse struct {
+	Deleted bool `json:"deleted"`
 }
 
 // DeliveryEvidence defines model for DeliveryEvidence.
@@ -643,6 +725,34 @@ type ReminderConfig struct {
 	Timezone        *string `json:"timezone,omitempty"`
 }
 
+// ReminderListResponse defines model for ReminderListResponse.
+type ReminderListResponse struct {
+	Count     int                `json:"count"`
+	Reminders *[]ReminderSummary `json:"reminders"`
+}
+
+// ReminderSummary defines model for ReminderSummary.
+type ReminderSummary struct {
+	Action          string  `json:"action"`
+	EntryId         string  `json:"entry_id"`
+	FeatureId       *string `json:"feature_id,omitempty"`
+	FireCount       *int    `json:"fire_count,omitempty"`
+	FiredAt         *string `json:"fired_at,omitempty"`
+	GeneratedTaskId *string `json:"generated_task_id,omitempty"`
+	LateBySeconds   *int64  `json:"late_by_seconds,omitempty"`
+	Path            *string `json:"path,omitempty"`
+	Project         *string `json:"project,omitempty"`
+	Prompt          *string `json:"prompt,omitempty"`
+	RemindAt        *string `json:"remind_at,omitempty"`
+	ReminderId      string  `json:"reminder_id"`
+	Repeat          *string `json:"repeat,omitempty"`
+	RepeatUntil     *string `json:"repeat_until,omitempty"`
+	State           string  `json:"state"`
+	Status          string  `json:"status"`
+	Timezone        *string `json:"timezone,omitempty"`
+	Title           string  `json:"title"`
+}
+
 // ResolvedTask defines model for ResolvedTask.
 type ResolvedTask struct {
 	AbandonReason           *string                 `json:"abandon_reason,omitempty"`
@@ -811,6 +921,16 @@ type SessionInfo struct {
 	Workdir   *string `json:"workdir,omitempty"`
 }
 
+// SnoozeAttentionRequest defines model for SnoozeAttentionRequest.
+type SnoozeAttentionRequest struct {
+	SnoozedUntil time.Time `json:"snoozed_until"`
+}
+
+// SnoozeReminderRequest defines model for SnoozeReminderRequest.
+type SnoozeReminderRequest struct {
+	RemindAt time.Time `json:"remind_at"`
+}
+
 // TaskListResponse defines model for TaskListResponse.
 type TaskListResponse struct {
 	Count  int             `json:"count"`
@@ -927,6 +1047,24 @@ type UpdateGoalRequest struct {
 	Workdir          *string           `json:"workdir,omitempty"`
 }
 
+// UpdateReminderRequest defines model for UpdateReminderRequest.
+type UpdateReminderRequest struct {
+	Action        *string `json:"action,omitempty"`
+	Agent         *string `json:"agent,omitempty"`
+	Content       *string `json:"content,omitempty"`
+	ExecutionMode *string `json:"execution_mode,omitempty"`
+	Executor      *string `json:"executor,omitempty"`
+	Model         *string `json:"model,omitempty"`
+	Prompt        *string `json:"prompt,omitempty"`
+	RemindAt      *string `json:"remind_at,omitempty"`
+	Repeat        *string `json:"repeat,omitempty"`
+	RepeatUntil   *string `json:"repeat_until,omitempty"`
+	Status        *string `json:"status,omitempty"`
+	TargetWorkdir *string `json:"target_workdir,omitempty"`
+	Timezone      *string `json:"timezone,omitempty"`
+	Title         *string `json:"title,omitempty"`
+}
+
 // ValidationDetail defines model for ValidationDetail.
 type ValidationDetail struct {
 	Field   string `json:"field"`
@@ -970,6 +1108,16 @@ type AttachmentsExtractParams struct {
 // AttachmentsTextParams defines parameters for AttachmentsText.
 type AttachmentsTextParams struct {
 	ProjectId string `form:"project_id" json:"project_id"`
+}
+
+// AttentionListParams defines parameters for AttentionList.
+type AttentionListParams struct {
+	State          *string `form:"state,omitempty" json:"state,omitempty"`
+	Project        *string `form:"project,omitempty" json:"project,omitempty"`
+	Kind           *string `form:"kind,omitempty" json:"kind,omitempty"`
+	Severity       *string `form:"severity,omitempty" json:"severity,omitempty"`
+	SourceType     *string `form:"source_type,omitempty" json:"source_type,omitempty"`
+	IncludeSnoozed *bool   `form:"include_snoozed,omitempty" json:"include_snoozed,omitempty"`
 }
 
 // EntriesListParams defines parameters for EntriesList.
@@ -1033,11 +1181,23 @@ type GoalsAuditParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// RemindersListParams defines parameters for RemindersList.
+type RemindersListParams struct {
+	Project *string `form:"project,omitempty" json:"project,omitempty"`
+	State   *string `form:"state,omitempty" json:"state,omitempty"`
+}
+
 // AttachmentsUploadMultipartRequestBody defines body for AttachmentsUpload for multipart/form-data ContentType.
 type AttachmentsUploadMultipartRequestBody AttachmentsUploadMultipartBody
 
 // AttachmentsExtractJSONRequestBody defines body for AttachmentsExtract for application/json ContentType.
 type AttachmentsExtractJSONRequestBody = AttachmentExtractionRequest
+
+// AttentionCreateJSONRequestBody defines body for AttentionCreate for application/json ContentType.
+type AttentionCreateJSONRequestBody = CreateAttentionRequest
+
+// AttentionSnoozeJSONRequestBody defines body for AttentionSnooze for application/json ContentType.
+type AttentionSnoozeJSONRequestBody = SnoozeAttentionRequest
 
 // EntriesCreateJSONRequestBody defines body for EntriesCreate for application/json ContentType.
 type EntriesCreateJSONRequestBody = CreateEntryRequest
@@ -1062,6 +1222,15 @@ type GoalsCreateJSONRequestBody = CreateGoalRequest
 
 // GoalsUpdateJSONRequestBody defines body for GoalsUpdate for application/json ContentType.
 type GoalsUpdateJSONRequestBody = UpdateGoalRequest
+
+// RemindersCreateJSONRequestBody defines body for RemindersCreate for application/json ContentType.
+type RemindersCreateJSONRequestBody = CreateReminderRequest
+
+// RemindersUpdateJSONRequestBody defines body for RemindersUpdate for application/json ContentType.
+type RemindersUpdateJSONRequestBody = UpdateReminderRequest
+
+// RemindersSnoozeJSONRequestBody defines body for RemindersSnooze for application/json ContentType.
+type RemindersSnoozeJSONRequestBody = SnoozeReminderRequest
 
 // SearchQueryJSONRequestBody defines body for SearchQuery for application/json ContentType.
 type SearchQueryJSONRequestBody = SearchRequest

@@ -513,10 +513,270 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/reminders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List reminders */
+        get: operations["reminders.list"];
+        put?: never;
+        /** Create a reminder */
+        post: operations["reminders.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reminders/{reminderId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reminderId: string;
+            };
+            cookie?: never;
+        };
+        /** Get a reminder */
+        get: operations["reminders.get"];
+        put?: never;
+        post?: never;
+        /** Delete a reminder */
+        delete: operations["reminders.delete"];
+        options?: never;
+        head?: never;
+        /** Update a reminder */
+        patch: operations["reminders.update"];
+        trace?: never;
+    };
+    "/reminders/{reminderId}/ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reminderId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Acknowledge a reminder */
+        post: operations["reminders.ack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reminders/{reminderId}/snooze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reminderId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Snooze a reminder until a new timestamp */
+        post: operations["reminders.snooze"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reminders/{reminderId}/fire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reminderId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fire a reminder now; may publish notices or submit work */
+        post: operations["reminders.fire"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List attention for the authenticated recipient */
+        get: operations["attention.list"];
+        put?: never;
+        /** Create attention under existing publication policy */
+        post: operations["attention.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attention/counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get authenticated recipient attention counts */
+        get: operations["attention.counts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attention/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get authenticated recipient attention item */
+        get: operations["attention.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attention/{id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark attention read */
+        post: operations["attention.read"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attention/{id}/unread": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark attention unread */
+        post: operations["attention.unread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attention/{id}/snooze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Snooze attention until a timestamp */
+        post: operations["attention.snooze"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attention/{id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve attention */
+        post: operations["attention.resolve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attention/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dismiss attention */
+        post: operations["attention.dismiss"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        DeletionResponse: {
+            deleted: boolean;
+        };
+        SnoozeReminderRequest: {
+            /** Format: date-time */
+            remind_at: string;
+        };
+        SnoozeAttentionRequest: {
+            /** Format: date-time */
+            snoozed_until: string;
+        };
+        AttentionListResponse: {
+            attention: components["schemas"]["Attention"][];
+            count: number;
+        };
         ListGoalsResponse: {
             goals: components["schemas"]["GoalSummary"][] | null;
             count: number;
@@ -1341,6 +1601,110 @@ export interface components {
             trigger_source?: string | null;
             validation?: string | null;
             workdir?: string | null;
+        };
+        Attention: {
+            actions?: components["schemas"]["AttentionAction"][] | null;
+            body?: string;
+            created_at: string;
+            dedup_key?: string;
+            feature_id?: string;
+            id: string;
+            instance_id?: string;
+            kind: string;
+            project?: string;
+            read_at?: string;
+            recipient: string;
+            resolved_at?: string;
+            revision: number;
+            runner_id?: string;
+            session_id?: string;
+            severity: string;
+            snoozed_until?: string;
+            source_id?: string;
+            source_type?: string;
+            state: string;
+            task_id?: string;
+            title: string;
+            updated_at: string;
+        };
+        AttentionAction: {
+            kind: string;
+            label: string;
+            params?: {
+                [key: string]: string;
+            } | null;
+        };
+        AttentionCounts: {
+            critical: number;
+            total: number;
+            unread: number;
+        };
+        CreateAttentionRequest: {
+            actions?: components["schemas"]["AttentionAction"][] | null;
+            body?: string;
+            dedup_key?: string;
+            feature_id?: string;
+            instance_id?: string;
+            kind: string;
+            project?: string;
+            recipient?: string;
+            runner_id?: string;
+            session_id?: string;
+            severity?: string;
+            source_id?: string;
+            source_type?: string;
+            task_id?: string;
+            title: string;
+        };
+        CreateReminderRequest: {
+            config: components["schemas"]["ReminderConfig"];
+            content?: string;
+            feature_id?: string;
+            global?: boolean | null;
+            project?: string;
+            tags?: string[] | null;
+            title: string;
+        };
+        ReminderListResponse: {
+            count: number;
+            reminders: components["schemas"]["ReminderSummary"][] | null;
+        };
+        ReminderSummary: {
+            action: string;
+            entry_id: string;
+            feature_id?: string;
+            fire_count?: number;
+            fired_at?: string;
+            generated_task_id?: string;
+            /** Format: int64 */
+            late_by_seconds?: number;
+            path?: string;
+            project?: string;
+            prompt?: string;
+            remind_at?: string;
+            reminder_id: string;
+            repeat?: string;
+            repeat_until?: string;
+            state: string;
+            status: string;
+            timezone?: string;
+            title: string;
+        };
+        UpdateReminderRequest: {
+            action?: string | null;
+            agent?: string | null;
+            content?: string | null;
+            execution_mode?: string | null;
+            executor?: string | null;
+            model?: string | null;
+            prompt?: string | null;
+            remind_at?: string | null;
+            repeat?: string | null;
+            repeat_until?: string | null;
+            status?: string | null;
+            target_workdir?: string | null;
+            timezone?: string | null;
+            title?: string | null;
         };
     };
     responses: never;
@@ -2179,6 +2543,400 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GoalReconcileAudit"];
+                };
+            };
+        };
+    };
+    "reminders.list": {
+        parameters: {
+            query?: {
+                project?: string;
+                state?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reminder summaries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReminderListResponse"];
+                };
+            };
+        };
+    };
+    "reminders.create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateReminderRequest"];
+            };
+        };
+        responses: {
+            /** @description Created reminder */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReminderSummary"];
+                };
+            };
+        };
+    };
+    "reminders.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reminderId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reminder */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReminderSummary"];
+                };
+            };
+        };
+    };
+    "reminders.delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reminderId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deletion outcome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletionResponse"];
+                };
+            };
+        };
+    };
+    "reminders.update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reminderId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateReminderRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated reminder */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReminderSummary"];
+                };
+            };
+        };
+    };
+    "reminders.ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reminderId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reminder state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReminderSummary"];
+                };
+            };
+        };
+    };
+    "reminders.snooze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reminderId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SnoozeReminderRequest"];
+            };
+        };
+        responses: {
+            /** @description Reminder state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReminderSummary"];
+                };
+            };
+        };
+    };
+    "reminders.fire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reminderId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reminder state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReminderSummary"];
+                };
+            };
+        };
+    };
+    "attention.list": {
+        parameters: {
+            query?: {
+                state?: string;
+                project?: string;
+                kind?: string;
+                severity?: string;
+                source_type?: string;
+                include_snoozed?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attention items */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttentionListResponse"];
+                };
+            };
+        };
+    };
+    "attention.create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAttentionRequest"];
+            };
+        };
+        responses: {
+            /** @description Created attention */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attention"];
+                };
+            };
+        };
+    };
+    "attention.counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Counts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttentionCounts"];
+                };
+            };
+        };
+    };
+    "attention.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attention item */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attention"];
+                };
+            };
+        };
+    };
+    "attention.read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attention state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attention"];
+                };
+            };
+        };
+    };
+    "attention.unread": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attention state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attention"];
+                };
+            };
+        };
+    };
+    "attention.snooze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SnoozeAttentionRequest"];
+            };
+        };
+        responses: {
+            /** @description Attention state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attention"];
+                };
+            };
+        };
+    };
+    "attention.resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attention state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attention"];
+                };
+            };
+        };
+    };
+    "attention.dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attention state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attention"];
                 };
             };
         };

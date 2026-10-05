@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/attentionstore"
 	"github.com/huynle/brain-api/internal/blobstore"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
@@ -54,7 +55,14 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	}
 	attachments := service.NewAttachmentService(store, blobs, svc, 8<<20)
 	goals := service.NewGoalService(svc, tasks, store)
-	h := api.NewHandler(svc, api.WithTaskService(tasks), api.WithAttachmentService(attachments), api.WithGoalService(goals))
+	inbox, err := attentionstore.Open(filepath.Join(root, "attention.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inbox.Close()
+	attention := service.NewAttentionService(inbox)
+	reminders := service.NewReminderService(svc, store)
+	h := api.NewHandler(svc, api.WithTaskService(tasks), api.WithAttachmentService(attachments), api.WithGoalService(goals), api.WithReminderService(reminders), api.WithAttentionService(attention))
 	srv := httptest.NewServer(api.NewRouter(cfg, api.WithHandler(h), api.WithTokenValidator(control)))
 	defer srv.Close()
 	c, err := brain.New(brain.Config{BaseURL: srv.URL})
@@ -65,6 +73,12 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	if _, err := c.Entries().List(context.Background(), nil); err == nil {
 		t.Fatal("unauthenticated SDK request accepted")
 	}
+	authed, err := brain.New(brain.Config{BaseURL: srv.URL, Token: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer authed.Close()
+	exerciseNotificationSDK(t, authed)
 	repo, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)

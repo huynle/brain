@@ -556,6 +556,7 @@ paths:
       operationId: projects.list
       summary: List projects visible to the current single-mode service
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Project names
           content:
@@ -584,6 +585,7 @@ paths:
           schema:
             type: boolean
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Legacy statistics, including host paths; not script-safe
           content:
@@ -612,6 +614,7 @@ paths:
           schema:
             type: integer
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Orphan entries
           content:
@@ -646,6 +649,7 @@ paths:
           schema:
             type: integer
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Stale entries
           content:
@@ -687,6 +691,7 @@ paths:
           schema:
             type: string
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Ready tasks
           content:
@@ -726,6 +731,7 @@ paths:
           schema:
             type: string
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Next ready task, or null when no task is ready
           content:
@@ -754,6 +760,7 @@ paths:
           schema:
             type: string
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Waiting tasks
           content:
@@ -774,6 +781,7 @@ paths:
           schema:
             type: string
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Blocked tasks
           content:
@@ -789,6 +797,7 @@ paths:
       summary: Get server health
       security: []
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Server health (not script availability)
           content:
@@ -846,6 +855,7 @@ paths:
           schema:
             type: string
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: A page of entries; truncated is not end-of-pagination
           content:
@@ -895,6 +905,7 @@ paths:
       operationId: entries.get
       summary: Get an entry by ID or legacy path
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Entry, including current revision
           content:
@@ -914,6 +925,7 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateEntryRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Updated entry
           content:
@@ -939,6 +951,7 @@ paths:
             type: boolean
             default: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '204':
           description: Entry deleted; no response body
   /search:
@@ -958,6 +971,7 @@ paths:
             schema:
               $ref: '#/components/schemas/SearchRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Matching entries
           content:
@@ -992,6 +1006,7 @@ paths:
       operationId: tasks.list
       summary: List resolved project tasks
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Resolved tasks and dependencies
           content:
@@ -1017,6 +1032,7 @@ paths:
       operationId: tasks.get
       summary: Get a resolved task
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Resolved task
           content:
@@ -1043,6 +1059,7 @@ paths:
             schema:
               $ref: '#/components/schemas/MoveEntryRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Move result
           content:
@@ -1063,6 +1080,7 @@ paths:
             schema:
               $ref: '#/components/schemas/BulkUpdateRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Per-entry outcomes; inspect failed and truncated
           content:
@@ -1083,6 +1101,7 @@ paths:
             schema:
               $ref: '#/components/schemas/BulkDeleteRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Per-entry outcomes; inspect failed and truncated
           content:
@@ -1103,6 +1122,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Section headings
           content:
@@ -1133,6 +1153,7 @@ paths:
           schema:
             type: boolean
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Section content
           content:
@@ -1153,6 +1174,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Entry array
           content:
@@ -1175,6 +1197,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Entry array
           content:
@@ -1205,6 +1228,7 @@ paths:
             maximum: 100
             default: 10
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Entry array
           content:
@@ -1227,6 +1251,7 @@ paths:
           schema:
             type: string
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Attachment metadata list
           content:
@@ -1259,6 +1284,7 @@ paths:
                   format: binary
                   x-go-type: '[]byte'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '201':
           description: Stored attachment metadata
           content:
@@ -1284,6 +1310,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Attachment metadata
           content:
@@ -1297,6 +1324,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Deletion result
           content:
@@ -1322,6 +1350,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Raw content; actual media type follows stored metadata
           content:
@@ -1349,6 +1378,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Stored derived text
           content:
@@ -1379,6 +1409,7 @@ paths:
             schema:
               $ref: '#/components/schemas/AttachmentExtractionRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Derived text and linked-entry outcomes
           content:
@@ -1404,6 +1435,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Entry references
           content:
@@ -1426,6 +1458,7 @@ paths:
             schema:
               $ref: '#/components/schemas/AttachEntryAttachmentRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Updated entry references
           content:
@@ -1463,6 +1496,7 @@ paths:
             type: string
             minLength: 1
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Updated entry references
           content:
@@ -1490,6 +1524,7 @@ paths:
           schema:
             type: string
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Goal summaries
           content:
@@ -1509,6 +1544,7 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateGoalRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '201':
           description: Created goal
           content:
@@ -1535,6 +1571,7 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateGoalRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Updated goal
           content:
@@ -1548,6 +1585,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Goal deletion result
           content:
@@ -1568,6 +1606,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Goal progress
           content:
@@ -1596,6 +1635,7 @@ paths:
             maximum: 1000
             default: 50
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Goal audit history
           content:
@@ -1616,6 +1656,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Reconcile decision
           content:
@@ -1639,6 +1680,7 @@ paths:
           schema:
             type: string
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Reminder summaries
           content:
@@ -1658,6 +1700,7 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateReminderRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '201':
           description: Created reminder
           content:
@@ -1678,6 +1721,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Reminder
           content:
@@ -1697,6 +1741,7 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateReminderRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Updated reminder
           content:
@@ -1710,6 +1755,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Deletion outcome
           content:
@@ -1730,6 +1776,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Reminder state
           content:
@@ -1756,6 +1803,7 @@ paths:
             schema:
               $ref: '#/components/schemas/SnoozeReminderRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Reminder state
           content:
@@ -1776,6 +1824,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Reminder state
           content:
@@ -1815,6 +1864,7 @@ paths:
           schema:
             type: boolean
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Attention items
           content:
@@ -1834,6 +1884,7 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateAttentionRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '201':
           description: Created attention
           content:
@@ -1848,6 +1899,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Counts
           content:
@@ -1868,6 +1920,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Attention item
           content:
@@ -1888,6 +1941,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Attention state
           content:
@@ -1908,6 +1962,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Attention state
           content:
@@ -1934,6 +1989,7 @@ paths:
             schema:
               $ref: '#/components/schemas/SnoozeAttentionRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Attention state
           content:
@@ -1954,6 +2010,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Attention state
           content:
@@ -1974,6 +2031,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Attention state
           content:
@@ -1993,6 +2051,7 @@ paths:
           schema:
             type: boolean
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Webhooks
           content:
@@ -2012,6 +2071,7 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateWebhookRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '201':
           description: Created webhook
           content:
@@ -2032,6 +2092,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Webhook
           content:
@@ -2051,6 +2112,7 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateWebhookRequest'
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Updated webhook
           content:
@@ -2064,6 +2126,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Deletion result
           content:
@@ -2091,6 +2154,7 @@ paths:
             minimum: 1
             default: 50
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Delivery history
           content:
@@ -2111,6 +2175,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
           description: Delivery result
           content:
@@ -2126,6 +2191,7 @@ paths:
       x-brain-script: false
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RunAutomationRequest'}}}}
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200': {description: Generated tasks, content: {application/json: {schema: {$ref: '#/components/schemas/RunAutomationResponse'}}}}
         '409': {description: Generation skipped, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationSkippedResponse'}}}}
   /automation-runs:
@@ -2141,6 +2207,7 @@ paths:
         - {name: automation_id, in: query, schema: {type: string}}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, default: 100}}
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200': {description: Run entries, content: {application/json: {schema: {$ref: '#/components/schemas/ListEntriesResponse'}}}}
   /automation-runs/{runId}:
     parameters: [{name: runId, in: path, required: true, schema: {type: string}}]
@@ -2151,6 +2218,7 @@ paths:
       x-brain-profile: single
       x-brain-script: false
       responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200': {description: Run entry, content: {application/json: {schema: {$ref: '#/components/schemas/BrainEntry'}}}}
 components:
   securitySchemes:
@@ -2662,12 +2730,12 @@ components:
         and preserve field details without changing the server wire format.
       required:
         - error
-        - message
       properties:
         error:
           type: string
         message:
           type: string
+          description: Optional; some legacy conflicts contain only error and success.
         details:
           type: array
           items:

@@ -886,7 +886,9 @@ type LegacyErrorResponse struct {
 	Code    *string             `json:"code,omitempty"`
 	Details *[]ValidationDetail `json:"details,omitempty"`
 	Error   string              `json:"error"`
-	Message string              `json:"message"`
+
+	// Message Optional; some legacy conflicts contain only error and success.
+	Message *string `json:"message,omitempty"`
 
 	// RequestId Optional fallback when X-Request-ID is absent.
 	RequestId *string `json:"request_id,omitempty"`

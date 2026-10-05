@@ -58,6 +58,15 @@ external-provider path is route/decoding-tested, not a live provider verificatio
 The metadata key contract has an exact server allowlist guard; embedded resume and
 nullable timestamp DTOs have real JSON round-trip parity tests.
 
+All 104 operation declarations now name the legacy default JSON error response.
+`TestEveryOperationDeclaresLegacyErrorBehavior` guards coverage. The shared error
+schema requires `error`, but **not** `message`: the real task-dispatch conflict
+handler returns `{error, success:false}` without it, reproduced by
+`TestLegacyErrorContractAcceptsActualDispatchConflict` (service conflict seam,
+actual HTTP handler serialization). Both generated SDK shapes preserve this
+optionality. This is error-shape compatibility, not an authorization test, server
+error normalization, a retry promise or proof every status path was exercised.
+
 `events.stream` consumes SSE through the authenticated existing transport, bounded
 per frame, without reconnect/retry. Unit evidence covers comments, CRLF, multiline
 data, callback stop, incomplete EOF, malformed/oversized frames, legacy HTTP errors,

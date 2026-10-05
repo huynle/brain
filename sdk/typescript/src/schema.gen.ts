@@ -2206,7 +2206,8 @@ export interface components {
         /** @description Existing REST error envelope; SDKs adapt HTTP status to a machine code and preserve field details without changing the server wire format. */
         LegacyErrorResponse: {
             error: string;
-            message: string;
+            /** @description Optional; some legacy conflicts contain only error and success. */
+            message?: string;
             details?: components["schemas"]["ValidationDetail"][];
             /** @description Optional future-compatible machine code; legacy endpoints usually omit it. */
             code?: string;
@@ -4364,6 +4365,15 @@ export interface operations {
                     "application/json": components["schemas"]["ProjectListResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "observability.stats": {
@@ -4389,6 +4399,15 @@ export interface operations {
                     "application/json": components["schemas"]["StatsResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "graph.orphans": {
@@ -4412,6 +4431,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BrainEntry"][] | null;
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -4440,6 +4468,15 @@ export interface operations {
                     "application/json": components["schemas"]["BrainEntry"][] | null;
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "tasks.ready": {
@@ -4466,6 +4503,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskSelectionResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -4505,6 +4551,15 @@ export interface operations {
                     "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "tasks.waiting": {
@@ -4525,6 +4580,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskSelectionResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -4549,6 +4613,15 @@ export interface operations {
                     "application/json": components["schemas"]["TaskSelectionResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "health.get": {
@@ -4567,6 +4640,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -4598,6 +4680,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListEntriesResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -4656,6 +4747,15 @@ export interface operations {
                     "application/json": components["schemas"]["BrainEntry"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "entries.delete": {
@@ -4678,6 +4778,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
             };
         };
     };
@@ -4705,6 +4814,15 @@ export interface operations {
                     "application/json": components["schemas"]["BrainEntry"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "search.query": {
@@ -4729,6 +4847,15 @@ export interface operations {
                     "application/json": components["schemas"]["SearchResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "tasks.list": {
@@ -4749,6 +4876,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskListResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -4808,6 +4944,15 @@ export interface operations {
                     "application/json": components["schemas"]["ResolvedTask"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "entries.move": {
@@ -4834,6 +4979,15 @@ export interface operations {
                     "application/json": components["schemas"]["MoveResult"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "entries.bulkUpdate": {
@@ -4856,6 +5010,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BulkUpdateResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -4882,6 +5045,15 @@ export interface operations {
                     "application/json": components["schemas"]["BulkDeleteResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "sections.list": {
@@ -4902,6 +5074,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SectionsResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -4929,6 +5110,15 @@ export interface operations {
                     "application/json": components["schemas"]["SectionContentResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "graph.backlinks": {
@@ -4951,6 +5141,15 @@ export interface operations {
                     "application/json": components["schemas"]["BrainEntry"][];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "graph.outlinks": {
@@ -4971,6 +5170,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BrainEntry"][];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -4997,6 +5205,15 @@ export interface operations {
                     "application/json": components["schemas"]["BrainEntry"][];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "attachments.list": {
@@ -5017,6 +5234,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListAttachmentsResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5049,6 +5275,15 @@ export interface operations {
                     "application/json": components["schemas"]["CreateAttachmentResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "attachments.get": {
@@ -5071,6 +5306,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Attachment"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5097,6 +5341,15 @@ export interface operations {
                     "application/json": components["schemas"]["AttachmentDeletionResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "attachments.download": {
@@ -5121,6 +5374,15 @@ export interface operations {
                     "application/octet-stream": string;
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "attachments.text": {
@@ -5143,6 +5405,15 @@ export interface operations {
                 };
                 content: {
                     "text/plain": string;
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5173,6 +5444,15 @@ export interface operations {
                     "application/json": components["schemas"]["AttachmentExtractionResult"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "attachments.forEntry": {
@@ -5195,6 +5475,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AttachEntryAttachmentResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5225,6 +5514,15 @@ export interface operations {
                     "application/json": components["schemas"]["AttachEntryAttachmentResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "attachments.detach": {
@@ -5251,6 +5549,15 @@ export interface operations {
                     "application/json": components["schemas"]["AttachEntryAttachmentResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "goals.list": {
@@ -5273,6 +5580,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListGoalsResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5299,6 +5615,15 @@ export interface operations {
                     "application/json": components["schemas"]["GoalSummary"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "goals.delete": {
@@ -5319,6 +5644,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeleteGoalResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5347,6 +5681,15 @@ export interface operations {
                     "application/json": components["schemas"]["GoalSummary"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "goals.progress": {
@@ -5367,6 +5710,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GoalProgressResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5393,6 +5745,15 @@ export interface operations {
                     "application/json": components["schemas"]["GoalAuditResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "goals.run": {
@@ -5413,6 +5774,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GoalReconcileAudit"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5436,6 +5806,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReminderListResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5462,6 +5841,15 @@ export interface operations {
                     "application/json": components["schemas"]["ReminderSummary"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "reminders.get": {
@@ -5484,6 +5872,15 @@ export interface operations {
                     "application/json": components["schemas"]["ReminderSummary"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "reminders.delete": {
@@ -5504,6 +5901,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeletionResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5532,6 +5938,15 @@ export interface operations {
                     "application/json": components["schemas"]["ReminderSummary"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "reminders.ack": {
@@ -5552,6 +5967,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReminderSummary"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5580,6 +6004,15 @@ export interface operations {
                     "application/json": components["schemas"]["ReminderSummary"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "reminders.fire": {
@@ -5600,6 +6033,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReminderSummary"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5629,6 +6071,15 @@ export interface operations {
                     "application/json": components["schemas"]["AttentionListResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "attention.create": {
@@ -5653,6 +6104,15 @@ export interface operations {
                     "application/json": components["schemas"]["Attention"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "attention.counts": {
@@ -5671,6 +6131,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AttentionCounts"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5695,6 +6164,15 @@ export interface operations {
                     "application/json": components["schemas"]["Attention"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "attention.read": {
@@ -5717,6 +6195,15 @@ export interface operations {
                     "application/json": components["schemas"]["Attention"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "attention.unread": {
@@ -5737,6 +6224,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Attention"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5765,6 +6261,15 @@ export interface operations {
                     "application/json": components["schemas"]["Attention"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "attention.resolve": {
@@ -5785,6 +6290,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Attention"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5809,6 +6323,15 @@ export interface operations {
                     "application/json": components["schemas"]["Attention"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "webhooks.list": {
@@ -5829,6 +6352,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListWebhooksResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5855,6 +6387,15 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "webhooks.get": {
@@ -5877,6 +6418,15 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "webhooks.delete": {
@@ -5897,6 +6447,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SuccessResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -5925,6 +6484,15 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "webhooks.deliveries": {
@@ -5949,6 +6517,15 @@ export interface operations {
                     "application/json": components["schemas"]["ListWebhookDeliveriesResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "webhooks.test": {
@@ -5969,6 +6546,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WebhookDeliveryResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };
@@ -6004,6 +6590,15 @@ export interface operations {
                     "application/json": components["schemas"]["AutomationSkippedResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "automations.runs": {
@@ -6029,6 +6624,15 @@ export interface operations {
                     "application/json": components["schemas"]["ListEntriesResponse"];
                 };
             };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
         };
     };
     "automations.getRun": {
@@ -6049,6 +6653,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BrainEntry"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };

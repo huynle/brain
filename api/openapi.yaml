@@ -1,0 +1,1933 @@
+openapi: 3.1.0
+info:
+  title: Brain public API
+  version: 1.0.0
+  description: >-
+    Supported single-mode HTTP contract. Tenant selection never grants
+    authority. Script execution is not exposed by this contract checkpoint.
+    Existing error bodies are retained; SDK adapters add stable codes and
+    request identifiers.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+x-brain-read:
+  x-brain-effect: read
+  x-brain-script: false
+  x-brain-profile: single
+x-brain-write:
+  x-brain-effect: write
+  x-brain-script: false
+  x-brain-profile: single
+paths:
+  /health:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: health.get
+      summary: Get server health
+      security: []
+      responses:
+        '200':
+          description: Server health (not script availability)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /entries:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: entries.list
+      summary: List entries
+      parameters:
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: tags
+          in: query
+          schema:
+            type: string
+        - name: feature_id
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+        - name: global
+          in: query
+          schema:
+            type: boolean
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+        - name: sortOrder
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A page of entries; truncated is not end-of-pagination
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListEntriesResponse'
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: entries.create
+      summary: Create an entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEntryRequest'
+      responses:
+        '201':
+          description: Persisted entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateEntryResponse'
+  /entries/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: entries.get
+      summary: Get an entry by ID or legacy path
+      responses:
+        '200':
+          description: Entry, including current revision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrainEntry'
+    patch:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: entries.update
+      summary: Update an entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEntryRequest'
+      responses:
+        '200':
+          description: Updated entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrainEntry'
+    delete:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: entries.delete
+      summary: Delete a confirmed entry
+      parameters:
+        - name: confirm
+          in: query
+          required: true
+          schema:
+            type: boolean
+            const: true
+        - name: force
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '204':
+          description: Entry deleted; no response body
+  /search:
+    post:
+      x-brain-effect: provider
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: search.query
+      summary: Search visible entries
+      description: >-
+        Semantic/hybrid strategy may call an embedding provider; not a safe
+        dry-run read.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Matching entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+  /tasks/{projectId}:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.list
+      summary: List resolved project tasks
+      responses:
+        '200':
+          description: Resolved tasks and dependencies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskListResponse'
+  /tasks/{projectId}/{taskId}:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: taskId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.get
+      summary: Get a resolved task
+      responses:
+        '200':
+          description: Resolved task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolvedTask'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+        - embedding
+      properties:
+        status:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        embedding:
+          $ref: '#/components/schemas/EmbeddingHealthStatus'
+    EmbeddingHealthStatus:
+      type: object
+      required:
+        - enabled
+        - status
+      properties:
+        enabled:
+          type: boolean
+        status:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+    AttachmentDerived:
+      properties:
+        content_type:
+          type: string
+        created:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        size:
+          format: int64
+          type: integer
+        storage_key:
+          type: string
+      required:
+        - id
+        - kind
+      type: object
+    AttachmentDerivedText:
+      properties:
+        content_type:
+          type: string
+        created:
+          type: string
+        error:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        metadata:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        modified:
+          type: string
+        status:
+          type: string
+        text:
+          type: string
+      required:
+        - status
+      type: object
+    AttachmentReference:
+      properties:
+        caption:
+          type: string
+        content_type:
+          type: string
+        derived:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttachmentDerived'
+              type: array
+            - type: 'null'
+        derived_text:
+          anyOf:
+            - $ref: '#/components/schemas/AttachmentDerivedText'
+            - type: 'null'
+        download_url:
+          type: string
+        filename:
+          type: string
+        id:
+          type: string
+        metadata:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        role:
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+        text_url:
+          type: string
+      required:
+        - id
+      type: object
+    AutomationAction:
+      properties:
+        agent:
+          type: string
+        command:
+          type: string
+        complete_on_idle:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        direct_prompt:
+          type: string
+        execution_mode:
+          type: string
+        executor:
+          type: string
+        model:
+          type: string
+        requires_capability:
+          type: string
+        session_mode:
+          type: string
+        set_status:
+          type: string
+        target_workdir:
+          type: string
+        timeout:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    AutomationRetry:
+      properties:
+        backoff:
+          type: string
+        delay:
+          type: string
+        max_attempts:
+          type: integer
+      type: object
+    BacklinkEntry:
+      properties:
+        id:
+          type: string
+        path:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+      required:
+        - id
+        - path
+        - title
+        - type
+      type: object
+    BrainEntry:
+      properties:
+        access_count:
+          type: integer
+        action:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationAction'
+            - type: 'null'
+        agent:
+          type: string
+        attachments:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttachmentReference'
+              type: array
+            - type: 'null'
+        attempt_count:
+          type: integer
+        automation_run_id:
+          type: string
+        backlinks:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/BacklinkEntry'
+              type: array
+            - type: 'null'
+        checkout_mode:
+          type: string
+        complete_on_idle:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        completed_at:
+          type: string
+        content:
+          type: string
+        created:
+          type: string
+        delivery_mode:
+          type: string
+        delivery_verification:
+          anyOf:
+            - $ref: '#/components/schemas/DeliveryVerification'
+            - type: 'null'
+        depends_on:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        direct_prompt:
+          type: string
+        embedding_status:
+          type: string
+        execution_mode:
+          type: string
+        executor:
+          type: string
+        expires_at:
+          type: string
+        extensions:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        feature_depends_on:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        feature_expires_at:
+          type: string
+        feature_id:
+          type: string
+        feature_priority:
+          type: string
+        feature_run_once_at:
+          type: string
+        feature_schedule:
+          type: string
+        feature_starts_at:
+          type: string
+        feature_timezone:
+          type: string
+        generated:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        generated_by:
+          type: string
+        generated_key:
+          type: string
+        generated_kind:
+          type: string
+        git_branch:
+          type: string
+        git_remote:
+          type: string
+        goal:
+          anyOf:
+            - $ref: '#/components/schemas/GoalConfig'
+            - type: 'null'
+        id:
+          type: string
+        last_failed_at:
+          type: string
+        last_verified:
+          type: string
+        machine_affinity:
+          type: string
+        max_runs:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        merge_policy:
+          type: string
+        merge_strategy:
+          type: string
+        merge_target_branch:
+          type: string
+        model:
+          type: string
+        modified:
+          type: string
+        next_run:
+          type: string
+        open_pr_before_merge:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        origin_client_id:
+          type: string
+        origin_machine_id:
+          type: string
+        origin_path:
+          type: string
+        parent_id:
+          type: string
+        path:
+          type: string
+        priority:
+          type: string
+        project_id:
+          type: string
+        reminder:
+          anyOf:
+            - $ref: '#/components/schemas/ReminderConfig'
+            - type: 'null'
+        remote_branch_policy:
+          type: string
+        requires_capability:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        resume_executor_override:
+          type: string
+        resume_injected_context:
+          type: string
+        resume_mode:
+          type: string
+        resume_prefer_same_session:
+          type: boolean
+        resume_requested:
+          type: boolean
+        resume_requested_at:
+          type: string
+        retry:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationRetry'
+            - type: 'null'
+        revision:
+          type: string
+        run_finalizations:
+          anyOf:
+            - additionalProperties:
+                $ref: '#/components/schemas/RunFinalization'
+              type: object
+            - type: 'null'
+        run_once_at:
+          type: string
+        runs:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/CronRun'
+              type: array
+            - type: 'null'
+        schedule:
+          type: string
+        schedule_enabled:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        session_mode:
+          type: string
+        sessions:
+          anyOf:
+            - additionalProperties:
+                $ref: '#/components/schemas/SessionInfo'
+              type: object
+            - type: 'null'
+        starts_at:
+          type: string
+        status:
+          type: string
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        target_workdir:
+          type: string
+        timezone:
+          type: string
+        title:
+          type: string
+        trigger:
+          anyOf:
+            - $ref: '#/components/schemas/TriggerConfig'
+            - type: 'null'
+        type:
+          type: string
+        user_original_request:
+          type: string
+        workdir:
+          type: string
+      required:
+        - id
+        - path
+        - title
+        - type
+        - status
+        - content
+        - tags
+      type: object
+    CreateEntryRequest:
+      properties:
+        action:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationAction'
+            - type: 'null'
+        agent:
+          type: string
+        assignment_intent:
+          type: string
+        attachments:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttachmentReference'
+              type: array
+            - type: 'null'
+        automation_run_id:
+          type: string
+        checkout_mode:
+          type: string
+        complete_on_idle:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        content:
+          type: string
+        delivery_mode:
+          type: string
+        depends_on:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        direct_prompt:
+          type: string
+        execution_mode:
+          type: string
+        executor:
+          type: string
+        expires_at:
+          type: string
+        extensions:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        feature_depends_on:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        feature_expires_at:
+          type: string
+        feature_id:
+          type: string
+        feature_priority:
+          type: string
+        feature_run_once_at:
+          type: string
+        feature_schedule:
+          type: string
+        feature_starts_at:
+          type: string
+        feature_timezone:
+          type: string
+        generated:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        generated_by:
+          type: string
+        generated_key:
+          type: string
+        generated_kind:
+          type: string
+        git_branch:
+          type: string
+        git_remote:
+          type: string
+        global:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        goal:
+          anyOf:
+            - $ref: '#/components/schemas/GoalConfig'
+            - type: 'null'
+        machine_affinity:
+          type: string
+        max_runs:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        merge_policy:
+          type: string
+        merge_strategy:
+          type: string
+        merge_target_branch:
+          type: string
+        model:
+          type: string
+        next_run:
+          type: string
+        open_pr_before_merge:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        origin_client_id:
+          type: string
+        origin_machine_id:
+          type: string
+        origin_path:
+          type: string
+        priority:
+          type: string
+        project:
+          type: string
+        relatedEntries:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        reminder:
+          anyOf:
+            - $ref: '#/components/schemas/ReminderConfig'
+            - type: 'null'
+        remote_branch_policy:
+          type: string
+        requires_capability:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        retry:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationRetry'
+            - type: 'null'
+        run_finalizations:
+          anyOf:
+            - additionalProperties:
+                $ref: '#/components/schemas/RunFinalization'
+              type: object
+            - type: 'null'
+        run_once_at:
+          type: string
+        runner_id:
+          type: string
+        runs:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/CronRun'
+              type: array
+            - type: 'null'
+        schedule:
+          type: string
+        schedule_enabled:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        session_mode:
+          type: string
+        starts_at:
+          type: string
+        status:
+          type: string
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        target_workdir:
+          type: string
+        timezone:
+          type: string
+        title:
+          type: string
+        trigger:
+          anyOf:
+            - $ref: '#/components/schemas/TriggerConfig'
+            - type: 'null'
+        type:
+          type: string
+        user_original_request:
+          type: string
+        workdir:
+          type: string
+      required:
+        - type
+        - title
+        - content
+      type: object
+    CreateEntryResponse:
+      properties:
+        id:
+          type: string
+        link:
+          type: string
+        path:
+          type: string
+        status:
+          type: string
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        title:
+          type: string
+        type:
+          type: string
+      required:
+        - id
+        - path
+        - title
+        - type
+        - status
+        - link
+      type: object
+    CronRun:
+      properties:
+        completed:
+          type: string
+        duration:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        failed_task:
+          type: string
+        run_id:
+          type: string
+        skip_reason:
+          type: string
+        started:
+          type: string
+        status:
+          type: string
+        tasks:
+          anyOf:
+            - type: integer
+            - type: 'null'
+      required:
+        - run_id
+        - status
+        - started
+      type: object
+    DeliveryEvidence:
+      properties:
+        checks:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        head:
+          type: string
+        integration_artifact:
+          type: string
+        integration_passed:
+          type: boolean
+        integration_reference:
+          type: string
+        integration_verifier:
+          type: string
+        merge_commit:
+          type: string
+        merged:
+          type: boolean
+        review_accepted:
+          type: boolean
+        source:
+          type: string
+        target:
+          type: string
+        verified_at:
+          format: date-time
+          type: string
+        verifier:
+          type: string
+      required:
+        - head
+        - target
+        - merge_commit
+        - checks
+        - review_accepted
+        - merged
+        - integration_passed
+        - verified_at
+        - verifier
+        - source
+      type: object
+    DeliveryVerification:
+      properties:
+        evidence:
+          anyOf:
+            - $ref: '#/components/schemas/DeliveryEvidence'
+            - type: 'null'
+        head:
+          type: string
+        pull_request:
+          type: integer
+        repository:
+          type: string
+        required:
+          type: string
+        required_checks:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        revision:
+          type: integer
+        target:
+          type: string
+        verification_error:
+          type: string
+      required:
+        - revision
+        - required
+        - repository
+        - pull_request
+        - head
+        - target
+        - required_checks
+      type: object
+    DispatchLease:
+      properties:
+        acked_at:
+          format: int64
+          type: integer
+        assigned_machine_id:
+          type: string
+        assigned_runner_id:
+          type: string
+        expires_at:
+          format: int64
+          type: integer
+        id:
+          type: string
+        last_error:
+          type: string
+        leaseId:
+          type: string
+        project_id:
+          type: string
+        pushed_at:
+          format: int64
+          type: integer
+        rejected_at:
+          format: int64
+          type: integer
+        state:
+          type: string
+        task_id:
+          type: string
+      required:
+        - leaseId
+        - project_id
+        - task_id
+        - assigned_runner_id
+        - assigned_machine_id
+        - state
+        - pushed_at
+        - expires_at
+      type: object
+    GoalConfig:
+      properties:
+        blocked_statuses:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        complete_statuses:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        criteria:
+          type: string
+        id:
+          type: string
+        steering:
+          anyOf:
+            - $ref: '#/components/schemas/GoalSteering'
+            - type: 'null'
+        task_id:
+          type: string
+        trigger_source:
+          type: string
+        validation:
+          type: string
+        workdir:
+          type: string
+      required:
+        - id
+      type: object
+    GoalSteering:
+      properties:
+        cooldown_minutes:
+          type: integer
+        enabled:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+      type: object
+    ListEntriesResponse:
+      properties:
+        entries:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/BrainEntry'
+              type: array
+            - type: 'null'
+        limit:
+          type: integer
+        offset:
+          type: integer
+        total:
+          type: integer
+        truncated:
+          type: boolean
+      required:
+        - entries
+        - total
+        - limit
+        - offset
+      type: object
+    PlacementReason:
+      properties:
+        created_at:
+          format: int64
+          type: integer
+        decision:
+          type: string
+        id:
+          format: int64
+          type: integer
+        machine_id:
+          type: string
+        missing_labels:
+          type: string
+        project_id:
+          type: string
+        reason:
+          type: string
+        required_labels:
+          type: string
+        runner_id:
+          type: string
+        runner_labels:
+          type: string
+        task_id:
+          type: string
+      required:
+        - project_id
+        - task_id
+        - decision
+        - created_at
+      type: object
+    ReminderConfig:
+      properties:
+        action:
+          type: string
+        agent:
+          type: string
+        execution_mode:
+          type: string
+        executor:
+          type: string
+        fire_count:
+          type: integer
+        fired_at:
+          type: string
+        generated_task_id:
+          type: string
+        id:
+          type: string
+        model:
+          type: string
+        prompt:
+          type: string
+        remind_at:
+          type: string
+        repeat:
+          type: string
+        repeat_until:
+          type: string
+        target_workdir:
+          type: string
+        timezone:
+          type: string
+      required:
+        - id
+      type: object
+    ResolvedTask:
+      properties:
+        abandon_reason:
+          type: string
+        action:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationAction'
+            - type: 'null'
+        agent:
+          type: string
+        assigned_runner_id:
+          type: string
+        assignment_scope:
+          type: string
+        attempt_count:
+          type: integer
+        blocked_by:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        blocked_by_features:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        blocked_by_reason:
+          type: string
+        checkout_mode:
+          type: string
+        classification:
+          type: string
+        complete_on_idle:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        completed_at:
+          type: string
+        content:
+          type: string
+        created:
+          type: string
+        delivery_mode:
+          type: string
+        delivery_verification:
+          anyOf:
+            - $ref: '#/components/schemas/DeliveryVerification'
+            - type: 'null'
+        depends_on:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        direct_prompt:
+          type: string
+        dispatch_lease:
+          anyOf:
+            - $ref: '#/components/schemas/DispatchLease'
+            - type: 'null'
+        env:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        execution_mode:
+          type: string
+        executor:
+          type: string
+        expires_at:
+          type: string
+        extensions:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        feature_depends_on:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        feature_expires_at:
+          type: string
+        feature_id:
+          type: string
+        feature_priority:
+          type: string
+        feature_run_once_at:
+          type: string
+        feature_schedule:
+          type: string
+        feature_starts_at:
+          type: string
+        feature_timezone:
+          type: string
+        generated:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        generated_by:
+          type: string
+        generated_key:
+          type: string
+        generated_kind:
+          type: string
+        git_branch:
+          type: string
+        git_remote:
+          type: string
+        id:
+          type: string
+        in_cycle:
+          type: boolean
+        is_abandoned:
+          type: boolean
+        last_failed_at:
+          type: string
+        last_placement_reason:
+          anyOf:
+            - $ref: '#/components/schemas/PlacementReason'
+            - type: 'null'
+        machine_affinity:
+          type: string
+        max_runs:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        merge_policy:
+          type: string
+        merge_strategy:
+          type: string
+        merge_target_branch:
+          type: string
+        model:
+          type: string
+        modified:
+          type: string
+        next_run:
+          type: string
+        open_pr_before_merge:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        origin_client_id:
+          type: string
+        origin_machine_id:
+          type: string
+        origin_path:
+          type: string
+        parent_id:
+          type: string
+        path:
+          type: string
+        placement_reasons:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/PlacementReason'
+              type: array
+            - type: 'null'
+        priority:
+          type: string
+        projectId:
+          type: string
+        remote_branch_policy:
+          type: string
+        requires_capability:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        resolved_deps:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        resolved_workdir:
+          type: string
+        resume_executor_override:
+          type: string
+        resume_injected_context:
+          type: string
+        resume_mode:
+          type: string
+        resume_prefer_same_session:
+          type: boolean
+        resume_requested:
+          type: boolean
+        resume_requested_at:
+          type: string
+        retry:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationRetry'
+            - type: 'null'
+        run_once_at:
+          type: string
+        runs:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/CronRun'
+              type: array
+            - type: 'null'
+        schedule:
+          type: string
+        schedule_enabled:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        sessions:
+          anyOf:
+            - additionalProperties:
+                $ref: '#/components/schemas/SessionInfo'
+              type: object
+            - type: 'null'
+        starts_at:
+          type: string
+        status:
+          type: string
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        target_workdir:
+          type: string
+        timezone:
+          type: string
+        title:
+          type: string
+        trigger:
+          anyOf:
+            - $ref: '#/components/schemas/TriggerConfig'
+            - type: 'null'
+        undispatchable_reason:
+          type: string
+        unresolved_deps:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        unresolved_feature_deps:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        user_original_request:
+          type: string
+        waiting_on:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        waiting_on_features:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        workdir:
+          type: string
+      required:
+        - id
+        - path
+        - title
+        - priority
+        - status
+        - depends_on
+        - created
+        - workdir
+        - git_remote
+        - git_branch
+        - direct_prompt
+        - agent
+        - model
+        - resolved_deps
+        - unresolved_deps
+        - classification
+        - blocked_by
+        - waiting_on
+        - in_cycle
+        - resolved_workdir
+      type: object
+    RunFinalization:
+      properties:
+        finalized_at:
+          type: string
+        session_id:
+          type: string
+        status:
+          type: string
+      required:
+        - status
+        - finalized_at
+      type: object
+    SearchRequest:
+      properties:
+        feature_id:
+          type: string
+        global:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        include:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        limit:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        priority:
+          type: string
+        project:
+          type: string
+        projects:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        query:
+          type: string
+        status:
+          type: string
+        strategy:
+          type: string
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        type:
+          type: string
+      required:
+        - query
+      type: object
+    SearchResponse:
+      properties:
+        results:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/SearchResult'
+              type: array
+            - type: 'null'
+        total:
+          type: integer
+      required:
+        - results
+        - total
+      type: object
+    SearchResult:
+      properties:
+        attachments:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttachmentReference'
+              type: array
+            - type: 'null'
+        id:
+          type: string
+        match_source:
+          type: string
+        path:
+          type: string
+        snippet:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+      required:
+        - id
+        - path
+        - title
+        - type
+        - status
+        - snippet
+      type: object
+    SessionInfo:
+      properties:
+        cron_id:
+          type: string
+        hostname:
+          type: string
+        machine_id:
+          type: string
+        parent_id:
+          type: string
+        run_id:
+          type: string
+        runner_id:
+          type: string
+        timestamp:
+          type: string
+        workdir:
+          type: string
+      required:
+        - timestamp
+      type: object
+    TaskListResponse:
+      properties:
+        count:
+          type: integer
+        cycles:
+          anyOf:
+            - items:
+                anyOf:
+                  - items:
+                      type: string
+                    type: array
+                  - type: 'null'
+              type: array
+            - type: 'null'
+        stats:
+          anyOf:
+            - $ref: '#/components/schemas/TaskStats'
+            - type: 'null'
+        tasks:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/ResolvedTask'
+              type: array
+            - type: 'null'
+      required:
+        - tasks
+        - count
+      type: object
+    TaskStats:
+      properties:
+        blocked:
+          type: integer
+        not_pending:
+          type: integer
+        ready:
+          type: integer
+        status_blocked:
+          type: integer
+        total:
+          type: integer
+        waiting:
+          type: integer
+      required:
+        - total
+        - ready
+        - waiting
+        - blocked
+        - status_blocked
+        - not_pending
+      type: object
+    TriggerConfig:
+      properties:
+        cooldown:
+          type: string
+        event:
+          type: string
+        events:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        filter:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        ignore_automation_events:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        max_concurrent:
+          type: integer
+        once_per:
+          type: string
+        schedule:
+          type: string
+        timezone:
+          type: string
+        type:
+          type: string
+        webhook:
+          type: string
+      type: object
+    UpdateEntryRequest:
+      properties:
+        action:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationAction'
+            - type: 'null'
+        agent:
+          anyOf:
+            - type: string
+            - type: 'null'
+        append:
+          anyOf:
+            - type: string
+            - type: 'null'
+        attachments:
+          anyOf:
+            - anyOf:
+                - items:
+                    $ref: '#/components/schemas/AttachmentReference'
+                  type: array
+                - type: 'null'
+            - type: 'null'
+        automation_run_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+        checkout_mode:
+          anyOf:
+            - type: string
+            - type: 'null'
+        complete_on_idle:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        content:
+          anyOf:
+            - type: string
+            - type: 'null'
+        delivery_mode:
+          anyOf:
+            - type: string
+            - type: 'null'
+        depends_on:
+          anyOf:
+            - anyOf:
+                - items:
+                    type: string
+                  type: array
+                - type: 'null'
+            - type: 'null'
+        direct_prompt:
+          anyOf:
+            - type: string
+            - type: 'null'
+        execution_mode:
+          anyOf:
+            - type: string
+            - type: 'null'
+        executor:
+          anyOf:
+            - type: string
+            - type: 'null'
+        expected_revision:
+          type: string
+        expires_at:
+          anyOf:
+            - type: string
+            - type: 'null'
+        extensions:
+          anyOf:
+            - anyOf:
+                - items:
+                    type: string
+                  type: array
+                - type: 'null'
+            - type: 'null'
+        feature_depends_on:
+          anyOf:
+            - anyOf:
+                - items:
+                    type: string
+                  type: array
+                - type: 'null'
+            - type: 'null'
+        feature_expires_at:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_priority:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_run_once_at:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_schedule:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_starts_at:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_timezone:
+          anyOf:
+            - type: string
+            - type: 'null'
+        generated:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        generated_by:
+          anyOf:
+            - type: string
+            - type: 'null'
+        generated_key:
+          anyOf:
+            - type: string
+            - type: 'null'
+        generated_kind:
+          anyOf:
+            - type: string
+            - type: 'null'
+        git_branch:
+          anyOf:
+            - type: string
+            - type: 'null'
+        git_remote:
+          anyOf:
+            - type: string
+            - type: 'null'
+        goal:
+          anyOf:
+            - $ref: '#/components/schemas/GoalConfig'
+            - type: 'null'
+        machine_affinity:
+          anyOf:
+            - type: string
+            - type: 'null'
+        max_runs:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        merge_policy:
+          anyOf:
+            - type: string
+            - type: 'null'
+        merge_strategy:
+          anyOf:
+            - type: string
+            - type: 'null'
+        merge_target_branch:
+          anyOf:
+            - type: string
+            - type: 'null'
+        model:
+          anyOf:
+            - type: string
+            - type: 'null'
+        next_run:
+          anyOf:
+            - type: string
+            - type: 'null'
+        note:
+          anyOf:
+            - type: string
+            - type: 'null'
+        open_pr_before_merge:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        origin_client_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+        origin_machine_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+        origin_path:
+          anyOf:
+            - type: string
+            - type: 'null'
+        priority:
+          anyOf:
+            - type: string
+            - type: 'null'
+        reminder:
+          anyOf:
+            - $ref: '#/components/schemas/ReminderConfig'
+            - type: 'null'
+        remote_branch_policy:
+          anyOf:
+            - type: string
+            - type: 'null'
+        retry:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationRetry'
+            - type: 'null'
+        run_finalizations:
+          anyOf:
+            - additionalProperties:
+                $ref: '#/components/schemas/RunFinalization'
+              type: object
+            - type: 'null'
+        run_once_at:
+          anyOf:
+            - type: string
+            - type: 'null'
+        runs:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/CronRun'
+              type: array
+            - type: 'null'
+        schedule:
+          anyOf:
+            - type: string
+            - type: 'null'
+        schedule_enabled:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        sessions:
+          anyOf:
+            - additionalProperties:
+                $ref: '#/components/schemas/SessionInfo'
+              type: object
+            - type: 'null'
+        starts_at:
+          anyOf:
+            - type: string
+            - type: 'null'
+        status:
+          anyOf:
+            - type: string
+            - type: 'null'
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        target_workdir:
+          anyOf:
+            - type: string
+            - type: 'null'
+        timezone:
+          anyOf:
+            - type: string
+            - type: 'null'
+        title:
+          anyOf:
+            - type: string
+            - type: 'null'
+        trigger:
+          anyOf:
+            - $ref: '#/components/schemas/TriggerConfig'
+            - type: 'null'
+        user_original_request:
+          anyOf:
+            - type: string
+            - type: 'null'
+        workdir:
+          anyOf:
+            - type: string
+            - type: 'null'
+      type: object

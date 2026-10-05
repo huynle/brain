@@ -1,0 +1,46 @@
+package sdkcontract
+
+import (
+	"encoding/json"
+	"os"
+	"reflect"
+	"testing"
+
+	"github.com/huynle/brain-api/internal/types"
+	"gopkg.in/yaml.v3"
+)
+
+func TestRepositoryContractAndWireParity(t *testing.T) {
+	data, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(data); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Components struct {
+			Schemas map[string]any `yaml:"schemas"`
+		} `yaml:"components"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	schemas, err := Schemas(reflect.TypeOf(types.BrainEntry{}), reflect.TypeOf(types.CreateEntryRequest{}), reflect.TypeOf(types.CreateEntryResponse{}), reflect.TypeOf(types.UpdateEntryRequest{}), reflect.TypeOf(types.ListEntriesResponse{}), reflect.TypeOf(types.SearchRequest{}), reflect.TypeOf(types.SearchResponse{}), reflect.TypeOf(types.TaskListResponse{}), reflect.TypeOf(types.ResolvedTask{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, schema := range schemas {
+		want, err := json.Marshal(schema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := json.Marshal(doc.Components.Schemas[name])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != string(want) {
+			t.Errorf("wire schema drift for %s; review before updating the public contract", name)
+		}
+	}
+}

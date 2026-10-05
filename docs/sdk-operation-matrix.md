@@ -20,6 +20,11 @@ Both languages have route tests for these 17 methods. The authenticated real-ser
 Go fixture additionally exercises seven reminder methods (not fire) and all nine
 attention methods, including token-name recipient binding. These notification
 methods are not yet exercised by the installed external Node consumer.
+`TestDeliveredContractMatchesRouterAndInventory` checks every delivered operation
+against the real Chi route inventory and its table row below (51 currently).
+It normalizes parameter names/trailing slashes and explicitly maps legacy entry
+dispatchers to their wildcard routes. It does not certify dispatcher suffix
+semantics, authorization, or completion of pending inventory operations.
 The external consumers exercise six goal operations; manual run has route parity
 tests only, avoiding runner/provider submission in consumer examples.
 Contract: `api/openapi.yaml`; transport tests: `sdk/brain/client_test.go`

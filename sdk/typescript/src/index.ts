@@ -79,7 +79,11 @@ export class BrainClient {
     const signal = AbortSignal.any(signals);
     signal.throwIfAborted();
     const q = new URLSearchParams();
-    for (const [key, value] of Object.entries(query ?? {})) if (value !== undefined) q.set(key, String(value));
+    for (const [key, value] of Object.entries(query ?? {})) {
+      if (value === undefined) continue;
+      if (Array.isArray(value)) for (const item of value) q.append(key, String(item));
+      else q.set(key, String(value));
+    }
     const suffix = q.size ? `?${q}` : "";
     const headers = new Headers({Accept: "application/json"});
     if (body !== undefined && !(body instanceof FormData)) headers.set("Content-Type", "application/json");

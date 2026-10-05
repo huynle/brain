@@ -201,3 +201,13 @@ test("task waiting and blocked routes",async t=>{
   assert.deepEqual(await c.tasks.blocked("p q"),{tasks:[]});
   assert.deepEqual(seen,["GET /api/v1/tasks/p%20q/waiting","GET /api/v1/tasks/p%20q/blocked"]);
 });
+
+test("query arrays preserve repeated parameter values without comma coercion",async t=>{
+  const seen=[];const baseUrl=await server(t,(req,res)=>{seen.push(req.url);res.end('{"entries":[]}');});
+  const c=new BrainClient({baseUrl});t.after(()=>c.close());
+  // Exercise the shared transport before binding an array-bearing namespace.
+  // JS callers can supply additional query properties; this tests encoding,
+  // not admission of these fields by the entries service.
+  await c.entries.list({feature_id:["a,b","c & d"],unused:undefined,empty:[],limit:2,global:false});
+  assert.equal(seen[0],"/api/v1/entries?feature_id=a%2Cb&feature_id=c+%26+d&limit=2&global=false");
+});

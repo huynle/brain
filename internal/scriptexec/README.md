@@ -59,6 +59,15 @@ before `finish`; terminal-result presence and current output authority are
 separate required checks. No callback is an operation grant or permission to
 release result bytes, and no untrusted callback is made interruptible here.
 
+`TestQuickJSManagedParentIntegration` cross-builds the Go tests for Linux arm64
+and runs them inside the existing opt-in compiler container. The Go parent
+**directly** starts the sealed native QuickJS binary with empty environment,
+exchanges two framed fixture calls through `frameSink`/`ProtocolSession`, retains
+result42 until successful Wait, and separately cancels after one call and Waits
+the killed child. This is not a Docker CLI PID being mistaken for the worker.
+The inner cross-build is non-race (`CGO_ENABLED=0`); host-side parent primitives
+have separate race coverage. No Brain services, credentials or live output exist.
+
 ### macOS address-space negative control
 
 `BRAIN_SCRIPT_DARWIN_MEMORY_PROBE=1 go test -race ./internal/scriptexec -run
@@ -71,6 +80,16 @@ Pre-existing allocator virtual reservations permit this: refusing a new 128MiB
 mapping does not constrain new resident memory. Do not promote the earlier
 baseline-relative mmap observation to macOS memory readiness. A separately
 reviewed enforceable memory/isolation mechanism is still required.
+
+An additional unprivileged alternative was investigated against Apple XNU
+[`f6217f891ac0bb64f3d375211650a4c1ff8ca1ea`](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_memorystatus.c#L9192):
+`memorystatus_control` command7 (SET_MEMLIMIT_PROPERTIES) is behind root or
+`com.apple.private.memorystatus`; the documented exceptions in that source do
+not include this command. `TestDarwinMemlimitRequiresPrivilege` invokes it only
+for the fresh probe's own PID, empty environment, no privilege escalation and
+no allocation stress: locally it returns -1/EPERM. PASS means that alternative
+is **unavailable**, not secure memory enforcement. No entitlement/helper is
+installed; this does not prove every future macOS/VM design impossible.
 
 ## Opt-in macOS process-confinement experiment
 

@@ -142,6 +142,12 @@ func (c *Client) request(ctx context.Context, method, path string, body any, q u
 		}
 	}
 	req.Header.Set("Accept", "application/json")
+	if stream, ok := out.(*eventStream); ok {
+		req.Header.Set("Accept", "text/event-stream")
+		if stream.lastEventID != "" {
+			req.Header.Set("Last-Event-ID", stream.lastEventID)
+		}
+	}
 	if input != nil {
 		req.Header.Set("Content-Type", contentType)
 	}
@@ -169,6 +175,9 @@ func (c *Client) request(ctx context.Context, method, path string, body any, q u
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		e.Code = "redirect_refused"
 		return e
+	}
+	if stream, ok := out.(*eventStream); ok && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return stream.read(ctx, resp, c.limit)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, c.limit+1))
 	if ctx.Err() != nil {

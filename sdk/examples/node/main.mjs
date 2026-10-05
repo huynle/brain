@@ -1,6 +1,7 @@
 // Install the built SDK package before running this external application.
 import { BrainClient, BrainError } from "@huynle/brain-sdk";
 import { createServer } from "node:http";
+import assert from "node:assert/strict";
 
 const client = new BrainClient({baseUrl:process.env.BRAIN_API_URL, token:process.env.BRAIN_API_TOKEN});
 let id;
@@ -38,6 +39,72 @@ try {
     }finally{await client.attachments.delete("sdk-node-extraction",image.attachment.id);}
   }
   if(process.env.BRAIN_SDK_ACTION_FIXTURE==="1") {
+    const hp="sdk-node-http";
+    const ht=await client.entries.create({type:"task",project:hp,status:"pending",title:"Quasar context",content:"Quasar unique source"});
+    try {
+      const before=await client.entries.get(ht.id);assert.ok(before.revision);
+      assert.equal((await client.entries.updateMetadata(ht.id,{expected_revision:before.revision,title:"Quasar revised",tags:[],schedule_enabled:false})).title,"Quasar revised");
+      await assert.rejects(client.entries.updateMetadata(ht.id,{expected_revision:before.revision,title:"stale"}),e=>e instanceof BrainError&&e.status===409);
+      await assert.rejects(client.entries.updateMetadata(ht.id,{workdir:"not-allowed"}),e=>e instanceof BrainError&&e.status===400&&e.details[0].field==="workdir");
+      const injected=await client.inject({query:"Quasar",project:hp});assert.ok(injected.total>0);assert.ok(injected.context);
+      const initial=await client.tasks.delivery(hp,ht.id);assert.equal(initial.delivery,null);assert.equal(initial.unmet,null);
+      const configured=await client.tasks.verifyDelivery(hp,ht.id,{action:"configure",expected_revision:0,policy:{required:"none"}});assert.equal(configured.delivery.revision,1);
+      assert.equal((await client.tasks.delivery(hp,ht.id)).delivery.revision,1);
+      await assert.rejects(client.tasks.verifyDelivery(hp,ht.id,{action:"configure",expected_revision:0,policy:{required:"none"}}),e=>e instanceof BrainError&&e.status===409);
+      const recent=await client.events.recent({project_id:hp,type:"entry.*"});assert.ok(recent.count>0);assert.ok(recent.coverage.buffered>=recent.count);assert.ok(recent.events.every(e=>e.project_id===hp));
+      const anchor=recent.events.at(-1).id,stopStream=new Error('fixture received replay');let streamed=0;
+      await client.entries.update(ht.id,{title:'Quasar stream'});
+      await assert.rejects(client.events.stream({project_id:hp},event=>{streamed++;assert.equal(event.project_id,hp);assert.notEqual(event.id,anchor);throw stopStream;},{lastEventId:anchor,signal:AbortSignal.timeout(3000)}),e=>e===stopStream);
+      assert.equal(streamed,1);
+      const page=await client.events.wait({project_id:hp,timeout_ms:0,limit:1});assert.equal(page.events.length,1);assert.ok(page.next_cursor);
+      await assert.rejects(client.events.wait({project_id:"different",timeout_ms:0,after:page.next_cursor}),e=>e instanceof BrainError&&e.status===400);
+      const timed=await client.events.wait({project_id:"no-such-events",timeout_ms:0});assert.equal(timed.timed_out,true);assert.deepEqual(timed.events,[]);
+      const health=await client.events.resourceHealth({project_id:hp});assert.deepEqual(health.samples,[]);assert.ok(health.availability);
+      const timeline=await client.observability.timeline({project:hp,from:new Date(Date.now()-3600000).toISOString(),to:new Date(Date.now()+3600000).toISOString()});assert.ok(timeline.items.length>0);assert.ok(timeline.items.every(i=>i.project_id===hp));
+      await assert.rejects(client.projects.delete(hp,"true"),e=>e instanceof BrainError&&e.status===400);
+      const removed=await client.projects.delete(hp,hp);assert.equal(removed.deleted,1);assert.equal(removed.failed,0);
+    } finally {try{await client.projects.delete(hp,hp);}catch(e){if(!(e instanceof BrainError)||e.status!==404)throw e;}}
+    const p="sdk-node-actions",f="action-feature";
+    assert.equal((await client.projects.getPlacement(p)).affinity,"soft");
+    assert.equal((await client.projects.setPlacement(p,{project_id:"ignored",affinity:"soft"})).project_id,p);
+    assert.equal((await client.projects.getPlacement(p)).affinity,"soft");
+    await assert.rejects(client.projects.setPlacement(p,{project_id:p,affinity:"bad"}),e=>e instanceof BrainError&&e.status===400&&e.details[0].field==="affinity");
+    const standalone=await client.entries.create({type:"task",title:"Standalone action",content:"fixture",project:p,status:"pending"});
+    const task=await client.entries.create({type:"task",title:"Feature action",content:"fixture",project:p,feature_id:f,status:"pending"});
+    let checkout;
+    try {
+      const assigned=await client.tasks.assign(p,standalone.id,{runner_id:"sdk-fixture-runner"});
+      assert.equal(assigned.runner_id,"sdk-fixture-runner");assert.equal(assigned.scope,"task");
+      assert.equal((await client.tasks.clearAssignment(p,standalone.id,{intent:"clear"})).status,"cleared");
+      assert.equal((await client.features.assign(p,f,{runner_id:"sdk-fixture-runner"})).runner_id,"sdk-fixture-runner");
+      assert.equal((await client.features.clearAssignment(p,f,{intent:"clear"})).status,"cleared");
+      await assert.rejects(client.tasks.assign(p,task.id,{runner_id:"sdk-fixture-runner"}),e=>e instanceof BrainError&&e.status===409);
+      const logs=await client.tasks.logs(p,task.id,{limit:2,offset:0});assert.equal(logs.total,0);assert.deepEqual(logs.lines,[]);
+      assert.equal((await client.tasks.trigger(p,task.id)).success,true);
+      assert.equal((await client.tasks.resume(p,task.id)).resumed,false);
+      await client.entries.update(task.id,{status:"in_progress"});
+      assert.equal((await client.tasks.resume(p,task.id)).resumed,true);
+      const batch=await client.features.resume(p,f);assert.equal(batch.total_skipped,1);assert.equal(batch.results.length,1);
+      await client.entries.update(task.id,{status:"in_progress"});
+      const resumed=await client.tasks.resumeWithContext(p,task.id,{injected_context:"fixture",prefer_same_session:false});
+      assert.equal(resumed.resumed,true);assert.equal(resumed.resume_mode,"rehydrate");
+      assert.equal((await client.features.resumeWithContext(p,f,{injected_context:"fixture"})).total_skipped,1);
+      await assert.rejects(client.tasks.resumeWithContext(p,task.id,{injected_context:""}),e=>e instanceof BrainError&&e.status===400);
+      const run=await client.tasks.run(p,task.id);assert.equal(run.dispatched,false);assert.ok(run.reason);
+      assert.equal((await client.features.run(p,f,{includeDependents:true})).dispatched,false);
+      assert.equal((await client.projects.run(p)).totalTasksDispatched,0);
+      assert.ok(Array.isArray((await client.features.chains(p)).chains));
+      assert.equal((await client.features.cancel(p,f)).success,true);
+      assert.equal((await client.features.cancel(p,f)).cancelled,false);
+      await assert.rejects(client.tasks.dispatch(p,task.id,{targetRunnerId:"not-registered"}),e=>e instanceof BrainError&&e.status===403);
+      assert.equal((await client.tasks.claimStatus(p,task.id)).claimed,false);
+      await client.entries.update(task.id,{status:"completed"});
+      checkout=await client.features.checkout(p,f,{merge_policy:"prompt_only",delivery_mode:"none"});
+      assert.equal(checkout.created,true);assert.equal((await client.entries.get(checkout.task.id)).type,"task");
+    } finally {
+      if(checkout?.task)await client.entries.delete(checkout.task.id);
+      await client.entries.delete(task.id);await client.entries.delete(standalone.id);
+    }
     const received=[];
     const receiver=createServer(async(req,res)=>{
       try{let body="";for await(const chunk of req){body+=chunk;if(body.length>8192)throw new Error("oversized test delivery");}received.push(JSON.parse(body));res.writeHead(204);res.end();}

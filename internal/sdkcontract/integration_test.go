@@ -15,9 +15,12 @@ import (
 	"github.com/huynle/brain-api/internal/blobstore"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
+	"github.com/huynle/brain-api/internal/logbuffer"
+	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/service"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/tenant"
+	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/sdk/brain"
 )
 
@@ -64,7 +67,16 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	attention := service.NewAttentionService(inbox)
 	reminders := service.NewReminderService(svc, store)
 	webhooks := service.NewWebhookService(store)
-	h := api.NewHandler(svc, api.WithTaskService(tasks), api.WithAttachmentService(attachments), api.WithGoalService(goals), api.WithReminderService(reminders), api.WithAttentionService(attention), api.WithWebhookService(webhooks), api.WithAutomationRunService(service.NewAutomationService(svc)))
+	registry := service.NewRunnerRegistryService(store)
+	// Registration is local fixture state only: no runner process or executor.
+	if _, err := registry.Register(context.Background(), types.RunnerRegistration{RunnerID: "sdk-fixture-runner", Hostname: "fixture", Executors: []string{"opencode"}, MaxParallel: 2}); err != nil {
+		t.Fatal(err)
+	}
+	placement := service.NewProjectPlacementService(store)
+	scheduler := service.NewSchedulerService(tasks, nil, store, registry, placement, realtime.NewHub())
+	events := service.NewEventService(realtime.NewEventHub())
+	timeline := service.NewTimelineService(svc, events)
+	h := api.NewHandler(svc, api.WithTaskService(tasks), api.WithAttachmentService(attachments), api.WithGoalService(goals), api.WithReminderService(reminders), api.WithAttentionService(attention), api.WithWebhookService(webhooks), api.WithAutomationRunService(service.NewAutomationService(svc)), api.WithProjectPlacementService(placement), api.WithRunTaskService(scheduler), api.WithRunFeatureService(scheduler), api.WithRunProjectService(scheduler), api.WithDependentChainService(scheduler), api.WithLogBuffer(logbuffer.New(100)), api.WithEventService(events), api.WithTimelineService(timeline))
 	srv := httptest.NewServer(api.NewRouter(cfg, api.WithHandler(h), api.WithTokenValidator(control)))
 	defer srv.Close()
 	c, err := brain.New(brain.Config{BaseURL: srv.URL})

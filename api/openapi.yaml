@@ -20,6 +20,405 @@ x-brain-write:
   x-brain-script: false
   x-brain-profile: single
 paths:
+  /events/stream:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: events.stream
+      summary: Consume the bounded event stream without automatic reconnect
+      description: SSE data is an Event JSON object. Comments are heartbeats. Last-Event-ID requests best-effort replay from the volatile buffer, not a durable cursor or exactly-once delivery. SDK client lifetime, caller cancellation and timeout terminate the stream; callback return errors stop delivery. Bounds apply per frame, not to the total stream lifetime.
+      parameters:
+        - {name: project_id, in: query, schema: {type: string}}
+        - {name: feature_id, in: query, schema: {type: string}}
+        - {name: type, in: query, schema: {type: string}}
+        - {name: source, in: query, schema: {type: string}}
+        - {name: Last-Event-ID, in: header, schema: {type: string}}
+      responses:
+        '200': {description: SSE frames carrying Event JSON data, content: {text/event-stream: {schema: {type: string}}}}
+        default: {description: Legacy error before stream starts, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /entries/{id}/metadata:
+    patch:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: entries.updateMetadata
+      summary: Update explicitly allowed durable and runtime metadata
+      description: expected_revision is a precondition and is not persisted. Durable fields sync to Markdown; runtime/audit fields remain index-only. Unknown fields return 400 with field details. Runnable metadata may affect work; not script-exposed.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/MetadataUpdateRequest'}}}}
+      responses:
+        '200': {description: Updated entry, content: {application/json: {schema: {$ref: '#/components/schemas/BrainEntry'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /inject:
+    post:
+      x-brain-effect: provider
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: search.inject
+      summary: Retrieve bounded context for a query
+      description: Preserves legacy search/provider and read-tracking behavior; not a side-effect-free script read.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/InjectRequest'}}}}
+      responses:
+        '200': {description: Context and source entries, content: {application/json: {schema: {$ref: '#/components/schemas/InjectResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/delivery:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+      - {name: taskId, in: path, required: true, schema: {type: string}}
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.delivery
+      summary: Read delivery verification independently of implementation status
+      responses:
+        '200': {description: Delivery state and unmet requirements, content: {application/json: {schema: {$ref: '#/components/schemas/TaskDeliveryResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+    post:
+      x-brain-effect: provider
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.verifyDelivery
+      summary: Configure or verify delivery with revision precondition
+      description: Configure and integration update state; verify may call GitHub. Provider failure can still return 200 with verification_error and invalidated evidence. No merge or deployment occurs here.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryCommand'}}}}
+      responses:
+        '200': {description: Updated delivery and unmet requirements, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryUpdateResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /events/recent:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: events.recent
+      summary: Read filtered recent event buffer and coverage
+      description: Volatile buffer, not a durable complete audit. Positive limit defaults to 100 and is capped at 1000.
+      parameters:
+        - {name: project_id, in: query, schema: {type: string}}
+        - {name: feature_id, in: query, schema: {type: string}}
+        - {name: type, in: query, schema: {type: string}}
+        - {name: source, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer}}
+      responses:
+        '200': {description: Recent events, content: {application/json: {schema: {$ref: '#/components/schemas/RecentEventsResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /events/wait:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: events.wait
+      summary: Wait for a bounded event page using caller-bound opaque cursor
+      description: Cursor binds caller and exact filters. Omitted timeout_ms is 25000; zero polls immediately. No automatic retry. Events are server-redacted; cursor_expired and truncated require explicit caller handling.
+      parameters:
+        - {name: project_id, in: query, required: true, schema: {type: string}}
+        - {name: feature_id, in: query, schema: {type: string}}
+        - {name: task_id, in: query, schema: {type: string}}
+        - {name: type, in: query, schema: {type: string}}
+        - {name: source, in: query, schema: {type: string}}
+        - {name: after, in: query, schema: {type: string}}
+        - {name: timeout_ms, in: query, schema: {type: integer, minimum: 0, maximum: 25000}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+      responses:
+        '200': {description: Event page or timeout/shutdown outcome, content: {application/json: {schema: {$ref: '#/components/schemas/EventWaitResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /events/resource-health:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: events.resourceHealth
+      summary: Read recent runner resource samples
+      description: Null measurements mean unavailable, not zero. An empty list does not establish health. At most 100 unique runner/task samples.
+      parameters:
+        - {name: project_id, in: query, required: true, schema: {type: string}}
+        - {name: task_id, in: query, schema: {type: string}}
+      responses:
+        '200': {description: Samples and coverage limitations, content: {application/json: {schema: {$ref: '#/components/schemas/ResourceHealthResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /timeline:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: observability.timeline
+      summary: Read recorded events and projected schedule occurrences
+      description: Projections are not executions. Range must increase and span at most 366 days. Default range is 30 days before and after now.
+      parameters:
+        - {name: project, in: query, schema: {type: string}}
+        - {name: from, in: query, schema: {type: string, format: date-time}}
+        - {name: to, in: query, schema: {type: string, format: date-time}}
+      responses:
+        '200': {description: Actual and projected timeline items, content: {application/json: {schema: {$ref: '#/components/schemas/TimelineResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /projects/{projectId}/placement:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: projects.getPlacement
+      summary: Read project placement policy (soft default when no row exists)
+      responses:
+        '200': {description: Placement policy, content: {application/json: {schema: {$ref: '#/components/schemas/ProjectPlacement'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+    put:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: projects.setPlacement
+      summary: Replace project placement policy
+      description: Changes future work placement; does not dispatch work. Path project overrides the body project_id.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ProjectPlacement'}}}}
+      responses:
+        '200': {description: Saved policy, content: {application/json: {schema: {$ref: '#/components/schemas/ProjectPlacement'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/resume:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.resume
+      summary: Request abandoned task resume
+      description: Force bypasses abandonment, not live-claim safety. HTTP 200 may be a no-op; inspect resumed and reason. No executor is started by this HTTP handler.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody: {content: {application/json: {schema: {$ref: '#/components/schemas/ResumeTaskOptions'}}}}
+      responses:
+        '200': {description: Resume outcome, content: {application/json: {schema: {$ref: '#/components/schemas/ResumeTaskResult'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/resume-with-context:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.resumeWithContext
+      summary: Inject context into a live session or request a relaunch
+      description: Nonblank injected_context required. Resume mode is advisory until runner resolution. Results may be no-ops. Live injection is effectful.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ResumeWithContextOptions'}}}}
+      responses:
+        '200': {description: Context resume outcome, content: {application/json: {schema: {$ref: '#/components/schemas/ResumeWithContextResult'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/assignment:
+    put:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.assign
+      summary: Assign a task to a registered runner
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TaskAssignmentRequest'}}}}
+      responses:
+        '200': {description: Assignment state, content: {application/json: {schema: {$ref: '#/components/schemas/TaskAssignmentResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/assignment/clear:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.clearAssignment
+      summary: Clear task assignment with explicit intent
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ClearFeatureAssignmentRequest'}}}}
+      responses:
+        '200': {description: Cleared assignment state, content: {application/json: {schema: {$ref: '#/components/schemas/TaskAssignmentResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/trigger:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.trigger
+      summary: Trigger a task or create its next scheduled run
+      description: Inspect triggered and reason; HTTP success does not promise work started.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Trigger result, content: {application/json: {schema: {$ref: '#/components/schemas/TriggerResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/run:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.run
+      summary: Request immediate scheduler dispatch
+      description: HTTP 200 can report dispatched false. Unconfigured scheduler returns 501. No automatic SDK fallback to trigger or retry.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody: {content: {application/json: {schema: {$ref: '#/components/schemas/RunTaskRequest'}}}}
+      responses:
+        '200': {description: Dispatch outcome, content: {application/json: {schema: {$ref: '#/components/schemas/RunTaskResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/dispatch:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.dispatch
+      summary: Direct dispatch to a registered eligible runner
+      description: Creates a pre-claim and dispatch lease; never retried by SDK. Runner registration and placement are checked by the existing service, not proof of hosted runner ownership. Conflict bodies use success and error, not message.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DispatchRequest'}}}}
+      responses:
+        '200': {description: Dispatch lease, content: {application/json: {schema: {$ref: '#/components/schemas/SDKDispatchResponse'}}}}
+        '409': {description: Claim conflict, content: {application/json: {schema: {$ref: '#/components/schemas/DispatchConflictResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/logs:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.logs
+      summary: Read retained in-memory task logs
+      description: Omitted offset returns the newest limit lines. Explicit offset zero starts at oldest retained. Empty real task logs do not prove no output before a restart.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer}}
+        - {name: offset, in: query, schema: {type: integer}}
+      responses:
+        '200': {description: Log window, content: {application/json: {schema: {$ref: '#/components/schemas/LogQueryResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/features/{featureId}/resume:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.resume
+      summary: Resume feature tasks with per-task outcomes
+      description: Partial errors are skipped results, not a failed batch. Results may be truncated while aggregate counts remain complete.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      requestBody: {content: {application/json: {schema: {$ref: '#/components/schemas/ResumeTaskOptions'}}}}
+      responses:
+        '200': {description: Batch resume outcome, content: {application/json: {schema: {$ref: '#/components/schemas/ResumeFeatureResult'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/features/{featureId}/resume-with-context:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.resumeWithContext
+      summary: Inject context or request relaunch for each feature task
+      description: Partial outcomes and truncation mirror feature resume. Live injection is effectful, advisory modes are resolved by runner.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ResumeWithContextOptions'}}}}
+      responses:
+        '200': {description: Context resume batch, content: {application/json: {schema: {$ref: '#/components/schemas/ResumeWithContextFeatureResult'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/features/{featureId}/assignment:
+    put:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.assign
+      summary: Assign a feature to a registered runner
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/FeatureAssignmentRequest'}}}}
+      responses:
+        '200': {description: Feature assignment, content: {application/json: {schema: {$ref: '#/components/schemas/FeatureAssignmentResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/features/{featureId}/assignment/clear:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.clearAssignment
+      summary: Clear feature assignment with explicit clear intent
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ClearFeatureAssignmentRequest'}}}}
+      responses:
+        '200': {description: Cleared feature assignment, content: {application/json: {schema: {$ref: '#/components/schemas/FeatureAssignmentResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/features/{featureId}/checkout:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.checkout
+      summary: Create an indexed checkout task
+      description: Creates work rather than executing Git synchronously. Unknown body fields rejected. Supply explicit merge_policy to avoid inherited defaults.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      requestBody: {content: {application/json: {schema: {$ref: '#/components/schemas/FeatureCheckoutOptions'}}}}
+      responses:
+        '200': {description: Created or existing checkout task, content: {application/json: {schema: {$ref: '#/components/schemas/CheckoutFeatureResult'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/features/{featureId}/run:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+      - {name: featureId, in: path, required: true, schema: {type: string}}
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.run
+      summary: Request feature dispatch and optional dependent chain
+      description: Inspect dispatched and reason. Missing scheduler returns 501. No automatic retry or trigger fallback.
+      requestBody: {content: {application/json: {schema: {$ref: '#/components/schemas/RunFeatureRequest'}}}}
+      responses:
+        '200': {description: Per-task dispatch results, content: {application/json: {schema: {$ref: '#/components/schemas/RunFeatureResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+    delete:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.cancel
+      summary: Cancel future additions to a dependent chain
+      description: Already-dispatched tasks continue. This does not cancel running tasks.
+      responses:
+        '200': {description: Chain cancellation result, content: {application/json: {schema: {$ref: '#/components/schemas/CancelChainResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/chains:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.chains
+      summary: List standing dependent chains
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Chains with current derived membership, content: {application/json: {schema: {$ref: '#/components/schemas/DependentChainsResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/run:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: projects.run
+      summary: Dispatch ready project features
+      description: Per-feature partial outcomes; absence of eligible runners can be a successful HTTP response with no dispatch.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      requestBody: {content: {application/json: {schema: {$ref: '#/components/schemas/RunProjectRequest'}}}}
+      responses:
+        '200': {description: Feature dispatch outcomes, content: {application/json: {schema: {$ref: '#/components/schemas/RunProjectResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
   /tasks/{projectId}/status:
     post:
       x-brain-effect: read
@@ -566,6 +965,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/SearchResponse'
   /tasks/{projectId}:
+    delete:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: projects.delete
+      summary: Delete a project and its entries across all types
+      description: Destructive operation requires confirm equal to projectId (not true). Reports partial failures. Force bypasses the legacy live-claim guard; this is not hosted authorization or a filesystem erasure guarantee.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: confirm, in: query, required: true, schema: {type: string}}
+        - {name: force, in: query, schema: {type: boolean}}
+      responses:
+        '200': {description: Deletion counts and errors, content: {application/json: {schema: {$ref: '#/components/schemas/DeleteProjectResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
     parameters:
       - name: projectId
         in: path
@@ -1745,6 +2158,248 @@ components:
       type: http
       scheme: bearer
   schemas:
+    MetadataUpdateRequest:
+      type: object
+      additionalProperties: false
+      description: Exact metadata endpoint key allowlist. Omitted fields are unchanged. Use ordinary entry update for other frontmatter. Audit/runtime JSON fields preserve server-defined contents.
+      properties:
+        expected_revision: {type: string}
+        status: {type: string}
+        priority: {type: string}
+        tags: {type: array, items: {type: string}}
+        depends_on: {type: array, items: {type: string}}
+        title: {type: string}
+        feature_id: {type: string}
+        feature_priority: {type: string}
+        feature_depends_on: {type: array, items: {type: string}}
+        note: {type: string}
+        append: {type: string}
+        starts_at: {type: string}
+        expires_at: {type: string}
+        run_once_at: {type: string}
+        timezone: {type: string}
+        automation_run_id: {type: string}
+        completed_at: {type: string}
+        sessions: {type: object, additionalProperties: {$ref: '#/components/schemas/SessionInfo'}}
+        next_run: {type: string}
+        schedule: {type: string}
+        schedule_enabled: {type: boolean}
+        complete_on_idle: {type: boolean}
+        direct_prompt: {type: string}
+        runs: {type: array, items: {}}
+        max_runs: {type: integer}
+        last_reconcile: {}
+        exit_code: {type: integer}
+        script_output: {type: string}
+        mr_url: {type: string}
+        resume_requested: {type: boolean}
+        resume_requested_at: {type: string}
+        resume_mode: {type: string}
+        resume_injected_context: {type: string}
+        resume_prefer_same_session: {type: boolean}
+        resume_executor_override: {type: string}
+        abandoned_at: {type: string}
+        abandoned_reason: {type: string}
+        attempt_count: {type: integer}
+        last_failed_at: {type: string}
+    DeliveryCommand:
+      type: object
+      additionalProperties: false
+      required: [action, expected_revision]
+      properties:
+        action: {type: string, enum: [configure, verify, integration]}
+        expected_revision: {type: integer}
+        policy: {$ref: '#/components/schemas/DeliveryVerification'}
+        artifact: {type: string}
+        passed: {type: boolean}
+        evidence_reference: {type: string}
+    DeliveryUpdateResponse:
+      type: object
+      required: [delivery, unmet]
+      properties:
+        delivery: {anyOf: [{$ref: '#/components/schemas/DeliveryVerification'}, {type: 'null'}]}
+        unmet: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+    TaskDeliveryResponse:
+      allOf:
+        - {$ref: '#/components/schemas/DeliveryUpdateResponse'}
+        - type: object
+          required: [task_id, implementation_status]
+          properties:
+            task_id: {type: string}
+            implementation_status: {type: string}
+    RecentEventsResponse:
+      type: object
+      required: [events, count, coverage]
+      properties:
+        events: {anyOf: [{type: array, items: {$ref: '#/components/schemas/Event'}}, {type: 'null'}]}
+        count: {type: integer}
+        coverage: {$ref: '#/components/schemas/EventCoverage'}
+    EventWaitResponse:
+      type: object
+      required: [events, next_cursor, cursor_expired, timed_out, shutdown, truncated]
+      properties:
+        events: {type: array, items: {$ref: '#/components/schemas/Event'}}
+        next_cursor: {type: string}
+        cursor_expired: {type: boolean}
+        timed_out: {type: boolean}
+        shutdown: {type: boolean}
+        truncated: {type: boolean}
+    ResourceSample:
+      type: object
+      required: [sampled_at, rss_bytes, process_count, limit_bytes, last_activity, command_summary, warning]
+      properties:
+        instance_id: {type: string}
+        session_id: {type: string}
+        executor: {type: string}
+        sampled_at: {type: string, format: date-time}
+        rss_bytes: {anyOf: [{type: integer, format: int64}, {type: 'null'}]}
+        process_count: {anyOf: [{type: integer}, {type: 'null'}]}
+        limit_bytes: {type: integer, format: int64}
+        last_activity: {anyOf: [{type: string, format: date-time}, {type: 'null'}]}
+        command_summary: {anyOf: [{type: string}, {type: 'null'}]}
+        unavailable_reason: {type: string}
+        termination_reason: {type: string}
+        warning: {type: boolean}
+    ResourceObservation:
+      type: object
+      required: [runner_id, task_id, sample, fresh]
+      properties:
+        runner_id: {type: string}
+        task_id: {type: string}
+        feature_id: {type: string}
+        sample: {$ref: '#/components/schemas/ResourceSample'}
+        fresh: {type: boolean}
+    ResourceHealthResponse:
+      type: object
+      required: [observed_at, samples, truncated, coverage, availability, warning_fraction, clear_fraction]
+      properties:
+        observed_at: {type: string, format: date-time}
+        samples: {type: array, items: {$ref: '#/components/schemas/ResourceObservation'}}
+        truncated: {type: boolean}
+        coverage: {$ref: '#/components/schemas/EventCoverage'}
+        availability: {type: string}
+        warning_fraction: {type: number}
+        clear_fraction: {type: number}
+    TimelineItem:
+      type: object
+      required: [id, type, source, timestamp, temporal_state]
+      properties:
+        id: {type: string}
+        type: {type: string}
+        source: {type: string}
+        timestamp: {type: string, format: date-time}
+        project_id: {type: string}
+        task_id: {type: string}
+        task_path: {type: string}
+        task_title: {type: string}
+        feature_id: {type: string}
+        runner_id: {type: string}
+        reason: {type: string}
+        summary: {type: string}
+        metadata: {anyOf: [{type: object, additionalProperties: {type: string}}, {type: 'null'}]}
+        temporal_state: {type: string}
+        temporal_kind: {type: string}
+        source_kind: {type: string}
+        source_id: {type: string}
+        source_path: {type: string}
+        timezone: {type: string}
+        projection_rule: {type: string}
+        occurrence_count: {type: integer}
+        window_start: {anyOf: [{type: string, format: date-time}, {type: 'null'}]}
+        window_end: {anyOf: [{type: string, format: date-time}, {type: 'null'}]}
+    TimelineWarning:
+      type: object
+      required: [message]
+      properties:
+        source_id: {type: string}
+        message: {type: string}
+    TimelineResponse:
+      type: object
+      required: [from, to, generated_at, items, warnings, truncated]
+      properties:
+        from: {type: string, format: date-time}
+        to: {type: string, format: date-time}
+        generated_at: {type: string, format: date-time}
+        items: {anyOf: [{type: array, items: {$ref: '#/components/schemas/TimelineItem'}}, {type: 'null'}]}
+        warnings: {anyOf: [{type: array, items: {$ref: '#/components/schemas/TimelineWarning'}}, {type: 'null'}]}
+        truncated: {type: boolean}
+    CheckoutFeatureResult: {"properties":{"created":{"type":"boolean"},"generatedKey":{"type":"string"},"superseded":{"type":"boolean"},"supersededTaskId":{"type":"string"},"task":{"anyOf":[{"$ref":"#/components/schemas/CreateEntryResponse"},{"type":"null"}]}},"required":["created","generatedKey"],"type":"object"}
+    ClearFeatureAssignmentRequest: {"properties":{"intent":{"type":"string"}},"required":["intent"],"type":"object"}
+    DeleteProjectResponse: {"properties":{"deleted":{"type":"integer"},"directory_removed":{"type":"boolean"},"errors":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"failed":{"type":"integer"},"index_rows_removed":{"format":"int64","type":"integer"},"project":{"type":"string"},"state_rows_removed":{"anyOf":[{"additionalProperties":{"format":"int64","type":"integer"},"type":"object"},{"type":"null"}]}},"required":["project","deleted","failed","directory_removed"],"type":"object"}
+    DependentChain: {"properties":{"pausedAtRequest":{"type":"boolean"},"projectId":{"type":"string"},"queued":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"requestedAt":{"format":"int64","type":"integer"},"rootFeatureId":{"type":"string"},"skipped":{"anyOf":[{"additionalProperties":{"type":"string"},"type":"object"},{"type":"null"}]},"truncated":{"type":"boolean"},"waitsOnExternal":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]}},"required":["projectId","rootFeatureId","requestedAt","pausedAtRequest","queued"],"type":"object"}
+    DependentQueue: {"properties":{"queued":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"skipped":{"anyOf":[{"additionalProperties":{"type":"string"},"type":"object"},{"type":"null"}]},"truncated":{"type":"boolean"},"waitsOnExternal":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]}},"required":["queued"],"type":"object"}
+    DispatchRequest: {"properties":{"targetRunnerId":{"type":"string"}},"required":["targetRunnerId"],"type":"object"}
+    Event: {"properties":{"feature_id":{"type":"string"},"from_status":{"type":"string"},"id":{"type":"string"},"metadata":{"anyOf":[{"additionalProperties":{"type":"string"},"type":"object"},{"type":"null"}]},"project_id":{"type":"string"},"reason":{"type":"string"},"runner_id":{"type":"string"},"source":{"type":"string"},"task_id":{"type":"string"},"task_path":{"type":"string"},"task_title":{"type":"string"},"timestamp":{"format":"date-time","type":"string"},"to_status":{"type":"string"},"type":{"type":"string"}},"required":["id","type","source","timestamp"],"type":"object"}
+    EventCoverage: {"properties":{"buffered":{"type":"integer"},"capacity":{"type":"integer"},"oldest":{"type":"string"}},"required":["buffered","capacity"],"type":"object"}
+    FeatureAssignmentRequest: {"properties":{"force":{"type":"boolean"},"intent":{"type":"string"},"runner_id":{"type":"string"}},"required":["runner_id"],"type":"object"}
+    FeatureAssignmentResponse: {"properties":{"assigned_at":{"type":"string"},"feature_id":{"type":"string"},"previous_runner":{"type":"string"},"project_id":{"type":"string"},"runner_id":{"type":"string"},"source":{"type":"string"},"status":{"type":"string"},"updated_at":{"type":"string"}},"required":["project_id","feature_id","source","status"],"type":"object"}
+    FeatureCheckoutOptions: {"properties":{"checkout_mode":{"type":"string"},"delivery_mode":{"type":"string"},"execution_branch":{"type":"string"},"execution_mode":{"type":"string"},"merge_policy":{"type":"string"},"merge_strategy":{"type":"string"},"merge_target_branch":{"type":"string"},"open_pr_before_merge":{"type":"boolean"},"remote_branch_policy":{"type":"string"}},"type":"object"}
+    InjectEntry: {"properties":{"id":{"type":"string"},"path":{"type":"string"},"title":{"type":"string"},"type":{"type":"string"}},"required":["id","path","title","type"],"type":"object"}
+    InjectRequest: {"properties":{"maxChars":{"anyOf":[{"type":"integer"},{"type":"null"}]},"maxEntries":{"anyOf":[{"type":"integer"},{"type":"null"}]},"project":{"type":"string"},"query":{"type":"string"},"type":{"type":"string"}},"required":["query"],"type":"object"}
+    InjectResponse: {"properties":{"context":{"type":"string"},"entries":{"anyOf":[{"items":{"$ref":"#/components/schemas/InjectEntry"},"type":"array"},{"type":"null"}]},"total":{"type":"integer"},"truncated":{"type":"boolean"}},"required":["context","entries","total"],"type":"object"}
+    LogLine: {"properties":{"content":{"type":"string"},"level":{"type":"string"},"timestamp":{"type":"string"}},"required":["timestamp","level","content"],"type":"object"}
+    LogQueryResponse: {"properties":{"limit":{"type":"integer"},"lines":{"anyOf":[{"items":{"$ref":"#/components/schemas/LogLine"},"type":"array"},{"type":"null"}]},"offset":{"type":"integer"},"total":{"type":"integer"}},"required":["lines","total","offset","limit"],"type":"object"}
+    ProjectPlacement: {"properties":{"affinity":{"type":"string"},"allowed_machines":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"preferred_machines":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"project_id":{"type":"string"},"required_capabilities":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"required_labels":{"anyOf":[{"additionalProperties":{"type":"string"},"type":"object"},{"type":"null"}]},"resources":{"anyOf":[{"additionalProperties":{},"type":"object"},{"type":"null"}]},"workspace_policy":{"type":"string"}},"required":["project_id","affinity"],"type":"object"}
+    ResumeFeatureResult: {"properties":{"feature_id":{"type":"string"},"results":{"anyOf":[{"items":{"$ref":"#/components/schemas/ResumeTaskResult"},"type":"array"},{"type":"null"}]},"total_results":{"type":"integer"},"total_resumed":{"type":"integer"},"total_skipped":{"type":"integer"},"truncated":{"type":"boolean"}},"required":["feature_id","total_resumed","total_skipped","results"],"type":"object"}
+    ResumeTaskOptions: {"properties":{"force":{"type":"boolean"}},"type":"object"}
+    ResumeTaskResult: {"properties":{"abandon_reason":{"type":"string"},"prior_sessions_count":{"type":"integer"},"prior_status":{"type":"string"},"reason":{"type":"string"},"resumed":{"type":"boolean"},"task_id":{"type":"string"}},"required":["task_id","resumed"],"type":"object"}
+    ResumeWithContextOptions: {"properties":{"executor_override":{"type":"string"},"force":{"type":"boolean"},"injected_context":{"type":"string"},"prefer_same_session":{"type":"boolean"}},"required":["injected_context"],"type":"object"}
+    ResumeWithContextResult:
+      allOf:
+        - {$ref: '#/components/schemas/ResumeTaskResult'}
+        - type: object
+          required: [resume_mode]
+          properties:
+            resume_mode: {type: string}
+            target_session_id: {type: string}
+            injected_live: {type: boolean}
+    ResumeWithContextFeatureResult:
+      type: object
+      required: [feature_id, total_resumed, total_skipped, results]
+      properties:
+        feature_id: {type: string}
+        total_resumed: {type: integer}
+        total_skipped: {type: integer}
+        total_results: {type: integer}
+        truncated: {type: boolean}
+        results: {anyOf: [{type: array, items: {$ref: '#/components/schemas/ResumeWithContextResult'}}, {type: 'null'}]}
+    RunFeatureRequest: {"properties":{"force":{"type":"boolean"},"includeDependents":{"type":"boolean"}},"type":"object"}
+    RunFeatureResponse: {"properties":{"blockedByFeatures":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"cascadeActive":{"type":"boolean"},"dependents":{"anyOf":[{"$ref":"#/components/schemas/DependentQueue"},{"type":"null"}]},"detail":{"type":"string"},"dispatched":{"type":"boolean"},"dispatchedCount":{"type":"integer"},"featureId":{"type":"string"},"outstanding":{"anyOf":[{"type":"integer"},{"type":"null"}]},"projectId":{"type":"string"},"queued":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"reason":{"type":"string"},"results":{"anyOf":[{"items":{"$ref":"#/components/schemas/RunTaskResponse"},"type":"array"},{"type":"null"}]},"skippedCount":{"type":"integer"},"waitingOnFeatures":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]}},"required":["dispatched","projectId","featureId","dispatchedCount","skippedCount"],"type":"object"}
+    RunProjectRequest: {"properties":{"force":{"type":"boolean"}},"type":"object"}
+    RunProjectResponse: {"properties":{"featuresConsidered":{"type":"integer"},"featuresDispatched":{"type":"integer"},"featuresSkipped":{"type":"integer"},"projectId":{"type":"string"},"reason":{"type":"string"},"results":{"anyOf":[{"items":{"$ref":"#/components/schemas/RunFeatureResponse"},"type":"array"},{"type":"null"}]},"totalTasksDispatched":{"type":"integer"}},"required":["projectId","featuresConsidered","featuresDispatched","featuresSkipped","totalTasksDispatched"],"type":"object"}
+    RunTaskRequest: {"properties":{"force":{"type":"boolean"}},"type":"object"}
+    RunTaskResponse: {"properties":{"detail":{"type":"string"},"dispatched":{"type":"boolean"},"expiresAt":{"type":"string"},"leaseId":{"type":"string"},"leaseState":{"type":"string"},"projectId":{"type":"string"},"reason":{"type":"string"},"runnerId":{"type":"string"},"taskId":{"type":"string"}},"required":["dispatched","taskId","projectId"],"type":"object"}
+    TaskAssignmentRequest: {"properties":{"force":{"type":"boolean"},"intent":{"type":"string"},"runner_id":{"type":"string"}},"required":["runner_id"],"type":"object"}
+    TaskAssignmentResponse: {"properties":{"assigned_at":{"type":"string"},"previous_runner":{"type":"string"},"project_id":{"type":"string"},"runner_id":{"type":"string"},"scope":{"type":"string"},"source":{"type":"string"},"status":{"type":"string"},"task_id":{"type":"string"},"updated_at":{"type":"string"}},"required":["project_id","task_id","scope","source","status"],"type":"object"}
+    TriggerResponse: {"properties":{"nextRun":{"type":"string"},"reason":{"type":"string"},"runId":{"type":"string"},"success":{"type":"boolean"},"taskId":{"type":"string"},"triggered":{"type":"boolean"}},"required":["success","taskId","triggered"],"type":"object"}
+    SDKDispatchResponse:
+      type: object
+      required: [success, runnerId, leaseId, expiresAt]
+      properties:
+        success: {type: boolean}
+        runnerId: {type: string}
+        leaseId: {type: string}
+        expiresAt: {type: string}
+    DispatchConflictResponse:
+      type: object
+      required: [success, error]
+      properties:
+        success: {type: boolean}
+        error: {type: string}
+    CancelChainResponse:
+      type: object
+      required: [success, cancelled, projectId, rootFeatureId, detail]
+      properties:
+        success: {type: boolean}
+        cancelled: {type: boolean}
+        projectId: {type: string}
+        rootFeatureId: {type: string}
+        detail: {type: string}
+    DependentChainsResponse:
+      type: object
+      required: [chains]
+      properties:
+        chains: {type: array, items: {$ref: '#/components/schemas/DependentChain'}}
     ClaimStatusResponse:
       type: object
       required: [taskId, claimed, isStale]

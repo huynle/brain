@@ -3,14 +3,9 @@
 **Partial implementation, not V1 completion. Scripts are unavailable.**
 
 The reviewed public protocol lives in `api/openapi.yaml` (OpenAPI 3.1).
-Current typed operations: health get; entries list/create/get/update/delete/move/
-bulk-update/bulk-delete; search; tasks list/get; sections list/get; graph
-backlinks/outlinks/related; attachments upload/list/get/delete/download/text/
-extract/for-entry/attach/detach; goals list/create/update/delete/progress/audit/run
-(34 operations), plus eight reminder, nine attention and seven webhook operations
-(58 total), plus automation run/history/get, task waiting/blocked/ready/next,
-project list, graph orphans and observability stats/stale (69 total).
-The remaining inventory is in
+All 104 inventoried operations have typed Go/TypeScript adapters, including
+task/feature actions, metadata, project placement/deletion, delivery state,
+finite events, timeline and SSE. Exact evidence and remaining integration gates are in
 `docs/sdk-operation-matrix.md`. Task creation and dependency updates use typed
 entry requests. No capability route, hosted adapter or script route is added.
 
@@ -74,7 +69,24 @@ their filters and stay bound to their original client. They do not interpret the
 legacy page-local `total` as a collection count. They stop at an empty page, fail
 on `truncated` or inconsistent offsets/limits, and cap a walk at 10,000 pages.
 Concurrent server changes can move entries between offset pages; no snapshot or
-server-cursor guarantee is claimed. Broader namespaces remain work.
+server-cursor guarantee is claimed.
+
+Event streaming uses `Events().Stream(ctx, filters, lastEventID, callback, options)`
+or `events.stream(filters, callback, {lastEventId, signal})`. It is bounded per
+frame by the response-byte limit and by the client timeout/lifetime. Callback
+errors stop delivery and close the stream; there is no automatic reconnect.
+Replay is best-effort from a volatile server buffer, not a durable or gap-free
+cursor. The finite `events.wait` cursor instead binds exact filters and caller;
+handle its `cursor_expired`, `truncated`, `shutdown` and `timed_out` flags explicitly.
+
+Task/feature actions can return HTTP 200 with a no-op or partial result; inspect
+`resumed`, `triggered`, `dispatched`, reasons and per-task results. Feature cancel
+only stops future dependent-chain dispatch, not already-running work. Checkout
+creates an indexed task; pass `merge_policy: "prompt_only"` and `delivery_mode:
+"none"` when Git delivery must not be requested. Project deletion requires the
+exact project name as confirmation and deletes entries of every type. Delivery
+verification is separate from implementation status and can return a provider
+error inside a successful response; configuration uses `expected_revision`.
 
 Attachment upload takes bytes, never a filesystem path. Filenames cannot contain
 path separators or CR/LF/NUL. Uploads (including multipart overhead) and downloads

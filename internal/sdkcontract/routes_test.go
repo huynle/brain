@@ -10,6 +10,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/realtime"
+	"github.com/huynle/brain-api/internal/service"
 	"github.com/huynle/brain-api/internal/tenant"
 	"gopkg.in/yaml.v3"
 )
@@ -51,7 +53,9 @@ func TestDeliveredContractMatchesRouterAndInventory(t *testing.T) {
 	normalize := func(path string) string { return strings.TrimRight(params.ReplaceAllString(path, "{}"), "/") }
 	cfg := config.Config{}
 	cfg.Tenancy.Mode = tenant.ModeSingle
-	router := api.NewRouter(cfg, api.WithHandler(api.NewHandler(nil)))
+	// Task assignment routes have no unavailable-service placeholders. Walk
+	// the task-enabled composition; no method is invoked by chi.Walk.
+	router := api.NewRouter(cfg, api.WithHandler(api.NewHandler(nil, api.WithTaskService(service.NewTaskService(&cfg, nil, nil)), api.WithEventService(service.NewEventService(realtime.NewEventHub())))))
 	routes := map[string]bool{}
 	if err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		routes[method+" "+normalize(route)] = true
@@ -74,7 +78,7 @@ func TestDeliveredContractMatchesRouterAndInventory(t *testing.T) {
 	count := 0
 	// These legacy operations deliberately use the entry wildcard dispatcher.
 	// This inventory checks dispatch route existence, not suffix-handler behavior.
-	wildcards := map[string]string{"entries.get": "/entries/*", "entries.update": "/entries/*", "entries.delete": "/entries/*", "entries.move": "/entries/*"}
+	wildcards := map[string]string{"entries.get": "/entries/*", "entries.update": "/entries/*", "entries.delete": "/entries/*", "entries.move": "/entries/*", "entries.updateMetadata": "/entries/*"}
 	for path, methods := range doc.Paths {
 		for method, op := range methods {
 			count++

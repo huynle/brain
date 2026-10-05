@@ -4,6 +4,505 @@
  */
 
 export interface paths {
+    "/events/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Consume the bounded event stream without automatic reconnect
+         * @description SSE data is an Event JSON object. Comments are heartbeats. Last-Event-ID requests best-effort replay from the volatile buffer, not a durable cursor or exactly-once delivery. SDK client lifetime, caller cancellation and timeout terminate the stream; callback return errors stop delivery. Bounds apply per frame, not to the total stream lifetime.
+         */
+        get: operations["events.stream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entries/{id}/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update explicitly allowed durable and runtime metadata
+         * @description expected_revision is a precondition and is not persisted. Durable fields sync to Markdown; runtime/audit fields remain index-only. Unknown fields return 400 with field details. Runnable metadata may affect work; not script-exposed.
+         */
+        patch: operations["entries.updateMetadata"];
+        trace?: never;
+    };
+    "/inject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retrieve bounded context for a query
+         * @description Preserves legacy search/provider and read-tracking behavior; not a side-effect-free script read.
+         */
+        post: operations["search.inject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/{taskId}/delivery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        /** Read delivery verification independently of implementation status */
+        get: operations["tasks.delivery"];
+        put?: never;
+        /**
+         * Configure or verify delivery with revision precondition
+         * @description Configure and integration update state; verify may call GitHub. Provider failure can still return 200 with verification_error and invalidated evidence. No merge or deployment occurs here.
+         */
+        post: operations["tasks.verifyDelivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events/recent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read filtered recent event buffer and coverage
+         * @description Volatile buffer, not a durable complete audit. Positive limit defaults to 100 and is capped at 1000.
+         */
+        get: operations["events.recent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events/wait": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Wait for a bounded event page using caller-bound opaque cursor
+         * @description Cursor binds caller and exact filters. Omitted timeout_ms is 25000; zero polls immediately. No automatic retry. Events are server-redacted; cursor_expired and truncated require explicit caller handling.
+         */
+        get: operations["events.wait"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events/resource-health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read recent runner resource samples
+         * @description Null measurements mean unavailable, not zero. An empty list does not establish health. At most 100 unique runner/task samples.
+         */
+        get: operations["events.resourceHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read recorded events and projected schedule occurrences
+         * @description Projections are not executions. Range must increase and span at most 366 days. Default range is 30 days before and after now.
+         */
+        get: operations["observability.timeline"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{projectId}/placement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        /** Read project placement policy (soft default when no row exists) */
+        get: operations["projects.getPlacement"];
+        /**
+         * Replace project placement policy
+         * @description Changes future work placement; does not dispatch work. Path project overrides the body project_id.
+         */
+        put: operations["projects.setPlacement"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/{taskId}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request abandoned task resume
+         * @description Force bypasses abandonment, not live-claim safety. HTTP 200 may be a no-op; inspect resumed and reason. No executor is started by this HTTP handler.
+         */
+        post: operations["tasks.resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/{taskId}/resume-with-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inject context into a live session or request a relaunch
+         * @description Nonblank injected_context required. Resume mode is advisory until runner resolution. Results may be no-ops. Live injection is effectful.
+         */
+        post: operations["tasks.resumeWithContext"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/{taskId}/assignment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Assign a task to a registered runner */
+        put: operations["tasks.assign"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/{taskId}/assignment/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clear task assignment with explicit intent */
+        post: operations["tasks.clearAssignment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/{taskId}/trigger": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger a task or create its next scheduled run
+         * @description Inspect triggered and reason; HTTP success does not promise work started.
+         */
+        post: operations["tasks.trigger"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/{taskId}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request immediate scheduler dispatch
+         * @description HTTP 200 can report dispatched false. Unconfigured scheduler returns 501. No automatic SDK fallback to trigger or retry.
+         */
+        post: operations["tasks.run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/{taskId}/dispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Direct dispatch to a registered eligible runner
+         * @description Creates a pre-claim and dispatch lease; never retried by SDK. Runner registration and placement are checked by the existing service, not proof of hosted runner ownership. Conflict bodies use success and error, not message.
+         */
+        post: operations["tasks.dispatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/{taskId}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read retained in-memory task logs
+         * @description Omitted offset returns the newest limit lines. Explicit offset zero starts at oldest retained. Empty real task logs do not prove no output before a restart.
+         */
+        get: operations["tasks.logs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/features/{featureId}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume feature tasks with per-task outcomes
+         * @description Partial errors are skipped results, not a failed batch. Results may be truncated while aggregate counts remain complete.
+         */
+        post: operations["features.resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/features/{featureId}/resume-with-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inject context or request relaunch for each feature task
+         * @description Partial outcomes and truncation mirror feature resume. Live injection is effectful, advisory modes are resolved by runner.
+         */
+        post: operations["features.resumeWithContext"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/features/{featureId}/assignment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Assign a feature to a registered runner */
+        put: operations["features.assign"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/features/{featureId}/assignment/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clear feature assignment with explicit clear intent */
+        post: operations["features.clearAssignment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/features/{featureId}/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create an indexed checkout task
+         * @description Creates work rather than executing Git synchronously. Unknown body fields rejected. Supply explicit merge_policy to avoid inherited defaults.
+         */
+        post: operations["features.checkout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/features/{featureId}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                featureId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request feature dispatch and optional dependent chain
+         * @description Inspect dispatched and reason. Missing scheduler returns 501. No automatic retry or trigger fallback.
+         */
+        post: operations["features.run"];
+        /**
+         * Cancel future additions to a dependent chain
+         * @description Already-dispatched tasks continue. This does not cancel running tasks.
+         */
+        delete: operations["features.cancel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/chains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List standing dependent chains */
+        get: operations["features.chains"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dispatch ready project features
+         * @description Per-feature partial outcomes; absence of eligible runners can be a successful HTTP response with no dispatch.
+         */
+        post: operations["projects.run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{projectId}/status": {
         parameters: {
             query?: never;
@@ -334,7 +833,11 @@ export interface paths {
         get: operations["tasks.list"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a project and its entries across all types
+         * @description Destructive operation requires confirm equal to projectId (not true). Reports partial failures. Force bypasses the legacy live-claim guard; this is not hosted authorization or a filesystem erasure guarantee.
+         */
+        delete: operations["projects.delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1133,6 +1636,424 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Exact metadata endpoint key allowlist. Omitted fields are unchanged. Use ordinary entry update for other frontmatter. Audit/runtime JSON fields preserve server-defined contents. */
+        MetadataUpdateRequest: {
+            expected_revision?: string;
+            status?: string;
+            priority?: string;
+            tags?: string[];
+            depends_on?: string[];
+            title?: string;
+            feature_id?: string;
+            feature_priority?: string;
+            feature_depends_on?: string[];
+            note?: string;
+            append?: string;
+            starts_at?: string;
+            expires_at?: string;
+            run_once_at?: string;
+            timezone?: string;
+            automation_run_id?: string;
+            completed_at?: string;
+            sessions?: {
+                [key: string]: components["schemas"]["SessionInfo"];
+            };
+            next_run?: string;
+            schedule?: string;
+            schedule_enabled?: boolean;
+            complete_on_idle?: boolean;
+            direct_prompt?: string;
+            runs?: unknown[];
+            max_runs?: number;
+            last_reconcile?: unknown;
+            exit_code?: number;
+            script_output?: string;
+            mr_url?: string;
+            resume_requested?: boolean;
+            resume_requested_at?: string;
+            resume_mode?: string;
+            resume_injected_context?: string;
+            resume_prefer_same_session?: boolean;
+            resume_executor_override?: string;
+            abandoned_at?: string;
+            abandoned_reason?: string;
+            attempt_count?: number;
+            last_failed_at?: string;
+        };
+        DeliveryCommand: {
+            /** @enum {string} */
+            action: "configure" | "verify" | "integration";
+            expected_revision: number;
+            policy?: components["schemas"]["DeliveryVerification"];
+            artifact?: string;
+            passed?: boolean;
+            evidence_reference?: string;
+        };
+        DeliveryUpdateResponse: {
+            delivery: components["schemas"]["DeliveryVerification"] | null;
+            unmet: string[] | null;
+        };
+        TaskDeliveryResponse: components["schemas"]["DeliveryUpdateResponse"] & {
+            task_id: string;
+            implementation_status: string;
+        };
+        RecentEventsResponse: {
+            events: components["schemas"]["Event"][] | null;
+            count: number;
+            coverage: components["schemas"]["EventCoverage"];
+        };
+        EventWaitResponse: {
+            events: components["schemas"]["Event"][];
+            next_cursor: string;
+            cursor_expired: boolean;
+            timed_out: boolean;
+            shutdown: boolean;
+            truncated: boolean;
+        };
+        ResourceSample: {
+            instance_id?: string;
+            session_id?: string;
+            executor?: string;
+            /** Format: date-time */
+            sampled_at: string;
+            rss_bytes: number | null;
+            process_count: number | null;
+            /** Format: int64 */
+            limit_bytes: number;
+            last_activity: string | null;
+            command_summary: string | null;
+            unavailable_reason?: string;
+            termination_reason?: string;
+            warning: boolean;
+        };
+        ResourceObservation: {
+            runner_id: string;
+            task_id: string;
+            feature_id?: string;
+            sample: components["schemas"]["ResourceSample"];
+            fresh: boolean;
+        };
+        ResourceHealthResponse: {
+            /** Format: date-time */
+            observed_at: string;
+            samples: components["schemas"]["ResourceObservation"][];
+            truncated: boolean;
+            coverage: components["schemas"]["EventCoverage"];
+            availability: string;
+            warning_fraction: number;
+            clear_fraction: number;
+        };
+        TimelineItem: {
+            id: string;
+            type: string;
+            source: string;
+            /** Format: date-time */
+            timestamp: string;
+            project_id?: string;
+            task_id?: string;
+            task_path?: string;
+            task_title?: string;
+            feature_id?: string;
+            runner_id?: string;
+            reason?: string;
+            summary?: string;
+            metadata?: {
+                [key: string]: string;
+            } | null;
+            temporal_state: string;
+            temporal_kind?: string;
+            source_kind?: string;
+            source_id?: string;
+            source_path?: string;
+            timezone?: string;
+            projection_rule?: string;
+            occurrence_count?: number;
+            window_start?: string | null;
+            window_end?: string | null;
+        };
+        TimelineWarning: {
+            source_id?: string;
+            message: string;
+        };
+        TimelineResponse: {
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            /** Format: date-time */
+            generated_at: string;
+            items: components["schemas"]["TimelineItem"][] | null;
+            warnings: components["schemas"]["TimelineWarning"][] | null;
+            truncated: boolean;
+        };
+        CheckoutFeatureResult: {
+            created: boolean;
+            generatedKey: string;
+            superseded?: boolean;
+            supersededTaskId?: string;
+            task?: components["schemas"]["CreateEntryResponse"] | null;
+        };
+        ClearFeatureAssignmentRequest: {
+            intent: string;
+        };
+        DeleteProjectResponse: {
+            deleted: number;
+            directory_removed: boolean;
+            errors?: string[] | null;
+            failed: number;
+            /** Format: int64 */
+            index_rows_removed?: number;
+            project: string;
+            state_rows_removed?: {
+                [key: string]: number;
+            } | null;
+        };
+        DependentChain: {
+            pausedAtRequest: boolean;
+            projectId: string;
+            queued: string[] | null;
+            /** Format: int64 */
+            requestedAt: number;
+            rootFeatureId: string;
+            skipped?: {
+                [key: string]: string;
+            } | null;
+            truncated?: boolean;
+            waitsOnExternal?: string[] | null;
+        };
+        DependentQueue: {
+            queued: string[] | null;
+            skipped?: {
+                [key: string]: string;
+            } | null;
+            truncated?: boolean;
+            waitsOnExternal?: string[] | null;
+        };
+        DispatchRequest: {
+            targetRunnerId: string;
+        };
+        Event: {
+            feature_id?: string;
+            from_status?: string;
+            id: string;
+            metadata?: {
+                [key: string]: string;
+            } | null;
+            project_id?: string;
+            reason?: string;
+            runner_id?: string;
+            source: string;
+            task_id?: string;
+            task_path?: string;
+            task_title?: string;
+            /** Format: date-time */
+            timestamp: string;
+            to_status?: string;
+            type: string;
+        };
+        EventCoverage: {
+            buffered: number;
+            capacity: number;
+            oldest?: string;
+        };
+        FeatureAssignmentRequest: {
+            force?: boolean;
+            intent?: string;
+            runner_id: string;
+        };
+        FeatureAssignmentResponse: {
+            assigned_at?: string;
+            feature_id: string;
+            previous_runner?: string;
+            project_id: string;
+            runner_id?: string;
+            source: string;
+            status: string;
+            updated_at?: string;
+        };
+        FeatureCheckoutOptions: {
+            checkout_mode?: string;
+            delivery_mode?: string;
+            execution_branch?: string;
+            execution_mode?: string;
+            merge_policy?: string;
+            merge_strategy?: string;
+            merge_target_branch?: string;
+            open_pr_before_merge?: boolean;
+            remote_branch_policy?: string;
+        };
+        InjectEntry: {
+            id: string;
+            path: string;
+            title: string;
+            type: string;
+        };
+        InjectRequest: {
+            maxChars?: number | null;
+            maxEntries?: number | null;
+            project?: string;
+            query: string;
+            type?: string;
+        };
+        InjectResponse: {
+            context: string;
+            entries: components["schemas"]["InjectEntry"][] | null;
+            total: number;
+            truncated?: boolean;
+        };
+        LogLine: {
+            content: string;
+            level: string;
+            timestamp: string;
+        };
+        LogQueryResponse: {
+            limit: number;
+            lines: components["schemas"]["LogLine"][] | null;
+            offset: number;
+            total: number;
+        };
+        ProjectPlacement: {
+            affinity: string;
+            allowed_machines?: string[] | null;
+            preferred_machines?: string[] | null;
+            project_id: string;
+            required_capabilities?: string[] | null;
+            required_labels?: {
+                [key: string]: string;
+            } | null;
+            resources?: {
+                [key: string]: unknown;
+            } | null;
+            workspace_policy?: string;
+        };
+        ResumeFeatureResult: {
+            feature_id: string;
+            results: components["schemas"]["ResumeTaskResult"][] | null;
+            total_results?: number;
+            total_resumed: number;
+            total_skipped: number;
+            truncated?: boolean;
+        };
+        ResumeTaskOptions: {
+            force?: boolean;
+        };
+        ResumeTaskResult: {
+            abandon_reason?: string;
+            prior_sessions_count?: number;
+            prior_status?: string;
+            reason?: string;
+            resumed: boolean;
+            task_id: string;
+        };
+        ResumeWithContextOptions: {
+            executor_override?: string;
+            force?: boolean;
+            injected_context: string;
+            prefer_same_session?: boolean;
+        };
+        ResumeWithContextResult: components["schemas"]["ResumeTaskResult"] & {
+            resume_mode: string;
+            target_session_id?: string;
+            injected_live?: boolean;
+        };
+        ResumeWithContextFeatureResult: {
+            feature_id: string;
+            total_resumed: number;
+            total_skipped: number;
+            total_results?: number;
+            truncated?: boolean;
+            results: components["schemas"]["ResumeWithContextResult"][] | null;
+        };
+        RunFeatureRequest: {
+            force?: boolean;
+            includeDependents?: boolean;
+        };
+        RunFeatureResponse: {
+            blockedByFeatures?: string[] | null;
+            cascadeActive?: boolean;
+            dependents?: components["schemas"]["DependentQueue"] | null;
+            detail?: string;
+            dispatched: boolean;
+            dispatchedCount: number;
+            featureId: string;
+            outstanding?: number | null;
+            projectId: string;
+            queued?: string[] | null;
+            reason?: string;
+            results?: components["schemas"]["RunTaskResponse"][] | null;
+            skippedCount: number;
+            waitingOnFeatures?: string[] | null;
+        };
+        RunProjectRequest: {
+            force?: boolean;
+        };
+        RunProjectResponse: {
+            featuresConsidered: number;
+            featuresDispatched: number;
+            featuresSkipped: number;
+            projectId: string;
+            reason?: string;
+            results?: components["schemas"]["RunFeatureResponse"][] | null;
+            totalTasksDispatched: number;
+        };
+        RunTaskRequest: {
+            force?: boolean;
+        };
+        RunTaskResponse: {
+            detail?: string;
+            dispatched: boolean;
+            expiresAt?: string;
+            leaseId?: string;
+            leaseState?: string;
+            projectId: string;
+            reason?: string;
+            runnerId?: string;
+            taskId: string;
+        };
+        TaskAssignmentRequest: {
+            force?: boolean;
+            intent?: string;
+            runner_id: string;
+        };
+        TaskAssignmentResponse: {
+            assigned_at?: string;
+            previous_runner?: string;
+            project_id: string;
+            runner_id?: string;
+            scope: string;
+            source: string;
+            status: string;
+            task_id: string;
+            updated_at?: string;
+        };
+        TriggerResponse: {
+            nextRun?: string;
+            reason?: string;
+            runId?: string;
+            success: boolean;
+            taskId: string;
+            triggered: boolean;
+        };
+        SDKDispatchResponse: {
+            success: boolean;
+            runnerId: string;
+            leaseId: string;
+            expiresAt: string;
+        };
+        DispatchConflictResponse: {
+            success: boolean;
+            error: string;
+        };
+        CancelChainResponse: {
+            success: boolean;
+            cancelled: boolean;
+            projectId: string;
+            rootFeatureId: string;
+            detail: string;
+        };
+        DependentChainsResponse: {
+            chains: components["schemas"]["DependentChain"][];
+        };
         ClaimStatusResponse: {
             taskId: string;
             claimed: boolean;
@@ -2250,6 +3171,988 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "events.stream": {
+        parameters: {
+            query?: {
+                project_id?: string;
+                feature_id?: string;
+                type?: string;
+                source?: string;
+            };
+            header?: {
+                "Last-Event-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE frames carrying Event JSON data */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Legacy error before stream starts */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "entries.updateMetadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetadataUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated entry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrainEntry"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "search.inject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InjectRequest"];
+            };
+        };
+        responses: {
+            /** @description Context and source entries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InjectResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.delivery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delivery state and unmet requirements */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDeliveryResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.verifyDelivery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeliveryCommand"];
+            };
+        };
+        responses: {
+            /** @description Updated delivery and unmet requirements */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryUpdateResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "events.recent": {
+        parameters: {
+            query?: {
+                project_id?: string;
+                feature_id?: string;
+                type?: string;
+                source?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecentEventsResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "events.wait": {
+        parameters: {
+            query: {
+                project_id: string;
+                feature_id?: string;
+                task_id?: string;
+                type?: string;
+                source?: string;
+                after?: string;
+                timeout_ms?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Event page or timeout/shutdown outcome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventWaitResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "events.resourceHealth": {
+        parameters: {
+            query: {
+                project_id: string;
+                task_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Samples and coverage limitations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceHealthResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "observability.timeline": {
+        parameters: {
+            query?: {
+                project?: string;
+                from?: string;
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Actual and projected timeline items */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimelineResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "projects.getPlacement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Placement policy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectPlacement"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "projects.setPlacement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectPlacement"];
+            };
+        };
+        responses: {
+            /** @description Saved policy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectPlacement"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ResumeTaskOptions"];
+            };
+        };
+        responses: {
+            /** @description Resume outcome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResumeTaskResult"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.resumeWithContext": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResumeWithContextOptions"];
+            };
+        };
+        responses: {
+            /** @description Context resume outcome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResumeWithContextResult"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.assign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskAssignmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Assignment state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskAssignmentResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.clearAssignment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClearFeatureAssignmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Cleared assignment state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskAssignmentResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.trigger": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Trigger result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RunTaskRequest"];
+            };
+        };
+        responses: {
+            /** @description Dispatch outcome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunTaskResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.dispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DispatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Dispatch lease */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SDKDispatchResponse"];
+                };
+            };
+            /** @description Claim conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DispatchConflictResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.logs": {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Log window */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogQueryResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "features.resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                featureId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ResumeTaskOptions"];
+            };
+        };
+        responses: {
+            /** @description Batch resume outcome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResumeFeatureResult"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "features.resumeWithContext": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                featureId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResumeWithContextOptions"];
+            };
+        };
+        responses: {
+            /** @description Context resume batch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResumeWithContextFeatureResult"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "features.assign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                featureId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeatureAssignmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Feature assignment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeatureAssignmentResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "features.clearAssignment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                featureId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClearFeatureAssignmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Cleared feature assignment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeatureAssignmentResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "features.checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                featureId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["FeatureCheckoutOptions"];
+            };
+        };
+        responses: {
+            /** @description Created or existing checkout task */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckoutFeatureResult"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "features.run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                featureId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RunFeatureRequest"];
+            };
+        };
+        responses: {
+            /** @description Per-task dispatch results */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunFeatureResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "features.cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                featureId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chain cancellation result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CancelChainResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "features.chains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chains with current derived membership */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DependentChainsResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "projects.run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RunProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description Feature dispatch outcomes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunProjectResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
     "tasks.status": {
         parameters: {
             query?: never;
@@ -2846,6 +4749,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskListResponse"];
+                };
+            };
+        };
+    };
+    "projects.delete": {
+        parameters: {
+            query: {
+                confirm: string;
+                force?: boolean;
+            };
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deletion counts and errors */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteProjectResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
                 };
             };
         };

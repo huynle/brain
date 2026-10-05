@@ -35,15 +35,40 @@ The installed Node fixture now also submits a task, checks provenance, lists its
 actual run audit and fetches each audit entry. These assertions are checked in,
 not only held in an independent verifier overlay.
 `TestDeliveredContractMatchesRouterAndInventory` checks every delivered operation
-against the real Chi route inventory and its table row below (75 currently).
+against the real Chi route inventory and its table row below (104 currently).
 Task `status/metadata/claimStatus` and feature `list/ready/get` are implemented
 in both SDKs. External Go and installed Node consumers prove mixed found/missing
 status IDs, empty-ID validation, metadata, no claim acquisition, pending-to-completed
 feature readiness, feature wrapper decoding and missing-feature 404. `status`
 accepts legacy `waitFor/timeout` fields but returns immediately; it is not long polling.
 These methods remain script-disabled. Redocly reports one existing-route ambiguity
-between task metadata and feature lookup; Chi gives the literal `features` prefix
+between task suffix routes and feature lookup (currently reported for `delivery`); Chi gives the literal `features` prefix
 precedence. No lint rule or server routing policy is weakened to hide this warning.
+
+All 29 formerly pending inventory methods now have Go/TypeScript adapters and
+contract declarations. The authenticated external Go and installed Node fixtures
+exercise metadata CAS, injection, placement defaults/write/validation, assignment
+and clear guards, trigger, abandoned/context/batch resume, task/feature/project run
+refusals without an executing runner, chain list/cancel, prompt-only checkout and
+immediate indexing, empty logs, delivery configure/read/revision conflicts, filtered
+events/recent/wait, caller-bound cursor refusal, resource-health absence, timeline,
+and explicit-confirmation project deletion. Direct dispatch is tested against an
+unregistered target (403, no claim), not an actual remote executor. Delivery verify's
+external-provider path is route/decoding-tested, not a live provider verification.
+The metadata key contract has an exact server allowlist guard; embedded resume and
+nullable timestamp DTOs have real JSON round-trip parity tests.
+
+`events.stream` consumes SSE through the authenticated existing transport, bounded
+per frame, without reconnect/retry. Unit evidence covers comments, CRLF, multiline
+data, callback stop, incomplete EOF, malformed/oversized frames, legacy HTTP errors,
+and Go cancellation/timeout/close/rebind. Both external consumers exercise actual
+authenticated Last-Event-ID replay filtered by project and stop after one event.
+The server buffer is volatile and replay is best-effort; this is not durable cursor,
+exactly-once, gap-free replay, or hosted authorization evidence. Resource health
+empty samples do not establish health; timeline projections do not execute work.
+Full SDK/V1 acceptance still requires independent review, remaining error/metadata
+compatibility auditing and worker/broker/shared-owner integration. Inventory coverage
+alone does not assert these gates are complete, and all operations remain script-off.
 Projects `list`, graph `orphans`, and observability `stats/stale` have route tests
 in both SDKs plus external Go/Node real-service checks. Stats preserves legacy
 host paths and is not script-safe. Stale means never verified or verified before

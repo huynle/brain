@@ -7,6 +7,27 @@ import (
 	"time"
 )
 
+// Defines values for DeliveryCommandAction.
+const (
+	Configure   DeliveryCommandAction = "configure"
+	Integration DeliveryCommandAction = "integration"
+	Verify      DeliveryCommandAction = "verify"
+)
+
+// Valid indicates whether the value is a known member of the DeliveryCommandAction enum.
+func (e DeliveryCommandAction) Valid() bool {
+	switch e {
+	case Configure:
+		return true
+	case Integration:
+		return true
+	case Verify:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for EntriesDeleteParamsConfirm.
 const (
 	True EntriesDeleteParamsConfirm = true
@@ -359,6 +380,24 @@ type BulkUpdateResult struct {
 	Title  string  `json:"title"`
 }
 
+// CancelChainResponse defines model for CancelChainResponse.
+type CancelChainResponse struct {
+	Cancelled     bool   `json:"cancelled"`
+	Detail        string `json:"detail"`
+	ProjectId     string `json:"projectId"`
+	RootFeatureId string `json:"rootFeatureId"`
+	Success       bool   `json:"success"`
+}
+
+// CheckoutFeatureResult defines model for CheckoutFeatureResult.
+type CheckoutFeatureResult struct {
+	Created          bool                 `json:"created"`
+	GeneratedKey     string               `json:"generatedKey"`
+	Superseded       *bool                `json:"superseded,omitempty"`
+	SupersededTaskId *string              `json:"supersededTaskId,omitempty"`
+	Task             *CreateEntryResponse `json:"task,omitempty"`
+}
+
 // ClaimStatusResponse defines model for ClaimStatusResponse.
 type ClaimStatusResponse struct {
 	Claimed   bool    `json:"claimed"`
@@ -366,6 +405,11 @@ type ClaimStatusResponse struct {
 	IsStale   bool    `json:"isStale"`
 	RunnerId  *string `json:"runnerId,omitempty"`
 	TaskId    string  `json:"taskId"`
+}
+
+// ClearFeatureAssignmentRequest defines model for ClearFeatureAssignmentRequest.
+type ClearFeatureAssignmentRequest struct {
+	Intent string `json:"intent"`
 }
 
 // CreateAttachmentResponse defines model for CreateAttachmentResponse.
@@ -522,10 +566,34 @@ type DeleteGoalResponse struct {
 	Success bool   `json:"success"`
 }
 
+// DeleteProjectResponse defines model for DeleteProjectResponse.
+type DeleteProjectResponse struct {
+	Deleted          int               `json:"deleted"`
+	DirectoryRemoved bool              `json:"directory_removed"`
+	Errors           *[]string         `json:"errors,omitempty"`
+	Failed           int               `json:"failed"`
+	IndexRowsRemoved *int64            `json:"index_rows_removed,omitempty"`
+	Project          string            `json:"project"`
+	StateRowsRemoved *map[string]int64 `json:"state_rows_removed,omitempty"`
+}
+
 // DeletionResponse defines model for DeletionResponse.
 type DeletionResponse struct {
 	Deleted bool `json:"deleted"`
 }
+
+// DeliveryCommand defines model for DeliveryCommand.
+type DeliveryCommand struct {
+	Action            DeliveryCommandAction `json:"action"`
+	Artifact          *string               `json:"artifact,omitempty"`
+	EvidenceReference *string               `json:"evidence_reference,omitempty"`
+	ExpectedRevision  int                   `json:"expected_revision"`
+	Passed            *bool                 `json:"passed,omitempty"`
+	Policy            *DeliveryVerification `json:"policy,omitempty"`
+}
+
+// DeliveryCommandAction defines model for DeliveryCommand.Action.
+type DeliveryCommandAction string
 
 // DeliveryEvidence defines model for DeliveryEvidence.
 type DeliveryEvidence struct {
@@ -544,6 +612,12 @@ type DeliveryEvidence struct {
 	Verifier             string             `json:"verifier"`
 }
 
+// DeliveryUpdateResponse defines model for DeliveryUpdateResponse.
+type DeliveryUpdateResponse struct {
+	Delivery *DeliveryVerification `json:"delivery"`
+	Unmet    *[]string             `json:"unmet"`
+}
+
 // DeliveryVerification defines model for DeliveryVerification.
 type DeliveryVerification struct {
 	Evidence          *DeliveryEvidence `json:"evidence,omitempty"`
@@ -555,6 +629,37 @@ type DeliveryVerification struct {
 	Revision          int               `json:"revision"`
 	Target            string            `json:"target"`
 	VerificationError *string           `json:"verification_error,omitempty"`
+}
+
+// DependentChain defines model for DependentChain.
+type DependentChain struct {
+	PausedAtRequest bool               `json:"pausedAtRequest"`
+	ProjectId       string             `json:"projectId"`
+	Queued          *[]string          `json:"queued"`
+	RequestedAt     int64              `json:"requestedAt"`
+	RootFeatureId   string             `json:"rootFeatureId"`
+	Skipped         *map[string]string `json:"skipped,omitempty"`
+	Truncated       *bool              `json:"truncated,omitempty"`
+	WaitsOnExternal *[]string          `json:"waitsOnExternal,omitempty"`
+}
+
+// DependentChainsResponse defines model for DependentChainsResponse.
+type DependentChainsResponse struct {
+	Chains []DependentChain `json:"chains"`
+}
+
+// DependentQueue defines model for DependentQueue.
+type DependentQueue struct {
+	Queued          *[]string          `json:"queued"`
+	Skipped         *map[string]string `json:"skipped,omitempty"`
+	Truncated       *bool              `json:"truncated,omitempty"`
+	WaitsOnExternal *[]string          `json:"waitsOnExternal,omitempty"`
+}
+
+// DispatchConflictResponse defines model for DispatchConflictResponse.
+type DispatchConflictResponse struct {
+	Error   string `json:"error"`
+	Success bool   `json:"success"`
 }
 
 // DispatchLease defines model for DispatchLease.
@@ -573,12 +678,52 @@ type DispatchLease struct {
 	TaskId            string  `json:"task_id"`
 }
 
+// DispatchRequest defines model for DispatchRequest.
+type DispatchRequest struct {
+	TargetRunnerId string `json:"targetRunnerId"`
+}
+
 // EmbeddingHealthStatus defines model for EmbeddingHealthStatus.
 type EmbeddingHealthStatus struct {
 	Enabled  bool    `json:"enabled"`
 	Model    *string `json:"model,omitempty"`
 	Provider *string `json:"provider,omitempty"`
 	Status   string  `json:"status"`
+}
+
+// Event defines model for Event.
+type Event struct {
+	FeatureId  *string            `json:"feature_id,omitempty"`
+	FromStatus *string            `json:"from_status,omitempty"`
+	Id         string             `json:"id"`
+	Metadata   *map[string]string `json:"metadata,omitempty"`
+	ProjectId  *string            `json:"project_id,omitempty"`
+	Reason     *string            `json:"reason,omitempty"`
+	RunnerId   *string            `json:"runner_id,omitempty"`
+	Source     string             `json:"source"`
+	TaskId     *string            `json:"task_id,omitempty"`
+	TaskPath   *string            `json:"task_path,omitempty"`
+	TaskTitle  *string            `json:"task_title,omitempty"`
+	Timestamp  time.Time          `json:"timestamp"`
+	ToStatus   *string            `json:"to_status,omitempty"`
+	Type       string             `json:"type"`
+}
+
+// EventCoverage defines model for EventCoverage.
+type EventCoverage struct {
+	Buffered int     `json:"buffered"`
+	Capacity int     `json:"capacity"`
+	Oldest   *string `json:"oldest,omitempty"`
+}
+
+// EventWaitResponse defines model for EventWaitResponse.
+type EventWaitResponse struct {
+	CursorExpired bool    `json:"cursor_expired"`
+	Events        []Event `json:"events"`
+	NextCursor    string  `json:"next_cursor"`
+	Shutdown      bool    `json:"shutdown"`
+	TimedOut      bool    `json:"timed_out"`
+	Truncated     bool    `json:"truncated"`
 }
 
 // Feature defines model for Feature.
@@ -588,6 +733,38 @@ type Feature struct {
 	Stats                 *TaskStats      `json:"stats,omitempty"`
 	Tasks                 *[]ResolvedTask `json:"tasks"`
 	UnresolvedFeatureDeps *[]string       `json:"unresolved_feature_deps,omitempty"`
+}
+
+// FeatureAssignmentRequest defines model for FeatureAssignmentRequest.
+type FeatureAssignmentRequest struct {
+	Force    *bool   `json:"force,omitempty"`
+	Intent   *string `json:"intent,omitempty"`
+	RunnerId string  `json:"runner_id"`
+}
+
+// FeatureAssignmentResponse defines model for FeatureAssignmentResponse.
+type FeatureAssignmentResponse struct {
+	AssignedAt     *string `json:"assigned_at,omitempty"`
+	FeatureId      string  `json:"feature_id"`
+	PreviousRunner *string `json:"previous_runner,omitempty"`
+	ProjectId      string  `json:"project_id"`
+	RunnerId       *string `json:"runner_id,omitempty"`
+	Source         string  `json:"source"`
+	Status         string  `json:"status"`
+	UpdatedAt      *string `json:"updated_at,omitempty"`
+}
+
+// FeatureCheckoutOptions defines model for FeatureCheckoutOptions.
+type FeatureCheckoutOptions struct {
+	CheckoutMode       *string `json:"checkout_mode,omitempty"`
+	DeliveryMode       *string `json:"delivery_mode,omitempty"`
+	ExecutionBranch    *string `json:"execution_branch,omitempty"`
+	ExecutionMode      *string `json:"execution_mode,omitempty"`
+	MergePolicy        *string `json:"merge_policy,omitempty"`
+	MergeStrategy      *string `json:"merge_strategy,omitempty"`
+	MergeTargetBranch  *string `json:"merge_target_branch,omitempty"`
+	OpenPrBeforeMerge  *bool   `json:"open_pr_before_merge,omitempty"`
+	RemoteBranchPolicy *string `json:"remote_branch_policy,omitempty"`
 }
 
 // FeatureListResponse defines model for FeatureListResponse.
@@ -678,6 +855,31 @@ type HealthResponse struct {
 	Timestamp time.Time             `json:"timestamp"`
 }
 
+// InjectEntry defines model for InjectEntry.
+type InjectEntry struct {
+	Id    string `json:"id"`
+	Path  string `json:"path"`
+	Title string `json:"title"`
+	Type  string `json:"type"`
+}
+
+// InjectRequest defines model for InjectRequest.
+type InjectRequest struct {
+	MaxChars   *int    `json:"maxChars,omitempty"`
+	MaxEntries *int    `json:"maxEntries,omitempty"`
+	Project    *string `json:"project,omitempty"`
+	Query      string  `json:"query"`
+	Type       *string `json:"type,omitempty"`
+}
+
+// InjectResponse defines model for InjectResponse.
+type InjectResponse struct {
+	Context   string         `json:"context"`
+	Entries   *[]InjectEntry `json:"entries"`
+	Total     int            `json:"total"`
+	Truncated *bool          `json:"truncated,omitempty"`
+}
+
 // LegacyErrorResponse Existing REST error envelope; SDKs adapt HTTP status to a machine code and preserve field details without changing the server wire format.
 type LegacyErrorResponse struct {
 	// Code Optional future-compatible machine code; legacy endpoints usually omit it.
@@ -726,6 +928,64 @@ type ListWebhookDeliveriesResponse struct {
 // ListWebhooksResponse defines model for ListWebhooksResponse.
 type ListWebhooksResponse struct {
 	Webhooks []WebhookResponse `json:"webhooks"`
+}
+
+// LogLine defines model for LogLine.
+type LogLine struct {
+	Content   string `json:"content"`
+	Level     string `json:"level"`
+	Timestamp string `json:"timestamp"`
+}
+
+// LogQueryResponse defines model for LogQueryResponse.
+type LogQueryResponse struct {
+	Limit  int        `json:"limit"`
+	Lines  *[]LogLine `json:"lines"`
+	Offset int        `json:"offset"`
+	Total  int        `json:"total"`
+}
+
+// MetadataUpdateRequest Exact metadata endpoint key allowlist. Omitted fields are unchanged. Use ordinary entry update for other frontmatter. Audit/runtime JSON fields preserve server-defined contents.
+type MetadataUpdateRequest struct {
+	AbandonedAt             *string                 `json:"abandoned_at,omitempty"`
+	AbandonedReason         *string                 `json:"abandoned_reason,omitempty"`
+	Append                  *string                 `json:"append,omitempty"`
+	AttemptCount            *int                    `json:"attempt_count,omitempty"`
+	AutomationRunId         *string                 `json:"automation_run_id,omitempty"`
+	CompleteOnIdle          *bool                   `json:"complete_on_idle,omitempty"`
+	CompletedAt             *string                 `json:"completed_at,omitempty"`
+	DependsOn               *[]string               `json:"depends_on,omitempty"`
+	DirectPrompt            *string                 `json:"direct_prompt,omitempty"`
+	ExitCode                *int                    `json:"exit_code,omitempty"`
+	ExpectedRevision        *string                 `json:"expected_revision,omitempty"`
+	ExpiresAt               *string                 `json:"expires_at,omitempty"`
+	FeatureDependsOn        *[]string               `json:"feature_depends_on,omitempty"`
+	FeatureId               *string                 `json:"feature_id,omitempty"`
+	FeaturePriority         *string                 `json:"feature_priority,omitempty"`
+	LastFailedAt            *string                 `json:"last_failed_at,omitempty"`
+	LastReconcile           interface{}             `json:"last_reconcile,omitempty"`
+	MaxRuns                 *int                    `json:"max_runs,omitempty"`
+	MrUrl                   *string                 `json:"mr_url,omitempty"`
+	NextRun                 *string                 `json:"next_run,omitempty"`
+	Note                    *string                 `json:"note,omitempty"`
+	Priority                *string                 `json:"priority,omitempty"`
+	ResumeExecutorOverride  *string                 `json:"resume_executor_override,omitempty"`
+	ResumeInjectedContext   *string                 `json:"resume_injected_context,omitempty"`
+	ResumeMode              *string                 `json:"resume_mode,omitempty"`
+	ResumePreferSameSession *bool                   `json:"resume_prefer_same_session,omitempty"`
+	ResumeRequested         *bool                   `json:"resume_requested,omitempty"`
+	ResumeRequestedAt       *string                 `json:"resume_requested_at,omitempty"`
+	RunOnceAt               *string                 `json:"run_once_at,omitempty"`
+	Runs                    *[]interface{}          `json:"runs,omitempty"`
+	Schedule                *string                 `json:"schedule,omitempty"`
+	ScheduleEnabled         *bool                   `json:"schedule_enabled,omitempty"`
+	ScriptOutput            *string                 `json:"script_output,omitempty"`
+	Sessions                *map[string]SessionInfo `json:"sessions,omitempty"`
+	StartsAt                *string                 `json:"starts_at,omitempty"`
+	Status                  *string                 `json:"status,omitempty"`
+	Tags                    *[]string               `json:"tags,omitempty"`
+	Timezone                *string                 `json:"timezone,omitempty"`
+	Title                   *string                 `json:"title,omitempty"`
 }
 
 // MoveEntryRequest defines model for MoveEntryRequest.
@@ -777,6 +1037,25 @@ type PlacementReason struct {
 // ProjectListResponse defines model for ProjectListResponse.
 type ProjectListResponse struct {
 	Projects *[]string `json:"projects"`
+}
+
+// ProjectPlacement defines model for ProjectPlacement.
+type ProjectPlacement struct {
+	Affinity             string                  `json:"affinity"`
+	AllowedMachines      *[]string               `json:"allowed_machines,omitempty"`
+	PreferredMachines    *[]string               `json:"preferred_machines,omitempty"`
+	ProjectId            string                  `json:"project_id"`
+	RequiredCapabilities *[]string               `json:"required_capabilities,omitempty"`
+	RequiredLabels       *map[string]string      `json:"required_labels,omitempty"`
+	Resources            *map[string]interface{} `json:"resources,omitempty"`
+	WorkspacePolicy      *string                 `json:"workspace_policy,omitempty"`
+}
+
+// RecentEventsResponse defines model for RecentEventsResponse.
+type RecentEventsResponse struct {
+	Count    int           `json:"count"`
+	Coverage EventCoverage `json:"coverage"`
+	Events   *[]Event      `json:"events"`
 }
 
 // ReminderConfig defines model for ReminderConfig.
@@ -921,6 +1200,98 @@ type ResolvedTask struct {
 	Workdir                 string                  `json:"workdir"`
 }
 
+// ResourceHealthResponse defines model for ResourceHealthResponse.
+type ResourceHealthResponse struct {
+	Availability    string                `json:"availability"`
+	ClearFraction   float32               `json:"clear_fraction"`
+	Coverage        EventCoverage         `json:"coverage"`
+	ObservedAt      time.Time             `json:"observed_at"`
+	Samples         []ResourceObservation `json:"samples"`
+	Truncated       bool                  `json:"truncated"`
+	WarningFraction float32               `json:"warning_fraction"`
+}
+
+// ResourceObservation defines model for ResourceObservation.
+type ResourceObservation struct {
+	FeatureId *string        `json:"feature_id,omitempty"`
+	Fresh     bool           `json:"fresh"`
+	RunnerId  string         `json:"runner_id"`
+	Sample    ResourceSample `json:"sample"`
+	TaskId    string         `json:"task_id"`
+}
+
+// ResourceSample defines model for ResourceSample.
+type ResourceSample struct {
+	CommandSummary    *string    `json:"command_summary"`
+	Executor          *string    `json:"executor,omitempty"`
+	InstanceId        *string    `json:"instance_id,omitempty"`
+	LastActivity      *time.Time `json:"last_activity"`
+	LimitBytes        int64      `json:"limit_bytes"`
+	ProcessCount      *int       `json:"process_count"`
+	RssBytes          *int64     `json:"rss_bytes"`
+	SampledAt         time.Time  `json:"sampled_at"`
+	SessionId         *string    `json:"session_id,omitempty"`
+	TerminationReason *string    `json:"termination_reason,omitempty"`
+	UnavailableReason *string    `json:"unavailable_reason,omitempty"`
+	Warning           bool       `json:"warning"`
+}
+
+// ResumeFeatureResult defines model for ResumeFeatureResult.
+type ResumeFeatureResult struct {
+	FeatureId    string              `json:"feature_id"`
+	Results      *[]ResumeTaskResult `json:"results"`
+	TotalResults *int                `json:"total_results,omitempty"`
+	TotalResumed int                 `json:"total_resumed"`
+	TotalSkipped int                 `json:"total_skipped"`
+	Truncated    *bool               `json:"truncated,omitempty"`
+}
+
+// ResumeTaskOptions defines model for ResumeTaskOptions.
+type ResumeTaskOptions struct {
+	Force *bool `json:"force,omitempty"`
+}
+
+// ResumeTaskResult defines model for ResumeTaskResult.
+type ResumeTaskResult struct {
+	AbandonReason      *string `json:"abandon_reason,omitempty"`
+	PriorSessionsCount *int    `json:"prior_sessions_count,omitempty"`
+	PriorStatus        *string `json:"prior_status,omitempty"`
+	Reason             *string `json:"reason,omitempty"`
+	Resumed            bool    `json:"resumed"`
+	TaskId             string  `json:"task_id"`
+}
+
+// ResumeWithContextFeatureResult defines model for ResumeWithContextFeatureResult.
+type ResumeWithContextFeatureResult struct {
+	FeatureId    string                     `json:"feature_id"`
+	Results      *[]ResumeWithContextResult `json:"results"`
+	TotalResults *int                       `json:"total_results,omitempty"`
+	TotalResumed int                        `json:"total_resumed"`
+	TotalSkipped int                        `json:"total_skipped"`
+	Truncated    *bool                      `json:"truncated,omitempty"`
+}
+
+// ResumeWithContextOptions defines model for ResumeWithContextOptions.
+type ResumeWithContextOptions struct {
+	ExecutorOverride  *string `json:"executor_override,omitempty"`
+	Force             *bool   `json:"force,omitempty"`
+	InjectedContext   string  `json:"injected_context"`
+	PreferSameSession *bool   `json:"prefer_same_session,omitempty"`
+}
+
+// ResumeWithContextResult defines model for ResumeWithContextResult.
+type ResumeWithContextResult struct {
+	AbandonReason      *string `json:"abandon_reason,omitempty"`
+	InjectedLive       *bool   `json:"injected_live,omitempty"`
+	PriorSessionsCount *int    `json:"prior_sessions_count,omitempty"`
+	PriorStatus        *string `json:"prior_status,omitempty"`
+	Reason             *string `json:"reason,omitempty"`
+	ResumeMode         string  `json:"resume_mode"`
+	Resumed            bool    `json:"resumed"`
+	TargetSessionId    *string `json:"target_session_id,omitempty"`
+	TaskId             string  `json:"task_id"`
+}
+
 // RunAutomationRequest defines model for RunAutomationRequest.
 type RunAutomationRequest struct {
 	Path    string  `json:"path"`
@@ -933,11 +1304,77 @@ type RunAutomationResponse struct {
 	TaskIds []string `json:"task_ids"`
 }
 
+// RunFeatureRequest defines model for RunFeatureRequest.
+type RunFeatureRequest struct {
+	Force             *bool `json:"force,omitempty"`
+	IncludeDependents *bool `json:"includeDependents,omitempty"`
+}
+
+// RunFeatureResponse defines model for RunFeatureResponse.
+type RunFeatureResponse struct {
+	BlockedByFeatures *[]string          `json:"blockedByFeatures,omitempty"`
+	CascadeActive     *bool              `json:"cascadeActive,omitempty"`
+	Dependents        *DependentQueue    `json:"dependents,omitempty"`
+	Detail            *string            `json:"detail,omitempty"`
+	Dispatched        bool               `json:"dispatched"`
+	DispatchedCount   int                `json:"dispatchedCount"`
+	FeatureId         string             `json:"featureId"`
+	Outstanding       *int               `json:"outstanding,omitempty"`
+	ProjectId         string             `json:"projectId"`
+	Queued            *[]string          `json:"queued,omitempty"`
+	Reason            *string            `json:"reason,omitempty"`
+	Results           *[]RunTaskResponse `json:"results,omitempty"`
+	SkippedCount      int                `json:"skippedCount"`
+	WaitingOnFeatures *[]string          `json:"waitingOnFeatures,omitempty"`
+}
+
 // RunFinalization defines model for RunFinalization.
 type RunFinalization struct {
 	FinalizedAt string  `json:"finalized_at"`
 	SessionId   *string `json:"session_id,omitempty"`
 	Status      string  `json:"status"`
+}
+
+// RunProjectRequest defines model for RunProjectRequest.
+type RunProjectRequest struct {
+	Force *bool `json:"force,omitempty"`
+}
+
+// RunProjectResponse defines model for RunProjectResponse.
+type RunProjectResponse struct {
+	FeaturesConsidered   int                   `json:"featuresConsidered"`
+	FeaturesDispatched   int                   `json:"featuresDispatched"`
+	FeaturesSkipped      int                   `json:"featuresSkipped"`
+	ProjectId            string                `json:"projectId"`
+	Reason               *string               `json:"reason,omitempty"`
+	Results              *[]RunFeatureResponse `json:"results,omitempty"`
+	TotalTasksDispatched int                   `json:"totalTasksDispatched"`
+}
+
+// RunTaskRequest defines model for RunTaskRequest.
+type RunTaskRequest struct {
+	Force *bool `json:"force,omitempty"`
+}
+
+// RunTaskResponse defines model for RunTaskResponse.
+type RunTaskResponse struct {
+	Detail     *string `json:"detail,omitempty"`
+	Dispatched bool    `json:"dispatched"`
+	ExpiresAt  *string `json:"expiresAt,omitempty"`
+	LeaseId    *string `json:"leaseId,omitempty"`
+	LeaseState *string `json:"leaseState,omitempty"`
+	ProjectId  string  `json:"projectId"`
+	Reason     *string `json:"reason,omitempty"`
+	RunnerId   *string `json:"runnerId,omitempty"`
+	TaskId     string  `json:"taskId"`
+}
+
+// SDKDispatchResponse defines model for SDKDispatchResponse.
+type SDKDispatchResponse struct {
+	ExpiresAt string `json:"expiresAt"`
+	LeaseId   string `json:"leaseId"`
+	RunnerId  string `json:"runnerId"`
+	Success   bool   `json:"success"`
 }
 
 // SearchRequest defines model for SearchRequest.
@@ -1034,6 +1471,34 @@ type SuccessResponse struct {
 	Success bool `json:"success"`
 }
 
+// TaskAssignmentRequest defines model for TaskAssignmentRequest.
+type TaskAssignmentRequest struct {
+	Force    *bool   `json:"force,omitempty"`
+	Intent   *string `json:"intent,omitempty"`
+	RunnerId string  `json:"runner_id"`
+}
+
+// TaskAssignmentResponse defines model for TaskAssignmentResponse.
+type TaskAssignmentResponse struct {
+	AssignedAt     *string `json:"assigned_at,omitempty"`
+	PreviousRunner *string `json:"previous_runner,omitempty"`
+	ProjectId      string  `json:"project_id"`
+	RunnerId       *string `json:"runner_id,omitempty"`
+	Scope          string  `json:"scope"`
+	Source         string  `json:"source"`
+	Status         string  `json:"status"`
+	TaskId         string  `json:"task_id"`
+	UpdatedAt      *string `json:"updated_at,omitempty"`
+}
+
+// TaskDeliveryResponse defines model for TaskDeliveryResponse.
+type TaskDeliveryResponse struct {
+	Delivery             *DeliveryVerification `json:"delivery"`
+	ImplementationStatus string                `json:"implementation_status"`
+	TaskId               string                `json:"task_id"`
+	Unmet                *[]string             `json:"unmet"`
+}
+
 // TaskFeatureFilter defines model for TaskFeatureFilter.
 type TaskFeatureFilter = []string
 
@@ -1109,6 +1574,49 @@ type TaskStats struct {
 	Waiting       int `json:"waiting"`
 }
 
+// TimelineItem defines model for TimelineItem.
+type TimelineItem struct {
+	FeatureId       *string            `json:"feature_id,omitempty"`
+	Id              string             `json:"id"`
+	Metadata        *map[string]string `json:"metadata,omitempty"`
+	OccurrenceCount *int               `json:"occurrence_count,omitempty"`
+	ProjectId       *string            `json:"project_id,omitempty"`
+	ProjectionRule  *string            `json:"projection_rule,omitempty"`
+	Reason          *string            `json:"reason,omitempty"`
+	RunnerId        *string            `json:"runner_id,omitempty"`
+	Source          string             `json:"source"`
+	SourceId        *string            `json:"source_id,omitempty"`
+	SourceKind      *string            `json:"source_kind,omitempty"`
+	SourcePath      *string            `json:"source_path,omitempty"`
+	Summary         *string            `json:"summary,omitempty"`
+	TaskId          *string            `json:"task_id,omitempty"`
+	TaskPath        *string            `json:"task_path,omitempty"`
+	TaskTitle       *string            `json:"task_title,omitempty"`
+	TemporalKind    *string            `json:"temporal_kind,omitempty"`
+	TemporalState   string             `json:"temporal_state"`
+	Timestamp       time.Time          `json:"timestamp"`
+	Timezone        *string            `json:"timezone,omitempty"`
+	Type            string             `json:"type"`
+	WindowEnd       *time.Time         `json:"window_end,omitempty"`
+	WindowStart     *time.Time         `json:"window_start,omitempty"`
+}
+
+// TimelineResponse defines model for TimelineResponse.
+type TimelineResponse struct {
+	From        time.Time          `json:"from"`
+	GeneratedAt time.Time          `json:"generated_at"`
+	Items       *[]TimelineItem    `json:"items"`
+	To          time.Time          `json:"to"`
+	Truncated   bool               `json:"truncated"`
+	Warnings    *[]TimelineWarning `json:"warnings"`
+}
+
+// TimelineWarning defines model for TimelineWarning.
+type TimelineWarning struct {
+	Message  string  `json:"message"`
+	SourceId *string `json:"source_id,omitempty"`
+}
+
 // TriggerConfig defines model for TriggerConfig.
 type TriggerConfig struct {
 	Cooldown               *string            `json:"cooldown,omitempty"`
@@ -1122,6 +1630,16 @@ type TriggerConfig struct {
 	Timezone               *string            `json:"timezone,omitempty"`
 	Type                   *string            `json:"type,omitempty"`
 	Webhook                *string            `json:"webhook,omitempty"`
+}
+
+// TriggerResponse defines model for TriggerResponse.
+type TriggerResponse struct {
+	NextRun   *string `json:"nextRun,omitempty"`
+	Reason    *string `json:"reason,omitempty"`
+	RunId     *string `json:"runId,omitempty"`
+	Success   bool    `json:"success"`
+	TaskId    string  `json:"taskId"`
+	Triggered bool    `json:"triggered"`
 }
 
 // UpdateEntryRequest defines model for UpdateEntryRequest.
@@ -1371,6 +1889,42 @@ type SectionsGetParams struct {
 	IncludeSubsections *bool `form:"includeSubsections,omitempty" json:"includeSubsections,omitempty"`
 }
 
+// EventsRecentParams defines parameters for EventsRecent.
+type EventsRecentParams struct {
+	ProjectId *string `form:"project_id,omitempty" json:"project_id,omitempty"`
+	FeatureId *string `form:"feature_id,omitempty" json:"feature_id,omitempty"`
+	Type      *string `form:"type,omitempty" json:"type,omitempty"`
+	Source    *string `form:"source,omitempty" json:"source,omitempty"`
+	Limit     *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// EventsResourceHealthParams defines parameters for EventsResourceHealth.
+type EventsResourceHealthParams struct {
+	ProjectId string  `form:"project_id" json:"project_id"`
+	TaskId    *string `form:"task_id,omitempty" json:"task_id,omitempty"`
+}
+
+// EventsStreamParams defines parameters for EventsStream.
+type EventsStreamParams struct {
+	ProjectId   *string `form:"project_id,omitempty" json:"project_id,omitempty"`
+	FeatureId   *string `form:"feature_id,omitempty" json:"feature_id,omitempty"`
+	Type        *string `form:"type,omitempty" json:"type,omitempty"`
+	Source      *string `form:"source,omitempty" json:"source,omitempty"`
+	LastEventID *string `json:"Last-Event-ID,omitempty"`
+}
+
+// EventsWaitParams defines parameters for EventsWait.
+type EventsWaitParams struct {
+	ProjectId string  `form:"project_id" json:"project_id"`
+	FeatureId *string `form:"feature_id,omitempty" json:"feature_id,omitempty"`
+	TaskId    *string `form:"task_id,omitempty" json:"task_id,omitempty"`
+	Type      *string `form:"type,omitempty" json:"type,omitempty"`
+	Source    *string `form:"source,omitempty" json:"source,omitempty"`
+	After     *string `form:"after,omitempty" json:"after,omitempty"`
+	TimeoutMs *int    `form:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
+	Limit     *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // GoalsListParams defines parameters for GoalsList.
 type GoalsListParams struct {
 	Project   *string `form:"project,omitempty" json:"project,omitempty"`
@@ -1417,6 +1971,18 @@ type ObservabilityStatsParams struct {
 	Global   *bool   `form:"global,omitempty" json:"global,omitempty"`
 }
 
+// ProjectsDeleteParams defines parameters for ProjectsDelete.
+type ProjectsDeleteParams struct {
+	Confirm string `form:"confirm" json:"confirm"`
+	Force   *bool  `form:"force,omitempty" json:"force,omitempty"`
+}
+
+// TasksLogsParams defines parameters for TasksLogs.
+type TasksLogsParams struct {
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
 // TasksNextParams defines parameters for TasksNext.
 type TasksNextParams struct {
 	FeatureId *TaskFeatureFilter `form:"feature_id,omitempty" json:"feature_id,omitempty"`
@@ -1435,6 +2001,13 @@ type TasksReadyParams struct {
 	Executors         *string `form:"executors,omitempty" json:"executors,omitempty"`
 	RunnerId          *string `form:"runner_id,omitempty" json:"runner_id,omitempty"`
 	GeneratedByPrefix *string `form:"generated_by_prefix,omitempty" json:"generated_by_prefix,omitempty"`
+}
+
+// ObservabilityTimelineParams defines parameters for ObservabilityTimeline.
+type ObservabilityTimelineParams struct {
+	Project *string    `form:"project,omitempty" json:"project,omitempty"`
+	From    *time.Time `form:"from,omitempty" json:"from,omitempty"`
+	To      *time.Time `form:"to,omitempty" json:"to,omitempty"`
 }
 
 // WebhooksListParams defines parameters for WebhooksList.
@@ -1477,6 +2050,9 @@ type EntriesUpdateJSONRequestBody = UpdateEntryRequest
 // AttachmentsAttachJSONRequestBody defines body for AttachmentsAttach for application/json ContentType.
 type AttachmentsAttachJSONRequestBody = AttachEntryAttachmentRequest
 
+// EntriesUpdateMetadataJSONRequestBody defines body for EntriesUpdateMetadata for application/json ContentType.
+type EntriesUpdateMetadataJSONRequestBody = MetadataUpdateRequest
+
 // EntriesMoveJSONRequestBody defines body for EntriesMove for application/json ContentType.
 type EntriesMoveJSONRequestBody = MoveEntryRequest
 
@@ -1485,6 +2061,12 @@ type GoalsCreateJSONRequestBody = CreateGoalRequest
 
 // GoalsUpdateJSONRequestBody defines body for GoalsUpdate for application/json ContentType.
 type GoalsUpdateJSONRequestBody = UpdateGoalRequest
+
+// SearchInjectJSONRequestBody defines body for SearchInject for application/json ContentType.
+type SearchInjectJSONRequestBody = InjectRequest
+
+// ProjectsSetPlacementJSONRequestBody defines body for ProjectsSetPlacement for application/json ContentType.
+type ProjectsSetPlacementJSONRequestBody = ProjectPlacement
 
 // RemindersCreateJSONRequestBody defines body for RemindersCreate for application/json ContentType.
 type RemindersCreateJSONRequestBody = CreateReminderRequest
@@ -1498,8 +2080,50 @@ type RemindersSnoozeJSONRequestBody = SnoozeReminderRequest
 // SearchQueryJSONRequestBody defines body for SearchQuery for application/json ContentType.
 type SearchQueryJSONRequestBody = SearchRequest
 
+// FeaturesAssignJSONRequestBody defines body for FeaturesAssign for application/json ContentType.
+type FeaturesAssignJSONRequestBody = FeatureAssignmentRequest
+
+// FeaturesClearAssignmentJSONRequestBody defines body for FeaturesClearAssignment for application/json ContentType.
+type FeaturesClearAssignmentJSONRequestBody = ClearFeatureAssignmentRequest
+
+// FeaturesCheckoutJSONRequestBody defines body for FeaturesCheckout for application/json ContentType.
+type FeaturesCheckoutJSONRequestBody = FeatureCheckoutOptions
+
+// FeaturesResumeJSONRequestBody defines body for FeaturesResume for application/json ContentType.
+type FeaturesResumeJSONRequestBody = ResumeTaskOptions
+
+// FeaturesResumeWithContextJSONRequestBody defines body for FeaturesResumeWithContext for application/json ContentType.
+type FeaturesResumeWithContextJSONRequestBody = ResumeWithContextOptions
+
+// FeaturesRunJSONRequestBody defines body for FeaturesRun for application/json ContentType.
+type FeaturesRunJSONRequestBody = RunFeatureRequest
+
+// ProjectsRunJSONRequestBody defines body for ProjectsRun for application/json ContentType.
+type ProjectsRunJSONRequestBody = RunProjectRequest
+
 // TasksStatusJSONRequestBody defines body for TasksStatus for application/json ContentType.
 type TasksStatusJSONRequestBody = MultiTaskStatusRequest
+
+// TasksAssignJSONRequestBody defines body for TasksAssign for application/json ContentType.
+type TasksAssignJSONRequestBody = TaskAssignmentRequest
+
+// TasksClearAssignmentJSONRequestBody defines body for TasksClearAssignment for application/json ContentType.
+type TasksClearAssignmentJSONRequestBody = ClearFeatureAssignmentRequest
+
+// TasksVerifyDeliveryJSONRequestBody defines body for TasksVerifyDelivery for application/json ContentType.
+type TasksVerifyDeliveryJSONRequestBody = DeliveryCommand
+
+// TasksDispatchJSONRequestBody defines body for TasksDispatch for application/json ContentType.
+type TasksDispatchJSONRequestBody = DispatchRequest
+
+// TasksResumeJSONRequestBody defines body for TasksResume for application/json ContentType.
+type TasksResumeJSONRequestBody = ResumeTaskOptions
+
+// TasksResumeWithContextJSONRequestBody defines body for TasksResumeWithContext for application/json ContentType.
+type TasksResumeWithContextJSONRequestBody = ResumeWithContextOptions
+
+// TasksRunJSONRequestBody defines body for TasksRun for application/json ContentType.
+type TasksRunJSONRequestBody = RunTaskRequest
 
 // WebhooksCreateJSONRequestBody defines body for WebhooksCreate for application/json ContentType.
 type WebhooksCreateJSONRequestBody = CreateWebhookRequest

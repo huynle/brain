@@ -22,6 +22,16 @@ func main() {
 		reflect.TypeOf(types.ResolvedTask{}),
 		reflect.TypeOf(api.TaskMetadataResponse{}), reflect.TypeOf(types.MultiTaskStatusRequest{}), reflect.TypeOf(types.MultiTaskStatusResponse{}), reflect.TypeOf(types.ClaimStatusResponse{}),
 		reflect.TypeOf(types.FeatureListResponse{}), reflect.TypeOf(types.FeatureResponse{}),
+		reflect.TypeOf(types.ProjectPlacement{}), reflect.TypeOf(types.DeleteProjectResponse{}),
+		reflect.TypeOf(types.InjectRequest{}), reflect.TypeOf(types.InjectResponse{}),
+		reflect.TypeOf(types.TaskAssignmentRequest{}), reflect.TypeOf(types.TaskAssignmentResponse{}),
+		reflect.TypeOf(types.FeatureAssignmentRequest{}), reflect.TypeOf(types.FeatureAssignmentResponse{}), reflect.TypeOf(types.ClearFeatureAssignmentRequest{}),
+		reflect.TypeOf(types.ResumeTaskOptions{}), reflect.TypeOf(types.ResumeTaskResult{}), reflect.TypeOf(types.ResumeFeatureResult{}),
+		reflect.TypeOf(types.ResumeWithContextOptions{}), // Embedded result DTOs have explicit public schemas.
+		reflect.TypeOf(types.RunTaskRequest{}), reflect.TypeOf(types.RunTaskResponse{}), reflect.TypeOf(types.RunFeatureRequest{}), reflect.TypeOf(types.RunFeatureResponse{}), reflect.TypeOf(types.RunProjectRequest{}), reflect.TypeOf(types.RunProjectResponse{}),
+		reflect.TypeOf(types.FeatureCheckoutOptions{}), reflect.TypeOf(types.CheckoutFeatureResult{}), reflect.TypeOf(types.TriggerResponse{}),
+		reflect.TypeOf(types.DependentChain{}), reflect.TypeOf(types.DispatchRequest{}), reflect.TypeOf(types.LogQueryResponse{}), reflect.TypeOf(types.DeliveryVerification{}),
+		reflect.TypeOf(types.Event{}), reflect.TypeOf(types.EventCoverage{}), // Nullable timestamp DTOs require explicit schemas.
 		reflect.TypeOf(types.MoveEntryRequest{}), reflect.TypeOf(types.MoveResult{}),
 		reflect.TypeOf(types.BulkUpdateRequest{}), reflect.TypeOf(types.BulkUpdateResponse{}),
 		reflect.TypeOf(types.BulkDeleteRequest{}), reflect.TypeOf(types.BulkDeleteResponse{}),

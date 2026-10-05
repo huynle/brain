@@ -17,6 +17,7 @@ export interface RequestOptions {
   requestId?: string;
   idempotencyKey?: string;
 }
+export interface StreamOptions extends RequestOptions { lastEventId?: string }
 export type EntriesListParams = NonNullable<operations["entries.list"]["parameters"]["query"]>;
 export interface FieldViolation {field: string; message: string}
 
@@ -65,7 +66,7 @@ export class BrainClient {
     return next;
   }
 
-  async #request<T>(method: string, path: string, body?: unknown, query?: object, options: RequestOptions = {}, expectBody = true, binary = false): Promise<T> {
+  async #request<T>(method: string, path: string, body?: unknown, query?: object, options: StreamOptions = {}, expectBody = true, binary = false, stream?: (response: Response,signal: AbortSignal)=>Promise<void>): Promise<T> {
     // Reject before WHATWG URL normalization, including encoded path segments.
     for (let decoded = path;;) {
       if (decoded.split(/[/\\]/).some(segment => segment === "." || segment === "..")) throw new BrainError("invalid_request");
@@ -86,6 +87,13 @@ export class BrainClient {
     }
     const suffix = q.size ? `?${q}` : "";
     const headers = new Headers({Accept: "application/json"});
+    if(stream){
+      headers.set("Accept","text/event-stream");
+      if(options.lastEventId!==undefined){
+        if(/[\r\n\0]/.test(options.lastEventId))throw new BrainError("invalid_request");
+        headers.set("Last-Event-ID",options.lastEventId);
+      }
+    }
     if (body !== undefined && !(body instanceof FormData)) headers.set("Content-Type", "application/json");
     if (this.#config.token) headers.set("Authorization", `Bearer ${this.#config.token}`);
     if (this.#config.tenant) headers.set("X-Brain-Tenant", this.#config.tenant);
@@ -105,6 +113,7 @@ export class BrainClient {
       await response.body?.cancel();
       throw new BrainError("redirect_refused", response.status, requestId);
     }
+    if(stream && response.ok){await stream(response,signal);return undefined as T;}
     const reader = response.body?.getReader();
     const chunks: Uint8Array[] = [];
     let total = 0;
@@ -144,10 +153,63 @@ export class BrainClient {
     catch { throw new BrainError("invalid_response", response.status, requestId); }
   }
 
+  async #readEvents(response: Response, signal: AbortSignal, onEvent: (event: Schema["Event"]) => void | Promise<void>): Promise<void> {
+    const failure = (code: string) => new BrainError(code, response.status, response.headers.get("X-Request-ID") ?? "");
+    if (response.headers.get("Content-Type")?.split(";")[0]?.trim().toLowerCase() !== "text/event-stream" || !response.body) {
+      await response.body?.cancel();
+      throw failure("invalid_response");
+    }
+    const reader = response.body.getReader();
+    const abort = () => { void reader.cancel().catch(() => {}); };
+    signal.addEventListener("abort", abort, {once: true});
+    const decoder = new TextDecoder("utf-8", {fatal: true});
+    let line: number[] = [], data = "", size = 0;
+    try {
+      signal.throwIfAborted();
+      while (true) {
+        let chunk: ReadableStreamReadResult<Uint8Array>;
+        try { chunk = await reader.read(); }
+        catch { signal.throwIfAborted(); throw failure("response_read_failed"); }
+        signal.throwIfAborted();
+        if (chunk.done) return; // Incomplete frames are not delivered at EOF.
+        for (const byte of chunk.value) {
+          if (++size > this.#config.maxResponseBytes) throw failure("response_too_large");
+          if (byte !== 10) { line.push(byte); continue; }
+          if (line.at(-1) === 13) line.pop();
+          let text: string;
+          try { text = decoder.decode(new Uint8Array(line)); }
+          catch { throw failure("invalid_response"); }
+          line = [];
+          if (text === "") {
+            if (data !== "") {
+              let event: Schema["Event"];
+              try {
+                event = JSON.parse(data);
+                if (!event || typeof event.id !== "string" || !event.id || typeof event.type !== "string" || !event.type || typeof event.source !== "string" || !event.source || typeof event.timestamp !== "string" || !Number.isFinite(Date.parse(event.timestamp))) throw new Error();
+              } catch { throw failure("invalid_response"); }
+              signal.throwIfAborted();
+              await onEvent(event);
+              signal.throwIfAborted();
+            }
+            data = ""; size = 0;
+          } else if (text.startsWith("data:")) {
+            data += text.slice(5).replace(/^ /, "") + "\n";
+          }
+        }
+      }
+    } finally {
+      signal.removeEventListener("abort", abort);
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+  }
+
   health(options?: RequestOptions): Promise<Schema["HealthResponse"]> { return this.#request("GET", "/health", undefined, undefined, options); }
+  inject(request: Schema["InjectRequest"], options?: RequestOptions): Promise<Schema["InjectResponse"]> { return this.#request("POST", "/inject", request, undefined, options); }
   search(request: Schema["SearchRequest"], options?: RequestOptions): Promise<Schema["SearchResponse"]> { return this.#request("POST", "/search", request, undefined, options); }
 
   readonly entries = Object.freeze({
+    updateMetadata: (id: string,request: Schema["MetadataUpdateRequest"],options?: RequestOptions): Promise<Schema["BrainEntry"]> => this.#request("PATCH",`/entries/${encodeURIComponent(id)}/metadata`,request,undefined,options),
     iterate: (query: EntriesListParams = {}, options: RequestOptions = {}): AsyncGenerator<Schema["BrainEntry"]> => this.#iterateEntries({...query}, {...options}),
     move: (id: string, request: Schema["MoveEntryRequest"], options?: RequestOptions): Promise<Schema["MoveResult"]> => this.#request("POST", `/entries/${encodeURIComponent(id)}/move`, request, undefined, options),
     bulkUpdate: (request: Schema["BulkUpdateRequest"], options?: RequestOptions): Promise<Schema["BulkUpdateResponse"]> => this.#request("POST", "/entries/bulk-update", request, undefined, options),
@@ -181,6 +243,16 @@ export class BrainClient {
     download: (project: string, id: string, options?: RequestOptions): Promise<Uint8Array> => this.#request("GET",`/attachments/${encodeURIComponent(id)}/content`,undefined,{project_id:project},options,true,true),
   });
   readonly tasks = Object.freeze({
+    delivery: (project: string,id: string,options?: RequestOptions): Promise<Schema["TaskDeliveryResponse"]> => this.#request("GET",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/delivery`,undefined,undefined,options),
+    verifyDelivery: (project: string,id: string,request: Schema["DeliveryCommand"],options?: RequestOptions): Promise<Schema["DeliveryUpdateResponse"]> => this.#request("POST",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/delivery`,request,undefined,options),
+    resume: (project: string,id: string,request: Schema["ResumeTaskOptions"] = {},options?: RequestOptions): Promise<Schema["ResumeTaskResult"]> => this.#request("POST",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/resume`,request,undefined,options),
+    resumeWithContext: (project: string,id: string,request: Schema["ResumeWithContextOptions"],options?: RequestOptions): Promise<Schema["ResumeWithContextResult"]> => this.#request("POST",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/resume-with-context`,request,undefined,options),
+    assign: (project: string,id: string,request: Schema["TaskAssignmentRequest"],options?: RequestOptions): Promise<Schema["TaskAssignmentResponse"]> => this.#request("PUT",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/assignment`,request,undefined,options),
+    clearAssignment: (project: string,id: string,request: Schema["ClearFeatureAssignmentRequest"],options?: RequestOptions): Promise<Schema["TaskAssignmentResponse"]> => this.#request("POST",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/assignment/clear`,request,undefined,options),
+    trigger: (project: string,id: string,options?: RequestOptions): Promise<Schema["TriggerResponse"]> => this.#request("POST",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/trigger`,undefined,undefined,options),
+    run: (project: string,id: string,request: Schema["RunTaskRequest"] = {},options?: RequestOptions): Promise<Schema["RunTaskResponse"]> => this.#request("POST",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/run`,request,undefined,options),
+    dispatch: (project: string,id: string,request: Schema["DispatchRequest"],options?: RequestOptions): Promise<Schema["SDKDispatchResponse"]> => this.#request("POST",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/dispatch`,request,undefined,options),
+    logs: (project: string,id: string,query?: NonNullable<operations["tasks.logs"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["LogQueryResponse"]> => this.#request("GET",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/logs`,undefined,query,options),
     status: (project: string, request: Schema["MultiTaskStatusRequest"], options?: RequestOptions): Promise<Schema["MultiTaskStatusResponse"]> => this.#request("POST", `/tasks/${encodeURIComponent(project)}/status`, request, undefined, options),
     metadata: (project: string, id: string, options?: RequestOptions): Promise<Schema["TaskMetadataResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/metadata`, undefined, undefined, options),
     claimStatus: (project: string, id: string, options?: RequestOptions): Promise<Schema["ClaimStatusResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/claim-status`, undefined, undefined, options),
@@ -192,16 +264,35 @@ export class BrainClient {
     get: (project: string, id: string, options?: RequestOptions): Promise<Schema["ResolvedTask"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}`, undefined, undefined, options),
   });
   readonly projects = Object.freeze({
+    delete: (project: string,confirm: string,force = false,options?: RequestOptions): Promise<Schema["DeleteProjectResponse"]> => this.#request("DELETE",`/tasks/${encodeURIComponent(project)}`,undefined,{confirm,force},options),
+    getPlacement: (project: string,options?: RequestOptions): Promise<Schema["ProjectPlacement"] | null> => this.#request("GET",`/projects/${encodeURIComponent(project)}/placement`,undefined,undefined,options),
+    setPlacement: (project: string,request: Schema["ProjectPlacement"],options?: RequestOptions): Promise<Schema["ProjectPlacement"]> => this.#request("PUT",`/projects/${encodeURIComponent(project)}/placement`,request,undefined,options),
+    run: (project: string,request: Schema["RunProjectRequest"] = {},options?: RequestOptions): Promise<Schema["RunProjectResponse"]> => this.#request("POST",`/tasks/${encodeURIComponent(project)}/run`,request,undefined,options),
     list: (options?: RequestOptions): Promise<Schema["ProjectListResponse"]> => this.#request("GET","/tasks",undefined,undefined,options),
   });
   readonly features = Object.freeze({
+    resume: (project: string,id: string,request: Schema["ResumeTaskOptions"] = {},options?: RequestOptions): Promise<Schema["ResumeFeatureResult"]> => this.#request("POST",`/tasks/${encodeURIComponent(project)}/features/${encodeURIComponent(id)}/resume`,request,undefined,options),
+    resumeWithContext: (project: string,id: string,request: Schema["ResumeWithContextOptions"],options?: RequestOptions): Promise<Schema["ResumeWithContextFeatureResult"]> => this.#request("POST",`/tasks/${encodeURIComponent(project)}/features/${encodeURIComponent(id)}/resume-with-context`,request,undefined,options),
+    assign: (project: string,id: string,request: Schema["FeatureAssignmentRequest"],options?: RequestOptions): Promise<Schema["FeatureAssignmentResponse"]> => this.#request("PUT",`/tasks/${encodeURIComponent(project)}/features/${encodeURIComponent(id)}/assignment`,request,undefined,options),
+    clearAssignment: (project: string,id: string,request: Schema["ClearFeatureAssignmentRequest"],options?: RequestOptions): Promise<Schema["FeatureAssignmentResponse"]> => this.#request("POST",`/tasks/${encodeURIComponent(project)}/features/${encodeURIComponent(id)}/assignment/clear`,request,undefined,options),
+    checkout: (project: string,id: string,request: Schema["FeatureCheckoutOptions"] = {},options?: RequestOptions): Promise<Schema["CheckoutFeatureResult"]> => this.#request("POST",`/tasks/${encodeURIComponent(project)}/features/${encodeURIComponent(id)}/checkout`,request,undefined,options),
+    run: (project: string,id: string,request: Schema["RunFeatureRequest"] = {},options?: RequestOptions): Promise<Schema["RunFeatureResponse"]> => this.#request("POST",`/tasks/${encodeURIComponent(project)}/features/${encodeURIComponent(id)}/run`,request,undefined,options),
+    cancel: (project: string,id: string,options?: RequestOptions): Promise<Schema["CancelChainResponse"]> => this.#request("DELETE",`/tasks/${encodeURIComponent(project)}/features/${encodeURIComponent(id)}/run`,undefined,undefined,options),
+    chains: (project: string,options?: RequestOptions): Promise<Schema["DependentChainsResponse"]> => this.#request("GET",`/tasks/${encodeURIComponent(project)}/chains`,undefined,undefined,options),
     list: (project: string, options?: RequestOptions): Promise<Schema["FeatureListResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/features`, undefined, undefined, options),
     ready: (project: string, options?: RequestOptions): Promise<Schema["FeatureListResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/features/ready`, undefined, undefined, options),
     get: (project: string, id: string, options?: RequestOptions): Promise<Schema["FeatureResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/features/${encodeURIComponent(id)}`, undefined, undefined, options),
   });
   readonly observability = Object.freeze({
+    timeline: (query?: NonNullable<operations["observability.timeline"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["TimelineResponse"]> => this.#request("GET","/timeline",undefined,query,options),
     stats: (query?: NonNullable<operations["observability.stats"]["parameters"]["query"]>, options?: RequestOptions): Promise<Schema["StatsResponse"]> => this.#request("GET","/stats",undefined,query,options),
     stale: (query?: NonNullable<operations["observability.stale"]["parameters"]["query"]>, options?: RequestOptions): Promise<Schema["BrainEntry"][] | null> => this.#request("GET","/stale",undefined,query,options),
+  });
+  readonly events = Object.freeze({
+    stream: (query: {project_id?: string;feature_id?: string;type?: string;source?: string},onEvent: (event: Schema["Event"])=>void|Promise<void>,options?: StreamOptions): Promise<void> => this.#request("GET","/events/stream",undefined,query,options,true,false,(response,signal)=>this.#readEvents(response,signal,onEvent)),
+    recent: (query?: NonNullable<operations["events.recent"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["RecentEventsResponse"]> => this.#request("GET","/events/recent",undefined,query,options),
+    wait: (query: NonNullable<operations["events.wait"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["EventWaitResponse"]> => this.#request("GET","/events/wait",undefined,query,options),
+    resourceHealth: (query: NonNullable<operations["events.resourceHealth"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["ResourceHealthResponse"]> => this.#request("GET","/events/resource-health",undefined,query,options),
   });
   readonly goals = Object.freeze({
     list: (query?: NonNullable<operations["goals.list"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["ListGoalsResponse"]> => this.#request("GET","/goals",undefined,query,options),

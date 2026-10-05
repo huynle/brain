@@ -193,3 +193,11 @@ test("pagination rejects NaN rather than silently selecting a default",async t=>
   await assert.rejects(async()=>{for await(const _e of c.entries.iterate({limit:NaN})){}},e=>e.code==="invalid_pagination");
   assert.equal(calls,0);
 });
+
+test("task waiting and blocked routes",async t=>{
+  const seen=[];const baseUrl=await server(t,(req,res)=>{seen.push(req.method+" "+req.url);res.end('{"tasks":[]}');});
+  const c=new BrainClient({baseUrl});t.after(()=>c.close());
+  assert.deepEqual(await c.tasks.waiting("p q"),{tasks:[]});
+  assert.deepEqual(await c.tasks.blocked("p q"),{tasks:[]});
+  assert.deepEqual(seen,["GET /api/v1/tasks/p%20q/waiting","GET /api/v1/tasks/p%20q/blocked"]);
+});

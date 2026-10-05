@@ -177,6 +177,8 @@ export class BrainClient {
     download: (project: string, id: string, options?: RequestOptions): Promise<Uint8Array> => this.#request("GET",`/attachments/${encodeURIComponent(id)}/content`,undefined,{project_id:project},options,true,true),
   });
   readonly tasks = Object.freeze({
+    waiting: (project: string, options?: RequestOptions): Promise<Schema["TaskSelectionResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/waiting`, undefined, undefined, options),
+    blocked: (project: string, options?: RequestOptions): Promise<Schema["TaskSelectionResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/blocked`, undefined, undefined, options),
     list: (project: string, options?: RequestOptions): Promise<Schema["TaskListResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}`, undefined, undefined, options),
     get: (project: string, id: string, options?: RequestOptions): Promise<Schema["ResolvedTask"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}`, undefined, undefined, options),
   });

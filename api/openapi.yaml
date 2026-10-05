@@ -20,6 +20,46 @@ x-brain-write:
   x-brain-script: false
   x-brain-profile: single
 paths:
+  /tasks/{project}/waiting:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.waiting
+      summary: List tasks waiting for dependencies
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Waiting tasks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskSelectionResponse'
+  /tasks/{project}/blocked:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.blocked
+      summary: List blocked tasks
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Blocked tasks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskSelectionResponse'
   /health:
     get:
       x-brain-effect: read
@@ -1384,6 +1424,14 @@ components:
       type: http
       scheme: bearer
   schemas:
+    TaskSelectionResponse:
+      type: object
+      required: [tasks]
+      properties:
+        tasks:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/ResolvedTask'
     RunAutomationRequest:
       type: object
       required: [path]

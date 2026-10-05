@@ -982,6 +982,11 @@ type TaskListResponse struct {
 	Tasks  *[]ResolvedTask `json:"tasks"`
 }
 
+// TaskSelectionResponse defines model for TaskSelectionResponse.
+type TaskSelectionResponse struct {
+	Tasks *[]ResolvedTask `json:"tasks"`
+}
+
 // TaskStats defines model for TaskStats.
 type TaskStats struct {
 	Blocked       int `json:"blocked"`

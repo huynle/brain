@@ -14,6 +14,14 @@ try {
   const updated = await client.entries.update(id,{title:"Node SDK updated",expected_revision:entry.revision});
   if (updated.title !== "Node SDK updated") throw new Error("update not visible");
   const task = await client.tasks.get("sdk-example",id);
+  const waitingTask=await client.entries.create({type:"task",project:"sdk-example",title:"Node dependency selection",content:"Dependency selection fixture",status:"pending",depends_on:[id]});
+  try {
+    await client.entries.update(id,{status:"pending"});
+    if(!((await client.tasks.waiting("sdk-example")).tasks??[]).some(t=>t.id===waitingTask.id))throw new Error("pending dependency omitted from waiting");
+    await client.entries.update(id,{status:"cancelled"});
+    if(!((await client.tasks.blocked("sdk-example")).tasks??[]).some(t=>t.id===waitingTask.id))throw new Error("cancelled dependency omitted from blocked");
+    if(((await client.tasks.waiting("sdk-example")).tasks??[]).some(t=>t.id===waitingTask.id))throw new Error("hard blocked dependency retained in waiting");
+  } finally {await client.entries.delete(waitingTask.id);await client.entries.update(id,{status:"pending"});}
   if (task.id !== id) throw new Error("task identity mismatch");
   await client.tasks.list("sdk-example");
   await client.entries.list({project:"sdk-example"});

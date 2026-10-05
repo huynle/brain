@@ -63,6 +63,19 @@ func run() error {
 	if _, err := c.Entries().List(ctx, &brain.EntriesListParams{Project: &project}); err != nil {
 		return err
 	}
+	pageSize := 1
+	found := false
+	for e, err := range c.Entries().Iterate(ctx, &brain.EntriesListParams{Project: &project, Limit: &pageSize}) {
+		if err != nil {
+			return err
+		}
+		if e.Id == created.Id {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("iterator did not find created entry")
+	}
 	strategy := "fts"
 	if _, err := c.Search(ctx, brain.SearchRequest{Query: title, Strategy: &strategy}); err != nil {
 		return err

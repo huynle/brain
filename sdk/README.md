@@ -60,8 +60,12 @@ The Go transport's implicit buffered-POST replay is disabled. An idempotency
 header does **not** give legacy REST writes server-side deduplication. Do not
 retry an uncertain mutation merely because it carried a key. No automatic
 cross-binding retry, cursor transfer, credential refresh or identity migration
-is implemented. Pagination iterators, attachments and broader namespaces remain
-required work; this checkpoint does not claim them.
+is implemented. Entry iterators (`Entries().Iterate` / `entries.iterate`) snapshot
+their filters and stay bound to their original client. They do not interpret the
+legacy page-local `total` as a collection count. They stop at an empty page, fail
+on `truncated` or inconsistent offsets/limits, and cap a walk at 10,000 pages.
+Concurrent server changes can move entries between offset pages; no snapshot or
+server-cursor guarantee is claimed. Attachments and broader namespaces remain work.
 
 The TypeScript package contains matching generated types and an ergonomic ESM
 client. `BRAIN_SDK_NODE_INTEGRATION=1 go test ./internal/sdkcontract -run

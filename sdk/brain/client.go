@@ -205,6 +205,10 @@ func (s EntriesService) Get(ctx context.Context, id string) (*BrainEntry, error)
 	return result[BrainEntry](s.c, ctx, "GET", "/entries/"+url.PathEscape(id), nil, nil, RequestOptions{})
 }
 func (s EntriesService) List(ctx context.Context, p *EntriesListParams) (*ListEntriesResponse, error) {
+	return result[ListEntriesResponse](s.c, ctx, "GET", "/entries", nil, listQuery(p), RequestOptions{})
+}
+
+func listQuery(p *EntriesListParams) url.Values {
 	q := url.Values{}
 	if p != nil {
 		for k, v := range map[string]*string{"project": p.Project, "type": p.Type, "status": p.Status, "tags": p.Tags, "feature_id": p.FeatureId, "sortBy": p.SortBy, "sortOrder": p.SortOrder} {
@@ -222,7 +226,7 @@ func (s EntriesService) List(ctx context.Context, p *EntriesListParams) (*ListEn
 			q.Set("global", strconv.FormatBool(*p.Global))
 		}
 	}
-	return result[ListEntriesResponse](s.c, ctx, "GET", "/entries", nil, q, RequestOptions{})
+	return q
 }
 func (s EntriesService) Create(ctx context.Context, r CreateEntryRequest, o RequestOptions) (*CreateEntryResponse, error) {
 	return result[CreateEntryResponse](s.c, ctx, "POST", "/entries", r, nil, o)

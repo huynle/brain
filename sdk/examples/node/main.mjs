@@ -15,6 +15,8 @@ try {
   if (task.id !== id) throw new Error("task identity mismatch");
   await client.tasks.list("sdk-example");
   await client.entries.list({project:"sdk-example"});
+  let found=false;for await(const entry of client.entries.iterate({project:"sdk-example",limit:1}))if(entry.id===id)found=true;
+  if(!found)throw new Error("iterator did not find created entry");
   await client.search({query:"Node SDK updated",strategy:"fts"});
   await client.sections.list(id); await client.sections.get(id,"Details",true);
   await client.graph.backlinks(id); await client.graph.outlinks(id); await client.graph.related(id,5);

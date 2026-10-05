@@ -123,6 +123,7 @@ export class BrainClient {
   search(request: Schema["SearchRequest"], options?: RequestOptions): Promise<Schema["SearchResponse"]> { return this.#request("POST", "/search", request, undefined, options); }
 
   readonly entries = Object.freeze({
+    iterate: (query: EntriesListParams = {}, options: RequestOptions = {}): AsyncGenerator<Schema["BrainEntry"]> => this.#iterateEntries({...query}, {...options}),
     move: (id: string, request: Schema["MoveEntryRequest"], options?: RequestOptions): Promise<Schema["MoveResult"]> => this.#request("POST", `/entries/${encodeURIComponent(id)}/move`, request, undefined, options),
     bulkUpdate: (request: Schema["BulkUpdateRequest"], options?: RequestOptions): Promise<Schema["BulkUpdateResponse"]> => this.#request("POST", "/entries/bulk-update", request, undefined, options),
     bulkDelete: (request: Schema["BulkDeleteRequest"], options?: RequestOptions): Promise<Schema["BulkDeleteResponse"]> => this.#request("POST", "/entries/bulk-delete", request, undefined, options),
@@ -145,4 +146,24 @@ export class BrainClient {
     outlinks: (id: string, options?: RequestOptions): Promise<Schema["BrainEntry"][]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/outlinks`, undefined, undefined, options),
     related: (id: string, limit = 10, options?: RequestOptions): Promise<Schema["BrainEntry"][]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/related`, undefined, {limit}, options),
   });
+
+  async *#iterateEntries(query: EntriesListParams, options: RequestOptions): AsyncGenerator<Schema["BrainEntry"]> {
+    const limit = query.limit === 0 ? 100 : (query.limit ?? 100);
+    let offset = query.offset ?? 0;
+    if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(offset) || offset < 0) throw new BrainError("invalid_pagination");
+    for (let page = 0; page < 10000; page++) {
+      const response = await this.entries.list({...query,limit,offset}, options);
+      if (response.truncated) throw new BrainError("pagination_incomplete");
+      if (response.offset !== offset || response.limit !== limit || (response.entries !== null && !Array.isArray(response.entries))) throw new BrainError("invalid_pagination");
+      if (!response.entries?.length) return;
+      if (response.entries.length > limit) throw new BrainError("invalid_pagination");
+      for (const entry of response.entries) {
+        this.#lifetime.signal.throwIfAborted(); options.signal?.throwIfAborted();
+        yield entry;
+      }
+      offset += limit;
+      if (!Number.isSafeInteger(offset)) throw new BrainError("invalid_pagination");
+    }
+    throw new BrainError("pagination_limit");
+  }
 }

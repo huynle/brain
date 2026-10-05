@@ -94,3 +94,32 @@ test("content namespace routes and graph array decoding",async t=>{
   assert.equal((await c.graph.backlinks("a"))[0].id,"linked");await c.graph.outlinks("a");await c.graph.related("a",5);
   assert.deepEqual(seen,[["POST","/api/v1/entries/a/move"],["POST","/api/v1/entries/bulk-update"],["POST","/api/v1/entries/bulk-delete"],["GET","/api/v1/entries/p%2Fa.md/sections"],["GET","/api/v1/entries/p%2Fa.md/sections/Hello%20world?includeSubsections=true"],["GET","/api/v1/entries/a/backlinks"],["GET","/api/v1/entries/a/outlinks"],["GET","/api/v1/entries/a/related?limit=5"]]);
 });
+
+test("pagination snapshots filters and ignores page-local total",async t=>{
+  const offsets=[];
+  const baseUrl=await server(t,(req,res)=>{
+    const q=new URL(req.url,"http://localhost").searchParams;assert.equal(q.get("project"),"original");
+    const offset=Number(q.get("offset"));offsets.push(offset);
+    res.end(JSON.stringify({entries:offset<2?[{id:String(offset)}]:[],offset,limit:1,total:1}));
+  });
+  const c=new BrainClient({baseUrl});t.after(()=>c.close());const q={project:"original",limit:1};
+  assert.equal(typeof c.entries.iterate,"function");
+  const seq=c.entries.iterate(q);q.project="changed";const ids=[];for await(const e of seq)ids.push(e.id);
+  assert.deepEqual(ids,["0","1"]);assert.deepEqual(offsets,[0,1,2]);
+});
+
+test("pagination rejects truncated pages and stops on consumer break",async t=>{
+  let calls=0;let truncated=true;
+  const baseUrl=await server(t,(_req,res)=>{calls++;res.end(JSON.stringify({entries:[{id:"a"}],offset:0,limit:100,truncated}));});
+  const c=new BrainClient({baseUrl});t.after(()=>c.close());
+  assert.equal(typeof c.entries.iterate,"function");
+  await assert.rejects(async()=>{for await(const _e of c.entries.iterate()){}},e=>e.code==="pagination_incomplete");
+  truncated=false;for await(const _e of c.entries.iterate())break;assert.equal(calls,2);
+});
+
+test("pagination rejects NaN rather than silently selecting a default",async t=>{
+  let calls=0;const baseUrl=await server(t,(_req,res)=>{calls++;res.end('{"entries":[],"offset":0,"limit":100}');});
+  const c=new BrainClient({baseUrl});t.after(()=>c.close());
+  await assert.rejects(async()=>{for await(const _e of c.entries.iterate({limit:NaN})){}},e=>e.code==="invalid_pagination");
+  assert.equal(calls,0);
+});

@@ -25,10 +25,15 @@ and no-generated-task assertions; this does not prove external notice delivery.
 Webhooks `list/get/create/update/delete/deliveries/test` bring delivered coverage
 to 58. All seven have Go/TS route tests and real Go service integration, including
 one actual HTTP delivery to an isolated local test receiver (not a public target).
+The checked-in installed Node fixture also verifies disabled/enabled filtering,
+update/read, one actual local delivery and history, then delete/not-found.
 Automations `run/runs/getRun` bring delivered coverage to 61; both SDK route
 tests cover all three, and real Go fixtures check filtered run history/get.
 Automation run submission now also generates a real task in the Go service fixture,
 with its generated-by provenance checked; no executor/runtime/provider is launched.
+The installed Node fixture now also submits a task, checks provenance, lists its
+actual run audit and fetches each audit entry. These assertions are checked in,
+not only held in an independent verifier overlay.
 `TestDeliveredContractMatchesRouterAndInventory` checks every delivered operation
 against the real Chi route inventory and its table row below (69 currently).
 Projects `list`, graph `orphans`, and observability `stats/stale` have route tests

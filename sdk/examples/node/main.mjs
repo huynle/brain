@@ -1,5 +1,6 @@
 // Install the built SDK package before running this external application.
 import { BrainClient, BrainError } from "@huynle/brain-sdk";
+import { createServer } from "node:http";
 
 const client = new BrainClient({baseUrl:process.env.BRAIN_API_URL, token:process.env.BRAIN_API_TOKEN});
 let id;
@@ -15,6 +16,38 @@ try {
       if(await client.attachments.text("sdk-node-extraction",image.attachment.id)!=="fixture extracted text")throw new Error("stored extraction text mismatch");
       if(await client.attachments.text("sdk-node-extraction",image.attachment.id)!=="fixture extracted text")throw new Error("repeated stored text mismatch");
     }finally{await client.attachments.delete("sdk-node-extraction",image.attachment.id);}
+  }
+  if(process.env.BRAIN_SDK_ACTION_FIXTURE==="1") {
+    const received=[];
+    const receiver=createServer(async(req,res)=>{
+      try{let body="";for await(const chunk of req){body+=chunk;if(body.length>8192)throw new Error("oversized test delivery");}received.push(JSON.parse(body));res.writeHead(204);res.end();}
+      catch{res.writeHead(400);res.end();}
+    });
+    await new Promise((resolve,reject)=>{receiver.once("error",reject);receiver.listen(0,"127.0.0.1",resolve);});
+    let webhook;
+    try {
+      webhook=await client.webhooks.create({name:"Node fixture",url:`http://127.0.0.1:${receiver.address().port}`,events:["webhook.test"],enabled:false});
+      if((await client.webhooks.list(true)).webhooks.some(w=>w.id===webhook.id))throw new Error("disabled webhook in enabled list");
+      await client.webhooks.update(webhook.id,{name:"Node fixture updated",enabled:true});
+      if((await client.webhooks.get(webhook.id)).name!=="Node fixture updated")throw new Error("webhook update mismatch");
+      if(!(await client.webhooks.list(true)).webhooks.some(w=>w.id===webhook.id))throw new Error("enabled webhook missing");
+      if(!(await client.webhooks.test(webhook.id)).success)throw new Error("webhook test failed");
+      if(received.length!==1||received[0].type!=="webhook.test")throw new Error("local receiver mismatch");
+      if((await client.webhooks.deliveries(webhook.id,10)).deliveries.length!==1)throw new Error("delivery history mismatch");
+      await client.webhooks.delete(webhook.id);
+      let missing;try{await client.webhooks.get(webhook.id);}catch(e){missing=e;}
+      if(!(missing instanceof BrainError)||missing.status!==404)throw new Error("deleted webhook still readable");
+      webhook=undefined;
+    }finally{try{if(webhook)await client.webhooks.delete(webhook.id);}finally{await new Promise(resolve=>receiver.close(resolve));}}
+    const automation=await client.entries.create({type:"automation",project:"sdk-node-automation",title:"Node manual action",content:"local fixture",status:"active",trigger:{type:"cron",schedule:"0 5 * * *"},action:{type:"prompt",direct_prompt:"Do the {{.Project}} thing."}});
+    let generated;
+    try {
+      const run=await client.automations.run({path:automation.id});generated=run.task_id;
+      if(run.task_ids.length!==1||(await client.entries.get(generated)).generated_by!==`automation:${automation.id}`)throw new Error("automation task provenance mismatch");
+      const history=await client.automations.runs({project:"sdk-node-automation",automation_id:automation.id});
+      if(!history.entries?.length)throw new Error("automation run history absent");
+      for(const entry of history.entries){const audit=await client.automations.getRun(entry.id);if(audit.type!=="automation_run")throw new Error("run audit type mismatch");await client.entries.delete(entry.id);}
+    }finally{if(generated)await client.entries.delete(generated);await client.entries.delete(automation.id);}
   }
   const created = await client.entries.create({type:"task",title:"Node SDK example",content:"## Details\nCreated through the public package",project:"sdk-example"});
   id = created.id;

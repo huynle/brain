@@ -103,7 +103,7 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "run", "-mod=mod", ".")
 	cmd.Dir = external
-	cmd.Env = append(os.Environ(), "BRAIN_API_URL="+srv.URL, "BRAIN_API_TOKEN="+token, "BRAIN_SDK_EXTRACTION_FIXTURE=1")
+	cmd.Env = append(os.Environ(), "BRAIN_API_URL="+srv.URL, "BRAIN_API_TOKEN="+token, "BRAIN_SDK_EXTRACTION_FIXTURE=1", "BRAIN_SDK_ACTION_FIXTURE=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("external Go: %v\n%s", err, out)

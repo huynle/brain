@@ -1,143 +1,274 @@
-# Script persistence and trusted-single composition: allocation request
+# Script C–F delta for the active DB.1 design
 
-For task `vggevclc` / plan `qfcda7ct`, SDK-TENANCY-20261005.
-**PROPOSAL ONLY. No profile number, migration, capability or route is allocated.**
-Independent OpenAPI/SDK development does not depend on accepting this proposal.
+Disposition packet **SDK-DB1-CF-20261006**, SDK task `vggevclc`, plan `qfcda7ct`.
+**PROPOSED ONLY. No DDL, profile number, capability grant or activation authority.**
+This replaces the earlier filesystem-era/broad table request in this file.
 
-## Exact owner handoffs
+## 1. Evidence, ownership and settled decisions
 
-- Schema coordinator: session `ses_ef3f81f1effe5QIXiGEt2qIGkD`, report
-  `zsief5fj`; credential owner `yp7llda1`.
-- Mutation/output fences: S09 `i8aurh42`, P5.5 `krmkfe26`, P5.9 `5tmpau6l`;
-  independently durable security-journal lifecycle remains P9-owned.
-- Hosted operation adapter: S10 `ap90gj4e`, coordinated with P8/SDK.
-- Resource ACL: S15 `rihm769f` (sole writer
-  `ses_ef3f6d064ffeQzLEQZQM16mLIT`), S16 `wuge6wiv`, S17 `86ij8ynq`,
-  S18 `cfo4q3z1`.
-- Effects: P8 `8gxc3qi1`, notices `4v1bv798`, parent `kimljzt0`.
+- DB.1 `hxcyvu0i` is **in_progress**, sole writer on
+  `codex/mt-db-authoritative-storage`, worktree
+  `/Users/huy/projects/brain-api/.worktrees/mt-db-authoritative-storage`.
+  Read immutable **d365a4aac3c9b251a0c6095d3c17f0ec2371173a**:
+  `docs/db-authoritative-storage-design.md`, all 620 lines. Its Phase A design is
+  proposed, not accepted methods/DDL; Phase B awaits independent review and exact
+  profile allocation. All DB1 section references below refer to that object.
+- Read current Brain plans `9fguh2pr` and `qfcda7ct`, and owner records
+  `hxcyvu0i`, `i8aurh42`, `yp7llda1`. DB1's live Started/Phase A notes supersede
+  canonical-plan text saying its worktree is not created. No dirty DB tree used.
+- S09 `i8aurh42` is draft and depends on DB1. P6 `yp7llda1` remains blocked;
+  repair **21d2d1e7 is unaccepted**. Neither supplies accepted commit/output fences.
+  P6 design at the DB1 pin, §§2.2/4/S09, specifies semantics, not usable signatures.
+- DB1 user decisions are settled: **D1** full text last 20 revisions OR newer 90 days,
+  then actor/time/length without digest; **D2** erasure leaves only tenant,
+  entry_uid, short_id, state, erased_at; **D3** deleted content follows D1,
+  identity nonreuse/no resurrection; **D5** attachment 25 MiB default, configurable
+  to 100 MiB. Do not reopen them or apply them automatically to script artifacts.
+  DB1 D4/D6–D15 remain reviewer dispositions per the current owner record.
+- SDK branch `sdk-script-execution-v1` stays exclusively owned here. A248f2fab and
+  B42802cfb are author-verified only. No DB-writer edits, competing catalog,
+  dependency/status changes, runner dispatch or independent-worker-review retry.
 
-Accepted credential foundation is `6077f9e7`. `c751d0e6` is a private
-credential-policy/storage candidate; `l3c70bk9` aggregate acceptance is pending.
-`3de1edc3` combines P5 `421719ef` and P6 `6077f9e7`, not `c751d0e6`.
-Coordinator-reported dormant P5 M1 `97e62eb4` is not complete lifecycle/fences.
-Re-resolve accepted immutable inputs before implementation.
+## 2. Reuse first: what DB1 already covers, and the exact gap
 
-## Proposed persistence delta
+These are **proposed design methods**, not claims of implementation or approval.
 
-Request a coordinator-named, exact successor for opt-in single scripts, and a
-separately allocated future tenant composition. Numeric versions and final profile
-names are **unassigned**. Never amend historical 30/31/32/33 manifests. A successor
-must admit only its reviewed exact predecessor; a published target reopens
-validate-only. No ad hoc optional tables or independent audit database.
+| Need | Reuse at DB1 pin | Minimal additional contract for reviewer disposition |
+|---|---|---|
+| Entry identity/CAS/history | §§2.1/2.2/2.4: entry_uid nonreuse, monotonic revision, actor and operation_id; §3 ReadEntry/CreateEntry/UpdateEntry/PatchEntryMetadata/MoveEntry/DeleteEntry | Resolve legacy locator once to tenant+entry_uid; require expected revision on script edits/move/delete/attach/detach. Reuse revision/view tokens, never create script revision/history tables. Runtime-only updates remain nonrevisioned. |
+| Domain mutation receipt | §2.3 optional Receipt{Namespace, ID, Hash}, reservation+mutation+completion in one transaction; §3 EntryCommit | Allocate one closed script-operation namespace in a later reviewed successor; bind receipt to execution+operation+verified owner. Extend fixed writer participation below, not reserve→HTTP call→complete. |
+| Generated work | §3 UpsertGeneratedEntry and §2.3 receipt | Reuse generated-key uniqueness; it does NOT supply work permission, delegation, outbox or dry-run validation. Deny runnable-type/field writes without those contracts. |
+| Attachment writes | §3 AttachToEntry/DetachFromEntry, §2.5 refs and §2.4 CAS | Same execution receipt/authority participation, atomic entry bytes+association+refs. No filesystem intent/quarantine scheme. |
+| BLOB bytes/reservations | §2.5; §3 ReserveBlobUpload/AppendBlobChunk/SealBlobUpload/AbortBlobUpload/ExpireBlobReservationsPage | Reuse chunked bytes for any protected replay payload, with a private purpose/ref kind allocated by DB1. Do NOT create a public attachments row or reuse its visibility to store replay. |
+| BLOB quota/reclamation | §2.5 tenant_blob_usage/blob_refs; §3 CondemnUnreferencedBlobsPage/ReclaimCondemnedBlobsPage | Account replay staging/live bytes under an explicit script-purpose quota; add reviewed ref-kind/lifecycle integration, never fake an attachment/revision ref. Worker CPU/slots are not BLOB quota. |
+| Output after commit | §3 EntryCommit{path,entry_uid,short_id,revision token,view token,sync seq,receipt body,event payload}; §5 P8 outbox | EntryCommit proves DB commit, NOT protected delivery or durable external effect. S09/P8 must supply fixed in-transaction participation and final release/dispatch ordering. |
+| Erasure/restore | §2.2, §4, §7 DB.6 ch7t990k | Add script lineage/payload purge and no-rerun admission-epoch handling; reuse DB6 lifecycle, never an SDK sweeper or security-journal clone. |
 
-Proposed tables, all in the existing shared SQLite owner:
+## 3. Logical relationships requested (not a catalog)
 
-1. `script_executions`: `(tenant_id, execution_id)` primary key; `principal_id`,
-   credential/auth-generation reference from the accepted server binding;
-   `endpoint`, nullable `idempotency_key`, `fingerprint` (32-byte SHA-256),
-   script digest, contract/policy version, dry-run, canonical requested/effective
-   limits, source transport, admitted/started/finished timestamps, terminal status,
-   bounded error code and operation count, expiry/purge timestamp. Unique
-   `(tenant_id, principal_id, endpoint, idempotency_key)` for non-null keys.
-   No raw source, token, arguments, logs or result body.
-2. `script_operations`: `(tenant_id, execution_id, operation_index)` primary key;
-   same-tenant execution FK, stable operation ID, request digest, outcome
-   (`planned`, `committed`, `failed`, `outcome_unknown`), optional atomic receipt
-   reference, timestamps and bounded non-content error code. Composite FK never
-   accepts an execution from another tenant. No normalized content arguments.
-3. `script_execution_sources`: `(tenant_id, execution_id, resource_kind,
-   resource_id)` primary key; composite execution FK, source revision and
-   authorization-generation references. This stores provenance identifiers, not
-   content. Resource IDs cannot be accepted as authority or expose hidden existence.
-4. Replay content, if enabled later: a separately reviewed bounded protected
-   payload relation keyed by the same composite execution identity, with encoded
-   byte count, digest, explicit retention and source-provenance requirement.
-   **Default off**; initial implementation can retain only minimal receipts and
-   return a stable `result_not_retained` on an otherwise-authorized replay. This
-   exception to the plan's retained-result acceptance needs explicit disposition;
-   absent approval, implement the protected relation before claiming replay done.
+DB1 alone chooses physical relations, exact keys/indexes/constraints/triggers,
+successor predecessor/pin and file ownership after review. Historical30/31/32/33
+remain immutable. Recommend content successor first, then one coordinated script/
+  authority extension as appropriate to DB1's §5 ordering, not modifying
+DB1's pending content catalog just to unblock SDK. No version number is proposed.
 
-Execution admission/idempotency claims and quota reservations commit in a short
-writer transaction. Never hold the writer while JavaScript runs. Terminalizing
-an interrupted execution does not rerun it. A lost journal/finalization after a
-domain commit is `outcome_unknown` unless an atomic domain receipt proves outcome.
+### C1 — execution claim and operation linkage
 
-Quota rows/reservations should reuse the coordinator-approved authoritative
-quota subsystem. If unavailable, request a bounded `script_reservations` relation
-with tenant/principal/execution identity, lease generation and deadline, unique
-execution reservation, and same-writer aggregate admission; no process-local
-counter is a multi-server quota proof. Expiry alone must not imply a worker is
-gone or permit duplicated uncertain work.
+- Execution key: **(tenant_id, execution_id)**, server-issued immutable execution
+  ID; owner is P6's stable principal/local association, credential or grant ID and
+  current authorization generations. Display names, raw bearer and frontmatter
+  are never keys/authority. Store request mode, contract/policy versions, normalized
+  requested/effective limits, owner-instance/admission generation, lifecycle state,
+  timestamps and bounded non-content outcomes. Fingerprints are protected (U1).
+- Dedup uniqueness: **(tenant, stable principal, endpoint, admission epoch,
+  idempotency-key MAC)**. Namespace/epoch comes from trusted server composition;
+  raw user keys may contain private text and are not persisted. Key rotation and
+  MAC key custody belong to P6/P9, not a new SDK secret store. U2 controls lifetime.
+  Endpoint is `/api/v1/scripts/execute`; request fingerprint covers source bytes,
+  contract version, mode and normalized requested limits. Record effective limits
+  and worker policy separately. Every record is still protected/owner-scoped.
+- Operation key: **(tenant, execution, operation_index)**; contiguous bounded
+  sequence, closed operation ID, dry-run/real mode and outcome. Composite parent
+  relationship forbids cross-tenant linking. The execution owner cannot change.
+  Outcome states distinguish planned, committed, failed, outcome_unknown; a
+  control-only pending marker is not evidence of a domain commit.
+- Atomic domain receipt key: **(tenant, namespace='script-operation/v1', receipt_id)**
+  (literal proposed for DB1's closed namespace allocation, not allocated now);
+  receipt_id is a server-derived unambiguous encoding of execution+operation index.
+  Bind receipt Hash to operation ID, canonical typed input, expected revision,
+  execution fingerprint and versions. One operation has at most one such receipt;
+  receipt replay cannot mutate again. Both directions validate the same tenant,
+  execution, owner and operation binding. No unauthenticated receipt lookup API.
+- Reuse DB1 `Receipt` storage and `entry_revisions.operation_id`; do not duplicate
+  domain receipts in a second script table. A script operation can reference zero
+  or multiple resulting revisions (e.g. future fixed bulk operation), each with
+  tenant+entry_uid+revision identity. Pure reads/plans have no mutation receipt.
+  If a bulk call is independently committed per target, represent child steps
+  explicitly and expose partial results; never label the batch one atomic receipt.
+  Future P8 outbox/delegation records must reference that same composite operation
+  and receipt identity plus constrained grant/reservation; they cannot fabricate a
+  second success independent of the content transaction.
 
-## Exact requested storage ownership
+### C2 — source/protected-payload linkage
 
-New proposed files (implementation only after allocation):
-`internal/storage/schema_script.go`, `schema_script_validation.go`,
-`schema_script_migration.go`, `script_executions.go`, `script_operations.go`,
-`script_sources.go`, `script_retention.go`, with adjacent tests.
-Existing `schema.go` only for reviewed private-artifact refusal/admission;
-`tenant_surface_test.go`, `tenant_coverage_manifest_test.go`, schema provenance
-and catalog testdata only for individually justified new surfaces. Do not grow
-raw DB/control/package-function allowances or blanket-regenerate goldens.
+- Source evidence joins **(tenant, execution, operation_index)** to stable
+  **(resource kind, resource identity, observed revision/view version)** plus the
+  relevant grant/epoch evidence. Entries use entry_uid, not paths; attachments use
+  tenant-scoped attachment/blob identity and complete owning-resource restrictions.
+  Polymorphic resource kinds need closed kind-specific ownership validation or
+  typed join relations, not an unchecked string-FK convention.
+- The authoritative service resolves sources in the same snapshot that produces
+  bytes. Persist bounded lineage before passing read bytes to the worker. Worker
+  assertions never add/replace authority. Lists/search/graphs include every
+  contributing readable resource and query visibility scope needed for counts/
+  absence; S17 must define complete provenance, otherwise operation unsupported.
+  Proposed initial lineage bound: 1,000 distinct evidence records / 64 KiB encoded
+  total, overflow denies and retires output rather than dropping sources. Reviewer
+  must account for complete epoch/query evidence within that budget.
+- Before each write, use the conservative union of **all prior reads** for
+  source→destination publication checks. Final logs/result/plan/journal/replay use
+  **all reads in the execution**, including later reads. No JS information-flow
+  claim, and no retroactive undo of earlier authorized commits/disclosures.
+- Protected replay envelope references execution plus complete source evidence
+  and a private sealed BLOB ref. Include result/logs/ordered plan/authorized
+  operation detail only within approved bounds (U1). Opaque ref is not a download
+  capability. Never serve it through the ordinary attachment catalog.
+- Delete/revoke first denies access. Source erasure purges dependent payloads,
+  content-derived fingerprints and source/target relationships, not just the live
+  note; detached no-rerun residue is classified separately in U2. No CASCADE may
+  silently remove replay prevention and turn an old key into fresh execution.
+- DB6's purge inventory includes **DB1 receipt completion bodies/Hashes**, revision
+  operation_id backreferences, operation request digests/targets and private BLOB
+  digests, not just a new replay relation. D1 pruning must not retain forbidden
+  history metadata through script links; D2 erasure must leave only its settled
+  tuple associated with that entry. Retire affected replay before removing lineage;
+  missing lineage thereafter means deny, never "no restricted sources". DB1 must
+  specify a retired receipt representation compatible with this purge, while the
+  detached U2 tombstone continues refusing reuse. Other legitimately retained BLOB
+  references follow DB1/DB6 ownership rules; script refs cannot prolong them.
 
-Proposed scoped receiver operations: `ClaimScriptExecution`,
-`GetScriptExecution`, `ListScriptExecutions` (bounded principal-scoped cursor),
-`AppendScriptOperation`, `RecordScriptSources`, `FinishScriptExecution`,
-`PurgeScriptExecutionPayloads`. Each takes context plus the accepted sealed
-operation binding through the existing authorized adapter. DTOs are descriptive;
-no public caller can construct authority. Exact signatures await fence allocation;
-no DB/Tx callback or general SQL accessor is requested.
+### C3 — quota and worker-owner linkage
 
-Migration acceptance: reject unknown/hybrid/lowered-stamp/TEMP artifacts before
-mutation; preserve permanent install claims, roots, all foreign rows/FTS/CAS,
-sync epochs/receipts/tombstones/high-water marks; atomic crash/reopen; failed COMMIT
-cleanup and next transaction success. Use colliding A/B execution and resource
-IDs plus principal in both orgs. Restore never restores access or reruns receipts.
+- One reservation per **(tenant, execution, reservation generation)**, linked to
+  claim+stable principal+owner instance+fixed worker policy. Account global,
+  tenant and principal slots, fixed memory/CPU ceilings, queue capacity, payload
+  staging/live bytes and, separately, delegated paid/effect budgets.
+  At most one unreleased reservation per execution across ALL generations; a new
+  owner may reconcile/reap but may not start the same execution again.
+- Claim/dedup and slot/byte reservation must be one short writer-owned decision;
+  all competing coordinators see the same quota state. Reuse P10's authoritative
+  reservation model if allocated; otherwise DB1 must allocate a narrow fixed
+  execution-reservation participant, NOT a second generic quota framework.
+- Release memory/slot credit only after trusted kill+Wait/join evidence; deadline
+  expiry or lease loss is not worker death. Uncertain owners quarantine reservations
+  until the launcher/reaper proves termination. Settle measured CPU once; use the
+  reserved maximum on missing measurements, not a free refund. No rerun on takeover.
+- P10/launcher reviewer recommendation: first supported topology is one Linux
+  execution coordinator per installation, enforced by a generation-bound exclusive
+  ownership mechanism; global2/tenant2/principal1 active, global queue8, at most
+  one queued request/principal. These are **unapproved technical defaults**, not
+  measured production capacity; existing local pool is not durable quota evidence.
+  Multi-coordinator support requires equivalent cross-instance accounting/fencing.
+  Existing paid-budget default zero stays zero; D5 is not a script-payload budget.
 
-## Trusted-single `script:execute` mapping request
+## 4. Fixed transaction ownership and typed method requirements
 
-Request a separate explicit opt-in submission permission at the existing verified
-single-mode composition. `admin:*` or OAuth `mcp` wildcard alone must not grant it.
-An auth-disabled single server may use only an explicitly configured trusted-local
-mapping, composed after actual mode/local policy checks, never a client selector,
-loopback address inference, forged name or nil auth shortcut.
+All names added here are **signature proposals**, not existing exported APIs.
+Authority/operation handles are sealed server-owned types, not public DTO structs
+the SDK or worker can construct. No generic SQL/Tx/callback or HTTP dispatch seam.
 
-The credential owner must choose the stable server-verified binding and live
-revocation/generation source for current runtime credentials. Do not invent a
-second identity registry, treat display names as immutable human principals, or
-derive a hosted identity from loopback headers. Submitted workers receive no
-credential. Request exact ownership of the new script authorization helper and
-minimal single composition sites before changing `internal/api/middleware.go`,
-`router.go`, `internal/apiserver/server.go` or MCP composition. Keep historical
-credential33's eleven-capability vocabulary untouched.
+| Boundary / owner | Exact proposed typed requirement |
+|---|---|
+| P6/S04 admission | `BindScriptExecution(ctx, VerifiedRequest, ScriptAdmission) -> ScriptBinding`: verify actual mode, stable identity, explicit execute grant and current state; never nil/local/loopback fallback. |
+| DB1/P10 claim | `ClaimScriptExecution(ctx, ScriptBinding, ClaimInput) -> ClaimResult{new,replay,in_progress,conflict,retired}`: atomically dedup+reserve; replay returns a protected reference, never starts a worker. |
+| DB1 operation start | `BeginScriptOperation(ctx, ExecutionHandle, OperationDescriptor) -> OperationHandle`: owner-generation/sequence/mode check and bounded control marker; descriptor is not authority or a validated plan. |
+| DB2/3/S17 reads | `ReadScriptEntry(ctx, ExecutionHandle, EntryRead) -> ProtectedEntry`: wraps DB1 ReadEntry snapshot and typed source capture, not a naked get followed by invented provenance. Each other read needs its own typed contract. |
+| DB3 preflight | `PreflightEntryCreate(ctx, ExecutionHandle, EntryCreate) -> PlannedEntry`; corresponding Update/MetadataPatch/Move/Delete/Attach/Detach methods. Return normalized typed arguments, resolved identities, revision/preconditions, effect classification, source/target evidence and clearly provisional result; no effect or reusable authorization token. |
+| DB1/2 mutations | Reuse §3 CreateEntry/UpdateEntry/PatchEntryMetadata/MoveEntry/DeleteEntry/AttachToEntry/DetachFromEntry input types, with a reviewed optional **sealed ScriptMutationContext** carrying operation binding, Receipt and source lineage. Missing/zero context is refused on the script path. Each fixed method owns the entire transaction below. |
+| DB1 recovery/finalize | `ReadScriptOperationReceipt(ctx, ExecutionHandle, index) -> ProtectedOutcome`; `FinishScriptExecution(ctx, ExecutionHandle, TerminalInput) -> TerminalRecord`; `Get/ListScriptExecutions` use bounded owner+resource-authorized cursors. No append method can independently assert a committed domain outcome. |
+| S09/S17 output | `ReleaseScriptRead(ctx, ExecutionHandle, ProtectedEntry, WorkerReplySink)` and `ReleaseScriptEnvelope(ctx, ExecutionHandle, ProtectedEnvelope, ResponseSink) -> ReleaseOutcome`: S09 owns actual bounded handoff/cancellation ordered with revoke, not `Authorize()->bytes` or a bool then send. Sinks are fixed transport adapters, no arbitrary authority/transaction callback. |
+| P8 effects | Operation-specific `PreflightTaskSubmission`, `CommitTaskSubmission` and `DispatchAuthorizedEffect`/`CommitEffectResult` contracts: typed constrained delegation, finite reservation, transactional outbox+domain receipt and late-result fencing. Names/bindings await P8; no generic enqueue or detached request credentials. |
+| DB6/P9 lifecycle | `PurgeScriptArtifactsPage(ctx, LifecycleHandle, cursor, limit)` and `ReconcileScriptRecovery(ctx, RecoveryHandle)`: fixed bounded purge/restore operations under existing lifecycle ownership, not goroutines started by graph construction. |
 
-## Broker requirements for the fence/ACL owners
+**One operation's linearization:** acquire DB1 reserved writer → re-admit exact
+profile/content_authority → check live execution/owner generation/cancellation,
+current P6 credential/principal/member/tenant/grants, complete source/destination
+ACL/publication and CAS → repeat service validation against current transaction
+state → mutate domain+projections+revision/sync+refs, complete DB1 Receipt and
+script operation outcome, settle applicable reservation and append any allocated
+P8 outbox record → commit → expose only through S09's output/effect boundary.
 
-Every operation needs current admission, then service preflight; mutations need
-the same-writer current grant/credential/revision validation and domain commit.
-Protected output/replay needs a release decision ordered with revocation, including
-the entire conservative source-resource set. Require fixtures pausing between
-admission/operation/commit/output and revoking credential, org membership, team,
-project or entry grant. Dependency outages deny, not use cached authority.
+DB1's public fixed methods already open transactions: a wrapper must **not** open
+another transaction and call them, nor call P6's pool reader while holding the
+one-connection writer. DB1/P6 must implement fixed transaction-local helpers under
+that owner, with exact reviewed signatures. No caller-supplied `func(tx)` hook.
+No SQL writer is held while JavaScript, socket writes or a provider is running.
+Protected read holders do not expose raw bytes to arbitrary broker callers;
+S09 release covers read-reply frames to the worker as well as final user output.
 
-Publication must prove destination audience is no broader than every source or
-have a separately authorized declassification decision. Until that decision exists,
-the broker can reject such writes but cannot claim arbitrary cross-resource
-publication support. Generic content methods creating runnable work must request
-work/automation capability and the P8 effect/delegation reservation path.
+Rollback leaves no committed operation/receipt/domain delta. A known no-effect
+failure may be recorded in a later fixed control transaction. COMMIT ambiguity
+requires querying the authoritative receipt before reporting; without proof report
+outcome_unknown and do not execute again. If finalization/output fails after a
+proven commit, retain that commit outcome but withhold protected bytes; do not
+claim rollback. P8 delivery failure remains separate from content DB success.
 
-Dry-run must enumerate only execution audit/idempotency/quota/security accounting
-and bounded scratch exceptions. Validators never invoke a real writer and roll
-back. Provider-shaped reads are denied unless an explicitly side-effect-free path
-exists. Snapshot domain SQL/Markdown/CAS/derived/events/queues and provider spies;
-assert exact control deltas rather than claiming byte-identical whole-host state.
+**Preflight is not commit authority.** Reuse DB7's pure parser/rendering and DB3
+service validation in both paths, then recheck state/authority in the actual writer.
+Do not implement dry-run by calling a writer and rolling it back. Reads after
+planned writes see committed data; unsupported provisional references return
+`dry_run_dependency_unsupported`. First composition should prove typed entry
+get/create/update plus required permissions/CAS/dry-run; adding any other method
+requires its own validator/effect contract, not automatic105-operation exposure.
+This sequence is an integration increment, not a reduction of V1 acceptance.
 
-## Retention disposition request
+Dry-run's exact persistent allowlist: execution claim/dedup, operation planned or
+failed markers, source evidence, quota/security accounting, and (if U1 approved)
+private replay staging/payload refs/chunks/settlement. These private-purpose bytes
+are execution audit, NOT domain attachment BLOBs. Ordinary notes/revisions/runtime,
+domain refs/bytes/FTS/embeddings/access counters/events/work/outbox/provider calls
+must stay unchanged. Any inherited auth telemetry must be enumerated separately;
+`unreviewed` in api/operation-policy.yaml cannot count as approval.
 
-Reuse D11 minimal security audit retention (90 days) only if the lifecycle owner
-classifies these minimal records accordingly. Content-bearing replay is not minimal
-audit and must follow content deletion, source revocation and approved shorter
-retention; no source/result retention is inferred from the audit period. Payload
-purge must leave non-content idempotency tombstones sufficient to prevent rerun.
-Specify legal purge/restore ordering with the existing owner rather than launching
-an unowned sweeper from graph construction.
+## 5. Finite USER dispositions (recommendations, not approvals)
+
+These are **new script-specific** decisions; none reopens DB1 D1/D2/D3/D5.
+
+| ID | Question and exact recommended answer | Consequence / dependency |
+|---|---|---|
+| U1 | What script material may persist, and for how long? **Never persist raw submitted source. Retain protected final result/log/plan envelope and content-derived fingerprints for24h after terminal state; interrupted artifacts expire no later than24h after the admission deadline. Result≤64KiB, logs≤16KiB/32records, full envelope including plan/journal≤256KiB. Keep only content-free actor/time/limits/closed outcome/count audit up to90days.** No sliding extension on replay. | Requires explicit approval to classify script hashes/request/result digests as short-lived protected material rather than permanent minimal audit. Plan's retained-result promise is satisfied only during the declared window; after it use U2. These sizes are proposals (result/log bounds match inactive quarantine), not attachment D5 or a production quota grant. DB1/DB6/S09/P9 must prove enforcement. |
+| U2 | What prevents old keys rerunning after payload purge/erasure? **After U1 expiry or source erasure, keep only a detached consumed-key tombstone (tenant, stable principal, endpoint, admission epoch, key MAC, consumed state), without execution/source/target IDs, content hashes or payload. Retain until that admission namespace is irreversibly retired; same key always returns a content-free409 `idempotency_key_retired`, never runs.** Before expiry compare fingerprints and return authorized stored result or mismatch409. | User approves potentially long-lived pseudonymous replay-prevention residue and the post-expiry conflict behavior, not eternal script/source history. DB6 erasure still leaves only D2 tuple associated with the erased entry; purge its lineage and linked content-derived metadata. Technical T4 must provide durable namespace retirement/restore safety before any purge of tombstones. If such residue is unacceptable, require a separately reviewed bounded server-issued expiring-key protocol; do not silently allow key reuse. |
+| U3 | Who may receive the new submit permission in the first Linux-single release? **Only explicitly opted-in, verified owner/admin human credentials; no role receives it automatically. Auth-disabled ordinary REST stays unchanged, but script submission requires a verified owner-bound credential. Defer no-credential trusted-single script mapping and service/runner/member/OAuth script issuance until separately reviewed.** | This is a proposed narrow initial eligibility/auth-off choice, NOT already approved by LINUX-FIRST. Existing plan permits explicit trusted-local mapping; deferring it needs this user disposition. If no-login scripts are required now, P6 must specify a real server-owned local policy/association and revoke source before implementation. Neither `admin:*` nor OAuth `mcp` nor resource editor/manager alone grants execute. |
+
+The stable permission spelling is **`script:execute`**, already required by the
+SDK plan. P6 must allocate its exact successor vocabulary/issuance/role ceilings;
+old eleven-capability credential33 is unchanged. No new grant is inferred for
+existing credentials. Effective execution authority = explicit execute permission
+intersected with current role/credential/client/grant ceilings AND every ordinary
+operation/resource permission. Workers never receive that credential or binding.
+
+Revocation/deletion suppresses protected access immediately, even within U1's
+window. Live erasure uses DB6's approved lifecycle bound (no later than24h), backups
+follow the existing30day policy; restoration must replay current deletion/security
+state before serving any bytes. Ordinary entry tombstoning is not D2 erasure:
+entry revisions still follow settled D1/D3, without granting script replay access.
+Script source evidence never pins entry revision payloads beyond D1/D3.
+
+## 6. Finite TECHNICAL dispositions — owners answer accept/change/reject
+
+Each answer must identify an immutable contract pin and responsible writer/files;
+agreement to semantics is not permission for SDK to edit another lane.
+
+| ID / owner | Exact proposed answer requested | Dependencies / evidence before consumption |
+|---|---|---|
+| T1 DB1/reviewer | **Keep content successor first; reuse §2.3 Receipt/§3 methods and §2.2 revisions. Allocate C1–C3 and private payload ref-purpose only in a subsequent reviewed extension, naming exact predecessor/profile/catalog/file owner without guessing a number.** | DB1 independent design review and D4/D6–D15 technical dispositions; no dependency on completed SDK feature. Publish narrow DB1 primitives before full DB14 acceptance; operational cutover remains separate. |
+| T2 DB1+S09+DB2/3 | **Fixed DB1 writers own current P6/ACL/CAS checks, domain receipt, script outcome and outbox participant in one transaction; accept §4 types or return exact replacement signatures.** | DB2/DB7 methods, accepted current-authority P6 inputs (21d2d1e7 unresolved), S09 protocol, S16/17. Real independent-pool/subprocess revoke/commit/failed-COMMIT tests; no pool recursion or generic callback. |
+| T3 S09+S17+P8 | **Execution-wide trusted source union; no broadening publication without a separate authorized contract; typed ReleaseScriptEnvelope owns actual bounded handoff and current-source authorization.** | Actual S09 cross-process release/revoke/journal protocol and S17 source acquisition, P8 effect/outbox composition. State exact linearization/cancellation/slow-sink behavior and unavailable-journal denial; no check-then-send substitute. |
+| T4 DB1+DB6+P9+S09 | **Classify U1 protected bytes/digests separately from non-content audit and U2 tombstones; use DB1 private BLOB purpose, existing DB6 purge and S09/P9 current-security recovery.** | User U1/U2. Reviewer specifies admission-epoch-qualified keys and durable namespace retirement after restore: an old key can never be reinterpreted under a fresh epoch. If content backup may lose consumed keys, old epoch stays sealed/retired via the SAME acknowledged security journal, not a new script ledger. Interrupted records never resume. No restored grants, source payloads or work revived. |
+| T5 DB1+P10+Linux launcher | **Reuse authoritative reservations or allocate only C3 participant; initially enforce one Linux coordinator, propose2/2/1active and8global queued, release only after death/join.** | Technical capacity/topology review, measured parent+worker budgets and crash/lease/reaper evidence. Paid budget zero unless separately configured. Durable byte accounting includes replay staging even for dry-run; BLOB D6 unlimited-single recommendation cannot make execution unlimited. |
+| T6 P6/S04+DB3+P8 | **Implement explicit script:execute only in reviewed successor and fixed verified binding; reuse DB7 parser/DB3 typed preflight and allocated P8 delegation/outbox.** | User U3; credential repair/admission acceptance independent of this request; safe read/source/telemetry contract plus CAS/preflight positive/negative tests. Do not issue through old credential33 or generic entry fields. Unsupported effectful/provider methods stay denied. |
+
+**Linux-single required:** approved DB-authoritative runtime composition/import
+contract (DB1 alone is dormant), current credential binding+S09/ACL/source rules,
+DB2/3 atomic operation receipts and real dry-run, U1/U2 lifecycle, measured launcher/
+quota/reaping, real REST+stdio MCP multi-read/write and revocation/partial/uncertain
+tests. Single mode does not waive any of those. Private colliding-tenant/hidden-
+resource negatives remain acceptance fixtures; they do not unseal tenant routes.
+
+**Deferred hosted:** S10 verified per-call/session in-process adapter and D06 VM/
+public release gates. A/B transport discovery is not their acceptance. Native
+macOS execution stays unsupported; macOS clients use remote Linux. No parent
+independent-worker-review retry or rephrasing is authorized by this packet.
+
+## 7. Handoff and next gate
+
+Search/read existing `hxcyvu0i`, `i8aurh42`, `yp7llda1` coordination notes before
+appending this packet ID, immutable SDK doc commit and only the relevant T/U rows.
+No new task/container/catalog is needed. Parent routes P8/DB6/P10 dispositions
+through existing lanes, and asks the user **U1–U3 only**; DB1 D1/D2/D3/D5 are settled.
+
+Next implementable gate is **accepted T1 primitive allocation**, not a demand that
+DB1 wait for all SDK/S09/P8 or final DB14 completion. T2–T6 can be specified against
+those primitives while their actual implementation dependencies remain mandatory.
+No runtime/schema/auth/source code is delivered by this document. A/B remain
+author-verified; this packet is design coordination, not C–F acceptance.

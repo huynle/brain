@@ -29,6 +29,16 @@ Main has advanced from the original recorded target SHA. Parent owns eventual
 whole-feature integration into `main` and fresh postmerge verification. No merge
 or completion is authorized for these partial A/B slices.
 
+**Current next gate — SDK-DB1-CF-20261006:** DB1 `hxcyvu0i` is active, sole
+writer on `codex/mt-db-authoritative-storage`; immutable Phase A design `d365a4aa`
+is proposed and Phase B DDL awaits independent design review/profile allocation.
+The SDK-owned [C–F disposition packet](sdk-script-allocation-proposal.md) replaces
+the older broad table/filesystem proposal with precise DB1 reuse, transaction,
+retention and typed-method requests. User questions U1–U3 and technical T1–T6 are
+**unapproved proposals**. DB1 D1/D2/D3/D5 decisions are already settled; not asked
+again. No further generic prototype work or new schema has been substituted for
+this actual owner handoff.
+
 ## Classification
 
 **R** = runnable in owned files now; **E** = exact external interface/allocation;
@@ -605,3 +615,45 @@ Linux production launcher/full integration and separate hosted S10/D06 gates rem
 Native macOS execution stays deferred/unsupported; macOS remote-client evidence is
 not server confinement evidence. No activation, merge, push, deployment or task
 completion; manual reservation and `prompt_only` remain.
+
+## DB1 coordination delta — design-only, 2026-10-06
+
+Read DB1 design `d365a4aac3c9b251a0c6095d3c17f0ec2371173a`, all620lines,
+current canonical plans `9fguh2pr`/`qfcda7ct`, current SDK proposal and existing
+DB1/S09/P6 request histories. Brain searches for script receipts, DB1+SDK and
+script:execute found existing broad requests; this packet narrows them, creates
+no competing task/catalog and does not edit the DB writer's worktree.
+
+DB1 already proposes §2.3 atomic Receipt, §2.2 revision history, §3 fixed entry/
+BLOB methods and §2.5 reservations/refs/quota. SDK requests reuse plus exact
+execution→operation→receipt→revision/source relationships and fixed transaction
+participation. `EntryCommit` is not protected output or durable provider success.
+S09 remains draft; P6 repair21d2d1e7 remains unaccepted, not a supplied fence.
+
+Finite disposition register (full proposed answers and dependencies in packet):
+
+| ID | Required disposition, not implementation acceptance |
+|---|---|
+| U1 user | Script-specific24h protected envelope/digests, no raw source persistence,64KiB result/16KiB logs/256KiB total envelope,90day content-free audit. Not DB1 D1/D5 inheritance. |
+| U2 user | Detached consumed-key MAC tombstones until namespace retirement; after payload purge/erasure old key returns409 retired, never reruns. No source linkage/digest in residue. |
+| U3 user | Initially explicit owner/admin human credential opt-in only; ordinary auth-off REST unchanged, no-credential scripts deferred. This narrows the plan's optional trusted-local mapping only if approved. |
+| T1 DB1/reviewer | Content successor first; reuse methods/receipts/history, exact later extension ownership/profile allocated by DB1, no guessed version. |
+| T2 DB1/S09/DB2/3 | Same fixed transaction owns current auth/ACL/CAS, content+receipt+operation outcome+allocated outbox; no pool recursion/callback. |
+| T3 S09/S17/P8 | Trusted complete source capture and bounded read-frame/final-output release ordered with revoke; no broader publication without separate authority. |
+| T4 DB1/DB6/P9/S09 | Classify all receipt/hash/source/replay data, reuse private BLOB refs and existing purge; irreversible admission-epoch retirement prevents restored/purged keys from becoming fresh. |
+| T5 DB1/P10/launcher | Authoritative reservations; proposed initial single Linux coordinator and2/2/1active/8queued limits require technical capacity approval; credit only after death/join. |
+| T6 P6/S04/DB3/P8 | Explicit script:execute successor/binding and typed side-effect-free preflight/effect contracts; immutable credential33 unchanged. |
+
+Next primitive gate is T1, not all-SDK or DB14 completion before DB1 can proceed.
+U1/U2 gate retention/replay design, U3 gates first submit eligibility; T2–T6 then
+need their specified accepted owner contracts and actual integration tests.
+Linux-single still requires authoritative content runtime, live auth/fences,
+preflight/CAS/receipts, source restrictions, lifecycle and full real REST/stdio
+execution evidence. Hosted S10/D06 and public activation remain separate; native
+macOS server execution deferred, remote clients retained. No DDL/auth grant/broker
+activation, merge/push/deployment/status/dependency change or worker-review retry.
+
+Verification for this packet is documentation-only: diff/whitespace, pinned DB1
+method/section references, balanced structure and finite U/T disposition coverage.
+No45-package rerun or runtime PASS is claimed. A/B author evidence above remains
+at its own commits; C–F is not delivered by writing this proposal.

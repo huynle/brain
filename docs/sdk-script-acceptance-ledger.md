@@ -296,3 +296,65 @@ unsupported code without inspecting hostile query/options. The operation remains
 unsupported and issues no IPC. Native facade inventory plus14cases pass27.237s
 under host race; full45 Go tested packages pass (many cached, storage153.044s).
 This corrects a return-shape gap, not full argument/default/service parity.
+
+## Current acceptance accounting (supersedes stale queue wording above)
+
+All rows remain incomplete unless their narrow evidence boundary says otherwise.
+The original plan and acceptance criteria are not reduced to the runnable subset.
+
+| Acceptance area | Author evidence now | Remaining work / owner |
+|---|---|---|
+| Public Go/TS inventory, typed DTOs and contract | 104 existing operations, generated contracts, installed/external client fixtures; policy inventory tests | Repeat SDK/package/contract checks for final candidate; no script-service support inferred |
+| SDK binding, cancellation, errors, pagination | Existing SDK tests and real-handler fixtures | Compatibility decoder/old-server refusal is still runnable; discovery wire allocation is A |
+| Capability discovery | No route or advertisement | A: authenticated route/file allocation; C: approved capability/profile semantics |
+| Stdio MCP convergence | No ownership allocation consumed | B: S10/coordinator composition and real child parity; preserve local-file behavior |
+| Hosted MCP | Unavailable | S10 sealed adapter, current principal/session binding and live cross-principal tests |
+| Full JS facade | 105-name closed surface, intrinsic Promise returns, lazy iterator refusal, get fixture, argument/error cases | **Not complete.** Per-method argument/default normalization and broader fixture mapping are runnable; actual supported service subset/preflight is C–F. Unsupported/provider/binary/stream/write operations must not gain authority from test mappings |
+| Unsupported facade corpus | 104 methods × 10 argument forms tested in real native child; zero IPC and zero hostile inspection | This proves denial only, not DTO validation or service parity |
+| Completion/errors/console/quarantine | Native completion/serialization/error/console tests; exact source/result/depth/retirement boundaries and terminal races | Current source-wide authorized release/publication requires D/E; malformed native console-frame corpus can still expand |
+| Runtime/build provenance | Pinned source/image; hardening and relocated byte equality previously observed | Repeat reproducibility after C change; independent runtime/native-compromise review and selected production launcher G |
+| Per-worker limits and denial | Native CPU/AS/framing/serialization/compile/fresh-state/cancellation corpus | More pressure/launch-race cases runnable; not a universal DoS proof |
+| Aggregate admission and lifecycle | Local fair fixed-slot pool; cancellation/join; direct Linux parent-death/reaping tests | Simultaneous sealed-child pressure and prefork/launch races still runnable. Authoritative topology/quota/init and graph lease composition C/D/G |
+| macOS / hosted platform | macOS memory negative controls; no supported profile; local Linux only | G: reviewed enforceable unprivileged macOS or VM alternative; D06 hosted VM gate separately |
+| Dedicated execute permission and single binding | No capability granted | C: successor vocabulary/trusted-single mapping; do not alter credential33 |
+| Per-operation auth, CAS and preflight | Descriptive policy metadata, no dispatch authority | C–F: approved current rights/resource validation, same-writer fences, safe reusable preflight |
+| Dry-run/provisional plan | Request fingerprint only | Pure ordered-plan/dependency validation runnable; real SQL/files/CAS/queues/provider proof requires C–F; no writer-rollback substitute |
+| Revocation, source restrictions and publication | Bounded trusted-parent source union without release | D/E: current source-wide acquisition/check/commit/output ordering and live outages/revocation tests |
+| Real writes, partial/uncertain outcomes | Fixed worker errors do not claim commit state | Pure journal-state validation runnable; durable atomic receipts/fences/service semantics D/F |
+| Durable idempotency, audit, quota, retention | No new tables or replay endpoint | C/D: exact successor/catalog, scoped ownership/receipts/security journal and purge/restore contract |
+| REST/SDK/MCP execution and audit flow | No execute interface wired | C–G plus A/B; real multi-read/write MCP call still required |
+| Colliding org/ACL/role/revoke acceptance | Existing historical tenant gate passed at actual approved target | Real accepted authenticated integration base and C–F composition, not synthetic identities or tenant predicates alone |
+| Migrations, foreign snapshots, COMMIT cleanup | Unmodified historical tenant gate passes | Exact allocated script migration and integrated foreign-data/COMMIT fixtures remain C/D |
+| Default-off, disable and observability | No runtime selection, route, config or tool; local stop/admission tests | Production configuration/composition ownership; authoritative joined disable/telemetry tests C/D/G |
+| Documentation/examples | New inactive operator/reference guide and three native-tested example files | Keep docs synchronized with actual future service bindings; no install/enablement claim |
+| Build/test/frontend/SDK final checks | Go/vet/build/lint, frontend1269 tests/typecheck/build, approved-base tenant gate; exact prior logs above | Fresh final aggregate/package checks as candidate evolves; frontend12 existing dependency findings unresolved |
+| Independent acceptance | No new independent PASS | Parent/provider tooling blocker remains; never retry/rephrase to bypass; author checks are not independent review |
+| Public hosted availability | Disabled, outside activation authority | D06 plus P5/P6/ACL/P8/P10 and release approval; no enablement/merge/push/deploy authorized |
+
+The three examples are fixture-only (`read-pair`, unsupported write, unsupported
+iterator), not a promised API deployment. `TestQuickJSScriptExamples` and
+`TestQuickJSFacadeUnsupportedArguments` passed under host race in52.626s.
+See [operator/reference status](script-execution-status.md) for precise limitations.
+This accounting is not exhausted runnable scope: full facade argument/default
+mapping, aggregate/launch corpus, compatibility decoder and pure plan/journal
+validation remain author work. Do not report them as completed or exclusively
+externally blocked.
+
+### Continuation checkpoint verification
+
+After the iterator correction and example/corpus additions, full opt-in native
+`go test -race ./internal/scriptexec -count=1` passes386.267s (same opt-in platform
+skips remain; this terse run does not report a fresh per-root count). This includes
+the existing relocation/hardening, parent-death, console and serialization tests.
+Full45 Go tested packages pass (many cached; storage240.577s), fresh vet/build pass
+and lint0issues. Public Go SDK/contract/bootstrap races pass1.604s/8.126s/2.153s.
+TypeScript SDK typecheck/build and36/36 tests pass0fail0skip. OpenAPI validation
+passes with the existing **one ambiguous-path warning** between task delivery and
+feature-get paths; it was not suppressed or resolved by changing shared routes.
+Logs: `sdk-iterator-examples-native.log`, `sdk-examples-suite.log` in approved temp.
+
+No production/service/schema/auth/MCP/tenant files changed in this continuation.
+All new evidence is author-owned. Independent review of3786c13f and later remains
+pending under the provider flag. No retry, rephrasing, activation, merge, push,
+deployment or task completion occurred. Continue the runnable items above; this is
+an explicit context handoff, **not a claim that full JS facade or V1 is finished**.

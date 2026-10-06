@@ -173,3 +173,41 @@ func TestQuickJSFacadeArgumentBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestQuickJSFacadeUnsupportedArguments(t *testing.T) {
+	names := publicFacadeNames(t)
+	_, err := quickJSProgram(t, "", true, func(host, container string) ([]byte, error) {
+		encoded, _ := json.Marshal(names)
+		source := `const names=` + string(encoded) + `;
+let inspected=0,denied=0;
+const hostile=new Proxy({}, {get(){inspected++;throw "private";},ownKeys(){inspected++;throw "private";},getPrototypeOf(){inspected++;throw "private";}});
+const cycle={};cycle.self=cycle;
+const cases=[[],[undefined],[null],[hostile,hostile,hostile,hostile],[cycle],[1n],[()=>42],[Symbol("private")],[NaN,Infinity],[new Uint8Array([1])]];
+for(const path of names){
+ if(path==="entries.get")continue;
+ const parts=path.split("."),fn=parts.length===1?brain[path]:brain[parts[0]][parts[1]];
+ for(const args of cases){
+  let code;
+  try{const value=fn(...args);if(path==="entries.iterate")await value.next();else await value;}
+  catch(e){code=e.code;if(Object.getPrototypeOf(e)!==null||e.message!=="unsupported_operation")throw "error shape";}
+  if(code!=="unsupported_operation")throw "unexpected support";
+  denied++;
+ }
+}
+({denied,inspected});`
+		r := bytes.NewReader(runFacadeFixture(t, host, container, source))
+		f, err := ReadFrame(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, _ := NewProtocolSession(ProtocolLimits{100, 65536, 1 << 20})
+		m, err := s.Accept(f)
+		if err != nil || !m.Done || string(m.Result) != `{"denied":1040,"inspected":0}` || r.Len() != 0 {
+			t.Fatalf("unsupported arguments touched or dispatched: %+v err=%v trailing=%d", m, err, r.Len())
+		}
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

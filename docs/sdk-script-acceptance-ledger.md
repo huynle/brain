@@ -36,6 +36,9 @@ the task stays blocked as a manual reservation.
 - `b30ce8cd..a098fa16` — PDEATHSIG isolation, `sourceWritten` regression, opt-in
   systemd test (`1ikgd5xs`).
 - Earlier SDK slice through `2f265f3d` (bounded PASS `xj7svqw3`).
+- A discovery `248f2fab` and B stdio `42802cfb` (`myyqriy7`): auth
+  401/403/200, manifest = OpenAPI 105 ops, Go/TS negotiation, stdio parity
+  with the old binary except one error string, hosted paths untouched.
 
 **Complete, awaiting independent review:**
 
@@ -46,7 +49,13 @@ the task stays blocked as a manual reservation.
 - `5f4cf6af` — portable `Seccomp_filters` parser test (fixes the darwin lint
   "unused" finding).
 - `74283be5` — main merge.
-- A discovery `248f2fab` and B stdio `42802cfb` (author-verified).
+- `0accbaa8` — stable error code in Go `Error()` and TS `BrainError.message`;
+  only valid machine codes are echoed, never message/request ID/details.
+- `3d6394d1` — stdio refuses `BRAIN_API_TOKEN` over plain http to a
+  non-loopback host at startup (`insecure_transport`; exact `localhost` or
+  loopback IP only). CHANGELOG/README document the intended stdio changes. No
+  override flag: no existing insecure-transport convention; use https or a
+  loopback tunnel.
 - C–F packet `ef83b9fc` (docs).
 - Inactive worker/SDK commits after `2f265f3d` through `b6f0c1ff`. Their earlier
   review was blocked by a provider flag and was not retried.

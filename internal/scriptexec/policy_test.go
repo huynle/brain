@@ -207,8 +207,9 @@ func TestReplayDecision(t *testing.T) {
 		if got.Action != c.want || got.Code != c.code {
 			t.Errorf("%s: %+v, want %v %q", c.name, got, c.want, c.code)
 		}
-		if got.Action == replayRetired && got.HTTPStatus != 409 {
-			t.Errorf("%s: retired must be 409, got %d", c.name, got.HTTPStatus)
+		// SCRIPT-DECISIONS-20261006(b): all three approved codes are HTTP 409.
+		if (got.Action == replayRetired || got.Action == replayConflict) && got.HTTPStatus != 409 {
+			t.Errorf("%s: approved code %q must be 409, got %d", c.name, got.Code, got.HTTPStatus)
 		}
 	}
 	if decideReplay(nil, "", now).Action != replayRefused {

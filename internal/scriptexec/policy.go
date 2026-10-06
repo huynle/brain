@@ -234,6 +234,9 @@ type replayDecision struct {
 // content-free 409 idempotency_key_retired regardless of fingerprint. Before
 // expiry, a matching fingerprint may return the stored result only after the
 // caller separately authorizes output release; a mismatch conflicts.
+// Codes approved by SCRIPT-DECISIONS-20261006/20261006b, all HTTP 409 and
+// content-free: idempotency_key_retired, idempotency_key_conflict,
+// idempotency_key_in_progress.
 func decideReplay(existing *replayRecord, fingerprint string, now time.Time) replayDecision {
 	if fingerprint == "" {
 		return replayDecision{Action: replayRefused}

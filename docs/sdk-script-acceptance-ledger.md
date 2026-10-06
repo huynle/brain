@@ -45,7 +45,10 @@ U1 no raw source persisted; protected result/log/plan/digest envelope 24h after
 terminal (interrupted: 24h after admission deadline, no sliding extension);
 content-free audit 90 days; result ≤64KiB, logs ≤16KiB/32 records, envelope ≤256KiB.
 U2 detached consumed-key MAC tombstones until irreversible namespace retirement;
-reuse returns content-free 409 `idempotency_key_retired`, never reruns. U3 only
+reuse returns content-free 409 `idempotency_key_retired`, never reruns.
+SCRIPT-DECISIONS-20261006b (approved): live-fingerprint mismatch 409
+`idempotency_key_conflict`, active claim 409 `idempotency_key_in_progress`;
+late-finish retention stays deadline-anchored (expiry ≤ admission deadline+24h). U3 only
 explicitly opted-in verified owner/admin human credentials; auth-off ordinary REST
 unchanged; credential-free submission deferred. These do NOT allocate DB1 schema/
 profile, grant `script:execute`, supply S09 fences, select a launcher or activate

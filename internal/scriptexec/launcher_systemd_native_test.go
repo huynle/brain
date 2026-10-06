@@ -37,9 +37,16 @@ i=0; until [ -s "$MARK" ]; do i=$((i+1)); [ $i -gt 300 ] && { echo "no marker"; 
 SERVER=$(sed -n 's/^server=\([0-9]*\) .*/\1/p' "$MARK"); WORKER=$(sed -n 's/.* worker=\([0-9]*\) .*/\1/p' "$MARK"); HOLDER=$(sed -n 's/.* holder=\([0-9]*\)$/\1/p' "$MARK")
 echo "pid1=$(cat /proc/1/comm) mainpid=$(systemctl show -p MainPID --value "$UNIT") server=$SERVER worker=$WORKER worker_ppid=$(awk '{print $4}' /proc/$WORKER/stat)"
 echo "worker_status $(grep -E '^(NoNewPrivs|Seccomp|Seccomp_filters):' /proc/$WORKER/status | tr -s '\t\n' '  ')"
+CG=$(systemctl show -p ControlGroup --value "$UNIT")
 sudo kill -9 "$SERVER"; sleep 2
+# Topology verdict BEFORE any cleanup: a live (non-zombie) process here means
+# the unit/launcher left it running after the server died.
+alive() { [ -e /proc/$1 ] && [ "$(awk '{print $3}' /proc/$1/stat 2>/dev/null)" != Z ] && echo 1 || echo 0; }
+CGPROCS=0; [ -n "$CG" ] && [ -f "/sys/fs/cgroup$CG/cgroup.procs" ] && CGPROCS=$(wc -l < "/sys/fs/cgroup$CG/cgroup.procs")
 if [ -e /proc/$WORKER ]; then echo "WORKER_STATE=$(awk '{print $3}' /proc/$WORKER/stat)"; else echo "WORKER_STATE=gone"; fi
+echo "post_kill alive_server=$(alive $SERVER) alive_worker=$(alive $WORKER) alive_holder=$(alive $HOLDER) cgroup_procs=$CGPROCS"
 echo "unit_state=$(systemctl show -p ActiveState --value "$UNIT") result=$(systemctl show -p Result --value "$UNIT")"
+# Cleanup is separate evidence: it must leave nothing behind either way.
 cleanup; sleep 1
 LEFT=0; for p in $SERVER $WORKER $HOLDER; do if [ -e /proc/$p ]; then LEFT=$((LEFT+1)); fi; done
 echo "leftover_units=$(systemctl list-units --all "$UNIT*" --no-legend | wc -l) leftover_procs=$LEFT"
@@ -91,7 +98,7 @@ func TestLinuxSystemdReaping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("systemd scenario: %v", err)
 	}
-	for _, want := range []string{"pid1=systemd", "NoNewPrivs: 1", "Seccomp: 2", "WORKER_STATE=gone", "result=signal", "leftover_units=0 leftover_procs=0"} {
+	for _, want := range []string{"pid1=systemd", "NoNewPrivs: 1", "Seccomp: 2", "WORKER_STATE=gone", "post_kill alive_server=0 alive_worker=0 alive_holder=0 cgroup_procs=0", "result=signal", "leftover_units=0 leftover_procs=0"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("systemd evidence missing %q", want)
 		}

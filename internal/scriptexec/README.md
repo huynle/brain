@@ -5,8 +5,8 @@ wired to it. SDK script exposure remains false. The approved implementation plan
 is Brain `qfcda7ct`, amendment `SDK-TENANCY-20261005`.
 
 The prototype codec uses a four-byte big-endian length followed by one JSON
-envelope: `version`, `kind`, `sequence`, `payload`. It currently models only
-`call` and `result`. Envelopes are capped at 1 MiB before payload allocation;
+envelope: `version`, `kind`, `sequence`, `payload`. It models `call`, `result` and
+terminal `error`. Envelopes are capped at 1 MiB before payload allocation;
 zero, partial, malformed, duplicate-field, unknown-field and trailing JSON
 envelopes are refused. Sequence numbers fit JavaScript's exact integer range.
 An IPC error must retire the stream, never replay its partially written frame.
@@ -301,8 +301,17 @@ It has **no release method**, persistence, logger or authorization callback. Rea
 S09/S17 source-wide release remains unavailable; the fixture only inspects its
 private state. Clearing owned buffers is not a promise to erase Go heap copies,
 source-ID strings, kernel pipes or bytes already legitimately released elsewhere.
-Structured source-aware exception delivery is still pending; raw exceptions remain
-discarded and worker exit statuses are not a durable operation outcome journal.
+Terminal error payloads admit only fixed `compile_failed`, `script_failed` or
+`result_invalid` codes. Optional line/column hints are integers1..32768 with no
+filename/path/text; parent treats them as untrusted hints, not verified locations.
+The native worker emits **no location** rather than inspect a submitted exception:
+thrown proxies, Error stack getters and rejection objects are never formatted or
+queried. Error frames use the current sequence after prior calls, consume parent
+budgets, permanently retire the session and remain distinct from successful results
+(`WorkerMessage.Failure` versus `Result`). Partial output is never retried. Hard
+kills/protocol/limit failures may emit no terminal, so the parent must still join
+and classify process failure. No protected-output release or durable operation
+journal exists; a fixed worker error proves nothing about earlier service commits.
 
 ### Inactive local aggregate admission
 

@@ -242,3 +242,32 @@ warnings. Vite/PWA build succeeds (2741modules,33precache entries), output remai
 ignored/uncommitted. Installation reports **12 existing dependency vulnerabilities
 (1low/3moderate/8high)** plus source-map/glob deprecations; no audit fix or dependency
 change was made. This is not a zero-vulnerability or browser-E2E claim.
+
+### Fixed terminal-error protocol (inactive)
+
+Added a distinct terminal `error` frame with exactly the fixed code vocabulary
+`compile_failed`, `script_failed`, `result_invalid`. Optional source line/column
+must each be integers1..32768; no text/filename/stack or extra field is accepted.
+These are untrusted bounded hints, not verified source provenance. Native worker
+deliberately emits no location rather than inspect potentially hostile exceptions.
+Thrown proxies, Error stack accessors and rejection objects are never queried or
+formatted; six real native regressions first failed for missing terminal errors,
+then passed with one fixed terminal, zero unexpected calls and zero stderr.
+Terminal/error sequence, byte budgets, retirement and duplicate outcome rejection
+are parent-validated. Hard kills/limit/IPC failures can still have no terminal;
+Wait/join remains mandatory. This is neither an operation commit receipt nor
+permission to release prior results/logs, and no journal/fence is invented.
+
+Final full opt-in native host-race suite:54passing top-level test/fuzz roots,
+8explicit platform/helper skips,341.180s. Linux inner Go-parent test remains
+non-race cross-built. Existing console, serializer, hostile compiler, parent death,
+Wait/reaping, hardening and relocation-reproducibility tests pass. Relocated binary
+SHA256 `3dcc9b72fd3bdcea30c689b55344d7e0831e24446e19f609c3052d9d47c660d6`
+matches both directories; no production runtime selection implied. Full45 tested
+Go packages pass (many cached; storage166.706s), fresh vet/build/lint0issues.
+Logs: `sdk-terminal-errors-{suite,full-native}.log` in the approved opencode temp.
+Independent review remains pending under the previously recorded tooling blocker.
+
+Fresh S10 and coordinator recalls still show no A/B allocation acknowledgement.
+Coordinator now has unrelated24f1f0cc reminder integration candidate; it is not
+script schema/permission/output/adapter allocation and was not imported.

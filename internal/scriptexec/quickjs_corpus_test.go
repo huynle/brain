@@ -45,10 +45,11 @@ func TestQuickJSWorkerAdversarialCompilationAndFreshness(t *testing.T) {
 				}
 				if tc.refused {
 					exit, ok := e.(*exec.ExitError)
-					if !ok || (exit.ExitCode() != 135 && exit.ExitCode() != 136 && exit.ExitCode() != 137) || len(out) != 0 {
+					if !ok || (exit.ExitCode() != 135 && exit.ExitCode() != 136 && exit.ExitCode() != 137) {
 						t.Fatalf("unbounded/crashing/non-refusing compiler or serializer: err=%v output bytes=%d", e, len(out))
 					}
-					t.Logf("bounded refusal with no output; exit=%d", exit.ExitCode())
+					assertBoundedWorkerFailure(t, bytes.NewReader(out), 1)
+					t.Logf("bounded refusal without protected content; exit=%d", exit.ExitCode())
 					return
 				}
 				if e != nil {

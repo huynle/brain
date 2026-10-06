@@ -102,9 +102,10 @@ func TestQuickJSSerializationThroughParent(t *testing.T) {
 					}
 				}
 				if tc.refused {
-					if runErr == nil || r.Len() != 0 {
+					if runErr == nil {
 						t.Fatal("invalid completion reported success or extra outcome")
 					}
+					assertBoundedWorkerFailure(t, r, uint64(len(tc.calls)+1))
 					return
 				}
 				frame, err := ReadFrame(r)

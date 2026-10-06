@@ -62,9 +62,10 @@ func TestQuickJSWorkerCompletionSemantics(t *testing.T) {
 					}
 				}
 				if tc.refused {
-					if runErr == nil || reader.Len() != 0 {
+					if runErr == nil {
 						t.Fatalf("refused source retried or released output: %v, remaining=%q", runErr, out[len(out)-reader.Len():])
 					}
+					assertBoundedWorkerFailure(t, reader, uint64(tc.calls+1))
 					return
 				}
 				result, err := ReadFrame(reader)

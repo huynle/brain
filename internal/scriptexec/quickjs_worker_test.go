@@ -142,9 +142,10 @@ func TestQuickJSWorkerBoundedFailures(t *testing.T) {
 					t.Fatalf("worker required outer wall timeout instead of own bound: %v", ctx.Err())
 				}
 				exit, ok := e.(*exec.ExitError)
-				if !ok || exit.ExitCode() != tc.exit || len(out) != 0 {
+				if !ok || exit.ExitCode() != tc.exit {
 					t.Fatalf("exit=%v want=%d output bytes=%d", e, tc.exit, len(out))
 				}
+				assertBoundedWorkerFailure(t, bytes.NewReader(out), 1)
 				t.Logf("actual worker waited/reaped, exit=%d, no result bytes", exit.ExitCode())
 			})
 		}

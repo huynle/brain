@@ -87,7 +87,7 @@ func ReadFrame(r io.Reader) (Frame, error) {
 }
 
 func validFrame(f Frame) bool {
-	return f.Version == 1 && (f.Kind == "call" || f.Kind == "result") && f.Sequence > 0 && f.Sequence <= 1<<53-1 && len(f.Payload) > 0 && json.Valid(f.Payload)
+	return f.Version == 1 && (f.Kind == "call" || f.Kind == "result" || f.Kind == "error") && f.Sequence > 0 && f.Sequence <= 1<<53-1 && len(f.Payload) > 0 && json.Valid(f.Payload)
 }
 
 // WriteFrame validates and buffers one envelope before emitting anything. The

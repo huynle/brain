@@ -16,9 +16,51 @@ type OperationCall struct {
 	Arguments json.RawMessage
 }
 type WorkerMessage struct {
-	Call   *OperationCall
-	Result json.RawMessage
-	Done   bool
+	Call    *OperationCall
+	Result  json.RawMessage
+	Failure *WorkerFailure `json:"failure,omitempty"`
+	Done    bool
+}
+
+// WorkerFailure is a bounded, untrusted worker report, not a service operation
+// receipt or permission to publish. Never include arbitrary exception content.
+// Location, when supplied, is only a hint within the prototype's source ceiling;
+// it is not an authenticated engine location and has no file/path field.
+type WorkerFailure struct {
+	Code     string                `json:"code"`
+	Location *WorkerSourceLocation `json:"location,omitempty"`
+}
+type WorkerSourceLocation struct {
+	Line   int `json:"line"`
+	Column int `json:"column"`
+}
+
+func decodeWorkerFailure(payload []byte) (*WorkerFailure, bool) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(payload, &fields) != nil || fields["code"] == nil || len(fields) < 1 || len(fields) > 2 {
+		return nil, false
+	}
+	var failure WorkerFailure
+	if json.Unmarshal(fields["code"], &failure.Code) != nil {
+		return nil, false
+	}
+	switch failure.Code {
+	case "compile_failed", "script_failed", "result_invalid":
+	default:
+		return nil, false
+	}
+	if len(fields) == 2 {
+		var location map[string]json.RawMessage
+		if fields["location"] == nil || json.Unmarshal(fields["location"], &location) != nil || len(location) != 2 || location["line"] == nil || location["column"] == nil {
+			return nil, false
+		}
+		var value WorkerSourceLocation
+		if json.Unmarshal(location["line"], &value.Line) != nil || json.Unmarshal(location["column"], &value.Column) != nil || value.Line < 1 || value.Line > 32768 || value.Column < 1 || value.Column > 32768 {
+			return nil, false
+		}
+		failure.Location = &value
+	}
+	return &failure, true
 }
 
 // ProtocolSession is only a parent-side IPC state machine. A parsed call is NOT
@@ -53,6 +95,14 @@ func (s *ProtocolSession) Accept(frame Frame) (WorkerMessage, error) {
 	if frame.Kind == "result" {
 		s.closed = true
 		return WorkerMessage{Done: true, Result: bytes.Clone(frame.Payload)}, nil
+	}
+	if frame.Kind == "error" {
+		failure, ok := decodeWorkerFailure(frame.Payload)
+		if !ok {
+			return bad()
+		}
+		s.closed = true
+		return WorkerMessage{Done: true, Failure: failure}, nil
 	}
 	if s.operations >= s.limits.MaxOperations {
 		return bad()

@@ -13,6 +13,7 @@ static unsigned sequence = 1;
 static unsigned log_count = 0;
 static size_t log_bytes = 0;
 static int terminal_sent = 0;
+static int wire_broken = 0;
 static unsigned unhandled_rejections = 0;
 
 /* Pinned QuickJS calls false once on unhandled rejection and true once when a
@@ -44,7 +45,7 @@ static int exact_write(const void *buf, size_t size) {
     const char *p = buf;
     while (size) {
         ssize_t n = write(1, p, size);
-        if (n <= 0) return -1;
+        if (n <= 0) { wire_broken=1; return -1; }
         p += n; size -= n;
     }
     return 0;
@@ -83,8 +84,16 @@ static int send_json(const char *kind, const char *text, size_t size) {
     size_t total=(size_t)n+size+1;
     unsigned char h[4]={total>>24,total>>16,total>>8,total};
     if (exact_write(h,4) || exact_write(prefix,n) || exact_write(text,size) || exact_write("}",1)) return -1;
-    if (!strcmp(kind,"result")) terminal_sent=1;
+    if (!strcmp(kind,"result") || !strcmp(kind,"error")) terminal_sent=1;
     return 0;
+}
+/* Fixed literals only, no thrown object/stack/property access, coercion, job
+ * pumping or user callback. A partially written stream is never retried. Error
+ * codes describe worker failure only, never whether a service mutation committed.
+ * No location is fabricated: source-location hints are optional on the protocol. */
+static int fail_terminal(const char *payload, int status) {
+    if(!wire_broken && !terminal_sent)(void)send_json("error",payload,strlen(payload));
+    return status;
 }
 static int send_value(JSContext *ctx, const char *kind, JSValueConst payload) {
     JSValue json = JS_JSONStringify(ctx, payload, JS_UNDEFINED, JS_UNDEFINED);
@@ -277,12 +286,12 @@ static int worker_main(void) {
         free(program);
     }
     JS_FreeCString(ctx, text); JS_FreeValue(ctx, source);
-    if (JS_IsException(compiled)) return 135;
+    if (JS_IsException(compiled)) return fail_terminal("{\"code\":\"compile_failed\"}",135);
     JSValue promise = JS_EvalFunction(ctx, compiled);
-    if (JS_IsException(promise)) return 135;
+    if (JS_IsException(promise)) return fail_terminal("{\"code\":\"script_failed\"}",135);
     JSContext *jobctx; int job;
     while ((job=JS_ExecutePendingJob(rt, &jobctx))>0) {}
-    if (job<0 || JS_PromiseState(ctx, promise)!=JS_PROMISE_FULFILLED) return 136;
+    if (job<0 || JS_PromiseState(ctx, promise)!=JS_PROMISE_FULFILLED) return fail_terminal("{\"code\":\"script_failed\"}",136);
     JSValue result = JS_PromiseResult(ctx, promise);
     if (completion_wrapped) {
         /* QuickJS's async global eval wraps completion as {value: completion}
@@ -291,15 +300,15 @@ static int worker_main(void) {
         JS_FreeValue(ctx, result);
         result = value;
     }
-    if (JS_IsException(result)) return 136;
+    if (JS_IsException(result)) return fail_terminal("{\"code\":\"script_failed\"}",136);
     JSValue settled = JS_Call(ctx, await_value, JS_UNDEFINED, 1, &result);
     JS_FreeValue(ctx, result); JS_FreeValue(ctx, await_value);
-    if (JS_IsException(settled)) return 136;
+    if (JS_IsException(settled)) return fail_terminal("{\"code\":\"script_failed\"}",136);
     while ((job=JS_ExecutePendingJob(rt, &jobctx))>0) {}
-    if (job<0 || JS_PromiseState(ctx, settled)!=JS_PROMISE_FULFILLED) return 136;
+    if (job<0 || JS_PromiseState(ctx, settled)!=JS_PROMISE_FULFILLED) return fail_terminal("{\"code\":\"script_failed\"}",136);
     result = JS_PromiseResult(ctx, settled);
     JS_FreeValue(ctx, settled);
-    if (JS_IsUndefined(result) || send_value(ctx, "result", result)) return 137;
+    if (JS_IsUndefined(result) || send_value(ctx, "result", result)) return fail_terminal("{\"code\":\"result_invalid\"}",137);
     JS_FreeValue(ctx, result); JS_FreeValue(ctx, promise);
     JS_FreeContext(ctx); JS_FreeRuntime(rt);
     return 0;

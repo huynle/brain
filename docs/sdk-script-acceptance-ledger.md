@@ -223,3 +223,22 @@ review session ended with a tool/provider cybersecurity-policy flag before retur
 a review. This is not a code finding or PASS; no retry/rephrasing to bypass that
 safeguard was attempted. Serialization/control changes still lack independent
 acceptance. Parent owns resolution; no full task completion is claimed.
+
+### Follow-on Promise parity and frontend evidence
+
+The fixture now creates intrinsic Promises for get results and fixed-code failures;
+native RED for then/catch and synchronous-throw detection preceded the change.
+Existing serialization regressions still perform the same calls during getters/
+toJSON and retain exact parent terminal-sequence checks; their synchronous `.value`
+reads were replaced by fixed values after initiating the call because actual SDK
+responses are Promises. The awaited control continues checking the actual reply.
+Native4 suites pass56.875s (11argument,17completion,22serialization subcases plus
+full inventory). Full45 Go packages pass, many cached (storage154.109s), fresh
+vet/build/lint0issues. No concurrent RPC or additional operation dispatch added.
+
+Frontend lockfile installed with `npm ci --ignore-scripts`; typecheck succeeds,
+1269/1269 tests pass with0failures/0skips and existing Zustand unavailable-storage
+warnings. Vite/PWA build succeeds (2741modules,33precache entries), output remains
+ignored/uncommitted. Installation reports **12 existing dependency vulnerabilities
+(1low/3moderate/8high)** plus source-map/glob deprecations; no audit fix or dependency
+change was made. This is not a zero-vulnerability or browser-E2E claim.

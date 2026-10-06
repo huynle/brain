@@ -138,6 +138,21 @@ static JSValue unsupported_operation(JSContext *ctx, JSValueConst self, int argc
     (void)self; (void)argc; (void)argv;
     return fixed_error(ctx,"unsupported_operation");
 }
+/* Match SDK Promise-return semantics, including validation failures. Native
+ * creation retains the engine intrinsic even if submitted code replaces Promise.
+ * The prototype IPC remains serial/blocking; this does not claim concurrent RPC. */
+static JSValue facade_method(JSContext *ctx, JSValueConst self, int argc, JSValueConst *argv, int fixture) {
+    JSValue functions[2];
+    JSValue promise=JS_NewPromiseCapability(ctx,functions);
+    if(JS_IsException(promise))return promise;
+    JSValue value=fixture?entry_get(ctx,self,argc,argv):unsupported_operation(ctx,self,argc,argv);
+    int rejected=JS_IsException(value);
+    if(rejected)value=JS_GetException(ctx);
+    JSValue settled=JS_Call(ctx,functions[rejected],JS_UNDEFINED,1,&value);
+    JS_FreeValue(ctx,value);JS_FreeValue(ctx,functions[0]);JS_FreeValue(ctx,functions[1]);
+    if(JS_IsException(settled)){JS_FreeValue(ctx,promise);return settled;}
+    JS_FreeValue(ctx,settled);return promise;
+}
 static int install_brain(JSContext *ctx, JSValueConst global) {
     const struct { const char *space; const char *methods; } surface[] = {
         {"", "health inject search"},
@@ -165,7 +180,7 @@ static int install_brain(JSContext *ctx, JSValueConst global) {
             char name[32];if(n>=sizeof(name))return -1;
             memcpy(name,p,n);name[n]=0;
             int fixture=!strcmp(surface[i].space,"entries")&&!strcmp(name,"get");
-            JSValue fn=JS_NewCFunction(ctx,fixture?entry_get:unsupported_operation,name,fixture?1:0);
+            JSValue fn=JS_NewCFunctionMagic(ctx,facade_method,name,fixture?1:0,JS_CFUNC_generic_magic,fixture);
             if(JS_SetPropertyStr(ctx,target,name,fn)<0)return -1;
             p=end?end+1:p+n;
         }

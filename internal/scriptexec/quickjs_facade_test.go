@@ -119,14 +119,17 @@ func TestQuickJSFacadeArgumentBoundary(t *testing.T) {
 			name, source, want string
 			call               bool
 		}{
-			{"optional undefined", `brain.entries.get("one",undefined).value;`, `42`, true},
-			{"empty identifier", `try{brain.entries.get("");}catch(e){e.code;}`, `"invalid_arguments"`, false},
-			{"missing identifier", `try{brain.entries.get();}catch(e){e.code;}`, `"invalid_arguments"`, false},
-			{"no coercion", `let n=0;try{brain.entries.get({toString(){n++;return "one"}});}catch(e){({code:e.code,n});}`, `{"code":"invalid_arguments","n":0}`, false},
-			{"no transport options", `try{brain.entries.get("one",{token:"secret"});}catch(e){e.code;}`, `"invalid_arguments"`, false},
-			{"too many arguments", `try{brain.entries.get("one",undefined,undefined);}catch(e){e.code;}`, `"invalid_arguments"`, false},
-			{"unsupported never inspects arguments", `let n=0;try{brain.entries.create({get content(){n++;throw "secret"},toJSON(){n++;throw "secret"}});}catch(e){({code:e.code,n});}`, `{"code":"unsupported_operation","n":0}`, false},
-			{"unsupported ignores prototype", `Object.prototype.code="forged";Object.prototype.toJSON=()=>"secret";try{brain.search({});}catch(e){({toJSON(){return e.code}});}`, `"unsupported_operation"`, false},
+			{"promise result", `const p=brain.entries.get("one");({promise:p instanceof Promise,value:await p.then(x=>x.value)});`, `{"promise":true,"value":42}`, true},
+			{"promise error", `let sync=false,p;try{p=brain.search({});}catch(e){sync=true;}({sync,code:await p.catch(e=>e.code)});`, `{"sync":false,"code":"unsupported_operation"}`, false},
+			{"promise validation", `let sync=false,p;try{p=brain.entries.get();}catch(e){sync=true;}({sync,code:await p.catch(e=>e.code)});`, `{"sync":false,"code":"invalid_arguments"}`, false},
+			{"optional undefined", `(await brain.entries.get("one",undefined)).value;`, `42`, true},
+			{"empty identifier", `try{await brain.entries.get("");}catch(e){e.code;}`, `"invalid_arguments"`, false},
+			{"missing identifier", `try{await brain.entries.get();}catch(e){e.code;}`, `"invalid_arguments"`, false},
+			{"no coercion", `let n=0;try{await brain.entries.get({toString(){n++;return "one"}});}catch(e){({code:e.code,n});}`, `{"code":"invalid_arguments","n":0}`, false},
+			{"no transport options", `try{await brain.entries.get("one",{token:"secret"});}catch(e){e.code;}`, `"invalid_arguments"`, false},
+			{"too many arguments", `try{await brain.entries.get("one",undefined,undefined);}catch(e){e.code;}`, `"invalid_arguments"`, false},
+			{"unsupported never inspects arguments", `let n=0;try{await brain.entries.create({get content(){n++;throw "secret"},toJSON(){n++;throw "secret"}});}catch(e){({code:e.code,n});}`, `{"code":"unsupported_operation","n":0}`, false},
+			{"unsupported ignores prototype", `Object.prototype.code="forged";Object.prototype.toJSON=()=>"secret";try{await brain.search({});}catch(e){({toJSON(){return e.code}});}`, `"unsupported_operation"`, false},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				replies := []json.RawMessage{}

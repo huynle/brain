@@ -171,7 +171,7 @@ func runManagedFixture(t *testing.T, observeDeath bool) {
 			t.Logf("external native subreaper after direct Go-parent death: %s", out)
 			return nil, nil
 		}
-		run := exec.CommandContext(ctx, "docker", "--host", host, "exec", "--user=65534:65534", name, "/usr/bin/env", "-i", "BRAIN_NATIVE_WORKER_FIXTURE=/tmp/probe", "/tmp/managed.test", "-test.run=^TestNativeManagedQuickJS$", "-test.v", "-test.timeout=10s")
+		run := exec.CommandContext(ctx, "docker", "--host", host, "exec", "--user=65534:65534", name, "/usr/bin/env", "-i", "BRAIN_NATIVE_WORKER_FIXTURE=/tmp/probe", "/tmp/managed.test", "-test.run=^TestNativeManaged(QuickJS|Aggregate|Startup)$", "-test.v", "-test.timeout=20s")
 		out, e := run.CombinedOutput()
 		if e != nil {
 			return nil, fmt.Errorf("native parent: %w %s", e, out)

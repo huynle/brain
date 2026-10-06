@@ -96,3 +96,25 @@ func TestDeliveredContractMatchesRouterAndInventory(t *testing.T) {
 	}
 	t.Logf("checked %d delivered operations against router and inventory; pending inventory is not claimed implemented", count)
 }
+
+// Preserve and disclose legacy chi precedence; do not "fix" OpenAPI ambiguity
+// by changing existing REST routes or pretending both meanings are reachable.
+func TestLegacyTaskFeatureAmbiguityUsesStaticFeatureRoute(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Tenancy.Mode = tenant.ModeSingle
+	router := api.NewRouter(cfg, api.WithHandler(api.NewHandler(nil, api.WithTaskService(service.NewTaskService(&cfg, nil, nil)))))
+	for _, tc := range []struct {
+		path, pattern string
+	}{
+		{"/api/v1/tasks/project/features/delivery", "/api/v1/tasks/{projectId}/features/{featureId}"},
+		{"/api/v1/tasks/project/ordinary/delivery", "/api/v1/tasks/{projectId}/{taskId}/delivery"},
+	} {
+		rctx := chi.NewRouteContext()
+		if !router.Match(rctx, http.MethodGet, tc.path) {
+			t.Fatalf("missing legacy route %s", tc.path)
+		}
+		if got := rctx.RoutePattern(); got != tc.pattern {
+			t.Fatalf("legacy dispatch %s: got %s want %s", tc.path, got, tc.pattern)
+		}
+	}
+}

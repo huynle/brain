@@ -388,3 +388,27 @@ and isolated-cache lint0issues. SDK/contract/bootstrap races pass1.848s/15.907s/
 2.337s, including external Go and installed Node fixtures. Log
 `sdk-normalization-suite.log` in approved temp. Existing one OpenAPI path warning
 remains disclosed. None of these author checks supplies independent acceptance.
+
+### Simultaneous native pressure and launch-boundary evidence
+
+The existing direct-parent integration now includes two sealed children held after
+touching2MiB each, measured simultaneously at VM11880KiB/RSS8704KiB combined.
+A third independent-tenant child returns42 while the pressure tenant is saturated.
+Releasing both barriers yields heap exhaustion `script_failed`/exit136 (maxrss17792KiB)
+and CPU SIGKILL after997.748ms user CPU (maxrss4480KiB). Both Wait and pool Close join.
+This is measured local fixed-slot behavior, **not** host-cgroup/parent-overhead or
+durable multi-server quotas.20 pre-Start refusals and20 post-Start/pre-source
+cancellations also pass; no kernel-internal prefork hook or universal race proof.
+Inner Linux parent remains non-race cross-built; host wrapper runs under race.
+
+Full opt-in native race passes659.514s; full Go45tested packages pass (many cached,
+storage252.280s), fresh vet/build/lint0issues. Logs `sdk-aggregate-native.log` and
+`sdk-aggregate-suite.log`; no owned probe containers remain. No C/runtime policy
+or production caller changed. Actual router-match regression also proves static
+feature precedence for the disclosed OpenAPI overlap. No shared REST compatibility
+change is appropriate in this scope; warning remains visible, not suppressed.
+
+Remaining runnable preparation: compatibility decoder/old-server refusal and pure
+ordered-plan/journal validation. The normalization fixture is not installed in the
+native facade and does not replace service mappings; those still require C–F.
+All A–G allocations and independent-review restrictions remain as stated above.

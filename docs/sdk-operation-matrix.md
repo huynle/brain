@@ -45,6 +45,12 @@ accepts legacy `waitFor/timeout` fields but returns immediately; it is not long 
 These methods remain script-disabled. Redocly reports one existing-route ambiguity
 between task suffix routes and feature lookup (currently reported for `delivery`); Chi gives the literal `features` prefix
 precedence. No lint rule or server routing policy is weakened to hide this warning.
+`TestLegacyTaskFeatureAmbiguityUsesStaticFeatureRoute` proves actual router matching:
+`GET /tasks/project/features/delivery` selects feature `delivery`, not task
+`features`' delivery view; `/tasks/project/ordinary/delivery` selects task delivery.
+This is a legacy REST constraint, not an SDK path-generation defect. Resolving it
+would require an explicitly coordinated REST compatibility change; the warning
+remains visible and no renamed/omitted contract operation is used to silence it.
 
 All 29 formerly pending inventory methods now have Go/TypeScript adapters and
 contract declarations. The authenticated external Go and installed Node fixtures

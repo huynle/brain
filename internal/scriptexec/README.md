@@ -356,6 +356,20 @@ No production caller, graph lease adapter, cross-server reservation, rate limite
 or principal resolver is connected. Those require the ledger's C/D/G allocations;
 local counters must never be presented as authoritative multi-server quota.
 
+`TestNativeManagedAggregate` now composes this pool with two actual sealed native
+children held at a fixture-call barrier after touching 2MiB each. `/proc` measurements
+verify simultaneous per-process virtual/resident memory, an independent tenant's
+third child returns42 while the pressure tenant is saturated, then both pressure
+children are released: heap exhaustion reports `script_failed`; the CPU loop is
+SIGKILLed around one CPU second. Both are Waited and maxrss remains below the
+experimental64MiB AS ceiling; pool Close joins. This measures these local workers,
+not parent/container overhead, a host aggregate cgroup, or multi-server quota.
+`TestNativeManagedStartup` adds20 pre-Start refusals and20 cancellations at Go's
+post-Start/pre-source stdin-copy boundary; every started child is Waited. It does
+not insert hooks inside the kernel fork/exec sequence or prove every prefork race.
+Both tests run in the existing non-race Linux cross-built parent fixture; the host
+wrapper and local primitives have separate race coverage. No launcher policy changed.
+
 Before receiving/compiling source it closes descriptors 3+ with `close_range`,
 sets hard/soft CPU to one second, and applies the experimental 64MiB address-space
 and syscall seal. Worker framing/source/result ceilings are 64KiB/32KiB/64KiB;

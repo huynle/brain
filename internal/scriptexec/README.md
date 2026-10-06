@@ -156,6 +156,84 @@ JS capability facade or parent broker exists. This image is an experiment input,
 not a selected/published worker runtime. This does not meet D06 hosted VM isolation
 or license/reproducibility/release gates. No container is deployed as a service.
 
+## Linux-first production launcher (disabled by default) — G
+
+`launcher.go`/`launcher_linux.go` are the LINUX-FIRST-20261006 launch policy
+for the sealed QuickJS worker. The zero `launcherConfig` refuses
+(`errLauncherDisabled`); any non-Linux OS, including native macOS, returns
+`errLauncherUnsupported` even when explicitly enabled. There is no degraded
+fallback, privileged helper, entitlement, route, config key or caller.
+`launcherAvailability` gives a content-free reason (`disabled`, `misconfigured`,
+`unsupported_platform`, `configured`); `configured` is not execution availability.
+
+Each `run` does the following:
+
+1. **Pinned binary:** open the configured absolute path with `O_NOFOLLOW`.
+   Require a regular executable owned by root or the service euid, with no
+   setuid/setgid and no group/world write. Hash that descriptor against the pinned
+   SHA-256, then exec `/proc/self/fd/<n>` so a path swap cannot substitute
+   another binary.
+2. **Launch:** empty environment, cwd `/`, only fds 0–2, parent-death SIGKILL on a
+   locked thread (`runWorkerProcessWithStart`), stderr counted and discarded at
+   64KiB, stdout wire budget 1MiB, source ≤32KiB, wall deadline ≤30s.
+3. **Parent-side attestation before any source byte:** `/proc/<pid>/status`
+   must show `NoNewPrivs:1`, `Seccomp:2` and `Seccomp_filters` strictly greater
+   than the launcher's own. Docker/systemd filters are inherited by every child,
+   so `Seccomp:2` alone proves nothing; the observed sealed worker in Docker
+   reports 2 filters. Then `/proc/<pid>/limits` must show CPU ≤1s and address
+   space ≤64MiB (soft ≤ hard, never unlimited), `/proc/<pid>/fd` exactly {0,1,2},
+   and `/proc/<pid>/exe` the pinned inode. The worker seals last and the seal
+   denies `setrlimit`/`prctl`/further filters, so this is its final state.
+   Failure or a 1s attestation timeout → kill, Wait, no source written.
+4. **Lifecycle:** caller cancellation, wall deadline, protocol/wire/diagnostic
+   violation or attestation failure all kill and Wait before `run` returns.
+
+Confinement comes from the worker's own deny-default seccomp seal plus kernel
+rlimits, not from containers or namespaces (unprivileged user namespaces are
+commonly unavailable under Docker/AppArmor and are not required). Filesystem
+(`open`/file mmap), network (`socket`), process creation/replacement (`fork`,
+`clone`, `clone3`, `execve`, `execveat`), descriptor reuse, executable memory and
+limit/parent-death changes are all denied in the sealed child. `RLIMIT_AS` is
+kernel-enforced on Linux (prior native probe: 128MiB mapping → ENOMEM), unlike
+the macOS counterexample above.
+
+**Real Linux evidence (kernel 6.8 arm64, Colima, uid 65534, non-race
+cross-built parent):** `TestQuickJSLauncherLinux` → `TestNativeLauncher` 10/10.
+The launch pin is taken from an INDEPENDENT relocated rebuild with the same recipe
+(`401a66247dfad878dd68be039851274eeae05921838f9d872b1fc3068e64abca`), and the
+shipped artifact must equal it byte-for-byte.
+Pinned exchange returns 42 with attestation `{NoNewPrivs, Seccomp 2, filters 2,
+cpu 1/1, as 64MiB/64MiB}`. Pin mismatch, a world-writable copy and a symlink are
+refused before start. An unsealed, correctly pinned `/bin/cat` is refused at
+attestation (~1.0s), killed and Waited with zero frames accepted; in a mutation
+run that ignored attestation, the source reached cat and was echoed back. A
+worker blocked on IPC is killed at the 500ms wall and Waited. Caller cancellation
+kills and Waits. A `for(;;){}` loop is killed by the attested RLIMIT_CPU before
+its 5s wall. A 1MiB-ArrayBuffer flood ends as a `script_failed` frame (exit136)
+in ~13ms through QuickJS's 16MiB heap limit, which fires before the OS ceiling.
+Kernel enforcement of the attested 64MiB `RLIMIT_AS` under the same `seal()` is
+freshly re-observed by `TestQuickJSNativeAddressSpaceProbe`: 4KiB map succeeds,
+128MiB map gets ENOMEM. `TestQuickJSNativeChildExecDenied`: the same probe without its seal
+really execs `/bin/echo` (the container-only gap reproduced); sealed, `execve`,
+`execveat`, `clone`, `clone3`, `PR_SET_PDEATHSIG` and `RLIMIT_AS` raises all
+return EPERM.
+
+**Supported topology (single Linux server):** brain-api runs under systemd
+(`KillMode=control-group`, plus an outer `MemoryMax`/`TasksMax` for
+API+workers) or as a container with an init/subreaper PID 1 (`--init`/tini),
+because a dead parent cannot reap its own killed child. Linux ≥5.9
+(`Seccomp_filters`), arm64 or x86_64 (only arm64 observed). The worker is
+installed read-only and root-owned, and its digest is pinned in configuration.
+Aggregate admission is `localWorkerPool` (N × 64MiB AS, N CPU); it is not a
+multi-server quota. Hosted multi-tenant execution still requires D06 VM
+isolation.
+
+Still not covered here: independent review of the seal/launcher and runtime
+selection (worker C source still lives in `testdata/`, built by the pinned
+reproducible recipe; no release artifact/installation path is produced), an
+x86_64 observation, live systemd/init deployment evidence, and C–F integration
+before any route can use this.
+
 ## Approved script policy enforcement (inactive) — SCRIPT-DECISIONS-20261006
 
 `policy.go` is pure code enforcement of the three user-approved product rules.

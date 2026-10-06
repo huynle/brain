@@ -51,6 +51,10 @@ unchanged; credential-free submission deferred. These do NOT allocate DB1 schema
 profile, grant `script:execute`, supply S09 fences, select a launcher or activate
 anything. Pure SDK-owned enforcement of these rules: `internal/scriptexec/policy.go`.
 
+**G — Linux-first launcher (author evidence, disabled):** see final section
+"G Linux production launcher". Author-implemented and real-Linux tested; NOT
+independently reviewed, not wired to any route and not activation.
+
 ## Classification
 
 **R** = runnable in owned files now; **E** = exact external interface/allocation;
@@ -669,3 +673,39 @@ Verification for this packet is documentation-only: diff/whitespace, pinned DB1
 method/section references, balanced structure and finite U/T disposition coverage.
 No45-package rerun or runtime PASS is claimed. A/B author evidence above remains
 at its own commits; C–F is not delivered by writing this proposal.
+
+## G Linux production launcher — author evidence, 2026-10-07
+
+Sole writer `ses_eee03b0f7ffeQnbOPdx1BA4D9T`, from `ef83b9fc` (plus the inherited
+uncommitted U1–U3 doc edits, completed in `31c9d998` with `policy.go`). Details and
+topology are in `internal/scriptexec/README.md` ("Linux-first production launcher").
+
+- `launcher.go`, `launcher_linux.go`, `launcher_other.go`, and the
+  `runWorkerProcessWithStart` hook. Disabled by default; non-Linux/macOS returns
+  `unsupported`. Pinned O_NOFOLLOW digest-verified exec via `/proc/self/fd`;
+  empty env, cwd `/`, fds 0–2, PDEATHSIG. Parent `/proc` attestation (own seccomp
+  filter above the inherited count, NoNewPrivs, CPU ≤1s, AS ≤64MiB, fds {0,1,2},
+  pinned exe inode) BEFORE any source; kill+Wait on every failure path.
+- Studied the archived Node failure (`sdk-seccomp-node-rejected.tar.gz`): Node
+  needs ambient post-seal syscalls (stdio reset, `newfstatat`, `fcntl`), so a
+  deny-default seal there means widening the allowlist; that was correctly
+  refused. The QuickJS core-only worker initializes before sealing and needs only
+  fd0 read / fd1–2 write / anonymous non-exec mmap afterwards, so no widening was
+  needed. The earlier container-only gap (child `/bin/echo` allowed despite
+  no-new-privileges/cap-drop/pids-limit) is closed by the worker's own seal and
+  is now verified from the parent, not assumed.
+- Real Linux (Colima kernel 6.8 arm64, uid 65534): `TestNativeLauncher` 10/10
+  PASS, launch pin from an independent relocated rebuild (`401a6624…abca`).
+  Memory: heap flood ends within bounds; fresh `TestQuickJSNativeAddressSpaceProbe`
+  shows kernel ENOMEM at the attested 64MiB AS. Refactor regression:
+  `TestQuickJSManagedParentIntegration` + `TestQuickJSManagedParentDeath` PASS. `TestQuickJSNativeChildExecDenied` PASS: the unsealed control really
+  execs; sealed `execve`/`execveat`/`clone`/`clone3`/pdeathsig/RLIMIT_AS changes
+  all return EPERM. Attestation-ignored mutation → the unsealed-binary case FAILS
+  (source echoed back by `/bin/cat`). Host `-race` package suite plus pure
+  attestation/file-mode/config tests pass on darwin.
+
+G remaining: independent review of seal/launcher/runtime selection
+(provider-flagged review not retried); release packaging/installation of the
+worker (source still in `testdata/`); x86_64 and live systemd/init deployment
+observations; composition with C–F. Hosted D06 is separate. No route, config,
+capability or activation changed.

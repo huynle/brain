@@ -240,7 +240,18 @@ two `brain.entries.get` calls over framed stdout/stdin, then returning async JSO
 result 42. The parent supplies fixture objects only: no Brain service, HTTP,
 credentials, authorization adapter, audit or publication path is connected.
 The source may use explicit `return` or a JavaScript completion expression.
-A full SDK facade is not implemented. QuickJS remains an experiment input,
+The inactive facade now declares all105 public TypeScript method names (104 wire
+operations plus the entries iterator). Namespace objects are frozen with null
+prototypes. Only `entries.get(id[, undefined])` retains its fixture-only framed
+exchange; other methods fail with a fixed `unsupported_operation` before inspecting
+arguments. Nonempty string IDs are required without coercion; transport options
+and extra arguments fail with `invalid_arguments`. These fixed exceptions have
+null prototypes and contain no submitted content. All methods remain unavailable
+to real clients. This is name/denial parity, **not full service/argument/default
+parity**, async Promise-return parity, approved script support or a broker registry.
+There is no generic request/HTTP/identity/rebind function in the facade. Further
+service bindings require approved per-operation preflight and authority contracts.
+QuickJS remains an experiment input,
 not a selected production dependency or installed worker command.
 
 `TestQuickJSWorkerCompletionSemantics` exercises actual sealed children with

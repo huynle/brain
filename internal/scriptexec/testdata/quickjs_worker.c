@@ -103,9 +103,21 @@ static int send_value(JSContext *ctx, const char *kind, JSValueConst payload) {
     JS_FreeCString(ctx, text); JS_FreeValue(ctx, json);
     return rc;
 }
+/* Never inspect/stringify a submitted exception to manufacture an API error. */
+static JSValue fixed_error(JSContext *ctx, const char *code) {
+    JSValue error = JS_NewObjectProto(ctx, JS_NULL);
+    JS_SetPropertyStr(ctx, error, "code", JS_NewString(ctx,code));
+    JS_SetPropertyStr(ctx, error, "message", JS_NewString(ctx,code));
+    return JS_Throw(ctx,error);
+}
 static JSValue entry_get(JSContext *ctx, JSValueConst self, int argc, JSValueConst *argv) {
     (void)self;
-    if (terminal_sent || sequence > OP_LIMIT || argc != 1 || !JS_IsString(argv[0])) _exit(130);
+    if (terminal_sent || sequence > OP_LIMIT) _exit(130);
+    if (argc<1 || argc>2 || !JS_IsString(argv[0]) ||
+        (argc==2 && !JS_IsUndefined(argv[1]))) return fixed_error(ctx,"invalid_arguments");
+    size_t id_size=0;const char *id=JS_ToCStringLen(ctx,&id_size,argv[0]);
+    int valid=id && id_size>0;JS_FreeCString(ctx,id);
+    if(!valid)return fixed_error(ctx,"invalid_arguments");
     JSValue call = JS_NewObjectProto(ctx,JS_NULL), args = JS_NewObjectProto(ctx,JS_NULL);
     JS_SetPropertyStr(ctx, args, "id", JS_DupValue(ctx, argv[0]));
     JS_SetPropertyStr(ctx, call, "operation", JS_NewString(ctx, "entries.get"));
@@ -116,6 +128,57 @@ static JSValue entry_get(JSContext *ctx, JSValueConst self, int argc, JSValueCon
     JSValue response = receive(ctx, "result", sequence++);
     if (JS_IsException(response) || JS_IsUndefined(response)) _exit(132);
     return response;
+}
+/* Complete public-name surface, NOT a service allowlist. All uncomposed methods
+ * fail without touching arguments (including hostile getters/toJSON). The sole
+ * transport-enabled method remains the existing entries.get fixture exchange.
+ * Keeping absent support explicit avoids silently exposing writes/providers or
+ * inventing preflight/authority. No generic operation or HTTP function is public. */
+static JSValue unsupported_operation(JSContext *ctx, JSValueConst self, int argc, JSValueConst *argv) {
+    (void)self; (void)argc; (void)argv;
+    return fixed_error(ctx,"unsupported_operation");
+}
+static int install_brain(JSContext *ctx, JSValueConst global) {
+    const struct { const char *space; const char *methods; } surface[] = {
+        {"", "health inject search"},
+        {"entries", "updateMetadata iterate move bulkUpdate bulkDelete get list create update delete"},
+        {"attachments", "list get delete extract text forEntry attach detach upload download"},
+        {"tasks", "delivery verifyDelivery resume resumeWithContext assign clearAssignment trigger run dispatch logs status metadata claimStatus ready next waiting blocked list get"},
+        {"projects", "delete getPlacement setPlacement run list"},
+        {"features", "resume resumeWithContext assign clearAssignment checkout run cancel chains list ready get"},
+        {"observability", "timeline stats stale"},
+        {"events", "stream recent wait resourceHealth"},
+        {"goals", "list create update delete progress audit run"},
+        {"webhooks", "list get create update delete deliveries test"},
+        {"automations", "run runs getRun"},
+        {"reminders", "list get create update delete ack snooze fire"},
+        {"attention", "list counts get create read unread snooze resolve dismiss"},
+        {"sections", "list get"},
+        {"graph", "orphans backlinks outlinks related"}
+    };
+    JSValue brain=JS_NewObjectProto(ctx,JS_NULL);
+    for(size_t i=0;i<sizeof(surface)/sizeof(surface[0]);i++) {
+        JSValue target=surface[i].space[0]?JS_NewObjectProto(ctx,JS_NULL):JS_DupValue(ctx,brain);
+        const char *p=surface[i].methods;
+        while(*p) {
+            const char *end=strchr(p,' ');size_t n=end?(size_t)(end-p):strlen(p);
+            char name[32];if(n>=sizeof(name))return -1;
+            memcpy(name,p,n);name[n]=0;
+            int fixture=!strcmp(surface[i].space,"entries")&&!strcmp(name,"get");
+            JSValue fn=JS_NewCFunction(ctx,fixture?entry_get:unsupported_operation,name,fixture?1:0);
+            if(JS_SetPropertyStr(ctx,target,name,fn)<0)return -1;
+            p=end?end+1:p+n;
+        }
+        if(surface[i].space[0]) {
+            if(JS_SetPropertyStr(ctx,brain,surface[i].space,target)<0)return -1;
+        } else JS_FreeValue(ctx,target);
+    }
+    if(JS_SetPropertyStr(ctx,global,"brain",brain)<0)return -1;
+    /* Executed before source, while intrinsics are trusted. No private dispatch
+     * closure or host token is reachable through the immutable public surface. */
+    const char *freeze="for(const ns of Object.keys(brain)){if(typeof brain[ns]!==\"function\")Object.freeze(brain[ns]);}Object.freeze(brain);";
+    JSValue done=JS_Eval(ctx,freeze,strlen(freeze),"facade",JS_EVAL_TYPE_GLOBAL);
+    int failed=JS_IsException(done);JS_FreeValue(ctx,done);return failed?-1:0;
 }
 /* Console is protected IPC, never a host logger. Parent must independently bound
  * and quarantine these messages. This fixture has no authorized output release. */
@@ -169,10 +232,8 @@ static int worker_main(void) {
     size_t size = 0;
     const char *text = JS_IsString(source) ? JS_ToCStringLen(ctx, &size, source) : NULL;
     if (!text || !size || size > SOURCE_LIMIT) return 133;
-    JSValue global = JS_GetGlobalObject(ctx), brain = JS_NewObject(ctx), entries = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, entries, "get", JS_NewCFunction(ctx, entry_get, "get", 1));
-    JS_SetPropertyStr(ctx, brain, "entries", entries);
-    JS_SetPropertyStr(ctx, global, "brain", brain);
+    JSValue global = JS_GetGlobalObject(ctx);
+    if(install_brain(ctx,global))return 125;
     JSValue console = JS_NewObject(ctx);
     const char *levels[] = {"debug", "info", "warn", "error", "log"};
     for (int i=0; i<5; i++)

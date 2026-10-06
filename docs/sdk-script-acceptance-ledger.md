@@ -198,3 +198,28 @@ Full facade, structured safe errors, actual aggregate pressure/startup corpus,
 quarantine edge corpus, compatibility decoder, operator/script examples and
 frontend/historical gate checks remain useful runnable work; they are not waived
 by this handoff and are not all externally blocked.
+
+## Fresh takeover: facade boundary (author evidence only)
+
+Sole writer `ses_ef17f4d15ffeiMziW4dpsKY7jO` took over clean
+`3786c13fe2a876c037c9c305194994ac83304bf6`; fresh dispatch lease absent. Blocked
+manual reservation and prompt_only unchanged. Native tests now compare the full
+105-name surface to the actual TypeScript client, test104 explicit fixed-code
+denials with zero operation IPC, frozen/null-prototype namespaces, optional
+undefined get argument, no identifier coercion, and denial without evaluating
+hostile argument getters/toJSON. `entries.get` remains the sole fixture operation.
+This does **not** implement service bindings, Promise-return or full argument/default
+parity for the unsupported operations, nor permit any write/provider/stream/binary
+operation. Those still require approved service subset and preflight composition.
+
+Observed RED: missing inventory terminated136; get's optional undefined and invalid
+arguments terminated130, empty id emitted a call then132. GREEN: native facade
+inventory plus8 argument cases, existing17 completion and22 serialization cases
+pass under host-race (70.254s). Full45 tested Go packages pass (many cached,
+storage129.733s); native source remains testdata, no activation.
+
+**Independent verification pending:** parent reports the independent3786c13f
+review session ended with a tool/provider cybersecurity-policy flag before returning
+a review. This is not a code finding or PASS; no retry/rephrasing to bypass that
+safeguard was attempted. Serialization/control changes still lack independent
+acceptance. Parent owns resolution; no full task completion is claimed.

@@ -431,3 +431,20 @@ returned nil and two claimed commits summarized as zero. GREEN:4top-level tests
 fresh vet/build/lint0issues. Log `sdk-plan-shapes-suite.log` in approved temp.
 No requirement for real dry-run/preflight, partial commit, protected replay or
 S09/P9's actual journal lifecycle is satisfied by these pure shape checks.
+
+### Inactive compatibility decoders
+
+Go and JavaScript now decode the **proposed**, unpublished manifest in
+`docs/sdk-capability-proposal.md`.32flag combinations check the independent
+compiled/configured/deployment/caller dimensions and their availability conjunction;
+old404/501, auth401/403, other non200, version mismatch, missing/null/wrong-typed or
+duplicate/escaped-alias fields, duplicate operations, invalid UTF8 and byte overflow
+all fail with fixed non-content errors. This does not grant permission from any
+flag, issue HTTP requests, advertise server support or add public SDK methods.
+Route/file/wire approval A and permission/profile C are still required.
+
+Observed RED in both languages: valid manifest decoded empty/undefined and404
+returned success. GREEN: Go2top-level suites repeated20race2.072s, fuzz65214executions
+12.053s; Node40/40tests/typecheck/build pass, fresh vet/build/lint0issues. Full45Go
+tested packages pass (many cached; storage306.530s). Log
+`sdk-capability-draft-suite.log`. No shared server/router/auth/schema/MCP files changed.

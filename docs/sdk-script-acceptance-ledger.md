@@ -358,3 +358,33 @@ All new evidence is author-owned. Independent review of3786c13f and later remain
 pending under the provider flag. No retry, rephrasing, activation, merge, push,
 deployment or task completion occurred. Continue the runnable items above; this is
 an explicit context handoff, **not a claim that full JS facade or V1 is finished**.
+
+## Continuation: pure argument/default mappings
+
+Exclusive writer `ses_ef137ec1fffear7Og33cArX1ES` confirmed clean starting
+`68b7dc3d29c6fa3aa311c86461b47759a96b4e09`, absent dispatch lease and persisted
+ownership transfer (PATCH timed out; recall confirmed it, no duplicate PATCH).
+
+The new **inactive pure fixture** maps all101 JSON-shaped public methods' positional
+arguments and defaults to operation IDs and detached argument objects. The other
+four public methods (binary upload/download, callback stream, iterator) explicitly
+refuse. Two Node tests derive all105 signatures/defaults from the actual TypeScript
+AST, rather than another expected inventory. Required string/object/boolean/limit
+types, non-JSON values, accessors, transport options and excess args are checked.
+Initial RED was `health defaults=false: undefined` and missing expected refusal.
+Final Node38/38 pass; native8mapping cases +6refusals pass under host race28.910s,
+with zero operation IPC and continued denial through the real fixture `brain`.
+
+This does **not** change the native facade's accepted operations, install the mapper
+as a capability, implement DTO/service preflight, authorize writes, or define final
+broker wire arguments. It is argument/default preparation only, not full live
+facade acceptance. No new dependency or shared file was needed. Fresh S10/P6 and
+coordinator recalls still contain no A/B/C acknowledgement; newer reminder-only
+integration acceptance does not allocate SDK seams. Independent-review restriction
+is unchanged and no review retry/redelegation was attempted.
+
+Full Go45/45 tested packages pass (many cached, storage265.907s), fresh vet/build
+and isolated-cache lint0issues. SDK/contract/bootstrap races pass1.848s/15.907s/
+2.337s, including external Go and installed Node fixtures. Log
+`sdk-normalization-suite.log` in approved temp. Existing one OpenAPI path warning
+remains disclosed. None of these author checks supplies independent acceptance.

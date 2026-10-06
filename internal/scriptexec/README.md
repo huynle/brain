@@ -257,6 +257,18 @@ name/denial/Promise parity, **not full service/argument/default parity**, approv
 script support or a broker registry.
 There is no generic request/HTTP/identity/rebind function in the facade. Further
 service bindings require approved per-operation preflight and authority contracts.
+`testdata/facade-normalization.js` separately exercises pure positional mapping:
+101 JSON-shaped methods, root-name/operation-ID aliases, optional query omission,
+request/boolean/numeric defaults and an optional **undefined-only** transport slot.
+The pinned TypeScript compiler reads the actual public method signatures in the
+parity test; binary upload/download, streaming callbacks and the iterator remain
+explicitly unsupported. Input data is copied without JSON coercion or evaluating
+accessors/toJSON. Invalid types, cycles and non-JSON values are refused with fixed
+errors. This mapper is **not installed in `brain`**, never dispatches, and is not
+DTO validation, service preflight, authorization or an enabled-operation registry.
+The native test evaluates it only as ordinary submitted fixture source and verifies
+zero operation IPC and continued denial of `brain.tasks.resume`. Full supported
+facade/service composition remains blocked on the approved subset and C–F seams.
 QuickJS remains an experiment input,
 not a selected production dependency or installed worker command.
 

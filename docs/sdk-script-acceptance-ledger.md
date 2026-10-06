@@ -752,3 +752,26 @@ and deadline-anchored late-finish retention.
 - **Remaining G:** x86_64 execution evidence, independent re-review of these
   commits, and C–F composition. Hosted D06 is separate. No activation, route,
   config or deployment.
+
+## G re-review follow-ups (2026-10-07)
+
+Independent re-review of `91c7b3e9..b30ce8cd`: PASS (Brain `85280tcu`; an
+independent rebuild reproduced `f81221bb…1972`). Its three test-strength
+findings are fixed, each confirmed by a mutation on real Linux:
+
+- **PDEATHSIG (intended design: set by the launcher's Go parent):** the
+  stand-in hands the worker's stdin to a holder that outlives the server, so the
+  worker cannot exit on EOF. Without init the worker must be a zombie with
+  termination signal 9; with `--init` it must be gone. Mutation removing
+  `Pdeathsig` → worker stays `S` → FAIL.
+- **sourceWritten:** `testdata/stdin_closer.c` (shipped `seal.h`, passes
+  attestation, no stdin reader) makes the source write fail with EPIPE, and the
+  report must say not written. The old wiring as a mutation → `sourceWritten:
+  true` → FAIL. A first mutation attempt was a compile error and was discarded
+  and redone, not counted.
+- **systemd:** now a committed opt-in test (`TestLinuxSystemdReaping`). PASS on
+  the local Colima VM (systemd 255, PID 1): worker gone, `result=signal`, no
+  leftover units or PIDs.
+
+x86_64 is unchanged: waiting on a user decision, and the `brain-x86` profile
+was left untouched.

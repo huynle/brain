@@ -249,22 +249,42 @@ isolation.
   first kills and Waits it, and the queued run completes 42 in the recovered
   slot. The second then completes 42, a fourth run reusing the cancelled
   principal completes 42, `close` joins, and no child process remains.
+- **Who sets PDEATHSIG:** in launcher mode, the launcher's Go parent sets
+  PDEATHSIG=SIGKILL on the worker (`prepareWorkerParentDeath` →
+  `SysProcAttr.Pdeathsig`, applied in the child before exec and kept across
+  exec of a non-set-ID binary). `worker.c` sets it itself only in the old
+  `--supervise` path.
 - **Init reaping:** `TestQuickJSInitReaping` SIGKILLs only the server process
-  (a Go test stand-in holding a sealed worker mid-call).
-  - With PID 1 = `/bin/sleep` (no init), the worker ends as zombie `Z`:
-    PDEATHSIG killed it, but nothing reaps it.
-  - With `docker --init` (PID 1 = `docker-init`), it is `gone`.
-  - Local Colima VM with systemd 255 as PID 1, transient unit with
-    `KillMode=control-group`: the sealed worker (filters 1, NoNewPrivs 1) is
-    `gone` after the main PID's SIGKILL, the unit ends `failed/result=signal`,
-    and no unit or process is left.
+  (a Go test stand-in holding a sealed worker mid-call). The stand-in reopens
+  the worker's stdin pipe via `/proc/<worker>/fd/0` and hands it to a separate
+  holder process, so the worker can never exit on stdin EOF. Without this, the
+  kernel closes the dying server's files before sending the parent-death
+  signal, and the worker could `_exit(132)` on EOF first.
+  - With PID 1 = `/bin/sleep` (no init), the worker must be exactly a zombie
+    whose recorded termination signal is 9 (`/proc/<pid>/stat` field 52, read
+    as the worker's uid).
+  - With `docker --init` it must be `gone`.
+  - The holder must still be alive in both cases.
+  - Mutation: removing the launcher's `Pdeathsig` leaves the worker running
+    (`S`) and fails the test.
+- **systemd:** `TestLinuxSystemdReaping` is a committed opt-in test. It needs
+  `BRAIN_SCRIPT_SYSTEMD_SHELL` (e.g. `colima ssh --`), a shared
+  `BRAIN_SCRIPT_SYSTEMD_DIR` and a recorded `BRAIN_SCRIPT_WORKER_ARTIFACT`. It
+  runs the stand-in as a transient unit (`KillMode=control-group`) under
+  systemd as PID 1 and SIGKILLs the main PID. The worker must be `gone`, the
+  unit must end with `result=signal`, and none of the run's server/worker/holder
+  PIDs or its unit may be left behind. Observed on a local Colima VM with systemd 255.
+  In this topology the cgroup kill and PDEATHSIG both end the worker;
+  PDEATHSIG alone is isolated by the container test.
 - **Process name:** the worker's `comm` shows the descriptor number (e.g. `6`)
   because it is executed through `/proc/self/fd/<n>`. Identify workers by
   parent PID or exe inode, not by name.
 - **Caller contract:** `run` returning nil means only that the worker exited 0
   with intact framing. Callers must still require a ProtocolSession terminal
   frame. `launchReport.sourceWritten` is set only after the source write
-  succeeds.
+  succeeds. Regression fixture `testdata/stdin_closer.c` passes attestation
+  with the shipped `seal.h` but leaves the launcher's stdin pipe without a
+  reader, so the write fails with EPIPE and the report must say not written.
 
 **x86_64 is blocked (exact):**
 

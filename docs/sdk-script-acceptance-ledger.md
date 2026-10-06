@@ -697,8 +697,10 @@ topology are in `internal/scriptexec/README.md` ("Linux-first production launche
   needed. The earlier container-only gap (child `/bin/echo` allowed despite
   no-new-privileges/cap-drop/pids-limit) is closed by the worker's own seal and
   is now verified from the parent, not assumed.
-- Real Linux (Colima kernel 6.8 arm64, uid 65534): `TestNativeLauncher` 10/10
-  PASS, launch pin from an independent relocated rebuild (`401a6624…abca`).
+- Real Linux (Colima kernel 6.8 arm64, uid 65534), historical as of `91c7b3e9`:
+  `TestNativeLauncher` 10/10 PASS, launch pin from an independent relocated
+  rebuild (`401a6624…abca`, pre-`seal.h`). Current from `3ca51d12`: 11
+  subtests, pin `f81221bb…1972` from `release.json`.
   Memory: heap flood ends within bounds; fresh `TestQuickJSNativeAddressSpaceProbe`
   shows kernel ENOMEM at the attested 64MiB AS. Refactor regression:
   `TestQuickJSManagedParentIntegration` + `TestQuickJSManagedParentDeath` PASS. `TestQuickJSNativeChildExecDenied` PASS: the unsealed control really

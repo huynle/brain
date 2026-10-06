@@ -198,10 +198,14 @@ kernel-enforced on Linux (prior native probe: 128MiB mapping → ENOMEM), unlike
 the macOS counterexample above.
 
 **Real Linux evidence (kernel 6.8 arm64, Colima, uid 65534, non-race
-cross-built parent):** `TestQuickJSLauncherLinux` → `TestNativeLauncher` 10/10.
-The launch pin is taken from an INDEPENDENT relocated rebuild with the same recipe
-(`401a66247dfad878dd68be039851274eeae05921838f9d872b1fc3068e64abca`), and the
-shipped artifact must equal it byte-for-byte.
+cross-built parent):** historical, as of `91c7b3e9` (2026-10-07):
+`TestQuickJSLauncherLinux` → `TestNativeLauncher` 10/10. The launch pin then
+came from an INDEPENDENT relocated rebuild with the same recipe
+(`401a66247dfad878dd68be039851274eeae05921838f9d872b1fc3068e64abca`, the
+pre-`seal.h` source), and the shipped artifact had to equal it byte-for-byte.
+**Current** (from `3ca51d12`): `TestNativeLauncher` has 11 subtests (adding
+"failed source write reported not written"), and the pin is the recorded
+`release.json` digest `f81221bb…1972`.
 Pinned exchange returns 42 with attestation `{NoNewPrivs, Seccomp 2, filters 2,
 cpu 1/1, as 64MiB/64MiB}`. Pin mismatch, a world-writable copy and a symlink are
 refused before start. An unsealed, correctly pinned `/bin/cat` is refused at

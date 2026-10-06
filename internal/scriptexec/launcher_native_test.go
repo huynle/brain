@@ -248,7 +248,7 @@ func TestNativeLauncher(t *testing.T) {
 	t.Run("failed source write reported not written", func(t *testing.T) {
 		closer := os.Getenv("BRAIN_NATIVE_STDIN_CLOSER_FIXTURE")
 		if closer == "" {
-			t.Fatal("stdin-closer fixture not supplied by the Linux wrapper")
+			t.Skip("BRAIN_NATIVE_STDIN_CLOSER_FIXTURE unset: run via TestQuickJSLauncherLinux, which builds testdata/stdin_closer.c")
 		}
 		pinnedCloser := filepath.Join(t.TempDir(), "stdin-closer")
 		closerData, err := os.ReadFile(closer)

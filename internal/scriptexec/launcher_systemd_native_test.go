@@ -21,17 +21,26 @@ import (
 // TestQuickJSInitReaping. Nothing is installed or left running.
 const systemdReapScript = `set -eu
 DIR="$1"; UNIT=brain-g-reap-test-$$; MARK=/tmp/$UNIT.marker; U=$(id -u)
+# Always tear the transient unit down, even if a step fails: SIGKILL every
+# process in its cgroup (server, worker, holder), then stop and reset it.
+cleanup() {
+  sudo systemctl kill --kill-whom=all -s SIGKILL "$UNIT" 2>/dev/null || true
+  sudo systemctl stop "$UNIT" 2>/dev/null || true
+  sudo systemctl reset-failed "$UNIT" 2>/dev/null || true
+  rm -f "$MARK"
+}
+trap cleanup EXIT
 sudo systemd-run --quiet --unit "$UNIT" -p KillMode=control-group --uid="$U" \
   --setenv=BRAIN_NATIVE_WORKER_FIXTURE="$DIR/worker" --setenv=BRAIN_NATIVE_HOLD_MARKER="$MARK" \
   "$DIR/launcher.test" '-test.run=^TestNativeLauncherServerHold$' -test.timeout=10m
-i=0; until [ -s "$MARK" ]; do i=$((i+1)); [ $i -gt 300 ] && { echo "no marker"; sudo systemctl stop "$UNIT" || true; exit 1; }; sleep 0.2; done
+i=0; until [ -s "$MARK" ]; do i=$((i+1)); [ $i -gt 300 ] && { echo "no marker"; exit 1; }; sleep 0.2; done
 SERVER=$(sed -n 's/^server=\([0-9]*\) .*/\1/p' "$MARK"); WORKER=$(sed -n 's/.* worker=\([0-9]*\) .*/\1/p' "$MARK"); HOLDER=$(sed -n 's/.* holder=\([0-9]*\)$/\1/p' "$MARK")
 echo "pid1=$(cat /proc/1/comm) mainpid=$(systemctl show -p MainPID --value "$UNIT") server=$SERVER worker=$WORKER worker_ppid=$(awk '{print $4}' /proc/$WORKER/stat)"
 echo "worker_status $(grep -E '^(NoNewPrivs|Seccomp|Seccomp_filters):' /proc/$WORKER/status | tr -s '\t\n' '  ')"
 sudo kill -9 "$SERVER"; sleep 2
 if [ -e /proc/$WORKER ]; then echo "WORKER_STATE=$(awk '{print $3}' /proc/$WORKER/stat)"; else echo "WORKER_STATE=gone"; fi
 echo "unit_state=$(systemctl show -p ActiveState --value "$UNIT") result=$(systemctl show -p Result --value "$UNIT")"
-sudo systemctl reset-failed "$UNIT" 2>/dev/null || true; sudo systemctl stop "$UNIT" 2>/dev/null || true; rm -f "$MARK"
+cleanup; sleep 1
 LEFT=0; for p in $SERVER $WORKER $HOLDER; do if [ -e /proc/$p ]; then LEFT=$((LEFT+1)); fi; done
 echo "leftover_units=$(systemctl list-units --all "$UNIT*" --no-legend | wc -l) leftover_procs=$LEFT"
 `

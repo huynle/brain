@@ -179,3 +179,16 @@ func TestWorkerLauncherSourceLimit(t *testing.T) {
 		t.Fatal("launcher source limit must equal the worker SOURCE_LIMIT (32KiB)")
 	}
 }
+
+// The attestation wait keys off Seccomp_filters; missing or malformed values
+// must fail closed (kernels older than 5.9 lack the field).
+func TestStatusSeccompFilters(t *testing.T) {
+	if n, ok := statusSeccompFilters("Name:\tx\nSeccomp:\t2\nSeccomp_filters:\t3\n"); !ok || n != 3 {
+		t.Fatalf("got %d %v", n, ok)
+	}
+	for _, status := range []string{"Seccomp:\t2\n", "Seccomp_filters:\tx\n", "Seccomp_filters:\t-1\n", ""} {
+		if _, ok := statusSeccompFilters(status); ok {
+			t.Errorf("%q accepted", status)
+		}
+	}
+}

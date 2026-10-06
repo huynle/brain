@@ -228,11 +228,70 @@ Aggregate admission is `localWorkerPool` (N × 64MiB AS, N CPU); it is not a
 multi-server quota. Hosted multi-tenant execution still requires D06 VM
 isolation.
 
+**Release packaging, concurrency and reaping (2026-10-07):**
+
+- **Release source:** the worker source is now release source in
+  `runtime/script-worker/` (`worker.c`, shared `seal.h`, `build.sh`,
+  `release.json`, install docs). The confinement probe compiles the same
+  `seal.h`.
+- **Recorded pin:** `release.json` pins the source archive, the compiler image
+  and GCC version, and the expected output `linux/arm64 =
+  f81221bb56c904862207676316342a7a307457be538987954b2589aeb7fd1972`.
+  `TestQuickJSLauncherLinux` fails unless an independent relocated rebuild
+  reproduces that committed digest (observed in three separate builds plus
+  `TestQuickJSExperimentalBuildReproducible`).
+- **Artifact reuse:** tests may reuse a prebuilt artifact through
+  `BRAIN_SCRIPT_WORKER_ARTIFACT`, accepted only when its SHA-256 is recorded in
+  `release.json`. The independent pin rebuild still compiles from source.
+- **Concurrency:** `TestNativeLauncherPool` (inside the Linux wrapper) runs two
+  simultaneous sealed workers held mid-call through `localWorkerPool`
+  (global 2, principal 1). A third is queued and doesn't start; cancelling the
+  first kills and Waits it, and the queued run completes 42 in the recovered
+  slot. The second then completes 42, a fourth run reusing the cancelled
+  principal completes 42, `close` joins, and no child process remains.
+- **Init reaping:** `TestQuickJSInitReaping` SIGKILLs only the server process
+  (a Go test stand-in holding a sealed worker mid-call).
+  - With PID 1 = `/bin/sleep` (no init), the worker ends as zombie `Z`:
+    PDEATHSIG killed it, but nothing reaps it.
+  - With `docker --init` (PID 1 = `docker-init`), it is `gone`.
+  - Local Colima VM with systemd 255 as PID 1, transient unit with
+    `KillMode=control-group`: the sealed worker (filters 1, NoNewPrivs 1) is
+    `gone` after the main PID's SIGKILL, the unit ends `failed/result=signal`,
+    and no unit or process is left.
+- **Process name:** the worker's `comm` shows the descriptor number (e.g. `6`)
+  because it is executed through `/proc/self/fd/<n>`. Identify workers by
+  parent PID or exe inode, not by name.
+- **Caller contract:** `run` returning nil means only that the worker exited 0
+  with intact framing. Callers must still require a ProtocolSession terminal
+  frame. `launchReport.sourceWritten` is set only after the source write
+  succeeds.
+
+**x86_64 is blocked (exact):**
+
+- **Reproducible build: done.** It is not recorded as a pinned output because
+  its compiler image differs from the arm64 one. Two relocated builds are
+  byte-identical, `9564f7a70dcff1c9f692b8ed59bcd0d8973f4e25bffbc175894bab8969fdd552`
+  (x86-64 PIE). They were built under user-mode emulation, which is fine for
+  compilation, with image
+  `sha256:dad5ba2223cbb389a20e8fd47e5efb8841894852359e8ce03fc19c6d7f729519`
+  and the same GCC 12.2.0-14+deb12u1.
+- **Execution on a real x86_64 kernel: not achieved.**
+  - Colima/Lima 2.2.0 full-system QEMU TCG (`brain-x86` profile) boots a real
+    Ubuntu 24.04 x86_64 kernel, but cloud-init starts only at ~234s of
+    guest uptime. Lima's usernet gives up resolving the guest IP after 2 min
+    and kills the VM; that timeout isn't configurable.
+  - Direct `qemu-system-x86_64` TCG booting an offline-provisioned clone
+    (host key and root key written with debugfs, journal replayed first,
+    `e2fsck -fn` clean) reaches `ubuntu login:` with `ssh.socket` listening,
+    but no SSH session was established within 30 minutes.
+  - Next step: run `TestQuickJSLauncherLinux` (with
+    `BRAIN_SCRIPT_LINUX_GOARCH=amd64`) plus the probe/child-exec tests on a
+    native x86_64 Linux host or KVM-capable runner, then record
+    `linux/amd64` from that host's pinned compiler image.
+
 Still not covered here: independent review of the seal/launcher and runtime
-selection (worker C source still lives in `testdata/`, built by the pinned
-reproducible recipe; no release artifact/installation path is produced), an
-x86_64 observation, live systemd/init deployment evidence, and C–F integration
-before any route can use this.
+selection, the x86_64 execution above, and C–F integration before any route
+can use this.
 
 ## Approved script policy enforcement (inactive) — SCRIPT-DECISIONS-20261006
 
@@ -337,7 +396,8 @@ acceptance follows from this Linux test; all script routes remain unavailable.
 
 ### Experimental build provenance (not production runtime approval)
 
-`testdata/build-quickjs-probe.sh` fixes the trusted compiler command, locale,
+`runtime/script-worker/build.sh` (moved from testdata; see its README and
+`release.json`) fixes the trusted compiler command, locale,
 source-date epoch and flags for both probe and worker (including the native
 supervisor fixture). It enables PIE, full RELRO/BIND_NOW, non-executable stack,
 strong stack protector and FORTIFY_SOURCE=3. `TestQuickJSExperimentalBuildHardening`
@@ -354,7 +414,7 @@ supply-chain audit, a reviewed runtime version or native-compromise resistance.
 
 ## Inactive framed embedded worker experiment
 
-`TestQuickJSWorkerFramedAsyncCalls` builds `testdata/quickjs_worker.c` against the
+`TestQuickJSWorkerFramedAsyncCalls` builds `runtime/script-worker/worker.c` (shared `seal.h`) against the
 same checksum-pinned source in the same opt-in isolated compiler container. This
 is an actual fresh JS child receiving submitted source over framed stdin, making
 two `brain.entries.get` calls over framed stdout/stdin, then returning async JSON

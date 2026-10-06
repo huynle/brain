@@ -712,3 +712,43 @@ G remaining: independent review of seal/launcher/runtime selection
 worker (source still in `testdata/`); x86_64 and live systemd/init deployment
 observations; composition with C–F. Hosted D06 is separate. No route, config,
 capability or activation changed.
+
+## G closure — packaging, concurrency, reaping, review gaps (2026-10-07)
+
+Independent review of `91c7b3e9` returned PASS (Brain report `wdyetyqh`). Its
+test-gap and minor findings are addressed below. SCRIPT-DECISIONS-20261006b
+approved `idempotency_key_conflict` and `idempotency_key_in_progress` (both 409)
+and deadline-anchored late-finish retention.
+
+- **Release packaging:** the worker moved to `runtime/script-worker/` with the
+  shared `seal.h` and `release.json`. Pinned `linux/arm64` =
+  `f81221bb56c904862207676316342a7a307457be538987954b2589aeb7fd1972`; the
+  committed digest is enforced by an independent rebuild in the launcher
+  wrapper. Install path: `/usr/libexec/brain/brain-script-worker`, root 0555,
+  documented only (no install or activation).
+- **Concurrency:** `TestNativeLauncherPool` PASS on real Linux. Two simultaneous
+  sealed workers; a third is queued; cancellation → kill+Wait → slot recovered
+  (42). Same-principal reuse works, `close` joins, no children left.
+- **Reaping:** `TestQuickJSInitReaping` PASS: no init → `Z`; `--init` →
+  `gone`. A systemd 255 transient unit (Colima VM) → `gone`, `result=signal`,
+  no leftovers.
+- **x86_64: BLOCKED.** The build is reproducible (`9564f7a7…d552`), but
+  execution on a real x86_64 kernel didn't happen: Lima's usernet timeout
+  (2 min) races a slow TCG boot (cloud-init at ~234s), and the direct-QEMU
+  provisioned boot reached login without an SSH session in 30 min. Needs a
+  native x86_64 host or KVM runner.
+- **Review gaps closed,** each confirmed by a mutation that removes the
+  protection (M1–M6 all FAIL):
+  - expired in-progress keys are retired and never re-run;
+  - a real length-prefix collision pair plus a golden MAC pin the domain label
+    and length prefixes;
+  - invalid-JSON log and plan cases are refused;
+  - a default (non-opt-in) 32KiB source-limit test runs on every OS.
+- **Launcher fixes:** `sourceWritten` is set only after a successful write; the
+  `run` terminal-frame contract is documented.
+- **Build timeouts:** trusted-build harness timeouts are 600s, because a
+  shared, loaded VM took up to ~5 min per compile, and prebuilt pinned
+  artifacts are reused by default.
+- **Remaining G:** x86_64 execution evidence, independent re-review of these
+  commits, and C–F composition. Hosted D06 is separate. No activation, route,
+  config or deployment.

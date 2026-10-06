@@ -412,3 +412,22 @@ Remaining runnable preparation: compatibility decoder/old-server refusal and pur
 ordered-plan/journal validation. The normalization fixture is not installed in the
 native facade and does not replace service mappings; those still require C–F.
 All A–G allocations and independent-review restrictions remain as stated above.
+
+### Pure plan and mutation-outcome validation
+
+`validatePlanShape` now checks contiguous indices, existing bounded strict JSON
+arguments, bounded revision text and unique backward-only provisional references.
+All otherwise-shaped provisional dependencies still return the exact
+`dry_run_dependency_unsupported` error: no service integration is invented.
+`summarizeMutationOutcomes` rejects mode mixing, continuation after failure/unknown,
+unknown statuses and excessive mutation records. This is an unverified descriptive
+sequence, not a durable journal, read-operation journal, atomic receipt or replay
+permission. No persistence, service calls, output or SQL interfaces were introduced.
+
+Observed RED:14 malformed/dependent plan cases wrongly returned nil, budget overflow
+returned nil and two claimed commits summarized as zero. GREEN:4top-level tests
+(14plan subcases plus outcome/budget matrices), repeated20 under race1.569s; fuzz
+244469executions11.394s. Full Go45tested packages pass (many cached; storage316.956s),
+fresh vet/build/lint0issues. Log `sdk-plan-shapes-suite.log` in approved temp.
+No requirement for real dry-run/preflight, partial commit, protected replay or
+S09/P9's actual journal lifecycle is satisfied by these pure shape checks.

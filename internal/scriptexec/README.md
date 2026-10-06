@@ -168,6 +168,23 @@ not receipts or authority; tenant/principal/endpoint scoping and replay/output
 authorization remain integration-owner responsibilities. No HTTP/MCP caller or
 public capability is added by this helper.
 
+`validatePlanShape` is separate pure preparation: contiguous indices, object JSON
+arguments under existing protocol count/byte/duplicate-key/depth rules, bounded
+revision strings, and backward-only unique provisional references. Even a shaped
+reference returns `dry_run_dependency_unsupported`: no service-owned provisional
+dependency path has been allocated. It does not check operation registry membership,
+DTOs, target existence, actual revisions, permissions or service preflight. A test
+explicitly demonstrates that a syntactically valid unknown operation is not thereby
+supported. There is no mutation or snapshot to roll back.
+
+`summarizeMutationOutcomes` checks only a descriptive sequence of mutation claims:
+dry-run `planned` versus real `committed`, and final-only `failed`/`outcome_unknown`.
+It rejects mixed modes, continuation after a stop, unknown states and budget overflow,
+returning no partial summary on invalid input. Reads are not represented by this
+helper. It is not a durable journal, state-transition owner, atomic receipt, replay
+decision or proof any write committed. No schema/API or S09/P9 journal interface is
+defined or replaced by either helper; both remain uncalled by production.
+
 ## Minimal embedded-runtime investigation (not a worker)
 
 The rejected native Node filter experiment is superseded **only as an experiment**

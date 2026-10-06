@@ -156,6 +156,33 @@ JS capability facade or parent broker exists. This image is an experiment input,
 not a selected/published worker runtime. This does not meet D06 hosted VM isolation
 or license/reproducibility/release gates. No container is deployed as a service.
 
+## Approved script policy enforcement (inactive) — SCRIPT-DECISIONS-20261006
+
+`policy.go` is pure code enforcement of the three user-approved product rules.
+It has no caller, storage, route, schema or capability effect; approval allocates
+no DB1 table/profile, `script:execute` grant, S09 fence or launcher.
+
+- **U1:** `checkProtectedEnvelope` enforces result ≤64KiB, logs ≤16KiB and ≤32
+  records, and the whole envelope (result+logs+plan+hex digests) ≤256KiB, all valid
+  JSON. Persistable types (`protectedEnvelope`, `contentFreeAudit`,
+  `consumedKeyTombstone`) have reflection-guarded exact field allowlists with no
+  source/script field. `protectedExpiry` is terminal+24h, interrupted = admission
+  deadline+24h; conservative interpretation: a terminal recorded after the
+  deadline is also capped at deadline+24h. No access-time input, so no sliding.
+  `auditExpiry` is admission+90d.
+- **U2:** `consumedKeyMAC` is HMAC-SHA256 (≥32-byte server key) over a
+  domain-separated, length-prefixed tenant/principal/endpoint/epoch/key tuple.
+  `decideReplay` never reruns a consumed key: expired, erased, tombstoned or
+  unknown state → content-free 409 `idempotency_key_retired`. Before expiry, a
+  matching fingerprint returns the stored result (output release still needs
+  separate authorization); a mismatch → 409. The `idempotency_key_conflict` and
+  `idempotency_key_in_progress` spellings are provisional; only `_retired` was
+  approved. `tombstonePurgeable` is true only for an exact irreversibly retired
+  namespace.
+- **U3:** `checkSubmitEligibility` admits only auth-enabled, verified, human,
+  exact `owner`/`admin` role with explicit script opt-in. Auth-off/credential-free
+  submission is refused (deferred); ordinary auth-off REST is untouched.
+
 ## Pure request preparation (inactive)
 
 `PrepareRequest` checks UTF-8 source byte size and server-supplied timeout and

@@ -2,6 +2,8 @@
 
 Disposition packet **SDK-DB1-CF-20261006**, SDK task `vggevclc`, plan `qfcda7ct`.
 **PROPOSED ONLY. No DDL, profile number, capability grant or activation authority.**
+**Exception — §5 U1–U3 are user-APPROVED product policy (SCRIPT-DECISIONS-20261006).**
+Their approval allocates no DB1 schema, capability, fence or activation; T1–T6 stay proposed.
 This replaces the earlier filesystem-era/broad table request in this file.
 
 ## 1. Evidence, ownership and settled decisions
@@ -203,22 +205,31 @@ requires its own validator/effect contract, not automatic105-operation exposure.
 This sequence is an integration increment, not a reduction of V1 acceptance.
 
 Dry-run's exact persistent allowlist: execution claim/dedup, operation planned or
-failed markers, source evidence, quota/security accounting, and (if U1 approved)
+failed markers, source evidence, quota/security accounting, and (per approved U1)
 private replay staging/payload refs/chunks/settlement. These private-purpose bytes
 are execution audit, NOT domain attachment BLOBs. Ordinary notes/revisions/runtime,
 domain refs/bytes/FTS/embeddings/access counters/events/work/outbox/provider calls
 must stay unchanged. Any inherited auth telemetry must be enumerated separately;
 `unreviewed` in api/operation-policy.yaml cannot count as approval.
 
-## 5. Finite USER dispositions (recommendations, not approvals)
+## 5. USER dispositions — APPROVED policy (SCRIPT-DECISIONS-20261006)
+
+The user explicitly approved all three recommended answers below from packet
+`ef83b9fcc9cb9caca5e9ead4e7dddfded3bdb18c` (recorded and read back in Brain plan
+`qfcda7ct` and task `vggevclc`). They are now **binding product policy**, not
+proposals. Approval does **not** allocate DB1 tables/profile, grant `script:execute`,
+supply S09 fences, select a production launcher or activate anything: T1–T6 below
+and independent acceptance remain required before any of it is enforced in storage.
+SDK-owned pure enforcement of the approved bounds/expiry/replay/eligibility rules
+lives in `internal/scriptexec/policy.go` (inactive, no persistence or caller).
 
 These are **new script-specific** decisions; none reopens DB1 D1/D2/D3/D5.
 
-| ID | Question and exact recommended answer | Consequence / dependency |
+| ID | Question and APPROVED answer | Consequence / dependency |
 |---|---|---|
-| U1 | What script material may persist, and for how long? **Never persist raw submitted source. Retain protected final result/log/plan envelope and content-derived fingerprints for24h after terminal state; interrupted artifacts expire no later than24h after the admission deadline. Result≤64KiB, logs≤16KiB/32records, full envelope including plan/journal≤256KiB. Keep only content-free actor/time/limits/closed outcome/count audit up to90days.** No sliding extension on replay. | Requires explicit approval to classify script hashes/request/result digests as short-lived protected material rather than permanent minimal audit. Plan's retained-result promise is satisfied only during the declared window; after it use U2. These sizes are proposals (result/log bounds match inactive quarantine), not attachment D5 or a production quota grant. DB1/DB6/S09/P9 must prove enforcement. |
-| U2 | What prevents old keys rerunning after payload purge/erasure? **After U1 expiry or source erasure, keep only a detached consumed-key tombstone (tenant, stable principal, endpoint, admission epoch, key MAC, consumed state), without execution/source/target IDs, content hashes or payload. Retain until that admission namespace is irreversibly retired; same key always returns a content-free409 `idempotency_key_retired`, never runs.** Before expiry compare fingerprints and return authorized stored result or mismatch409. | User approves potentially long-lived pseudonymous replay-prevention residue and the post-expiry conflict behavior, not eternal script/source history. DB6 erasure still leaves only D2 tuple associated with the erased entry; purge its lineage and linked content-derived metadata. Technical T4 must provide durable namespace retirement/restore safety before any purge of tombstones. If such residue is unacceptable, require a separately reviewed bounded server-issued expiring-key protocol; do not silently allow key reuse. |
-| U3 | Who may receive the new submit permission in the first Linux-single release? **Only explicitly opted-in, verified owner/admin human credentials; no role receives it automatically. Auth-disabled ordinary REST stays unchanged, but script submission requires a verified owner-bound credential. Defer no-credential trusted-single script mapping and service/runner/member/OAuth script issuance until separately reviewed.** | This is a proposed narrow initial eligibility/auth-off choice, NOT already approved by LINUX-FIRST. Existing plan permits explicit trusted-local mapping; deferring it needs this user disposition. If no-login scripts are required now, P6 must specify a real server-owned local policy/association and revoke source before implementation. Neither `admin:*` nor OAuth `mcp` nor resource editor/manager alone grants execute. |
+| U1 | What script material may persist, and for how long? **Never persist raw submitted source. Retain protected final result/log/plan envelope and content-derived fingerprints for24h after terminal state; interrupted artifacts expire no later than24h after the admission deadline. Result≤64KiB, logs≤16KiB/32records, full envelope including plan/journal≤256KiB. Keep only content-free actor/time/limits/closed outcome/count audit up to90days.** No sliding extension on replay. | Approved: classify script hashes/request/result digests as short-lived protected material rather than permanent minimal audit. Plan's retained-result promise is satisfied only during the declared window; after it use U2. These sizes are approved policy bounds (result/log match the inactive quarantine), not attachment D5 or a production quota grant. DB1/DB6/S09/P9 must prove enforcement. |
+| U2 | What prevents old keys rerunning after payload purge/erasure? **After U1 expiry or source erasure, keep only a detached consumed-key tombstone (tenant, stable principal, endpoint, admission epoch, key MAC, consumed state), without execution/source/target IDs, content hashes or payload. Retain until that admission namespace is irreversibly retired; same key always returns a content-free409 `idempotency_key_retired`, never runs.** Before expiry compare fingerprints and return authorized stored result or mismatch409. | User approved potentially long-lived pseudonymous replay-prevention residue and the post-expiry conflict behavior, not eternal script/source history. DB6 erasure still leaves only D2 tuple associated with the erased entry; purge its lineage and linked content-derived metadata. Technical T4 must provide durable namespace retirement/restore safety before any purge of tombstones. If such residue is unacceptable, require a separately reviewed bounded server-issued expiring-key protocol; do not silently allow key reuse. |
+| U3 | Who may receive the new submit permission in the first Linux-single release? **Only explicitly opted-in, verified owner/admin human credentials; no role receives it automatically. Auth-disabled ordinary REST stays unchanged, but script submission requires a verified owner-bound credential. Defer no-credential trusted-single script mapping and service/runner/member/OAuth script issuance until separately reviewed.** | This narrow initial eligibility/auth-off choice is now user-approved (separately from LINUX-FIRST). Existing plan permitted explicit trusted-local mapping; this approval defers it. If no-login scripts are required now, P6 must specify a real server-owned local policy/association and revoke source before implementation. Neither `admin:*` nor OAuth `mcp` nor resource editor/manager alone grants execute. |
 
 The stable permission spelling is **`script:execute`**, already required by the
 SDK plan. P6 must allocate its exact successor vocabulary/issuance/role ceilings;
@@ -265,7 +276,7 @@ independent-worker-review retry or rephrasing is authorized by this packet.
 Search/read existing `hxcyvu0i`, `i8aurh42`, `yp7llda1` coordination notes before
 appending this packet ID, immutable SDK doc commit and only the relevant T/U rows.
 No new task/container/catalog is needed. Parent routes P8/DB6/P10 dispositions
-through existing lanes, and asks the user **U1–U3 only**; DB1 D1/D2/D3/D5 are settled.
+through existing lanes. U1–U3 are answered (approved); DB1 D1/D2/D3/D5 are settled.
 
 Next implementable gate is **accepted T1 primitive allocation**, not a demand that
 DB1 wait for all SDK/S09/P8 or final DB14 completion. T2–T6 can be specified against

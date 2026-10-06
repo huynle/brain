@@ -34,10 +34,22 @@ writer on `codex/mt-db-authoritative-storage`; immutable Phase A design `d365a4a
 is proposed and Phase B DDL awaits independent design review/profile allocation.
 The SDK-owned [C–F disposition packet](sdk-script-allocation-proposal.md) replaces
 the older broad table/filesystem proposal with precise DB1 reuse, transaction,
-retention and typed-method requests. User questions U1–U3 and technical T1–T6 are
-**unapproved proposals**. DB1 D1/D2/D3/D5 decisions are already settled; not asked
+retention and typed-method requests. **User decisions U1–U3 are APPROVED policy
+(SCRIPT-DECISIONS-20261006, see below)**; technical T1–T6 remain **unapproved
+proposals**. DB1 D1/D2/D3/D5 decisions are already settled; not asked
 again. No further generic prototype work or new schema has been substituted for
 this actual owner handoff.
+
+**SCRIPT-DECISIONS-20261006 (user-approved policy, not allocation):**
+U1 no raw source persisted; protected result/log/plan/digest envelope 24h after
+terminal (interrupted: 24h after admission deadline, no sliding extension);
+content-free audit 90 days; result ≤64KiB, logs ≤16KiB/32 records, envelope ≤256KiB.
+U2 detached consumed-key MAC tombstones until irreversible namespace retirement;
+reuse returns content-free 409 `idempotency_key_retired`, never reruns. U3 only
+explicitly opted-in verified owner/admin human credentials; auth-off ordinary REST
+unchanged; credential-free submission deferred. These do NOT allocate DB1 schema/
+profile, grant `script:execute`, supply S09 fences, select a launcher or activate
+anything. Pure SDK-owned enforcement of these rules: `internal/scriptexec/policy.go`.
 
 ## Classification
 
@@ -630,13 +642,13 @@ execution→operation→receipt→revision/source relationships and fixed transa
 participation. `EntryCommit` is not protected output or durable provider success.
 S09 remains draft; P6 repair21d2d1e7 remains unaccepted, not a supplied fence.
 
-Finite disposition register (full proposed answers and dependencies in packet):
+Finite disposition register (U rows approved 2026-10-06; T rows still proposed):
 
 | ID | Required disposition, not implementation acceptance |
 |---|---|
-| U1 user | Script-specific24h protected envelope/digests, no raw source persistence,64KiB result/16KiB logs/256KiB total envelope,90day content-free audit. Not DB1 D1/D5 inheritance. |
-| U2 user | Detached consumed-key MAC tombstones until namespace retirement; after payload purge/erasure old key returns409 retired, never reruns. No source linkage/digest in residue. |
-| U3 user | Initially explicit owner/admin human credential opt-in only; ordinary auth-off REST unchanged, no-credential scripts deferred. This narrows the plan's optional trusted-local mapping only if approved. |
+| U1 user — APPROVED | Script-specific24h protected envelope/digests, no raw source persistence,64KiB result/16KiB logs/256KiB total envelope,90day content-free audit. Not DB1 D1/D5 inheritance. |
+| U2 user — APPROVED | Detached consumed-key MAC tombstones until namespace retirement; after payload purge/erasure old key returns409 retired, never reruns. No source linkage/digest in residue. |
+| U3 user — APPROVED | Initially explicit owner/admin human credential opt-in only; ordinary auth-off REST unchanged, no-credential scripts deferred. Narrows the plan's optional trusted-local mapping (approved). |
 | T1 DB1/reviewer | Content successor first; reuse methods/receipts/history, exact later extension ownership/profile allocated by DB1, no guessed version. |
 | T2 DB1/S09/DB2/3 | Same fixed transaction owns current auth/ACL/CAS, content+receipt+operation outcome+allocated outbox; no pool recursion/callback. |
 | T3 S09/S17/P8 | Trusted complete source capture and bounded read-frame/final-output release ordered with revoke; no broader publication without separate authority. |
@@ -645,7 +657,7 @@ Finite disposition register (full proposed answers and dependencies in packet):
 | T6 P6/S04/DB3/P8 | Explicit script:execute successor/binding and typed side-effect-free preflight/effect contracts; immutable credential33 unchanged. |
 
 Next primitive gate is T1, not all-SDK or DB14 completion before DB1 can proceed.
-U1/U2 gate retention/replay design, U3 gates first submit eligibility; T2–T6 then
+U1/U2 (approved) fix retention/replay policy, U3 (approved) first submit eligibility; T2–T6
 need their specified accepted owner contracts and actual integration tests.
 Linux-single still requires authoritative content runtime, live auth/fences,
 preflight/CAS/receipts, source restrictions, lifecycle and full real REST/stdio

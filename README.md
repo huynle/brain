@@ -307,11 +307,13 @@ under `mcp`:
 }
 ```
 
-The `brain mcp` subcommand reads `api_url` and `api_token` from
-`~/.config/brain/config.yaml` (env vars override). No bearer token is
-required for local brain servers; remote/protected deployments should set
-`runner.api_token` in the config file or `BRAIN_API_TOKEN` in the
-environment.
+The `brain mcp` subcommand reads the API URL from `~/.config/brain/config.yaml`,
+the `--api-url` flag or `BRAIN_API_URL`, and its bearer token from the
+`BRAIN_API_TOKEN` environment variable. No token is required for local brain
+servers. With a token set, stdio MCP refuses a plain `http://` URL to a
+non-loopback host at startup (`insecure_transport`): use `https://`, or a
+loopback URL such as an SSH tunnel. Redirects are refused, and a malformed URL
+fails at startup with `invalid_configuration`. See CHANGELOG ("Stdio MCP").
 
 > **Migrating from the old `brain.ts` plugin:** earlier brain releases
 > shipped a TypeScript plugin installed at `~/.config/opencode/plugin/brain.ts`.

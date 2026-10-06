@@ -116,3 +116,37 @@ func TestStdioCancellation(t *testing.T) {
 		t.Fatalf("cancel result=%v", err)
 	}
 }
+
+// A bad BRAIN_API_URL fails at startup with its stable code, not "HTTP 0".
+func TestStdioBadURLReportsCode(t *testing.T) {
+	t.Setenv("BRAIN_API_TOKEN", "")
+	_, err := NewStdioSDKClient("ftp://example.com")
+	if err == nil || !strings.Contains(err.Error(), "invalid_configuration") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// The ambient token is never sent over plain http to a non-loopback host.
+func TestStdioRefusesTokenOverRemotePlainHTTP(t *testing.T) {
+	const secret = "stdio-token-SECRET"
+	refused := []string{"http://brain.example.com", "http://10.0.0.5:3333", "http://localhost.evil.com", "http://127.0.0.1.evil.com:80", "HTTP://brain.example.com"}
+	for _, u := range refused {
+		t.Setenv("BRAIN_API_TOKEN", secret)
+		_, err := NewStdioSDKClient(u)
+		if err == nil || !strings.Contains(err.Error(), "insecure_transport") || !strings.Contains(err.Error(), "BRAIN_API_TOKEN") || strings.Contains(err.Error(), secret) {
+			t.Errorf("%s: err=%v", u, err)
+		}
+	}
+	allowed := []string{"https://brain.example.com", "http://127.0.0.1:3333", "http://localhost:3333", "http://[::1]:3333", "http://127.0.0.2"}
+	for _, u := range allowed {
+		t.Setenv("BRAIN_API_TOKEN", secret)
+		if _, err := NewStdioSDKClient(u); err != nil {
+			t.Errorf("%s refused: %v", u, err)
+		}
+	}
+	// No token: nothing secret to protect, plain http to a remote host is unchanged.
+	t.Setenv("BRAIN_API_TOKEN", "")
+	if _, err := NewStdioSDKClient("http://brain.example.com"); err != nil {
+		t.Errorf("token-less remote http refused: %v", err)
+	}
+}

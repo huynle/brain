@@ -243,6 +243,36 @@ func TestNativeLauncher(t *testing.T) {
 		t.Logf("allocation flood bounded: err=%v failure_frame=%v after %v (attested AS hard=%d)", err, failure, elapsed, report.attestation.asHard)
 	})
 
+	// Regression for sourceWritten: an attested worker whose stdin has no reader
+	// makes the source write fail (EPIPE); the report must say not written.
+	t.Run("failed source write reported not written", func(t *testing.T) {
+		closer := os.Getenv("BRAIN_NATIVE_STDIN_CLOSER_FIXTURE")
+		if closer == "" {
+			t.Fatal("stdin-closer fixture not supplied by the Linux wrapper")
+		}
+		pinnedCloser := filepath.Join(t.TempDir(), "stdin-closer")
+		closerData, err := os.ReadFile(closer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(pinnedCloser, closerData, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		l, err := newWorkerLauncher(config(pinnedCloser, fileSHA256(t, pinnedCloser), 3*time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := time.Now()
+		report, err := l.run(context.Background(), "1", func(Frame, func(Frame) error) error { return errors.New("no frames expected") })
+		if err == nil || errors.Is(err, errWorkerAttestation) || errors.Is(err, errWorkerWallTimeout) {
+			t.Fatalf("want source write failure, got err=%v", err)
+		}
+		if !report.attested || report.sourceWritten || !report.waited {
+			t.Fatalf("failed write must report sourceWritten=false: %+v", report)
+		}
+		t.Logf("source write failed after attestation: err=%v sourceWritten=%v waited=%v in %v", err, report.sourceWritten, report.waited, time.Since(start))
+	})
+
 	t.Run("oversized source refused", func(t *testing.T) {
 		l, err := newWorkerLauncher(config(pinned, digest, time.Second))
 		if err != nil {
@@ -303,7 +333,16 @@ sha256sum /tmp/pin-rebuild/worker | cut -d' ' -f1`)
 		if recorded != pin {
 			return nil, fmt.Errorf("release.json outputs[%q]=%q but reproducible build produced %s", platform, recorded, pin)
 		}
-		run := exec.CommandContext(ctx, "docker", "--host", host, "exec", "--user=65534:65534", name, "/usr/bin/env", "-i", "BRAIN_NATIVE_WORKER_FIXTURE=/tmp/probe", "BRAIN_NATIVE_WORKER_PIN="+pin, "/tmp/launcher.test", "-test.run=^TestNativeLauncher(Pool)?$", "-test.v", "-test.timeout=60s")
+		closerSource, e := os.ReadFile("testdata/stdin_closer.c")
+		if e != nil {
+			return nil, e
+		}
+		closer := exec.CommandContext(ctx, "docker", "--host", host, "exec", "-i", name, "/bin/sh", "-c", "cat > /tmp/stdin_closer.c && cc -O2 -D_GNU_SOURCE -I/tmp /tmp/stdin_closer.c -o /tmp/stdin-closer")
+		closer.Stdin = bytes.NewReader(closerSource)
+		if out, e := closer.CombinedOutput(); e != nil {
+			return nil, fmt.Errorf("build stdin-closer fixture: %w %s", e, out)
+		}
+		run := exec.CommandContext(ctx, "docker", "--host", host, "exec", "--user=65534:65534", name, "/usr/bin/env", "-i", "BRAIN_NATIVE_WORKER_FIXTURE=/tmp/probe", "BRAIN_NATIVE_STDIN_CLOSER_FIXTURE=/tmp/stdin-closer", "BRAIN_NATIVE_WORKER_PIN="+pin, "/tmp/launcher.test", "-test.run=^TestNativeLauncher(Pool)?$", "-test.v", "-test.timeout=60s")
 		out, e := run.CombinedOutput()
 		if e != nil {
 			return nil, fmt.Errorf("native launcher: %w %s", e, out)

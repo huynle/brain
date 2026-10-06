@@ -43,8 +43,24 @@ type FieldViolation struct {
 
 var machineCode = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
-// Error deliberately omits response content from default formatting.
-func (e *Error) Error() string { return fmt.Sprintf("brain: request failed (HTTP %d)", e.Status) }
+// Error formats only the stable machine code and HTTP status. Server message,
+// request ID and field details are deliberately omitted (explicit fields only);
+// a Code that is not a machine code is never echoed.
+func (e *Error) Error() string {
+	code := ""
+	if machineCode.MatchString(e.Code) {
+		code = e.Code
+	}
+	switch {
+	case code != "" && e.Status != 0:
+		return fmt.Sprintf("brain: %s (HTTP %d)", code, e.Status)
+	case code != "":
+		return "brain: " + code
+	case e.Status != 0:
+		return fmt.Sprintf("brain: request failed (HTTP %d)", e.Status)
+	}
+	return "brain: request failed"
+}
 
 // New fixes the origin, credentials and optional organization selector for the
 // lifetime of this client. A selector is not a grant. Transport is trusted code.

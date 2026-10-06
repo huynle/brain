@@ -57,6 +57,16 @@ export interface StreamOptions extends RequestOptions { lastEventId?: string }
 export type EntriesListParams = NonNullable<operations["entries.list"]["parameters"]["query"]>;
 export interface FieldViolation {field: string; message: string}
 
+const machineCode = /^[a-z][a-z0-9_]{0,63}$/;
+// Parity with Go Error(): stable machine code and HTTP status only. Server
+// message, request ID and details stay in explicit, non-enumerable fields.
+function formatBrainError(code: string, status: number): string {
+  const stable = typeof code === "string" && machineCode.test(code) ? code : "";
+  if (stable && status) return `brain: ${stable} (HTTP ${status})`;
+  if (stable) return `brain: ${stable}`;
+  return status ? `brain: request failed (HTTP ${status})` : "brain: request failed";
+}
+
 export class BrainError extends Error {
   constructor(
     readonly code: string,
@@ -66,7 +76,7 @@ export class BrainError extends Error {
     readonly retryable = false,
     readonly details: readonly FieldViolation[] = [],
   ) {
-    super(`brain: request failed (HTTP ${status})`);
+    super(formatBrainError(code, status));
     this.name = "BrainError";
     // Wire-derived fields require explicit access, never ordinary logging.
     for (const key of ["code", "requestId", "serverMessage", "details"]) {

@@ -57,8 +57,24 @@ the task stays blocked as a manual reservation.
   override flag: no existing insecure-transport convention; use https or a
   loopback tunnel.
 - C–F packet `ef83b9fc` (docs).
-- Inactive worker/SDK commits after `2f265f3d` through `b6f0c1ff`. Their earlier
-  review was blocked by a provider flag and was not retried.
+- `2228f1f1..b6f0c1ff` (inactive worker/SDK range): reviewed **FAIL**
+  (`zgck7qp2`), fixed below. Sequencing, size limits, admission, plan
+  validation and decoders passed that review.
+- `043ea7a8` — D1: the worker enforces the parent's 64-level JSON depth rule;
+  every script-attributable stop ends with exactly one accepted terminal
+  (`result_invalid` / `limit_exceeded` / `script_failed`). The new code
+  `limit_exceeded` is allowed by the parent. `TestNativeLauncherFinality`
+  passes 14/14 on Linux (RED on the old worker). Release pin `linux/arm64` →
+  `bec31a35…8e68`, reproducible.
+- `7551797c` — empty plan/outcome lists are pinned as valid zero-mutation
+  sequences; build/managed-parent timeouts raised to 600s.
+- `50c3708c` — D2: provider column corrected for 15 rows, `event_fanout`
+  declared, all 105 rows pinned, and a service-egress AST derivation added
+  (reverting a row or adding an unreviewed egress path both fail).
+- **Stale artifact:** the worker source changed in `043ea7a8`, so amd64
+  `9564f7a7…` and any homelab x86-64 binary built from earlier source no longer
+  match. Rebuild from `runtime/script-worker` at `043ea7a8` or later before
+  recording `linux/amd64`.
 - **x86_64:** the reproducible amd64 build `9564f7a7…d552` exists, unpinned;
   execution is running separately on the homelab.
 

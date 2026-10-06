@@ -390,6 +390,13 @@ func run() error {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+	manifest, err := c.Capabilities(ctx)
+	if err != nil {
+		return err
+	}
+	if manifest.ContractVersion != brain.ContractVersion || manifest.Scripts.Available {
+		return fmt.Errorf("unexpected discovery contract or script availability")
+	}
 	project := "sdk-example"
 	if err := exerciseTaskReads(ctx, c); err != nil {
 		return err

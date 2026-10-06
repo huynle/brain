@@ -142,6 +142,7 @@ are conservative and need per-handler proof before any script allowlisting.
 | Operation ID | Method/path | Scope | Preconditions / effects / resource rights |
 |---|---|---|---|
 | health.get | GET /health | Public | read; no resource identity |
+| capabilities.get | GET /capabilities | R | wired operation IDs and exact contract; no grants or resources; scripts unavailable |
 | entries.list | GET /entries | R | filters/limit/offset; visible entry set/count |
 | entries.get | GET /entries/{id} | R | immutable ID or legacy path; entry read |
 | entries.create | POST /entries | A | content; destination edit, separate work/automation permission for runnable types |

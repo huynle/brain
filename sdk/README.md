@@ -3,11 +3,19 @@
 **Partial implementation, not V1 completion. Scripts are unavailable.**
 
 The reviewed public protocol lives in `api/openapi.yaml` (OpenAPI 3.1).
-All 104 inventoried operations have typed Go/TypeScript adapters, including
+All 104 original inventoried operations plus capability discovery have typed Go/TypeScript adapters, including
 task/feature actions, metadata, project placement/deletion, delivery state,
 finite events, timeline and SSE. Exact evidence and remaining integration gates are in
 `docs/sdk-operation-matrix.md`. Task creation and dependency updates use typed
-entry requests. No capability route, hosted adapter or script route is added.
+entry requests. Discovery is single-mode only; no hosted adapter or script route is added.
+
+Negotiate explicitly with `client.Capabilities(ctx)` (Go) or
+`await client.capabilities({signal})` (TypeScript). The required OpenAPI contract
+version is1.0.0, distinct from the SDK package version0.1.0. Discovery reports
+sorted wired-operation IDs, not permissions or resource existence. All five script
+flags are false. Old servers (404/501) fail `unsupported_server`;401/403 fail
+`capability_auth_required` without anonymous fallback. The manifest is bounded to
+64KiB and never cached. See `docs/sdk-capability-proposal.md` for exact semantics.
 
 ## Generation and validation
 

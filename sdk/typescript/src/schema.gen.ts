@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Negotiate the public contract and discover wired operations
+         * @description Authenticated read-scope discovery in single mode only (existing auth-disabled local behavior retained). Operation IDs describe wired handlers, not caller grants, resource existence or provider readiness. Script compiled, configured, deployment and caller availability are independent; all are currently false. Responses are no-store. SDKs require the exact contract version, refuse old servers without fallback, and bound discovery to 64 KiB.
+         */
+        get: operations["capabilities.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/events/stream": {
         parameters: {
             query?: never;
@@ -1636,6 +1656,19 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        CapabilityManifest: {
+            contract_version: string;
+            operations: string[];
+            scripts: components["schemas"]["ScriptAvailability"];
+        };
+        /** @description Independent support dimensions, not permission grants. available equals their conjunction. Every dimension is false until production script composition is implemented and accepted. */
+        ScriptAvailability: {
+            compiled: boolean;
+            configured: boolean;
+            deployment_available: boolean;
+            caller_authorized: boolean;
+            available: boolean;
+        };
         /** @description Exact metadata endpoint key allowlist. Omitted fields are unchanged. Use ordinary entry update for other frontmatter. Audit/runtime JSON fields preserve server-defined contents. */
         MetadataUpdateRequest: {
             expected_revision?: string;
@@ -3172,6 +3205,35 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "capabilities.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Non-content support manifest */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapabilityManifest"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
     "events.stream": {
         parameters: {
             query?: {

@@ -389,6 +389,15 @@ type CancelChainResponse struct {
 	Success       bool   `json:"success"`
 }
 
+// CapabilityManifest defines model for CapabilityManifest.
+type CapabilityManifest struct {
+	ContractVersion string   `json:"contract_version"`
+	Operations      []string `json:"operations"`
+
+	// Scripts Independent support dimensions, not permission grants. available equals their conjunction. Every dimension is false until production script composition is implemented and accepted.
+	Scripts ScriptAvailability `json:"scripts"`
+}
+
 // CheckoutFeatureResult defines model for CheckoutFeatureResult.
 type CheckoutFeatureResult struct {
 	Created          bool                 `json:"created"`
@@ -1377,6 +1386,15 @@ type SDKDispatchResponse struct {
 	LeaseId   string `json:"leaseId"`
 	RunnerId  string `json:"runnerId"`
 	Success   bool   `json:"success"`
+}
+
+// ScriptAvailability Independent support dimensions, not permission grants. available equals their conjunction. Every dimension is false until production script composition is implemented and accepted.
+type ScriptAvailability struct {
+	Available           bool `json:"available"`
+	CallerAuthorized    bool `json:"caller_authorized"`
+	Compiled            bool `json:"compiled"`
+	Configured          bool `json:"configured"`
+	DeploymentAvailable bool `json:"deployment_available"`
 }
 
 // SearchRequest defines model for SearchRequest.

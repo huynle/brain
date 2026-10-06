@@ -92,6 +92,13 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer authed.Close()
+	manifest, err := authed.Capabilities(context.Background())
+	if err != nil || manifest == nil || len(manifest.Operations) != 105 || manifest.Scripts.Available {
+		t.Fatalf("fully composed discovery: %+v, %v", manifest, err)
+	}
+	if _, err := c.Capabilities(context.Background()); err == nil {
+		t.Fatal("unauthenticated discovery accepted")
+	}
 	exerciseNotificationSDK(t, authed)
 	exerciseWebhookSDK(t, authed)
 	exerciseAutomationSDK(t, authed)

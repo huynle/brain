@@ -11,6 +11,7 @@ evidence: docs/sdk-operation-matrix.md
 # none on a precondition means no revision guarantee, NOT unconditional authority.
 # Content may create runnable tasks/automations; never infer work/spend permission.
 operations:
+  capabilities.get: [read, no_resource_content_or_grants, exact_contract_version, read, none]
   health.get: [public, none, none, read, none]
   entries.list: [read, visible_entry_set_and_count, filters_limit_offset, read, none]
   entries.get: [read, entry_read, id_or_legacy_path, read, none]

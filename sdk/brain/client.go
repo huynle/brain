@@ -224,7 +224,13 @@ func (c *Client) request(ctx context.Context, method, path string, body any, q u
 		e.Retryable = resp.StatusCode == 429 || resp.StatusCode == 503
 		return e
 	}
-	if raw, ok := out.(*[]byte); ok {
+	if manifest, ok := out.(*capabilityBody); ok {
+		if resp.StatusCode != http.StatusOK {
+			e.Code = "unexpected_status"
+			return e
+		}
+		*manifest = data
+	} else if raw, ok := out.(*[]byte); ok {
 		*raw = data
 	} else if out != nil {
 		if err := json.Unmarshal(data, out); err != nil {

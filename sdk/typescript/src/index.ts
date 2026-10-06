@@ -2,6 +2,42 @@ export type { components, paths, operations } from "./schema.gen.js";
 import type { components, operations } from "./schema.gen.js";
 type Schema = components["schemas"];
 
+export const contractVersion = "1.0.0";
+export type CapabilityManifest = Schema["CapabilityManifest"];
+
+function decodeCapabilities(body: Uint8Array): CapabilityManifest {
+  const invalid = (): never => { throw new BrainError("invalid_capability_manifest"); };
+  const exact = (value: unknown, names: string[]): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === names.length && names.every(k=>Object.hasOwn(value,k));
+  if (!body.byteLength || body.byteLength>65536) invalid();
+  let value: unknown;
+  try {
+    const text = new TextDecoder("utf-8",{fatal:true,ignoreBOM:true}).decode(body);
+    value = JSON.parse(text);
+    // JSON.parse validates grammar but discards duplicate decoded object keys.
+    const tokens = [...text.matchAll(/"(?:\\.|[^"\\])*"|[{}\[\]:,]|true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g)].map(m=>m[0]);
+    const stack: (Set<string>|null)[] = [];
+    for (let i=0;i<tokens.length;i++) {
+      const token = tokens[i]!;
+      if (token==='{' || token==='[') {stack.push(token==='{'?new Set():null);if(stack.length>4)invalid();}
+      else if(token==='}'||token===']')stack.pop();
+      else if(token.startsWith('"')&&tokens[i+1]===':') {
+        const key=JSON.parse(token) as string, seen=stack[stack.length-1];
+        if(!seen||seen.has(key))invalid();seen!.add(key);
+      }
+    }
+  } catch { invalid(); }
+  if (!exact(value,['contract_version','operations','scripts'])) return invalid();
+  if(typeof value.contract_version!=='string'||!value.contract_version||new TextEncoder().encode(value.contract_version).length>64)invalid();
+  if(!Array.isArray(value.operations)||value.operations.length>10000)return invalid();
+  const seen=new Set<string>();
+  for(const op of value.operations){if(typeof op!=='string'||!/^[a-z][a-zA-Z0-9]{0,63}\.[a-z][a-zA-Z0-9]{0,63}$/.test(op)||seen.has(op))invalid();seen.add(op);}
+  const s=value.scripts;
+  const fields=['compiled','configured','deployment_available','caller_authorized','available'];
+  if(!exact(s,fields)||fields.some(k=>typeof s[k]!=='boolean')||s.available!==(s.compiled&&s.configured&&s.deployment_available&&s.caller_authorized))invalid();
+  if(value.contract_version!==contractVersion)throw new BrainError('incompatible_contract_version');
+  return value as unknown as CapabilityManifest;
+}
+
 export interface ClientConfig {
   baseUrl: string;
   token?: string;
@@ -66,7 +102,7 @@ export class BrainClient {
     return next;
   }
 
-  async #request<T>(method: string, path: string, body?: unknown, query?: object, options: StreamOptions = {}, expectBody = true, binary = false, stream?: (response: Response,signal: AbortSignal)=>Promise<void>): Promise<T> {
+  async #request<T>(method: string, path: string, body?: unknown, query?: object, options: StreamOptions = {}, expectBody = true, binary = false, stream?: (response: Response,signal: AbortSignal)=>Promise<void>, responseLimit = this.#config.maxResponseBytes, expectedStatus = 0): Promise<T> {
     // Reject before WHATWG URL normalization, including encoded path segments.
     for (let decoded = path;;) {
       if (decoded.split(/[/\\]/).some(segment => segment === "." || segment === "..")) throw new BrainError("invalid_request");
@@ -123,7 +159,7 @@ export class BrainClient {
         signal.throwIfAborted();
         if (done) break;
         total += value.byteLength;
-        if (total > this.#config.maxResponseBytes) {
+        if (total > Math.min(responseLimit,this.#config.maxResponseBytes)) {
           await reader.cancel();
           throw new BrainError("response_too_large", response.status, requestId);
         }
@@ -147,6 +183,7 @@ export class BrainClient {
       throw new BrainError(typeof wire.code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(wire.code) ? wire.code : codes[response.status] ?? "http_error", response.status, requestId || (typeof wire.request_id === "string" ? wire.request_id : ""),
         typeof wire.message === "string" && wire.message !== "" ? wire.message : typeof wire.error === "string" ? wire.error : "", [429,503].includes(response.status), details);
     }
+    if (expectedStatus && response.status!==expectedStatus) throw new BrainError("unexpected_status",response.status,requestId);
     if (!expectBody) return undefined as T;
     if (binary) return data as T;
     try { return JSON.parse(text) as T; }
@@ -205,6 +242,17 @@ export class BrainClient {
   }
 
   health(options?: RequestOptions): Promise<Schema["HealthResponse"]> { return this.#request("GET", "/health", undefined, undefined, options); }
+  /** Contract negotiation is not a grant. No cache, anonymous retry or fallback. */
+  async capabilities(options?: RequestOptions): Promise<CapabilityManifest> {
+    let body: Uint8Array;
+    try { body = await this.#request<Uint8Array>("GET","/capabilities",undefined,undefined,options,true,true,undefined,65536,200); }
+    catch(e) {
+      if(!(e instanceof BrainError))throw e;
+      const code = [404,501].includes(e.status)?'unsupported_server':[401,403].includes(e.status)?'capability_auth_required':e.code==='response_too_large'?'invalid_capability_manifest':'capability_discovery_unavailable';
+      throw new BrainError(code,e.status,e.requestId);
+    }
+    return decodeCapabilities(body);
+  }
   inject(request: Schema["InjectRequest"], options?: RequestOptions): Promise<Schema["InjectResponse"]> { return this.#request("POST", "/inject", request, undefined, options); }
   search(request: Schema["SearchRequest"], options?: RequestOptions): Promise<Schema["SearchResponse"]> { return this.#request("POST", "/search", request, undefined, options); }
 

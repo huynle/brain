@@ -5,6 +5,29 @@ This ledger supersedes stale pending counts in earlier handoffs, not the plan.
 Manual exclusive ownership, blocked dispatch reservation and `prompt_only` remain.
 No enablement, merge, push, deployment or task completion is authorized.
 
+## Current controlling disposition — 2026-10-06
+
+Parent/user explicitly allocated **A discovery** and **B stdio SDK convergence**
+in `vggevclc`, `ap90gj4e`, and `zsief5fj`. Earlier unanswered-allocation notes below
+are historical, not current blockers. Sole continuation writer is
+`ses_eee8ce506ffeycyBFJAGoE0lPz`, starting clean `b6f0c1ff` with no dispatch lease.
+Implementation/verification is in progress; allocation is not delivery evidence.
+
+**LINUX-FIRST-20261006:** server execution targets Linux; macOS clients connect
+remotely. Native macOS execution remains unsupported/deferred, not a Linux-first
+completion blocker. Linux production launcher and full integration acceptance,
+plus the separate D06 hosted gates, remain mandatory. Scripts stay unavailable.
+
+**DB-AUTH-20261006:** the shared database is the target authority for entry content
+and attachment bytes. SDKs remain storage-agnostic; legacy filesystem tests are
+compatibility evidence. Storage migration belongs to `mt-db-authoritative-storage`
+(DB1 `hxcyvu0i` through DB6 `ch7t990k`), not this SDK writer. C–F composition must
+consume that reviewed allocation, never resume obsolete filesystem isolation.
+
+Main has advanced from the original recorded target SHA. Parent owns eventual
+whole-feature integration into `main` and fresh postmerge verification. No merge
+or completion is authorized for these partial A/B slices.
+
 ## Classification
 
 **R** = runnable in owned files now; **E** = exact external interface/allocation;
@@ -15,8 +38,8 @@ A row can have both an independently implementable part and a blocked compositio
 |---|---|---|
 | OpenAPI inventory and both SDK namespaces | V/R: 104 operations, router inventory, external Go module and installed Node fixtures | Audit every operation's effect/resource/precondition/provider metadata; remove stale matrix wording; guard completeness. Task/automation creation uses entries, not new routes. |
 | SDK transport, immutable identity, pagination, errors | V/R: cancellation/rebind, no ambiguous write replay, bounded responses/SSE, typed errors and error-only conflicts, deterministic generated DTOs | Audit API compatibility/version failure, examples and release docs; no retry is safer than inventing safe retry. Existing legacy route ambiguity must remain disclosed. |
-| Capability/version discovery | E/R: no endpoint; clients cannot negotiate yet | Client decoder/old-server refusal tests runnable. Router allocation requires coordinator A below. Must distinguish compiled/configured/profile/caller, reveal no resources and advertise scripts unavailable. |
-| Stdio MCP SDK convergence and backward compatibility | E: no approved file ownership; S10 still draft | Coordinator B: new stdio constructor plus minimal composition change, retain local-file support and real child stdio parity. Hosted constructor remains untouched. |
+| Capability/version discovery | V: A implemented; author evidence in final section | Authenticated single-mode discovery plus public Go/TS negotiation, wired IDs, independent script flags, old-server/auth refusal and no hidden metadata. Parent independent acceptance remains separate. |
+| Stdio MCP SDK convergence and backward compatibility | R: B explicitly allocated; implementation in progress | New stdio constructor plus minimal composition, retain local-file support and real child stdio parity. Hosted constructor remains untouched; exact additional delegation seam request filed on ap90gj4e. |
 | Hosted MCP sealed authorized adapter | E: S10 `ap90gj4e` draft | Accepted immutable operation-specific adapter and verified caller/session binding, never loopback reconstruction. Real per-call/session/cross-principal tests. |
 | Worker async/final-expression/return semantics | V/R: `2228f1f1` compile-only grammar fallback and promise/thenable settling, no runtime reevaluation | Full JS facade/unsupported-method behavior and JSON-only boundaries; native corpus and examples. No actual service dispatch implied. |
 | Bounded console, errors and protected results | R/E: diagnostics currently discarded; result byte bound exists | Bounded quarantine and actual console fixture; source union from trusted parent only, no ambient logger or default formatting leak. Real release must use S09/S17 source-wide fence, not a new authorization callback masquerading as it. |
@@ -24,7 +47,7 @@ A row can have both an independently implementable part and a blocked compositio
 | Per-worker compile/wall/CPU/heap/native memory/IPC limits | V/R/P: Linux experimental limits, native denials, protocol budgets and hostile corpus | Further source/serialization/native abuse and prefork races runnable. Linux local container is not hosted VM acceptance. |
 | Cancellation/crash/death/reaping and shutdown | V/R/E: inactive Start/Wait, Linux creating-thread PDEATHSIG, native subreaper tests | Bounded admission-to-start and shutdown ownership tests; real graph lease integration only through approved composition. Dead-parent orphan reaping still needs reviewed external init. |
 | Aggregate admission, fairness, memory/CPU and lifetime | R/E: not implemented | Inactive bounded local scheduler with principal/tenant/global reservations and fair waiting, cancellation/shutdown join, no credit before Wait. This is not authoritative multi-server quota; durable reservation/topology allocation remains E. |
-| macOS confinement | P: RLIMIT_AS resident-memory counterexample; memorystatus EPERM | Approved enforceable unprivileged profile or reviewed VM/worker-service decision. No root helper/entitlement/degraded fallback. Keep disabled. |
+| macOS confinement | Deferred/unsupported by LINUX-FIRST-20261006 | Remote clients supported; native execution disabled. No root helper/entitlement/degraded fallback. Not a Linux-first V1 blocker. |
 | `script:execute` and trusted-single admission | E: absent from fixed credential33 | P6 chooses explicit server-verified permission and principal/auth-generation binding. OAuth `mcp` and admin wildcard cannot silently grant it. No nil-auth or display-name shortcut. |
 | Per-operation registry/authorization/CAS | R/E: protocol syntax is not authorization; script exposure false everywhere | Descriptive registry/shape checks runnable; live adapter needs S09/S16/S17 and effect APIs. Every supported write requires safe reusable preflight, current auth, ordinary rights and expected revision. |
 | Dry-run ordered plan and provisional dependencies | E/R: request fingerprint only, no broker | Pure plan shape/unsupported dependency validation runnable; service validation ownership required before real composition. Never writer-then-rollback. Prove SQL/files/CAS/events/queues/providers unchanged except exact control allowlist. |
@@ -306,8 +329,8 @@ The original plan and acceptance criteria are not reduced to the runnable subset
 |---|---|---|
 | Public Go/TS inventory, typed DTOs and contract | 104 existing operations, generated contracts, installed/external client fixtures; policy inventory tests | Repeat SDK/package/contract checks for final candidate; no script-service support inferred |
 | SDK binding, cancellation, errors, pagination | Existing SDK tests and real-handler fixtures | Compatibility decoder/old-server refusal is still runnable; discovery wire allocation is A |
-| Capability discovery | No route or advertisement | A: authenticated route/file allocation; C: approved capability/profile semantics |
-| Stdio MCP convergence | No ownership allocation consumed | B: S10/coordinator composition and real child parity; preserve local-file behavior |
+| Capability discovery | A implemented: authenticated single-mode manifest; public Go/TS exact-version negotiation; real external consumers |105 wired-operation contract, independent all-false script flags; no resource grants or script activation. Author checks recorded below; independent acceptance remains parent-owned |
+| Stdio MCP convergence | B explicitly allocated; shared public SDK transport integration in progress | Preserve legacy MCP DTO/error/local-file behavior and hosted constructor; real child parity required. This is transport convergence, not a claim all legacy DTOs became typed SDK calls |
 | Hosted MCP | Unavailable | S10 sealed adapter, current principal/session binding and live cross-principal tests |
 | Full JS facade | 105-name closed surface, intrinsic Promise returns, lazy iterator refusal, get fixture, argument/error cases | **Not complete.** Per-method argument/default normalization and broader fixture mapping are runnable; actual supported service subset/preflight is C–F. Unsupported/provider/binary/stream/write operations must not gain authority from test mappings |
 | Unsupported facade corpus | 104 methods × 10 argument forms tested in real native child; zero IPC and zero hostile inspection | This proves denial only, not DTO validation or service parity |
@@ -315,7 +338,7 @@ The original plan and acceptance criteria are not reduced to the runnable subset
 | Runtime/build provenance | Pinned source/image; hardening and relocated byte equality previously observed | Repeat reproducibility after C change; independent runtime/native-compromise review and selected production launcher G |
 | Per-worker limits and denial | Native CPU/AS/framing/serialization/compile/fresh-state/cancellation corpus | More pressure/launch-race cases runnable; not a universal DoS proof |
 | Aggregate admission and lifecycle | Local fair fixed-slot pool; cancellation/join; direct Linux parent-death/reaping tests | Simultaneous sealed-child pressure and prefork/launch races still runnable. Authoritative topology/quota/init and graph lease composition C/D/G |
-| macOS / hosted platform | macOS memory negative controls; no supported profile; local Linux only | G: reviewed enforceable unprivileged macOS or VM alternative; D06 hosted VM gate separately |
+| macOS / hosted platform | Linux-first approved; macOS remote clients, native worker unsupported/deferred | G: Linux production launcher/full integration evidence; D06 hosted VM gate separately |
 | Dedicated execute permission and single binding | No capability granted | C: successor vocabulary/trusted-single mapping; do not alter credential33 |
 | Per-operation auth, CAS and preflight | Descriptive policy metadata, no dispatch authority | C–F: approved current rights/resource validation, same-writer fences, safe reusable preflight |
 | Dry-run/provisional plan | Request fingerprint only | Pure ordered-plan/dependency validation runnable; real SQL/files/CAS/queues/provider proof requires C–F; no writer-rollback substitute |
@@ -494,14 +517,39 @@ Checklist at this stop:
   OpenAPI, native suite, vet/build/lint evidence recorded; exact limits disclosed.
 - [x] OpenAPI warning root cause established without REST compatibility changes.
 - [x] Documentation checked against plan; drafts and unavailable surfaces explicit.
-- [ ] Discovery/stdio routes and accepted hosted adapter — A/B/S10.
+- [x] A discovery route and public SDK negotiation implemented; author evidence below.
+- [ ] B stdio public transport convergence and separate S10 hosted adapter.
 - [ ] Live facade/preflight/CAS/dry-run/publication and current fences — C–F.
 - [ ] Allocated persistence/idempotency/audit/quota/retention/recovery — C/D.
-- [ ] Supported production launcher/macOS hard memory/hosted D06 — G.
+- [ ] Supported Linux production launcher/full integration and hosted D06 — G; native macOS deferred.
 - [ ] Real authenticated REST/MCP multi-read/write and negative acceptance matrix.
 - [ ] Required independent acceptance; provider flag remains parent-owned.
 - [ ] Whole V1 completion. Task stays blocked/manual-reserved, `prompt_only`.
 
 No activation, merge, push, deployment, review-bypass attempt or task completion.
-The next production-integration action requires disposition of the existing exact
-owner requests, not self-allocation or additional mock-based completion claims.
+Remaining C–F production composition requires the DB-AUTH-aligned owner handoffs,
+not self-allocation or mock-based completion claims. A/B have explicit allocation.
+
+## A discovery author evidence — 2026-10-06
+
+`internal/api/sdk_capabilities.go` registers only in empty/single mode under the
+existing auth, tenant scope and read-scope middleware. Minimal/unwired servers
+advertise only health/discovery; fully wired fixtures advertise105 contract IDs.
+No resource reads, identities, grants or script permission are returned. The five
+script booleans remain independently false. No tenant seal/schema/auth changes.
+
+Public Go/TS negotiation consumes generated OpenAPI types, uses immutable bound
+HTTP and cancellation, bounds discovery to64KiB, rejects duplicate/hidden/malformed
+fields and inconsistent flags, requires exact1.0.0, refuses404/501 and401/403 without
+fallback and rejects non200 success statuses. All32 availability combinations are
+covered in both public implementations. Real stored-token REST plus isolated Go
+module and offline-installed Node consumers exercise discovery before their existing
+flows. Contract/policy/matrix now contain105 operations; generated files reproduce
+exactly. Existing one legacy ambiguous-task-path OpenAPI warning remains disclosed.
+
+RED evidence: router404 instead of200/401/403; Go client made zero requests and
+accepted retired binding; JS method absent; non200 success incorrectly accepted.
+GREEN: Node43/43 full tests, four affected Go race packages, real external consumers,
+vet/build and lint0issues. Full-suite and final milestone SHA are reported in Brain
+`ihlslifb`; `sdk-discovery-{focused,race,suite,final-suite}.log` under the approved
+opencode temp directory retain command output. No independent PASS is claimed.

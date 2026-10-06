@@ -4,6 +4,8 @@ import { createServer } from "node:http";
 import assert from "node:assert/strict";
 
 const client = new BrainClient({baseUrl:process.env.BRAIN_API_URL, token:process.env.BRAIN_API_TOKEN});
+const capabilities = await client.capabilities();
+if (capabilities.contract_version !== '1.0.0' || capabilities.scripts.available) throw new Error('unexpected discovery contract or script availability');
 let id;
 try {
   let validation;try{await client.entries.create({});}catch(e){validation=e;}

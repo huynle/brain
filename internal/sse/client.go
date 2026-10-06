@@ -13,6 +13,11 @@ import (
 // eventBuffer is the depth of one connection's event channel.
 const eventBuffer = 32
 
+// maxSSELineSize must accommodate task snapshots, which the API emits as one
+// JSON data line. Production projects can exceed the Scanner default and the
+// former 2 MiB cap, causing an immediate reconnect loop.
+const maxSSELineSize = 16 * 1024 * 1024
+
 // stream is ONE connection's event channel plus the state needed to close it
 // exactly once.
 //
@@ -219,7 +224,7 @@ func (c *Client) listen(ctx context.Context, s *stream) {
 	defer resp.Body.Close()
 
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 2*1024*1024), 2*1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), maxSSELineSize)
 	var lines []string
 
 	for scanner.Scan() {
@@ -261,6 +266,9 @@ func (c *Client) listen(ctx context.Context, s *stream) {
 	// Scanner finished — connection lost or server closed
 	if ctx.Err() != nil {
 		return
+	}
+	if err := scanner.Err(); err != nil {
+		slog.Warn("SSE stream read failed", "error", err)
 	}
 
 	s.send(ctx, Event{Type: "disconnected"})

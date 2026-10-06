@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -479,6 +480,29 @@ func writeSSEEvent(w http.ResponseWriter, eventType, data string) {
 
 // Suppress unused import warning
 var _ = json.Marshal
+
+func TestClient_AcceptsTaskSnapshotLargerThanTwoMiB(t *testing.T) {
+	payload := `{"tasks":"` + strings.Repeat("x", 3*1024*1024) + `"}`
+	server := newSSETestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeSSEEvent(w, "tasks_snapshot", payload)
+	})
+	defer server.Close()
+
+	client := NewClient(server.URL, "", "test-project")
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	for event := range client.Connect(ctx) {
+		if event.Type == "tasks_snapshot" {
+			if len(event.Data) != len(payload) {
+				t.Fatalf("snapshot length = %d, want %d", len(event.Data), len(payload))
+			}
+			return
+		}
+	}
+	t.Fatal("stream closed before delivering the task snapshot")
+}
 
 // =============================================================================
 // Reconnect Tests

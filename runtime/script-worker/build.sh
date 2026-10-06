@@ -1,7 +1,8 @@
 #!/bin/sh
-# Experimental build recipe ONLY, not a production runtime selection. The Go
-# fixture verifies the official source digest and the installed image identity.
-# Arguments are trusted fixture paths: extracted root, C entry, output artifact.
+# Reproducible release recipe for the sealed QuickJS worker (see release.json).
+# Run only inside the pinned compiler image, offline, after verifying the source
+# archive SHA-256. Arguments: extracted root (containing quickjs-2026-06-04/, the
+# entry C file and seal.h), entry C file, output artifact. Not activation.
 set -eu
 export LC_ALL=C TZ=UTC SOURCE_DATE_EPOCH=1780531200
 root="$1"

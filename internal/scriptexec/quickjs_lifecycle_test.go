@@ -117,7 +117,7 @@ func runLifecycleObserver(t *testing.T, observer string) []byte {
 		buildCtx, cancelBuild := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancelBuild()
 		build := exec.CommandContext(buildCtx, "docker", "--host", host, "exec", "-i", name, "/bin/sh", "-c", `cat > /tmp/observer.c && /bin/sh /tmp/build-probe.sh /tmp observer.c /tmp/observer`)
-		worker, e := os.ReadFile("testdata/quickjs_worker.c")
+		worker, e := os.ReadFile(scriptWorkerDir + "worker.c")
 		if e != nil {
 			return nil, e
 		}

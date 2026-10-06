@@ -1,9 +1,11 @@
-/* Inactive experimental worker; no production linkage or authorization.
- * Build only in the opt-in fixture. The parent is a fixture, NOT Brain services.
- * Reuse the observed Linux boundary without claiming it is reviewed policy. */
-#define main native_probe_main
-#include "probe.c"
-#undef main
+/* Sealed QuickJS script worker (release source; see release.json/README.md).
+ * Inactive: no production caller, route or authority. Launched only by the
+ * disabled-by-default Linux launcher in internal/scriptexec. The parent owns
+ * every operation, authorization and output decision. */
+#include "quickjs.h"
+#include "seal.h"
+#include <stdlib.h>
+#include <string.h>
 #include <signal.h>
 
 #define FRAME_LIMIT 65536

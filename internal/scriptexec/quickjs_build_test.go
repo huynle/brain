@@ -46,12 +46,12 @@ func TestQuickJSExperimentalBuildHardening(t *testing.T) {
 
 func TestQuickJSExperimentalBuildReproducible(t *testing.T) {
 	_, err := quickJSProgram(t, "", true, func(host, name string) ([]byte, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second) // trusted build under shared-host load
 		defer cancel()
 		// Different source and output paths, not just rerunning the same command.
 		cmd := exec.CommandContext(ctx, "docker", "--host", host, "exec", name, "/bin/sh", "-c", `set -eu
 mkdir /tmp/relocated
-cp /tmp/probe.c /tmp/worker.c /tmp/relocated/
+cp /tmp/probe.c /tmp/worker.c /tmp/seal.h /tmp/relocated/
 cp -R /tmp/quickjs-2026-06-04 /tmp/relocated/
 /bin/sh /tmp/build-probe.sh /tmp/relocated worker.c /tmp/relocated/worker
 cmp /tmp/probe /tmp/relocated/worker

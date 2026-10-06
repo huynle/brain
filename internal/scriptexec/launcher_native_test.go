@@ -258,12 +258,16 @@ func TestNativeLauncher(t *testing.T) {
 // Host wrapper: cross-builds the Go test parent for Linux and runs the native
 // launcher suite inside the opt-in isolated compiler container as uid 65534.
 func TestQuickJSLauncherLinux(t *testing.T) {
+	goarch := os.Getenv("BRAIN_SCRIPT_LINUX_GOARCH") // e.g. amd64 for an x86_64 VM
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
 	_, err := quickJSProgram(t, "", true, func(host, name string) ([]byte, error) {
 		binary := filepath.Join(t.TempDir(), "launcher.test")
-		ctx, cancel := context.WithTimeout(context.Background(), 480*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 900*time.Second)
 		defer cancel()
 		build := exec.CommandContext(ctx, "go", "test", "-c", "-o", binary, ".")
-		build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+		build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+goarch, "CGO_ENABLED=0")
 		if out, e := build.CombinedOutput(); e != nil {
 			return nil, fmt.Errorf("cross-build native parent: %w %s", e, out)
 		}
@@ -280,7 +284,7 @@ func TestQuickJSLauncherLinux(t *testing.T) {
 		// not a hash of the artifact under test, becomes the launch pin.
 		rebuild := exec.CommandContext(ctx, "docker", "--host", host, "exec", name, "/bin/sh", "-c", `set -eu
 mkdir /tmp/pin-rebuild
-cp /tmp/probe.c /tmp/worker.c /tmp/pin-rebuild/
+cp /tmp/probe.c /tmp/worker.c /tmp/seal.h /tmp/pin-rebuild/
 cp -R /tmp/quickjs-2026-06-04 /tmp/pin-rebuild/
 /bin/sh /tmp/build-probe.sh /tmp/pin-rebuild worker.c /tmp/pin-rebuild/worker >/dev/null
 sha256sum /tmp/pin-rebuild/worker | cut -d' ' -f1`)
@@ -289,7 +293,17 @@ sha256sum /tmp/pin-rebuild/worker | cut -d' ' -f1`)
 		if e != nil || !lowerHexSHA256(pin) {
 			return nil, fmt.Errorf("independent pin rebuild: %v %s", e, pinOut)
 		}
-		run := exec.CommandContext(ctx, "docker", "--host", host, "exec", "--user=65534:65534", name, "/usr/bin/env", "-i", "BRAIN_NATIVE_WORKER_FIXTURE=/tmp/probe", "BRAIN_NATIVE_WORKER_PIN="+pin, "/tmp/launcher.test", "-test.run=^TestNativeLauncher$", "-test.v", "-test.timeout=60s")
+		// The committed release record is the operator pin: this session's
+		// rebuild must reproduce it exactly, not merely itself.
+		platform := "linux/" + goarch
+		recorded := loadScriptWorkerRelease(t).Outputs[platform]
+		if ver, _ := exec.CommandContext(ctx, "docker", "--host", host, "exec", name, "/bin/sh", "-c", "/usr/bin/cc --version | head -1").CombinedOutput(); len(ver) > 0 {
+			t.Logf("compiler: %s", strings.TrimSpace(string(ver)))
+		}
+		if recorded != pin {
+			return nil, fmt.Errorf("release.json outputs[%q]=%q but reproducible build produced %s", platform, recorded, pin)
+		}
+		run := exec.CommandContext(ctx, "docker", "--host", host, "exec", "--user=65534:65534", name, "/usr/bin/env", "-i", "BRAIN_NATIVE_WORKER_FIXTURE=/tmp/probe", "BRAIN_NATIVE_WORKER_PIN="+pin, "/tmp/launcher.test", "-test.run=^TestNativeLauncher(Pool)?$", "-test.v", "-test.timeout=60s")
 		out, e := run.CombinedOutput()
 		if e != nil {
 			return nil, fmt.Errorf("native launcher: %w %s", e, out)

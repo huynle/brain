@@ -55,7 +55,7 @@ func quickJSProgramWith(t *testing.T, transform func([]byte) []byte, worker bool
 		t.Fatal("QuickJS2026-06-04 archive digest mismatch")
 	}
 	run := func(args ...string) ([]byte, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second) // trusted build under shared-host load
+		ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second) // trusted build under shared-host load
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "docker", append([]string{"--host", host}, args...)...)
 		cmd.WaitDelay = time.Second
@@ -92,21 +92,32 @@ func quickJSProgramWith(t *testing.T, transform func([]byte) []byte, worker bool
 		t.Fatal(err)
 	}
 	copyInput("/tmp/probe.c", transform(probe))
+	seal, err := os.ReadFile(scriptWorkerDir + "seal.h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyInput("/tmp/seal.h", seal)
 	entry := "probe.c"
 	if worker {
-		content, err := os.ReadFile("testdata/quickjs_worker.c")
+		content, err := os.ReadFile(scriptWorkerDir + "worker.c")
 		if err != nil {
 			t.Fatal(err)
 		}
 		copyInput("/tmp/worker.c", content)
 		entry = "worker.c"
 	}
-	recipe, err := os.ReadFile("testdata/build-quickjs-probe.sh")
+	recipe, err := os.ReadFile(scriptWorkerDir + "build.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
 	copyInput("/tmp/build-probe.sh", recipe)
 	build := `cd /tmp && tar --no-same-owner -xf source.tar.xz && /bin/sh /tmp/build-probe.sh /tmp ` + entry + ` /tmp/probe`
+	if artifact := prebuiltWorkerArtifact(t, worker); artifact != nil {
+		// Pinned release artifact (digest recorded in release.json): install it
+		// instead of recompiling. Sources stay extracted for relocated rebuilds.
+		copyInput("/tmp/probe", artifact)
+		build = `cd /tmp && tar --no-same-owner -xf source.tar.xz && chmod 755 /tmp/probe`
+	}
 	if out, err := run("exec", name, "/bin/sh", "-c", build); err != nil {
 		t.Fatalf("build probe: %v %s", err, out)
 	}
@@ -211,4 +222,29 @@ func TestQuickJSNativeChildExecDenied(t *testing.T) {
 		}
 	}
 	t.Logf("sealed child-creation/limit-change observations: %s", out)
+}
+
+// prebuiltWorkerArtifact returns BRAIN_SCRIPT_WORKER_ARTIFACT only for worker
+// builds and only when its SHA-256 equals a digest recorded in release.json;
+// any other file fails the test rather than silently substituting a binary.
+func prebuiltWorkerArtifact(t *testing.T, worker bool) []byte {
+	t.Helper()
+	path := os.Getenv("BRAIN_SCRIPT_WORKER_ARTIFACT")
+	if path == "" || !worker {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	digest := hex.EncodeToString(sum[:])
+	for _, recorded := range loadScriptWorkerRelease(t).Outputs {
+		if recorded == digest {
+			t.Logf("using pinned prebuilt worker artifact %s", digest)
+			return data
+		}
+	}
+	t.Fatalf("BRAIN_SCRIPT_WORKER_ARTIFACT digest %s is not recorded in release.json", digest)
+	return nil
 }

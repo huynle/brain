@@ -106,6 +106,11 @@ type launchReport struct {
 // frame (it must validate via ProtocolSession and quarantine output; it is not
 // authorization) and may answer calls through reply. The returned error is the
 // cancellation cause when the worker was killed.
+//
+// A nil error means only that the worker exited 0 with intact framing. It does
+// NOT mean a terminal result was produced: callers must separately require the
+// ProtocolSession terminal outcome (WorkerMessage.Done or Failure) and treat
+// its absence as a failed execution.
 func (l *workerLauncher) run(ctx context.Context, source string, accept func(frame Frame, reply func(Frame) error) error) (launchReport, error) {
 	var report launchReport
 	if source == "" || len(source) > launcherMaxSourceBytes || !utf8.ValidString(source) {
@@ -140,7 +145,7 @@ func (l *workerLauncher) run(ctx context.Context, source string, accept func(fra
 		defer writeMu.Unlock()
 		return WriteFrame(stdin, f)
 	}
-	var written atomic.Bool
+	var written, sent atomic.Bool
 	sink := &frameSink{remaining: launcherWireBudget, cancel: cancel, accept: func(f Frame) error {
 		if !written.Load() {
 			return ErrProtocol // nothing may precede the source frame
@@ -156,11 +161,15 @@ func (l *workerLauncher) run(ctx context.Context, source string, accept func(fra
 			return err
 		}
 		report.attested = true
-		written.Store(true)
-		return reply(Frame{Version: 1, Kind: "call", Sequence: 1, Payload: encoded})
+		written.Store(true) // admit worker frames once the source write begins
+		if err := reply(Frame{Version: 1, Kind: "call", Sequence: 1, Payload: encoded}); err != nil {
+			return err
+		}
+		sent.Store(true)
+		return nil
 	})
 	report.waited = cmd.ProcessState != nil
-	report.sourceWritten = written.Load() && report.attested
+	report.sourceWritten = sent.Load()
 	if err == nil {
 		err = sink.finish()
 	}

@@ -2,6 +2,7 @@ package scriptexec
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"reflect"
 	"strings"
@@ -51,6 +52,8 @@ func TestCheckProtectedEnvelopeBounds(t *testing.T) {
 		"invalid json":  {Result: []byte("{")},
 		"empty result":  {},
 		"empty log":     {Result: []byte("1"), Logs: [][]byte{{}}},
+		"invalid log":   {Result: []byte("1"), Logs: [][]byte{[]byte(`{"level":`)}},
+		"invalid plan":  {Result: []byte("1"), Plan: []byte(`[1,`)},
 		"digest format": {Result: []byte("1"), Digests: []string{"not-hex"}},
 	}
 	for name, envelope := range cases {
@@ -158,14 +161,30 @@ func TestConsumedKeyMAC(t *testing.T) {
 		{keyNamespace{"t", "p", "other", 1}, "key-1"},
 		{keyNamespace{"t", "p", "script.execute", 2}, "key-1"},
 		{base, "key-2"},
-		// Length-prefixing prevents concatenation ambiguity.
-		{keyNamespace{"tp", "", "script.execute", 1}, "key-1"},
 	}
 	for _, v := range variants {
 		other, err := consumedKeyMAC(testMACKey(), v.ns, v.key)
 		if err == nil && other == a {
 			t.Errorf("MAC collision for %+v %q", v.ns, v.key)
 		}
+	}
+	// Length prefixes: both namespaces are valid (non-empty fields) and their
+	// naive concatenations are identical, so only the prefixes separate them.
+	left, errL := consumedKeyMAC(testMACKey(), keyNamespace{"t", "pX", "e", 1}, "k")
+	right, errR := consumedKeyMAC(testMACKey(), keyNamespace{"tp", "X", "e", 1}, "k")
+	if errL != nil || errR != nil || left == right {
+		t.Fatalf("length-prefix ambiguity: %v %v equal=%v", errL, errR, left == right)
+	}
+	keyShift, _ := consumedKeyMAC(testMACKey(), keyNamespace{"t", "p", "ek", 1}, "ey")
+	keyBase, _ := consumedKeyMAC(testMACKey(), keyNamespace{"t", "p", "e", 1}, "key")
+	if keyShift == keyBase {
+		t.Fatal("endpoint/key boundary ambiguity")
+	}
+	// Golden value pins the exact construction (domain label
+	// "brain-script-consumed-key-v1", 8-byte big-endian length prefixes,
+	// big-endian epoch): dropping or changing any part changes it.
+	if got := hex.EncodeToString(a[:]); got != goldenConsumedKeyMAC {
+		t.Fatalf("consumed-key MAC construction changed: %s", got)
 	}
 	if _, err := consumedKeyMAC(make([]byte, 31), base, "key-1"); !errors.Is(err, errPolicyRefused) {
 		t.Fatal("short MAC key accepted")
@@ -196,6 +215,10 @@ func TestReplayDecision(t *testing.T) {
 		{"live match returns stored", &live, "f1", replayReturnStored, ""},
 		{"live mismatch conflicts", &live, "f2", replayConflict, "idempotency_key_conflict"},
 		{"in progress never reruns", &replayRecord{State: replayInProgress, Fingerprint: "f1", ExpiresAt: now.Add(time.Hour)}, "f1", replayConflict, "idempotency_key_in_progress"},
+		// An abandoned claim past its deadline-anchored expiry is retired: it is
+		// neither re-admitted nor reported as still in progress.
+		{"expired in progress is retired", &replayRecord{State: replayInProgress, Fingerprint: "f1", ExpiresAt: now}, "f1", replayRetired, "idempotency_key_retired"},
+		{"long-expired in progress is retired", &replayRecord{State: replayInProgress, Fingerprint: "f1", ExpiresAt: now.Add(-48 * time.Hour)}, "f1", replayRetired, "idempotency_key_retired"},
 		{"exactly expired is retired", &replayRecord{State: replayPayloadLive, Fingerprint: "f1", ExpiresAt: now}, "f1", replayRetired, "idempotency_key_retired"},
 		{"tombstone retired same fp", &replayRecord{State: replayTombstoned}, "f1", replayRetired, "idempotency_key_retired"},
 		{"tombstone retired other fp", &replayRecord{State: replayTombstoned}, "zzz", replayRetired, "idempotency_key_retired"},
@@ -278,3 +301,5 @@ func TestPolicyRefusalIsContentFree(t *testing.T) {
 		t.Fatal("replay decision leaked content")
 	}
 }
+
+const goldenConsumedKeyMAC = "7ab40b0a87d306f2bee405c3665cc2b879b6df7986e9a0e1d7fa23411e49adf5"

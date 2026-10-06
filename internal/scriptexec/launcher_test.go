@@ -1,6 +1,7 @@
 package scriptexec
 
 import (
+	"context"
 	"errors"
 	"runtime"
 	"strings"
@@ -151,5 +152,30 @@ func TestCheckWorkerFileMode(t *testing.T) {
 		if err := checkWorkerFileFacts(f, euid); !errors.Is(err, errWorkerPin) {
 			t.Errorf("%s accepted", name)
 		}
+	}
+}
+
+// Default (non-opt-in) source-limit check: refused before any binary is
+// opened, on every OS. Exactly 32KiB passes the size gate and fails later
+// for platform/pin reasons instead.
+func TestWorkerLauncherSourceLimit(t *testing.T) {
+	l := &workerLauncher{cfg: validLauncherConfig()}
+	deny := func(Frame, func(Frame) error) error { return errors.New("must not run") }
+	for name, source := range map[string]string{
+		"over 32KiB": strings.Repeat("a", launcherMaxSourceBytes+1),
+		"empty":      "",
+		"bad utf8":   "\xff",
+	} {
+		report, err := l.run(context.Background(), source, deny)
+		if !errors.Is(err, errLauncherConfig) || report.started {
+			t.Errorf("%s: err=%v report=%+v", name, err, report)
+		}
+	}
+	report, err := l.run(context.Background(), strings.Repeat("a", launcherMaxSourceBytes), deny)
+	if errors.Is(err, errLauncherConfig) || err == nil || report.started {
+		t.Fatalf("exact 32KiB source refused by the size gate: err=%v", err)
+	}
+	if launcherMaxSourceBytes != 32<<10 {
+		t.Fatal("launcher source limit must equal the worker SOURCE_LIMIT (32KiB)")
 	}
 }

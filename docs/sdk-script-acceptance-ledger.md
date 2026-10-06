@@ -11,7 +11,8 @@ Parent/user explicitly allocated **A discovery** and **B stdio SDK convergence**
 in `vggevclc`, `ap90gj4e`, and `zsief5fj`. Earlier unanswered-allocation notes below
 are historical, not current blockers. Sole continuation writer is
 `ses_eee8ce506ffeycyBFJAGoE0lPz`, starting clean `b6f0c1ff` with no dispatch lease.
-Implementation/verification is in progress; allocation is not delivery evidence.
+A/B now have bounded author implementation/verification evidence below; allocation
+and author checks are not independent acceptance or whole-feature delivery.
 
 **LINUX-FIRST-20261006:** server execution targets Linux; macOS clients connect
 remotely. Native macOS execution remains unsupported/deferred, not a Linux-first
@@ -39,7 +40,7 @@ A row can have both an independently implementable part and a blocked compositio
 | OpenAPI inventory and both SDK namespaces | V/R: 104 operations, router inventory, external Go module and installed Node fixtures | Audit every operation's effect/resource/precondition/provider metadata; remove stale matrix wording; guard completeness. Task/automation creation uses entries, not new routes. |
 | SDK transport, immutable identity, pagination, errors | V/R: cancellation/rebind, no ambiguous write replay, bounded responses/SSE, typed errors and error-only conflicts, deterministic generated DTOs | Audit API compatibility/version failure, examples and release docs; no retry is safer than inventing safe retry. Existing legacy route ambiguity must remain disclosed. |
 | Capability/version discovery | V: A implemented; author evidence in final section | Authenticated single-mode discovery plus public Go/TS negotiation, wired IDs, independent script flags, old-server/auth refusal and no hidden metadata. Parent independent acceptance remains separate. |
-| Stdio MCP SDK convergence and backward compatibility | R: B explicitly allocated; implementation in progress | New stdio constructor plus minimal composition, retain local-file support and real child stdio parity. Hosted constructor remains untouched; exact additional delegation seam request filed on ap90gj4e. |
+| Stdio MCP SDK convergence and backward compatibility | V: B shared public SDK transport implemented; author evidence below | Real authenticated child stdio preserves legacy DTO/error/local-file/discovery behavior. Hosted constructors unchanged. Four-method delegation expansion withdrawn; parent independent acceptance remains separate. |
 | Hosted MCP sealed authorized adapter | E: S10 `ap90gj4e` draft | Accepted immutable operation-specific adapter and verified caller/session binding, never loopback reconstruction. Real per-call/session/cross-principal tests. |
 | Worker async/final-expression/return semantics | V/R: `2228f1f1` compile-only grammar fallback and promise/thenable settling, no runtime reevaluation | Full JS facade/unsupported-method behavior and JSON-only boundaries; native corpus and examples. No actual service dispatch implied. |
 | Bounded console, errors and protected results | R/E: diagnostics currently discarded; result byte bound exists | Bounded quarantine and actual console fixture; source union from trusted parent only, no ambient logger or default formatting leak. Real release must use S09/S17 source-wide fence, not a new authorization callback masquerading as it. |
@@ -330,7 +331,7 @@ The original plan and acceptance criteria are not reduced to the runnable subset
 | Public Go/TS inventory, typed DTOs and contract | 104 existing operations, generated contracts, installed/external client fixtures; policy inventory tests | Repeat SDK/package/contract checks for final candidate; no script-service support inferred |
 | SDK binding, cancellation, errors, pagination | Existing SDK tests and real-handler fixtures | Compatibility decoder/old-server refusal is still runnable; discovery wire allocation is A |
 | Capability discovery | A implemented: authenticated single-mode manifest; public Go/TS exact-version negotiation; real external consumers |105 wired-operation contract, independent all-false script flags; no resource grants or script activation. Author checks recorded below; independent acceptance remains parent-owned |
-| Stdio MCP convergence | B explicitly allocated; shared public SDK transport integration in progress | Preserve legacy MCP DTO/error/local-file behavior and hosted constructor; real child parity required. This is transport convergence, not a claim all legacy DTOs became typed SDK calls |
+| Stdio MCP convergence | B implemented: same public SDK HTTPTransport used by typed SDK and stdio; authenticated real child parity passes | Legacy DTO/error/local-file adapters retained, hosted constructor unchanged. Transport convergence, not replacement of every MCP DTO with typed SDK calls; parent independent acceptance pending |
 | Hosted MCP | Unavailable | S10 sealed adapter, current principal/session binding and live cross-principal tests |
 | Full JS facade | 105-name closed surface, intrinsic Promise returns, lazy iterator refusal, get fixture, argument/error cases | **Not complete.** Per-method argument/default normalization and broader fixture mapping are runnable; actual supported service subset/preflight is C–F. Unsupported/provider/binary/stream/write operations must not gain authority from test mappings |
 | Unsupported facade corpus | 104 methods × 10 argument forms tested in real native child; zero IPC and zero hostile inspection | This proves denial only, not DTO validation or service parity |
@@ -518,7 +519,8 @@ Checklist at this stop:
 - [x] OpenAPI warning root cause established without REST compatibility changes.
 - [x] Documentation checked against plan; drafts and unavailable surfaces explicit.
 - [x] A discovery route and public SDK negotiation implemented; author evidence below.
-- [ ] B stdio public transport convergence and separate S10 hosted adapter.
+- [x] B stdio public transport convergence, bounded author evidence below.
+- [ ] Separate S10 hosted adapter and independent acceptance.
 - [ ] Live facade/preflight/CAS/dry-run/publication and current fences — C–F.
 - [ ] Allocated persistence/idempotency/audit/quota/retention/recovery — C/D.
 - [ ] Supported Linux production launcher/full integration and hosted D06 — G; native macOS deferred.
@@ -553,3 +555,53 @@ GREEN: Node43/43 full tests, four affected Go race packages, real external consu
 vet/build and lint0issues. Full-suite and final milestone SHA are reported in Brain
 `ihlslifb`; `sdk-discovery-{focused,race,suite,final-suite}.log` under the approved
 opencode temp directory retain command output. No independent PASS is claimed.
+
+## B stdio shared-transport author evidence — 2026-10-06
+
+The actual Go SDK send policy now lives in public `brain.HTTPTransport`, consumed
+by both typed SDK methods and `NewStdioSDKClient`. It binds origin/API prefix,
+rejects structural traversal/redirects, suppresses implicit mutation replay and
+calls the trusted underlying RoundTripper once. It is not a generic script API,
+an authority adapter or a response decoder. Typed SDK response bounds, retirement,
+errors and streaming remain in the typed client. Stdio retains legacy response
+decoding/error text and local-file adapters, including their existing limits;
+it does not silently acquire all typed SDK semantics.
+
+Only the stdio composition in `internal/mcpserver/server.go` changes. Its new
+constructor snapshots `BRAIN_API_TOKEN`, rejects invalid header characters and
+uses the shared transport. `APIClient`, `NewAPIClient`, `WithAuthToken`, hosted
+constructors and identity paths are untouched. No four-method delegation expansion
+was consumed (withdrawal recorded in `ap90gj4e`). No storage authority is selected
+by clients; current local-store fixtures remain compatibility evidence only.
+
+RED established out-of-binding requests reaching transport, replayable mutations,
+typed/stdio clients not consuming the public transport, and missing stdio bearer
+causing child save401. GREEN real child MCP over stdin/stdout now proves stored-token
+save/recall, SDK-visible content, matching missing-entry errors, local upload,
+byte-exact inline/file download, local PRD discovery, read-only write refusal and
+unauthenticated read refusal. Additional tests cover in-flight cancellation,
+auth-disabled requests, immutable stdio token snapshots, explicit copied tokens,
+hosted ignoring ambient credentials, single-send failure and redirect refusal.
+
+The local discovery test initially failed because macOS canonical cwd used
+`/private/var` while fixture HOME used `/var`; diagnostic output showed the scan
+path duplicating both. Canonicalizing fixture HOME fixed it. Production discovery
+is unchanged; this is not a claim that its pre-existing path-spelling behavior is
+fixed for arbitrary environments.
+
+Verification: full45/45 tested Go packages pass (many cached, storage104.559s).
+Fresh affected race packages pass: SDK1.524s, MCP4.090s, MCPserver1.621s,
+SDKcontract6.768s including isolated external Go/offline-installed Node consumers.
+Node43/43 tests pass, typecheck/build pass, pinned Go/TS generation has zero diff.
+OpenAPI retains its one existing ambiguous-task-path warning. Fresh vet/build pass;
+shared-cache lint initially returned stale deleted-worktree diagnostics, then an
+isolated lint cache reports0issues. Logs `sdk-stdio-{suite,race}.log` are under the
+approved opencode temporary directory.
+
+Nested B-only verification was unavailable (subagent depth limit1). No independent
+PASS is claimed; the earlier worker-review restriction was not retried or bypassed.
+C–F DB-AUTH-aligned permission/schema/persistence/fences/ACL/preflight/effects,
+Linux production launcher/full integration and separate hosted S10/D06 gates remain.
+Native macOS execution stays deferred/unsupported; macOS remote-client evidence is
+not server confinement evidence. No activation, merge, push, deployment or task
+completion; manual reservation and `prompt_only` remain.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,7 +68,12 @@ func New(cfg Config) (*Client, error) {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Client{base: strings.TrimRight(u.String(), "/"), token: cfg.Token, tenant: cfg.Tenant, generation: cfg.AuthGeneration, limit: cfg.MaxResponseBytes, ctx: ctx, cancel: cancel, http: &http.Client{Timeout: cfg.Timeout, Transport: cfg.Transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	transport, err := NewHTTPTransport(cfg.BaseURL, cfg.Transport)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	return &Client{base: strings.TrimRight(u.String(), "/"), token: cfg.Token, tenant: cfg.Tenant, generation: cfg.AuthGeneration, limit: cfg.MaxResponseBytes, ctx: ctx, cancel: cancel, http: &http.Client{Timeout: cfg.Timeout, Transport: transport}}, nil
 }
 
 // Close cancels outstanding requests and permanently retires this binding.
@@ -85,19 +91,6 @@ func (c *Client) Rebind(cfg Config) (*Client, error) {
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body any, q url.Values, opts RequestOptions, out any) error {
-	// Validate before any URL parser or intermediary can normalize segments.
-	for decoded := path; ; {
-		for _, segment := range strings.FieldsFunc(decoded, func(r rune) bool { return r == '/' || r == '\\' }) {
-			if segment == "." || segment == ".." {
-				return &Error{Code: "invalid_request"}
-			}
-		}
-		next, err := url.PathUnescape(decoded)
-		if err != nil || next == decoded {
-			break
-		}
-		decoded = next
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -128,19 +121,6 @@ func (c *Client) request(ctx context.Context, method, path string, body any, q u
 	if err != nil {
 		return &Error{Code: "invalid_request"}
 	}
-	// An Idempotency-Key makes buffered POST bodies replayable to net/http.
-	// Legacy Brain endpoints do not promise idempotency, so never opt a write
-	// into the transport's implicit retry after a lost response.
-	if method != http.MethodGet && method != http.MethodHead {
-		req.GetBody = nil
-		// A nil/NoBody remains replayable when Idempotency-Key is present.
-		// Use a non-rewindable empty stream as well for bodyless mutations.
-		// Its unknown length also prevents the transport's nothing-written retry.
-		if req.Body == nil || req.Body == http.NoBody {
-			req.Body = io.NopCloser(strings.NewReader(""))
-			req.ContentLength = -1
-		}
-	}
 	req.Header.Set("Accept", "application/json")
 	if stream, ok := out.(*eventStream); ok {
 		req.Header.Set("Accept", "text/event-stream")
@@ -168,14 +148,14 @@ func (c *Client) request(ctx context.Context, method, path string, body any, q u
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		var policy *Error
+		if errors.As(err, &policy) {
+			return policy
+		}
 		return &Error{Code: "transport_error"}
 	}
 	defer resp.Body.Close()
 	e := &Error{Status: resp.StatusCode, RequestID: resp.Header.Get("X-Request-ID")}
-	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		e.Code = "redirect_refused"
-		return e
-	}
 	if stream, ok := out.(*eventStream); ok && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return stream.read(ctx, c.ctx, resp, c.limit)
 	}

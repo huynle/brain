@@ -247,8 +247,11 @@ exchange; other methods fail with a fixed `unsupported_operation` before inspect
 arguments. Nonempty string IDs are required without coercion; transport options
 and extra arguments fail with `invalid_arguments`. These fixed exceptions have
 null prototypes and contain no submitted content. All methods remain unavailable
-to real clients. Methods now return intrinsic Promises, including rejected
-Promises for unsupported/invalid arguments; await/then/catch work. IPC is still
+to real clients. Ordinary methods return intrinsic Promises, including rejected
+Promises for unsupported/invalid arguments; await/then/catch work. The iterator
+returns an async generator: first `next()` rejects with `unsupported_operation`,
+subsequent `next()` completes; `return()` before iteration closes without rejection.
+It does not inspect query/options or issue calls. IPC is still
 serial and blocking inside the test worker, not concurrent RPC. This is
 name/denial/Promise parity, **not full service/argument/default parity**, approved
 script support or a broker registry.

@@ -60,7 +60,7 @@ let denied=0;
 for(const path of expected) {
  if(path==="entries.get") continue;
  const parts=path.split(".");const fn=parts.length===1?brain[parts[0]]:brain[parts[0]][parts[1]];
- try { await fn(); throw "unexpected permission"; }
+ try { if(path==="entries.iterate") await fn().next(); else await fn(); throw "unexpected permission"; }
  catch(e) { if(e.code!=="unsupported_operation"||e.message!=="unsupported_operation") throw "unsafe error"; denied++; }
 }
 if(brain.request!==undefined||brain.fetch!==undefined||brain.entries.constructor!==undefined) throw "escape hatch";
@@ -122,6 +122,9 @@ func TestQuickJSFacadeArgumentBoundary(t *testing.T) {
 			{"promise result", `const p=brain.entries.get("one");({promise:p instanceof Promise,value:await p.then(x=>x.value)});`, `{"promise":true,"value":42}`, true},
 			{"promise error", `let sync=false,p;try{p=brain.search({});}catch(e){sync=true;}({sync,code:await p.catch(e=>e.code)});`, `{"sync":false,"code":"unsupported_operation"}`, false},
 			{"promise validation", `let sync=false,p;try{p=brain.entries.get();}catch(e){sync=true;}({sync,code:await p.catch(e=>e.code)});`, `{"sync":false,"code":"invalid_arguments"}`, false},
+			{"lazy async iterator", `const it=brain.entries.iterate();const same=it[Symbol.asyncIterator]()===it;let code;try{await it.next();}catch(e){code=e.code;}({same,code,done:(await it.next()).done});`, `{"same":true,"code":"unsupported_operation","done":true}`, false},
+			{"iterator early close", `const it=brain.entries.iterate();await it.return();({done:(await it.next()).done});`, `{"done":true}`, false},
+			{"iterator for await denial", `let n=0,code;const arg=new Proxy({},{get(){n++;throw "private";},ownKeys(){n++;throw "private";}});try{for await(const x of brain.entries.iterate(arg,arg)){n++;}}catch(e){code=e.code;}({n,code});`, `{"n":0,"code":"unsupported_operation"}`, false},
 			{"optional undefined", `(await brain.entries.get("one",undefined)).value;`, `42`, true},
 			{"empty identifier", `try{await brain.entries.get("");}catch(e){e.code;}`, `"invalid_arguments"`, false},
 			{"missing identifier", `try{await brain.entries.get();}catch(e){e.code;}`, `"invalid_arguments"`, false},

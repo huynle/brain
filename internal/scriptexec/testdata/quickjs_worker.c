@@ -162,6 +162,17 @@ static JSValue facade_method(JSContext *ctx, JSValueConst self, int argc, JSValu
     if(JS_IsException(settled)){JS_FreeValue(ctx,promise);return settled;}
     JS_FreeValue(ctx,settled);return promise;
 }
+/* Capture only the fixed denial function, before any submitted code runs.
+ * Construction and return() before next() do not reject or examine arguments. */
+static JSValue denied_iterator(JSContext *ctx) {
+    const char *source="(deny => async function* iterate(){deny();})";
+    JSValue factory=JS_Eval(ctx,source,strlen(source),"<facade>",JS_EVAL_TYPE_GLOBAL);
+    if(JS_IsException(factory))return factory;
+    JSValue deny=JS_NewCFunction(ctx,unsupported_operation,"deny",0);
+    JSValue iterator=JS_Call(ctx,factory,JS_UNDEFINED,1,&deny);
+    JS_FreeValue(ctx,deny);JS_FreeValue(ctx,factory);
+    return iterator;
+}
 static int install_brain(JSContext *ctx, JSValueConst global) {
     const struct { const char *space; const char *methods; } surface[] = {
         {"", "health inject search"},
@@ -189,7 +200,8 @@ static int install_brain(JSContext *ctx, JSValueConst global) {
             char name[32];if(n>=sizeof(name))return -1;
             memcpy(name,p,n);name[n]=0;
             int fixture=!strcmp(surface[i].space,"entries")&&!strcmp(name,"get");
-            JSValue fn=JS_NewCFunctionMagic(ctx,facade_method,name,fixture?1:0,JS_CFUNC_generic_magic,fixture);
+            JSValue fn=(!strcmp(name,"iterate"))?denied_iterator(ctx):
+                JS_NewCFunctionMagic(ctx,facade_method,name,fixture?1:0,JS_CFUNC_generic_magic,fixture);
             if(JS_SetPropertyStr(ctx,target,name,fn)<0)return -1;
             p=end?end+1:p+n;
         }

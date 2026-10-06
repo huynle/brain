@@ -271,3 +271,28 @@ Independent review remains pending under the previously recorded tooling blocker
 Fresh S10 and coordinator recalls still show no A/B allocation acknowledgement.
 Coordinator now has unrelated24f1f0cc reminder integration candidate; it is not
 script schema/permission/output/adapter allocation and was not imported.
+
+## Approved-base local gate and iterator correction
+
+Parent explicitly approved `7bea47d13bb99502035f51e32dd0c10e523581db` for this
+local historical gate: freshly verified main and origin/main equal that SHA,
+feature HEAD was `f467b1a5fea1b46aac5898ece2d810ca8b1382c5`, and merge-base
+equals that same unchanged target. This is not a candidate baseline. If target
+integration changes or a PR opens, resolve the actual reviewed integration/PR
+base again; do not automatically reuse this pin.
+
+`CI=1 GOMAXPROCS=2 BRAIN_STORAGE_RATCHET_BASE=7bea47d13bb99502035f51e32dd0c10e523581db just tenant-isolation-gate`
+exited **0**. Complete output read: full storage110.793s, tenant0.923s,
+selected apiserver17.466s/indexer0.359s; focused race storage12.663s,
+apiserver179.498s/indexer1.668s. No goldens, guards or production tenant files
+changed. Log: `sdk-historical-tenant-gate.log` in approved opencode temp.
+This is author-owned local historical evidence, NOT independent acceptance.
+
+Facade comparison to the actual TypeScript client found `entries.iterate`
+incorrectly returning a rejected Promise. Three real native RED cases established
+the mismatch. It now returns a lazy async generator that rejects on first next,
+then completes; early return closes without rejection; for-await reports the fixed
+unsupported code without inspecting hostile query/options. The operation remains
+unsupported and issues no IPC. Native facade inventory plus14cases pass27.237s
+under host race; full45 Go tested packages pass (many cached, storage153.044s).
+This corrects a return-shape gap, not full argument/default/service parity.

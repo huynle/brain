@@ -68,8 +68,13 @@ nullable timestamp DTOs have real JSON round-trip parity tests.
 `api/operation-policy.yaml` now records all104 operations' legacy scope, required
 future resource checks, preconditions, conservative effects and provider class.
 `TestOperationPolicyInventoryIsCompleteAndUnavailable` checks contract/matrix
-coverage and scope agreement, including read-scoped attention writes and provider
-operations. Global profile/scripting/preflight/telemetry fields apply to every row.
+coverage and scope agreement, including read-scoped attention writes.
+`TestOperationPolicyProviderEffectsArePinnedAndDerived` pins all 105 provider
+values (closed `+`-joined token set). It also derives the set of
+`internal/service` functions reaching embeddings (synchronous or background),
+entry `Save`/`Update` or Web Push, and fails until each new one is reviewed.
+Event fan-out to subscribed webhooks and event-triggered automations is
+declared once as `event_fanout` (corrected 2026-10-07, review `zgck7qp2`). Global profile/scripting/preflight/telemetry fields apply to every row.
 This is descriptive inventory, **not an authorization registry**: all script
 exposure is false, all dry-run validators are unimplemented and inherited request
 telemetry is unreviewed. Provider `none` excludes inherited auth/request telemetry;

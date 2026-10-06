@@ -96,7 +96,8 @@ func TestOperationPolicyInventoryIsCompleteAndUnavailable(t *testing.T) {
 			t.Fatalf("read scope must not imply effect-free: %s", id)
 		}
 	}
-	if policy.Operations["attachments.extract"][4] != "extraction_provider" || policy.Operations["search.query"][4] != "embedding_for_semantic_hybrid" {
+	// Full per-row provider pinning lives in policy_provider_test.go.
+	if !strings.Contains(policy.Operations["attachments.extract"][4], "extraction_provider") || policy.Operations["search.query"][4] != "embedding_for_semantic_hybrid" {
 		t.Fatal("provider-shaped reads/actions lost classification")
 	}
 	if policy.Operations["entries.move"][2] != "project_only_no_revision" {

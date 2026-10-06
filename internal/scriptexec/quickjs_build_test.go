@@ -12,7 +12,7 @@ import (
 
 func TestQuickJSExperimentalBuildHardening(t *testing.T) {
 	_, err := quickJSProgram(t, "", true, func(host, name string) ([]byte, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second) // trusted build or cross-build under shared-host load; prefer BRAIN_SCRIPT_WORKER_ARTIFACT
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "docker", "--host", host, "exec", name, "/bin/sh", "-c", "readelf -h -l -d -W /tmp/probe; readelf -s -W /tmp/probe; /usr/bin/cc --version")
 		out, err := cmd.CombinedOutput()

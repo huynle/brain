@@ -146,3 +146,22 @@ func TestMutationOutcomeSequenceStopsWithoutInventingReceipts(t *testing.T) {
 		}
 	}
 }
+
+// Decision (review zgck7qp2): an empty plan and an empty outcome list are
+// VALID. A read-only or pure-compute script has zero mutations; its dry-run
+// plan is empty and its summary is the zero value. Bounds still reject every
+// non-empty malformed sequence.
+func TestEmptyPlanAndOutcomesAreValidZeroMutation(t *testing.T) {
+	limits := ProtocolLimits{100, 65536, 1 << 20}
+	for _, plan := range [][]plannedStep{nil, {}} {
+		if err := validatePlanShape(plan, limits); err != nil {
+			t.Fatalf("empty plan rejected: %v", err)
+		}
+	}
+	for _, dryRun := range []bool{true, false} {
+		summary, err := summarizeMutationOutcomes(dryRun, nil, 100)
+		if err != nil || summary != (outcomeSummary{}) {
+			t.Fatalf("dryRun=%v empty outcomes: summary=%+v err=%v", dryRun, summary, err)
+		}
+	}
+}

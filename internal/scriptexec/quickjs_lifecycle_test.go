@@ -114,7 +114,7 @@ func TestQuickJSWorkerSupervisorCancellationReapsBeforeExit(t *testing.T) {
 func runLifecycleObserver(t *testing.T, observer string) []byte {
 	t.Helper()
 	out, err := quickJSProgram(t, "", true, func(host, name string) ([]byte, error) {
-		buildCtx, cancelBuild := context.WithTimeout(context.Background(), 90*time.Second)
+		buildCtx, cancelBuild := context.WithTimeout(context.Background(), 600*time.Second) // trusted build or cross-build under shared-host load; prefer BRAIN_SCRIPT_WORKER_ARTIFACT
 		defer cancelBuild()
 		build := exec.CommandContext(buildCtx, "docker", "--host", host, "exec", "-i", name, "/bin/sh", "-c", `cat > /tmp/observer.c && /bin/sh /tmp/build-probe.sh /tmp observer.c /tmp/observer`)
 		worker, e := os.ReadFile(scriptWorkerDir + "worker.c")

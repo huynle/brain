@@ -126,7 +126,7 @@ func runManagedFixture(t *testing.T, observeDeath bool) {
 	t.Helper()
 	_, err := quickJSProgram(t, "", true, func(host, name string) ([]byte, error) {
 		binary := filepath.Join(t.TempDir(), "managed.test")
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second) // trusted build or cross-build under shared-host load; prefer BRAIN_SCRIPT_WORKER_ARTIFACT
 		defer cancel()
 		build := exec.CommandContext(ctx, "go", "test", "-c", "-o", binary, ".")
 		build.Env = append(os.Environ(), "GOOS=linux", "GOARCH=arm64", "CGO_ENABLED=0")

@@ -5,6 +5,71 @@ This ledger supersedes stale pending counts in earlier handoffs, not the plan.
 Manual exclusive ownership, blocked dispatch reservation and `prompt_only` remain.
 No enablement, merge, push, deployment or task completion is authorized.
 
+## FINAL STATUS — 2026-10-07 (read this first; sections below are dated history)
+
+Branch `sdk-script-execution-v1`, writer `ses_eee03b0f7ffeQnbOPdx1BA4D9T`. Main
+`fe16c297` merged in `74283be5` (merge commit, no rebase). Script execution
+stays disabled: no route, config key, capability or caller. Not merged to main;
+the task stays blocked as a manual reservation.
+
+**Integration checks at `5f4cf6af`:**
+
+- **Fast checks:** `just vet` and `just build` OK; `just lint` 0 issues (isolated
+  cache).
+- **Affected packages, `-race`:** 8/8 pass — `sdk/brain`, `sdkcontract` (+bootstrap;
+  real external Go/Node clients ran, no skips), `mcp`, `mcpserver`, `api`, `sse`,
+  `scriptexec`.
+- **TypeScript SDK:** typecheck OK; tests 43/43, 0 skipped; OpenAPI valid
+  (1 known legacy ambiguous-path warning); regeneration 0 diff.
+- **Full Go suite:** `CI=1 GOMAXPROCS=2 go test -p 1 ./...` → 45/45 packages pass,
+  0 fail.
+- **Storage ratchet:** `BRAIN_STORAGE_RATCHET_BASE=fe16c297…` (the merged main), so
+  `TestProductionUnscopedStorageBaseline` ran and passed instead of skipping.
+
+**Complete and independently reviewed (PASS):**
+
+- `31c9d998..91c7b3e9` — approved U1–U3 policy enforcement plus the disabled
+  Linux-first attested launcher (`wdyetyqh`).
+- `91c7b3e9..b30ce8cd` — release packaging (`runtime/script-worker`, pin
+  `f81221bb…1972`, rebuilt independently), pooled concurrency, init reaping, gap
+  tests (`85280tcu`).
+- `b30ce8cd..a098fa16` — PDEATHSIG isolation, `sourceWritten` regression, opt-in
+  systemd test (`1ikgd5xs`).
+- Earlier SDK slice through `2f265f3d` (bounded PASS `xj7svqw3`).
+
+**Complete, awaiting independent review:**
+
+- `a471883d`: review FAILED (`twxijkp7`), fixed in **`a31347ac`**. Survivors are
+  now judged before cleanup. On Colima the `KillMode=process` mutation fails
+  (holder alive, `cgroup_procs=1`) and still leaves 0 units/PIDs; the baseline
+  passes.
+- `5f4cf6af` — portable `Seccomp_filters` parser test (fixes the darwin lint
+  "unused" finding).
+- `74283be5` — main merge.
+- A discovery `248f2fab` and B stdio `42802cfb` (author-verified).
+- C–F packet `ef83b9fc` (docs).
+- Inactive worker/SDK commits after `2f265f3d` through `b6f0c1ff`. Their earlier
+  review was blocked by a provider flag and was not retried.
+- **x86_64:** the reproducible amd64 build `9564f7a7…d552` exists, unpinned;
+  execution is running separately on the homelab.
+
+**Blocked on other workstreams (exact interface needed):**
+
+| Owner / ID | State | Interface this SDK needs |
+|---|---|---|
+| DB.1 `hxcyvu0i` | rev 4 design, no DDL | **T1:** content-successor primitive allocation reusing DB1 methods/receipts/revision history; DB1 allocates extension ownership/profile (no guessed version). **T2:** one fixed transaction owning current auth/ACL/CAS + content + receipt + operation outcome + allocated outbox. **T4:** retention/erasure classes for receipt/hash/source/replay data plus irreversible admission-epoch retirement (backs U2 tombstones). **T5:** authoritative reservations for the single Linux coordinator. |
+| S09 `i8aurh42` | draft | **T2/T3:** same-writer check+commit fence, bounded read-frame/final-output release ordered with revoke, and a security-journal record. Admission-only fences are not enough. |
+| P6 `yp7llda1` | blocked (repair `21d2d1e7`) | **T6/U3:** explicit `script:execute` successor and issuance, bound to a verified owner/admin human principal and auth generation; credential33 unchanged; OAuth `mcp`/`admin:*` do not grant it. |
+| S10 `ap90gj4e` | open | Hosted MCP: an operation-specific, per-call/session authorized in-process adapter, never loopback identity reconstruction. Stdio (B) is done. |
+| P8 `8gxc3qi1` | draft | **F/T3/T6:** source-limited delegation/reservation/outbox/result APIs plus reusable, side-effect-free typed service preflight for each supported write (needed for dry-run). |
+| S16/S17/S18 (E) | draft | Live current resource/source-set ACL and publication decision under the S09 fence. |
+| D06 | separate gate | Reviewed VM isolation for hosted multi-tenant execution; local container/VM evidence never substitutes. |
+
+**Next after those land:** compose the service-backed broker (preflight →
+fenced commit → protected release), add the REST/SDK/MCP `brain_script_execute`
+surfaces, and run real multi-read/write, dry-run, revoke and timeout flows. Then
+independent acceptance and parent integration into main.
+
 ## Current controlling disposition — 2026-10-06
 
 Parent/user explicitly allocated **A discovery** and **B stdio SDK convergence**

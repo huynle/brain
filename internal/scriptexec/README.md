@@ -275,9 +275,12 @@ isolation.
   `BRAIN_SCRIPT_SYSTEMD_SHELL` (e.g. `colima ssh --`), a shared
   `BRAIN_SCRIPT_SYSTEMD_DIR` and a recorded `BRAIN_SCRIPT_WORKER_ARTIFACT`. It
   runs the stand-in as a transient unit (`KillMode=control-group`) under
-  systemd as PID 1 and SIGKILLs the main PID. The worker must be `gone`, the
-  unit must end with `result=signal`, and none of the run's server/worker/holder
-  PIDs or its unit may be left behind. Observed on a local Colima VM with systemd 255.
+  systemd as PID 1 and SIGKILLs the main PID. Right after that kill, before any
+  cleanup, the server, worker and holder must all be dead and the unit's
+  `cgroup.procs` empty; the unit must end with `result=signal`. Then the trapped
+  cleanup (`systemctl kill --kill-whom=all`, stop, reset-failed) must leave no
+  unit or PID behind. The `KillMode=process` mutation fails this test (holder
+  alive) and still leaves nothing behind (`a31347ac`). Observed on a local Colima VM with systemd 255.
   In this topology the cgroup kill and PDEATHSIG both end the worker;
   PDEATHSIG alone is isolated by the container test.
 - **Process name:** the worker's `comm` shows the descriptor number (e.g. `6`)

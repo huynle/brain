@@ -3,6 +3,7 @@ package scriptexec
 import (
 	"bytes"
 	"encoding/json"
+	"sync"
 	"testing"
 )
 
@@ -43,6 +44,49 @@ func TestProtocolTerminalFailure(t *testing.T) {
 				t.Fatal("success after error accepted")
 			}
 		})
+	}
+}
+
+func TestProtocolCompetingTerminalOutcomes(t *testing.T) {
+	s, _ := NewProtocolSession(ProtocolLimits{100, 65536, 1 << 20})
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	accepted := make(chan WorkerMessage, 2)
+	for _, f := range []Frame{{1, "result", 1, json.RawMessage(`42`)}, {1, "error", 1, json.RawMessage(`{"code":"script_failed"}`)}} {
+		wg.Add(1)
+		go func(f Frame) {
+			defer wg.Done()
+			<-start
+			if m, err := s.Accept(f); err == nil {
+				accepted <- m
+			}
+		}(f)
+	}
+	close(start)
+	wg.Wait()
+	close(accepted)
+	count := 0
+	for m := range accepted {
+		count++
+		if !m.Done || (m.Failure == nil) == (m.Result == nil) {
+			t.Fatal("ambiguous outcome")
+		}
+	}
+	if count != 1 {
+		t.Fatalf("terminal winner count%d", count)
+	}
+}
+
+func TestProtocolPendingCallRefusesTerminalError(t *testing.T) {
+	s, _ := NewProtocolSession(ProtocolLimits{100, 65536, 1 << 20})
+	if _, err := s.Accept(Frame{1, "call", 1, json.RawMessage(`{"operation":"entries.get","arguments":{"id":"one"}}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Accept(Frame{1, "error", 1, json.RawMessage(`{"code":"script_failed"}`)}); err == nil {
+		t.Fatal("error bypassed pending call")
+	}
+	if _, err := s.Reply(json.RawMessage(`42`)); err == nil {
+		t.Fatal("pending error did not retire")
 	}
 }
 

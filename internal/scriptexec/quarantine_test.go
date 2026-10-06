@@ -110,3 +110,111 @@ func TestOutputQuarantineConcurrentRetirement(t *testing.T) {
 		t.Fatal("retired result accepted")
 	}
 }
+
+func TestOutputQuarantineExactSourceBudgets(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		count, width int
+	}{
+		{"source count", 1000, 8}, {"source bytes", 16, 4096},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q := newOutputQuarantine()
+			for i := 0; i < tc.count; i++ {
+				source := fmt.Sprintf("%04d", i) + strings.Repeat("x", tc.width-4)
+				if err := q.addSource(source); err != nil {
+					t.Fatalf("exact boundary rejected at%d: %v", i, err)
+				}
+				if err := q.addSource(source); err != nil {
+					t.Fatal("duplicate source double-counted")
+				}
+			}
+			if len(q.sources) != tc.count || q.sourceBytes != tc.count*tc.width {
+				t.Fatal("source accounting differs")
+			}
+			if err := q.addLog([]byte(`{"level":"log","values":["protected"]}`)); err != nil {
+				t.Fatal(err)
+			}
+			held := q.logs[0]
+			if q.addSource("overflow") == nil {
+				t.Fatal("source overflow allowed")
+			}
+			if len(q.sources) != 0 || q.sourceBytes != 0 || len(bytes.Trim(held, "\x00")) != 0 {
+				t.Fatal("source failure retained protected state")
+			}
+			if q.setResult([]byte(`42`)) == nil {
+				t.Fatal("source-overflow quarantine resurrected")
+			}
+		})
+	}
+	for _, source := range []string{"", strings.Repeat("x", 4097), "\xff"} {
+		q := newOutputQuarantine()
+		if q.addSource(source) == nil || !q.closed {
+			t.Fatal("invalid source accepted")
+		}
+	}
+}
+
+func TestOutputQuarantineExactResultAndJSONBounds(t *testing.T) {
+	for _, size := range []int{65536, 65537} {
+		q := newOutputQuarantine()
+		result := []byte(`"` + strings.Repeat("x", size-2) + `"`)
+		err := q.setResult(result)
+		if (err == nil) != (size == 65536) {
+			t.Fatalf("result boundary%d: %v", size, err)
+		}
+		if size == 65536 {
+			held := q.result
+			if q.addSource("late-source") == nil {
+				t.Fatal("late source accepted after finalization")
+			}
+			if len(bytes.Trim(held, "\x00")) != 0 {
+				t.Fatal("late source did not invalidate result")
+			}
+		}
+	}
+	for _, depth := range []int{64, 65} {
+		q := newOutputQuarantine()
+		err := q.setResult([]byte(strings.Repeat("[", depth) + "0" + strings.Repeat("]", depth)))
+		if (err == nil) != (depth == 64) {
+			t.Fatalf("depth%d boundary: %v", depth, err)
+		}
+	}
+	for _, data := range [][]byte{[]byte(`{"x":1,"\u0078":2}`), []byte("\"\xff\""), []byte(`42 true`), []byte(``)} {
+		q := newOutputQuarantine()
+		if q.setResult(data) == nil || !q.closed {
+			t.Fatal("invalid result accepted")
+		}
+	}
+}
+
+func TestOutputQuarantineFormattingDuringRetirement(t *testing.T) {
+	q := newOutputQuarantine()
+	if err := q.addSource("secret-source"); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.setResult([]byte(`"secret-result"`)); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for j := 0; j < 100; j++ {
+				if fmt.Sprintf("%#v", q) != "[protected output]" {
+					t.Error("format disclosure")
+				}
+				encoded, err := json.Marshal(q)
+				if err != nil || string(encoded) != `{"protected":true}` {
+					t.Error("JSON disclosure")
+				}
+			}
+		}()
+	}
+	close(start)
+	q.retire()
+	wg.Wait()
+}

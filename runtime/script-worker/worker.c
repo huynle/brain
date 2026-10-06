@@ -76,6 +76,33 @@ static JSValue receive(JSContext *ctx, const char *kind, unsigned expected) {
     JS_FreeValue(ctx, frame);
     return payload;
 }
+/* Mirror of the parent's uniqueJSON bound (session.go): no JSON value may sit
+ * deeper than `limit`, where the payload's top-level value is depth 0. An empty
+ * container at the limit is allowed; anything inside it is not. Exact for
+ * JSON.stringify output, which contains no insignificant whitespace. */
+#define DEPTH_LIMIT 64
+static int json_depth_ok(const char *s, size_t n, int limit) {
+    int open = 0, in_string = 0, escaped = 0;
+    for (size_t i = 0; i < n; i++) {
+        char c = s[i];
+        if (in_string) {
+            if (escaped) escaped = 0;
+            else if (c == '\\') escaped = 1;
+            else if (c == '"') in_string = 0;
+            continue;
+        }
+        if (c == '"') { in_string = 1; continue; }
+        if (c == '[' || c == '{') {
+            if (open > limit) return 0;
+            open++;
+            char close = c == '[' ? ']' : '}';
+            if (open > limit && (i + 1 >= n || s[i + 1] != close)) return 0;
+        } else if (c == ']' || c == '}') {
+            open--;
+        }
+    }
+    return 1;
+}
 /* Payload is already serialized and no JS runs while constructing this envelope.
  * Sequence is read only here, AFTER all reentrant calls have completed. */
 static int send_json(const char *kind, const char *text, size_t size) {
@@ -97,19 +124,24 @@ static int fail_terminal(const char *payload, int status) {
     if(!wire_broken && !terminal_sent)(void)send_json("error",payload,strlen(payload));
     return status;
 }
+/* Every resource-limit stop ends with exactly one bounded terminal frame. */
+#define LIMIT_EXCEEDED "{\"code\":\"limit_exceeded\"}"
+static void exit_limit(void) { _exit(fail_terminal(LIMIT_EXCEEDED, 138)); }
+/* Returns 0 sent, -1 invalid/unsendable value, -2 outstanding unhandled
+ * rejection after the final job drain (a script failure, not a bad result). */
 static int send_value(JSContext *ctx, const char *kind, JSValueConst payload) {
     JSValue json = JS_JSONStringify(ctx, payload, JS_UNDEFINED, JS_UNDEFINED);
     size_t size = 0;
     const char *text = JS_IsString(json) ? JS_ToCStringLen(ctx, &size, json) : NULL;
     int rc = -1;
-    if (text && size && size <= FRAME_LIMIT) {
+    if (text && size && size <= FRAME_LIMIT && json_depth_ok(text, size, DEPTH_LIMIT)) {
         /* Serialization may enqueue async effects. Drain them before terminal,
          * never reserialize the value or execute jobs after terminal output. */
         int job=0; JSContext *jobctx;
         if (!strcmp(kind,"result"))
             while ((job=JS_ExecutePendingJob(JS_GetRuntime(ctx),&jobctx))>0) {}
-        if (job>=0 && (strcmp(kind,"result") || !unhandled_rejections))
-            rc=send_json(kind,text,size);
+        if (job>=0 && !strcmp(kind,"result") && unhandled_rejections) rc=-2;
+        else if (job>=0) rc=send_json(kind,text,size);
     }
     JS_FreeCString(ctx, text); JS_FreeValue(ctx, json);
     return rc;
@@ -123,7 +155,8 @@ static JSValue fixed_error(JSContext *ctx, const char *code) {
 }
 static JSValue entry_get(JSContext *ctx, JSValueConst self, int argc, JSValueConst *argv) {
     (void)self;
-    if (terminal_sent || sequence > OP_LIMIT) _exit(130);
+    if (terminal_sent) _exit(130);
+    if (sequence > OP_LIMIT) exit_limit();
     if (argc<1 || argc>2 || !JS_IsString(argv[0]) ||
         (argc==2 && !JS_IsUndefined(argv[1]))) return fixed_error(ctx,"invalid_arguments");
     size_t id_size=0;const char *id=JS_ToCStringLen(ctx,&id_size,argv[0]);
@@ -223,7 +256,8 @@ static int install_brain(JSContext *ctx, JSValueConst global) {
 static JSValue console_log(JSContext *ctx, JSValueConst self, int argc, JSValueConst *argv, int level) {
     (void)self;
     const char *levels[] = {"debug", "info", "warn", "error", "log"};
-    if (terminal_sent || log_count >= 32 || sequence > OP_LIMIT) _exit(138);
+    if (terminal_sent) _exit(138);
+    if (log_count >= 32 || sequence > OP_LIMIT) exit_limit();
     JSValue args = JS_NewObjectProto(ctx,JS_NULL), values = JS_NewArray(ctx);
     for (int i=0; i<argc; i++) JS_SetPropertyUint32(ctx, values, i, JS_DupValue(ctx, argv[i]));
     JS_SetPropertyStr(ctx, args, "level", JS_NewString(ctx, levels[level]));
@@ -232,7 +266,11 @@ static JSValue console_log(JSContext *ctx, JSValueConst self, int argc, JSValueC
     JSValue json = JS_JSONStringify(ctx, args, JS_UNDEFINED, JS_UNDEFINED);
     size_t size = 0;
     const char *text = JS_IsException(json) ? NULL : JS_ToCStringLen(ctx, &size, json);
-    if (!text || log_count>=32 || size > 8192 || size > 16384-log_bytes) _exit(138);
+    /* A value that cannot be serialized (cycle, throwing toJSON) is a script
+     * error; bounds are limit errors. The console payload wraps these
+     * arguments one level deep, so they may use DEPTH_LIMIT-1. */
+    if (!text) _exit(fail_terminal("{\"code\":\"script_failed\"}", 136));
+    if (log_count>=32 || size > 8192 || size > 16384-log_bytes || !json_depth_ok(text, size, DEPTH_LIMIT-1)) exit_limit();
     log_count++; log_bytes += size;
     const char *prefix="{\"operation\":\"console.log\",\"arguments\":";
     size_t total=strlen(prefix)+size+1;
@@ -322,7 +360,10 @@ static int worker_main(void) {
     if (job<0 || JS_PromiseState(ctx, settled)!=JS_PROMISE_FULFILLED) return fail_terminal("{\"code\":\"script_failed\"}",136);
     result = JS_PromiseResult(ctx, settled);
     JS_FreeValue(ctx, settled);
-    if (JS_IsUndefined(result) || send_value(ctx, "result", result)) return fail_terminal("{\"code\":\"result_invalid\"}",137);
+    if (JS_IsUndefined(result)) return fail_terminal("{\"code\":\"result_invalid\"}",137);
+    int sent = send_value(ctx, "result", result);
+    if (sent == -2) return fail_terminal("{\"code\":\"script_failed\"}",136);
+    if (sent) return fail_terminal("{\"code\":\"result_invalid\"}",137);
     JS_FreeValue(ctx, result); JS_FreeValue(ctx, promise);
     JS_FreeContext(ctx); JS_FreeRuntime(rt);
     return 0;

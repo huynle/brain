@@ -8,7 +8,7 @@ import (
 )
 
 func TestProtocolTerminalFailure(t *testing.T) {
-	for _, code := range []string{"compile_failed", "script_failed", "result_invalid"} {
+	for _, code := range []string{"compile_failed", "script_failed", "result_invalid", "limit_exceeded"} {
 		t.Run(code, func(t *testing.T) {
 			s, err := NewProtocolSession(ProtocolLimits{100, 65536, 1 << 20})
 			if err != nil {

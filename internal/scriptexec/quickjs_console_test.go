@@ -15,15 +15,16 @@ func TestQuickJSBoundedConsole(t *testing.T) {
 			name, source string
 			logs         int
 			refused      bool
+			code         string // exactly one bounded terminal; "" only for a kernel CPU kill
 		}{
-			{"structured", `console.log("secret",{value:42});console.warn("warning");42;`, 2, false},
-			{"levels", `for(const k of ["debug","info","warn","error","log"])console[k](k);42;`, 5, false},
-			{"count", `for(let i=0;i<33;i++)console.log(i);42;`, 32, true},
-			{"nested count", `console.log({toJSON(){for(let i=0;i<32;i++)console.info(i);return 42}});42;`, 32, true},
-			{"single bytes", `console.log("x".repeat(8192));42;`, 0, true},
-			{"total bytes", `for(let i=0;i<3;i++)console.log("x".repeat(6000));42;`, 2, true},
-			{"cycle", `const x={};x.x=x;console.log(x);42;`, 0, true},
-			{"getter loop", `console.log({get x(){while(true){}}});42;`, 0, true},
+			{"structured", `console.log("secret",{value:42});console.warn("warning");42;`, 2, false, ""},
+			{"levels", `for(const k of ["debug","info","warn","error","log"])console[k](k);42;`, 5, false, ""},
+			{"count", `for(let i=0;i<33;i++)console.log(i);42;`, 32, true, "limit_exceeded"},
+			{"nested count", `console.log({toJSON(){for(let i=0;i<32;i++)console.info(i);return 42}});42;`, 32, true, "limit_exceeded"},
+			{"single bytes", `console.log("x".repeat(8192));42;`, 0, true, "limit_exceeded"},
+			{"total bytes", `for(let i=0;i<3;i++)console.log("x".repeat(6000));42;`, 2, true, "limit_exceeded"},
+			{"cycle", `const x={};x.x=x;console.log(x);42;`, 0, true, "script_failed"},
+			{"getter loop", `console.log({get x(){while(true){}}});42;`, 0, true, ""},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -69,8 +70,18 @@ func TestQuickJSBoundedConsole(t *testing.T) {
 					}
 				}
 				if tc.refused {
-					if runErr == nil || r.Len() != 0 {
+					if runErr == nil {
 						t.Fatal("log bound did not retire worker")
+					}
+					if tc.code == "" {
+						if r.Len() != 0 {
+							t.Fatal("kernel-killed worker emitted output")
+						}
+						return
+					}
+					f, err := ReadFrame(r)
+					if err != nil || f.Kind != "error" || f.Sequence != uint64(tc.logs+1) || string(f.Payload) != `{"code":"`+tc.code+`"}` || r.Len() != 0 {
+						t.Fatalf("want exactly one %s terminal at sequence %d: err=%v kind=%s seq=%d trailing=%d", tc.code, tc.logs+1, err, f.Kind, f.Sequence, r.Len())
 					}
 					return
 				}

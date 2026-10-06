@@ -6,6 +6,6 @@
   "entry": "worker.c",
   "install_path": "/usr/libexec/brain/brain-script-worker",
   "outputs": {
-    "linux/arm64": "f81221bb56c904862207676316342a7a307457be538987954b2589aeb7fd1972"
+    "linux/arm64": "bec31a35c0645b0dc8b86282329a9205bc6ce5d01ff451680d204e5b3da58e68"
   }
 }

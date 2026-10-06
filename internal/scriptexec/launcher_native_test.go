@@ -342,7 +342,7 @@ sha256sum /tmp/pin-rebuild/worker | cut -d' ' -f1`)
 		if out, e := closer.CombinedOutput(); e != nil {
 			return nil, fmt.Errorf("build stdin-closer fixture: %w %s", e, out)
 		}
-		run := exec.CommandContext(ctx, "docker", "--host", host, "exec", "--user=65534:65534", name, "/usr/bin/env", "-i", "BRAIN_NATIVE_WORKER_FIXTURE=/tmp/probe", "BRAIN_NATIVE_STDIN_CLOSER_FIXTURE=/tmp/stdin-closer", "BRAIN_NATIVE_WORKER_PIN="+pin, "/tmp/launcher.test", "-test.run=^TestNativeLauncher(Pool)?$", "-test.v", "-test.timeout=60s")
+		run := exec.CommandContext(ctx, "docker", "--host", host, "exec", "--user=65534:65534", name, "/usr/bin/env", "-i", "BRAIN_NATIVE_WORKER_FIXTURE=/tmp/probe", "BRAIN_NATIVE_STDIN_CLOSER_FIXTURE=/tmp/stdin-closer", "BRAIN_NATIVE_WORKER_PIN="+pin, "/tmp/launcher.test", "-test.run=^TestNativeLauncher(Pool|Finality)?$", "-test.v", "-test.timeout=60s")
 		out, e := run.CombinedOutput()
 		if e != nil {
 			return nil, fmt.Errorf("native launcher: %w %s", e, out)

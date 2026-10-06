@@ -9,8 +9,9 @@ import (
 	"time"
 )
 
-// Hard kills/limit exhaustion may have no terminal. If the worker emits a
-// failure it must be one exact bounded error, never content or success bytes.
+// Only kernel hard kills (CPU/address-space) may have no terminal; protocol
+// limits end with exactly one limit_exceeded. Any emitted failure must be one
+// exact bounded error, never content or success bytes.
 func assertBoundedWorkerFailure(t *testing.T, r *bytes.Reader, sequence uint64) {
 	t.Helper()
 	if r.Len() == 0 {

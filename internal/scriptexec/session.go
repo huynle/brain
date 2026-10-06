@@ -45,7 +45,7 @@ func decodeWorkerFailure(payload []byte) (*WorkerFailure, bool) {
 		return nil, false
 	}
 	switch failure.Code {
-	case "compile_failed", "script_failed", "result_invalid":
+	case "compile_failed", "script_failed", "result_invalid", "limit_exceeded":
 	default:
 		return nil, false
 	}

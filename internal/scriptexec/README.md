@@ -524,16 +524,38 @@ It has **no release method**, persistence, logger or authorization callback. Rea
 S09/S17 source-wide release remains unavailable; the fixture only inspects its
 private state. Clearing owned buffers is not a promise to erase Go heap copies,
 source-ID strings, kernel pipes or bytes already legitimately released elsewhere.
-Terminal error payloads admit only fixed `compile_failed`, `script_failed` or
-`result_invalid` codes. Optional line/column hints are integers1..32768 with no
+Terminal error payloads admit only fixed `compile_failed`, `script_failed`,
+`result_invalid` or `limit_exceeded` codes (`limit_exceeded` added 2026-10-07
+for review `zgck7qp2`). Optional line/column hints are integers1..32768 with no
 filename/path/text; parent treats them as untrusted hints, not verified locations.
 The native worker emits **no location** rather than inspect a submitted exception:
 thrown proxies, Error stack getters and rejection objects are never formatted or
 queried. Error frames use the current sequence after prior calls, consume parent
 budgets, permanently retire the session and remain distinct from successful results
-(`WorkerMessage.Failure` versus `Result`). Partial output is never retried. Hard
-kills/protocol/limit failures may emit no terminal, so the parent must still join
-and classify process failure. No protected-output release or durable operation
+(`WorkerMessage.Failure` versus `Result`). Partial output is never retried.
+
+**Exactly one final message (current contract):**
+
+- **Every script-attributable stop ends with exactly one terminal frame the
+  parent accepts, plus a deterministic exit status:**
+  - success → `result` (exit 0);
+  - compile → `compile_failed` (135);
+  - thrown/rejected, an outstanding unhandled rejection at completion (e.g. an
+    unawaited unsupported call), or an unserializable console value (cycle,
+    throwing `toJSON`) → `script_failed` (136);
+  - a result that is unserializable, larger than 64KiB, or nested deeper than
+    the parent's 64-level JSON bound → `result_invalid` (137);
+  - a 33rd console record, a record over 8,192 bytes, console total over
+    16,384 bytes, console arguments nested past the bound (payload depth 64,
+    i.e. a value may add 61 levels), or a 101st brokered call →
+    `limit_exceeded` (138).
+- **The worker enforces the parent's exact depth rule** before writing, so a
+  deep value can never surface as a protocol-violating frame.
+- **No terminal frame** only for kernel hard kills (CPU or address-space
+  limits, SIGKILL on cancel/wall/parent death) and genuine protocol faults. The
+  parent must still join and classify those from the process status.
+- **Evidence:** `TestNativeLauncherFinality` drives the real sealed worker
+  through the production launcher and a real `ProtocolSession`. No protected-output release or durable operation
 journal exists; a fixed worker error proves nothing about earlier service commits.
 
 ### Inactive local aggregate admission

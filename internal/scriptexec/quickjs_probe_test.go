@@ -22,6 +22,21 @@ func quickJSProbe(t *testing.T, injection string) ([]byte, error) {
 
 func quickJSProgram(t *testing.T, injection string, worker bool, exercise func(string, string) ([]byte, error)) ([]byte, error) {
 	t.Helper()
+	return quickJSProgramWith(t, func(probe []byte) []byte {
+		if injection == "" {
+			return probe
+		}
+		anchor := []byte("    errno=0; int opened=")
+		if bytes.Count(probe, anchor) != 1 {
+			t.Fatal("native injection anchor changed")
+		}
+		return bytes.Replace(probe, anchor, append([]byte(injection), anchor...), 1)
+	}, worker, exercise)
+}
+
+// quickJSProgramWith applies a trusted test-only source transform to the probe.
+func quickJSProgramWith(t *testing.T, transform func([]byte) []byte, worker bool, exercise func(string, string) ([]byte, error)) ([]byte, error) {
+	t.Helper()
 	archive := os.Getenv("BRAIN_QUICKJS_PROBE_ARCHIVE")
 	host := os.Getenv("BRAIN_SCRIPT_LINUX_PROTOTYPE_HOST")
 	image := os.Getenv("BRAIN_QUICKJS_PROBE_IMAGE")
@@ -40,7 +55,7 @@ func quickJSProgram(t *testing.T, injection string, worker bool, exercise func(s
 		t.Fatal("QuickJS2026-06-04 archive digest mismatch")
 	}
 	run := func(args ...string) ([]byte, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second) // trusted build under shared-host load
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "docker", append([]string{"--host", host}, args...)...)
 		cmd.WaitDelay = time.Second
@@ -76,14 +91,7 @@ func quickJSProgram(t *testing.T, injection string, worker bool, exercise func(s
 	if err != nil {
 		t.Fatal(err)
 	}
-	if injection != "" {
-		anchor := []byte("    errno=0; int opened=")
-		if bytes.Count(probe, anchor) != 1 {
-			t.Fatal("native injection anchor changed")
-		}
-		probe = bytes.Replace(probe, anchor, append([]byte(injection), anchor...), 1)
-	}
-	copyInput("/tmp/probe.c", probe)
+	copyInput("/tmp/probe.c", transform(probe))
 	entry := "probe.c"
 	if worker {
 		content, err := os.ReadFile("testdata/quickjs_worker.c")
@@ -147,4 +155,60 @@ func TestQuickJSNativeConfinementProbe(t *testing.T) {
 		}
 	}
 	t.Logf("embedded async + native syscall observations: %s", out)
+}
+
+// Child-exec negative control. The earlier container prototype showed that
+// container flags alone (no-new-privileges, cap-drop, pids-limit, read-only root)
+// still ALLOW /bin/echo to execute. The same probe with its seal removed must
+// actually exec (proving the probe can observe an escape); sealed, every process
+// creation/replacement syscall must return EPERM and execution must continue.
+const childExecInjection = `
+    { char *argv[]={"/bin/echo","exec-escaped",NULL}; char *envp[]={NULL};
+      errno=0; syscall(SYS_execve,"/bin/echo",argv,envp); int e_execve=errno;
+      errno=0; syscall(SYS_execveat,AT_FDCWD,"/bin/echo",argv,envp,0); int e_execveat=errno;
+      errno=0; long c=syscall(SYS_clone,SIGCHLD,0,0,0,0); int e_clone=errno; if(c==0)_exit(0); if(c>0)waitpid((pid_t)c,NULL,0);
+      errno=0; long c3=syscall(SYS_clone3,NULL,0); int e_clone3=errno; (void)c3;
+      errno=0; int pr=prctl(PR_SET_PDEATHSIG,0,0,0,0); int e_pdeath=errno; (void)pr;
+      errno=0; struct rlimit raise={RLIM_INFINITY,RLIM_INFINITY}; int rl=setrlimit(RLIMIT_AS,&raise); int e_rlimit=errno; (void)rl;
+      printf("{\"execve\":%d,\"execveat\":%d,\"clone\":%d,\"clone3\":%d,\"pdeathsig\":%d,\"rlimit\":%d}\n",e_execve,e_execveat,e_clone,e_clone3,e_pdeath,e_rlimit); _exit(0); }
+`
+
+func childExecProbe(t *testing.T, sealed bool) ([]byte, error) {
+	return quickJSProgramWith(t, func(probe []byte) []byte {
+		anchor := []byte("    errno=0; int opened=")
+		seal := []byte("if (!ctx || seal()) return 125;")
+		if bytes.Count(probe, anchor) != 1 || bytes.Count(probe, seal) != 1 {
+			t.Fatal("native injection anchor changed")
+		}
+		probe = bytes.Replace(probe, anchor, append([]byte(childExecInjection), anchor...), 1)
+		if !sealed {
+			probe = bytes.Replace(probe, seal, []byte("if (!ctx) return 125;"), 1)
+		}
+		return append([]byte("#include <signal.h>\n"), probe...)
+	}, false, nil)
+}
+
+func TestQuickJSNativeChildExecDenied(t *testing.T) {
+	control, err := childExecProbe(t, false)
+	if err != nil || !strings.Contains(string(control), "exec-escaped") {
+		t.Fatalf("unsealed control did not exec (probe cannot observe escape): %v %s", err, control)
+	}
+	t.Logf("unsealed control escaped via execve: %q", strings.TrimSpace(string(control)))
+	out, err := childExecProbe(t, true)
+	if err != nil {
+		t.Fatalf("sealed probe: %v %s", err, out)
+	}
+	if strings.Contains(string(out), "exec-escaped") {
+		t.Fatalf("sealed probe executed a child program: %s", out)
+	}
+	var got map[string]int
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode: %v %s", err, out)
+	}
+	for _, key := range []string{"execve", "execveat", "clone", "clone3", "pdeathsig", "rlimit"} {
+		if v, ok := got[key]; !ok || v != 1 {
+			t.Errorf("%s escaped seal: errno=%d (want EPERM=1); %s", key, v, out)
+		}
+	}
+	t.Logf("sealed child-creation/limit-change observations: %s", out)
 }

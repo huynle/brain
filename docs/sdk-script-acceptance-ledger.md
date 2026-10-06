@@ -448,3 +448,60 @@ returned success. GREEN: Go2top-level suites repeated20race2.072s, fuzz65214exec
 12.053s; Node40/40tests/typecheck/build pass, fresh vet/build/lint0issues. Full45Go
 tested packages pass (many cached; storage306.530s). Log
 `sdk-capability-draft-suite.log`. No shared server/router/auth/schema/MCP files changed.
+
+## Current continuation accounting
+
+Immutable implementation checkpoints:
+
+- `7ba660f5edb62a1aac90d80cf03a6e414bff3397`: positional/default preparation,
+  all105public signatures (101JSON-shaped mappings +4explicit refusals).
+- `fedaf9e94e81031651a49e8001f3e5c68daf5f62`: simultaneous native children,
+  startup cancellation, and actual legacy router precedence tests.
+- `cdcdb1142cdd82416efcbc13ea3e197c474e7a7c`: pure plan/dependency and descriptive
+  mutation-outcome validation, never durable receipts/journal authority.
+- `e75d43bfaac47bf0b4c6072a5ac68ee46954077a`: unpublished Go/JS compatibility
+  decoder proposal and refusal corpus, no negotiation route or SDK export.
+
+The four explicitly queued preparation units now have bounded code/test evidence.
+They **do not** finish the corresponding live V1 criteria. Remaining composition
+must not be simulated by claiming the pure mapper is a service facade, a parsed
+manifest grants permission, a shaped plan is preflighted, or a claimed outcome is
+a durable commit. Existing normal facade continues denying all but its get fixture.
+
+Fresh final non-opt-in race run: public Go SDK1.904s, SDKcontract13.271s (real
+external Go/installed Node included), bootstrap3.254s, scriptexec3.832s. Pinned
+Go/TS generation has zero diff. OpenAPI validates with the same one investigated
+legacy warning. Full opt-in native evidence above remains applicable: no C/runtime
+source changed afterward. Frontend1269/typecheck/build and historical tenant gate
+remain **prior evidence**, not rerun here; main=origin/main=merge-base was freshly
+confirmed as the unchanged reviewed `7bea47d13bb99502035f51e32dd0c10e523581db`.
+No historical goldens or admission gates were changed. Frontend12previously
+reported dependency vulnerabilities remain unresolved, not silently cleared.
+
+Fresh final owner reads: S09`i8aurh42`, P5.5`krmkfe26`, P5.9`5tmpau6l`,
+S16`wuge6wiv`, S17`86ij8ynq`, S18`cfo4q3z1`, P8`8gxc3qi1` remain draft with no
+SDK script allocation; S15`rihm769f` is completed only for private policy at
+`23664fe411de41f8b3ff1200232bed1df86bbd27`. S18 has bounded same-instance CAS
+work and P5.5 has an unacknowledged corrected durable-intent proposal, neither an
+accepted live script seam. Earlier fresh S10/P6/coordinator reads in this continuation
+likewise provide no A/B/C approval. A–G concrete decisions above remain required.
+No other writer's tree was edited or imported; no runner was dispatched.
+
+Checklist at this stop:
+
+- [x] Each queued preparation unit implemented and verified within owned scope.
+- [x] Full Go suite, affected races/fuzz, SDK build/typecheck/tests, generation,
+  OpenAPI, native suite, vet/build/lint evidence recorded; exact limits disclosed.
+- [x] OpenAPI warning root cause established without REST compatibility changes.
+- [x] Documentation checked against plan; drafts and unavailable surfaces explicit.
+- [ ] Discovery/stdio routes and accepted hosted adapter — A/B/S10.
+- [ ] Live facade/preflight/CAS/dry-run/publication and current fences — C–F.
+- [ ] Allocated persistence/idempotency/audit/quota/retention/recovery — C/D.
+- [ ] Supported production launcher/macOS hard memory/hosted D06 — G.
+- [ ] Real authenticated REST/MCP multi-read/write and negative acceptance matrix.
+- [ ] Required independent acceptance; provider flag remains parent-owned.
+- [ ] Whole V1 completion. Task stays blocked/manual-reserved, `prompt_only`.
+
+No activation, merge, push, deployment, review-bypass attempt or task completion.
+The next production-integration action requires disposition of the existing exact
+owner requests, not self-allocation or additional mock-based completion claims.

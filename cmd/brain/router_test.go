@@ -864,3 +864,14 @@ func TestRoute_RunPauseFamilyParsesArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestRoute_RunLogsParsesTwoPositionals(t *testing.T) {
+	cmd, err := route([]string{"run", "logs", "proj", "--limit", "5", "task1", "-f"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := cmd.(*commands.RunCommand)
+	if strings.Join(rc.Args, ",") != "proj,task1" || rc.Flags.Limit != 5 || !rc.Flags.Foreground {
+		t.Errorf("Args %v Limit %d Foreground %v", rc.Args, rc.Flags.Limit, rc.Flags.Foreground)
+	}
+}

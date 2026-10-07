@@ -396,18 +396,19 @@ USAGE:
   brain runner <subcommand> [project|all] [flags]
 
 SUBCOMMANDS:
-  start                          Start runner (implemented)
+  start [project|all]            Start a runner
   pause <project>                Pause task execution for one project
   resume <project>               Resume task execution for one project
   pause-all                      Pause ALL projects server-wide (asks to confirm)
   resume-all                     Resume ALL projects, including individually
                                  paused ones (asks to confirm)
-  status                         Show runner status (placeholder)
-  list                           List tasks (placeholder)
-  ready                          List ready tasks (placeholder)
-  features                       List features (placeholder)
-  logs                           Stream runner logs (placeholder)
-  config                         Show runner config (placeholder)
+  status                         Show pause state and registered runners
+  list [project]                 List projects, or a project's tasks
+  ready <project>                List a project's ready tasks
+  features <project>             List a project's features and their progress
+  logs <project> <taskId>        Show a task's latest log lines (--limit N;
+                                 one-shot: the endpoint does not stream)
+  config                         Show the server's task defaults
 
 COMMON FLAGS:
   Same flags as: brain help run start

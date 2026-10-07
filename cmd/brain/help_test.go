@@ -192,3 +192,15 @@ func TestRunHelp_DescribesPauseFamily(t *testing.T) {
 		t.Errorf("run help still advertises stop as stopping the runner:\n%s", out)
 	}
 }
+
+func TestRunHelp_NoPlaceholders(t *testing.T) {
+	out := captureOutput(func() { ShowHelp("run") })
+	if strings.Contains(out, "placeholder") {
+		t.Errorf("run help still labels implemented subcommands as placeholders:\n%s", out)
+	}
+	for _, want := range []string{"features <project>", "logs <project> <taskId>", "config"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("run help missing %q:\n%s", want, out)
+		}
+	}
+}

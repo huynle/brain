@@ -478,8 +478,10 @@ func parseRunCommand(args []string) (Command, error) {
 	// Pre-scan args to find the positional project arg regardless of flag order,
 	// so "brain run start <project> --headless" works the same as
 	// "brain run start --headless <project>".
-	project, flagArgs := splitRunnerProjectArg(subArgs)
-	positionals, _ := splitRunPositionals(subArgs)
+	project, _ := splitRunnerProjectArg(subArgs)
+	// Parse flags from the positional-free list so a flag after a second
+	// positional (`run logs <project> <taskId> -f`) is not silently dropped.
+	positionals, flagArgs := splitRunPositionals(subArgs)
 
 	flags, err := ParseRunnerFlags(flagArgs)
 	if err != nil {

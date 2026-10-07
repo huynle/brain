@@ -374,7 +374,7 @@ func (c *RunCommand) runReady() error {
 	}
 	ctx := context.Background()
 
-	project := c.Project
+	project := c.projectArg()
 	if project == "" {
 		return fmt.Errorf("project required: brain run ready <project>")
 	}
@@ -403,16 +403,4 @@ func (c *RunCommand) runReady() error {
 	}
 	w.Flush()
 	return nil
-}
-
-func (c *RunCommand) runFeatures() error {
-	return fmt.Errorf("run features: not yet implemented; use the API directly: GET /api/v1/tasks/<project>/features")
-}
-
-func (c *RunCommand) runLogs() error {
-	return fmt.Errorf("run logs: not yet implemented; use the API directly: GET /api/v1/tasks/<project>/<taskId>/logs")
-}
-
-func (c *RunCommand) runConfig() error {
-	return fmt.Errorf("run config: not yet implemented; use the API directly: GET /api/v1/config/task-defaults")
 }

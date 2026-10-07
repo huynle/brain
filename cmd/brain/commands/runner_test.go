@@ -409,10 +409,11 @@ func TestRunReady_WithTasks(t *testing.T) {
 	}
 }
 
+// The router passes "all" when no project positional was given.
 func TestRunReady_NoProject(t *testing.T) {
 	cmd := &RunCommand{
 		Subcommand: "ready",
-		Project:    "",
+		Project:    "all",
 		Config: &UnifiedConfig{
 			Runner: runner.RunnerConfig{BrainAPIURL: "http://localhost:9999"},
 		},
@@ -447,46 +448,6 @@ func TestRunReady_Empty(t *testing.T) {
 
 	err := cmd.runReady()
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// =============================================================================
-// Stub message tests (features/logs/config)
-// =============================================================================
-
-func TestRunFeatures_StubMessage(t *testing.T) {
-	cmd := &RunCommand{Subcommand: "features"}
-	err := cmd.runFeatures()
-	if err == nil {
-		t.Fatal("expected error from stub")
-	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(err.Error(), "/api/v1/tasks") {
-		t.Fatalf("stub should mention API endpoint, got: %v", err)
-	}
-}
-
-func TestRunLogs_StubMessage(t *testing.T) {
-	cmd := &RunCommand{Subcommand: "logs"}
-	err := cmd.runLogs()
-	if err == nil {
-		t.Fatal("expected error from stub")
-	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestRunConfig_StubMessage(t *testing.T) {
-	cmd := &RunCommand{Subcommand: "config"}
-	err := cmd.runConfig()
-	if err == nil {
-		t.Fatal("expected error from stub")
-	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

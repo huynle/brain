@@ -129,7 +129,11 @@ func runManagedFixture(t *testing.T, observeDeath bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second) // trusted build or cross-build under shared-host load; prefer BRAIN_SCRIPT_WORKER_ARTIFACT
 		defer cancel()
 		build := exec.CommandContext(ctx, "go", "test", "-c", "-o", binary, ".")
-		build.Env = append(os.Environ(), "GOOS=linux", "GOARCH=arm64", "CGO_ENABLED=0")
+		goarch := os.Getenv("BRAIN_SCRIPT_LINUX_GOARCH") // e.g. amd64 on an x86_64 host
+		if goarch == "" {
+			goarch = "arm64" // previous fixed behavior
+		}
+		build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+goarch, "CGO_ENABLED=0")
 		if out, e := build.CombinedOutput(); e != nil {
 			return nil, fmt.Errorf("cross-build native parent: %w %s", e, out)
 		}

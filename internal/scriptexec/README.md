@@ -204,8 +204,10 @@ came from an INDEPENDENT relocated rebuild with the same recipe
 (`401a66247dfad878dd68be039851274eeae05921838f9d872b1fc3068e64abca`, the
 pre-`seal.h` source), and the shipped artifact had to equal it byte-for-byte.
 **Current** (from `3ca51d12`): `TestNativeLauncher` has 11 subtests (adding
-"failed source write reported not written"), and the pin is the recorded
-`release.json` digest `f81221bb…1972`.
+"failed source write reported not written"). The pin is the recorded
+`release.json` digest for the build's architecture: historically `f81221bb…1972`
+(arm64, `e82f1f5d`..`043ea7a8`); current arm64 `bec31a35…8e68` (since `043ea7a8`)
+and amd64 `27e94805…f2b2` (since `hkjcca4y`).
 Pinned exchange returns 42 with attestation `{NoNewPrivs, Seccomp 2, filters 2,
 cpu 1/1, as 64MiB/64MiB}`. Pin mismatch, a world-writable copy and a symlink are
 refused before start. An unsealed, correctly pinned `/bin/cat` is refused at
@@ -226,7 +228,8 @@ return EPERM.
 (`KillMode=control-group`, plus an outer `MemoryMax`/`TasksMax` for
 API+workers) or as a container with an init/subreaper PID 1 (`--init`/tini),
 because a dead parent cannot reap its own killed child. Linux ≥5.9
-(`Seccomp_filters`), arm64 or x86_64 (only arm64 observed). The worker is
+(`Seccomp_filters`), arm64 or x86_64 (both observed: arm64 on Colima kernel 6.8,
+x86_64 on a homelab KVM VM with kernel 6.1, report `hkjcca4y`). The worker is
 installed read-only and root-owned, and its digest is pinned in configuration.
 Aggregate admission is `localWorkerPool` (N × 64MiB AS, N CPU); it is not a
 multi-server quota. Hosted multi-tenant execution still requires D06 VM
@@ -239,8 +242,12 @@ isolation.
   `release.json`, install docs). The confinement probe compiles the same
   `seal.h`.
 - **Recorded pin:** `release.json` pins the source archive, the compiler image
-  and GCC version, and the expected output `linux/arm64 =
-  f81221bb56c904862207676316342a7a307457be538987954b2589aeb7fd1972`.
+  (OCI index `sha256:363e1587…` plus each platform's manifest) and GCC version,
+  and the expected outputs. As of 2026-10-07 (historical, `e82f1f5d`) arm64 was
+  `f81221bb…1972`; it is now `linux/arm64 =
+  bec31a35c0645b0dc8b86282329a9205bc6ce5d01ff451680d204e5b3da58e68` (since
+  the D1 worker change `043ea7a8`) and `linux/amd64 =
+  27e948050882c176a9204872bd80d4696cd533ee372ca95f58ad8832df74f2b2`.
   `TestQuickJSLauncherLinux` fails unless an independent relocated rebuild
   reproduces that committed digest (observed in three separate builds plus
   `TestQuickJSExperimentalBuildReproducible`).
@@ -293,31 +300,30 @@ isolation.
   with the shipped `seal.h` but leaves the launcher's stdin pipe without a
   reader, so the write fails with EPIPE and the report must say not written.
 
-**x86_64 is blocked (exact):**
+**x86_64 observed (report `hkjcca4y`, 2026-10-07):**
 
-- **Reproducible build: done.** It is not recorded as a pinned output because
-  its compiler image differs from the arm64 one. Two relocated builds are
-  byte-identical, `9564f7a70dcff1c9f692b8ed59bcd0d8973f4e25bffbc175894bab8969fdd552`
-  (x86-64 PIE). They were built under user-mode emulation, which is fine for
-  compilation, with image
-  `sha256:dad5ba2223cbb389a20e8fd47e5efb8841894852359e8ce03fc19c6d7f729519`
-  and the same GCC 12.2.0-14+deb12u1.
-- **Execution on a real x86_64 kernel: not achieved.**
-  - Colima/Lima 2.2.0 full-system QEMU TCG (`brain-x86` profile) boots a real
-    Ubuntu 24.04 x86_64 kernel, but cloud-init starts only at ~234s of
-    guest uptime. Lima's usernet gives up resolving the guest IP after 2 min
-    and kills the VM; that timeout isn't configurable.
-  - Direct `qemu-system-x86_64` TCG booting an offline-provisioned clone
-    (host key and root key written with debugfs, journal replayed first,
-    `e2fsck -fn` clean) reaches `ubuntu login:` with `ssh.socket` listening,
-    but no SSH session was established within 30 minutes.
-  - Next step: run `TestQuickJSLauncherLinux` (with
-    `BRAIN_SCRIPT_LINUX_GOARCH=amd64`) plus the probe/child-exec tests on a
-    native x86_64 Linux host or KVM-capable runner, then record
-    `linux/amd64` from that host's pinned compiler image.
+- **Environment:** a real KVM VM on the homelab (Debian 12, kernel
+  6.1.0-41-cloud-amd64), with Docker 29.8.2 and its default seccomp profile.
+- **Build:** at `b6078ca9`, two relocated builds with the pinned image index
+  `sha256:363e1587…` (amd64 manifest `sha256:17b7fd60…`, GCC
+  12.2.0-14+deb12u1) were byte-identical: `linux/amd64 = 27e94805…f2b2`, now
+  recorded in `release.json`.
+- **Tests with that pin, all pass:**
+  - finality 14/14, launcher 11/11, pool, and the wrong-pin negative control;
+  - init reaping: zombie with signal 9 without an init, reaped with `--init`,
+    and the Pdeathsig mutation fails;
+  - seal and child-exec denial;
+  - the systemd script 7/7, with the `KillMode=process` mutation failing;
+  - the container prototype tests.
+- **Historical:** the earlier amd64 build `9564f7a7…d552` (user-mode emulation,
+  different image) predates the D1 worker change and is superseded. The local
+  emulated `brain-x86` attempts are superseded by this run.
+- **Running on x86_64:** set `BRAIN_SCRIPT_LINUX_GOARCH=amd64` for
+  `TestQuickJSLauncherLinux`, `TestQuickJSInitReaping` and the managed-parent
+  tests (default arm64).
 
 Still not covered here: independent review of the seal/launcher and runtime
-selection, the x86_64 execution above, and C–F integration before any route
+selection, and C–F integration before any route
 can use this.
 
 ## Approved script policy enforcement (inactive) — SCRIPT-DECISIONS-20261006

@@ -14,13 +14,15 @@ const scriptWorkerDir = "../../runtime/script-worker/"
 // sealed QuickJS worker. It pins inputs and expected outputs; it activates
 // nothing.
 type scriptWorkerRelease struct {
-	SourceURL       string            `json:"source_url"`
-	SourceSHA256    string            `json:"source_sha256"`
-	CompilerImage   string            `json:"compiler_image"`
-	CompilerVersion string            `json:"compiler_version"`
-	Entry           string            `json:"entry"`
-	InstallPath     string            `json:"install_path"`
-	Outputs         map[string]string `json:"outputs"`
+	SourceURL     string `json:"source_url"`
+	SourceSHA256  string `json:"source_sha256"`
+	CompilerImage string `json:"compiler_image"` // OCI image index digest (multi-arch)
+	// Per-platform manifest resolved from that index for each recorded output.
+	CompilerPlatformManifests map[string]string `json:"compiler_platform_manifests"`
+	CompilerVersion           string            `json:"compiler_version"`
+	Entry                     string            `json:"entry"`
+	InstallPath               string            `json:"install_path"`
+	Outputs                   map[string]string `json:"outputs"`
 }
 
 func loadScriptWorkerRelease(t *testing.T) scriptWorkerRelease {
@@ -56,11 +58,26 @@ func TestScriptWorkerReleaseRecord(t *testing.T) {
 		if (platform != "linux/arm64" && platform != "linux/amd64") || !lowerHexSHA256(digest) {
 			t.Errorf("output %s=%s", platform, digest)
 		}
+		m := r.CompilerPlatformManifests[platform]
+		if !strings.HasPrefix(m, "sha256:") || !lowerHexSHA256(strings.TrimPrefix(m, "sha256:")) || m == r.CompilerImage {
+			t.Errorf("output %s lacks its compiler platform manifest from the image index: %q", platform, m)
+		}
+	}
+	if len(r.CompilerPlatformManifests) != len(r.Outputs) {
+		t.Errorf("platform manifests %v must match outputs %v exactly", r.CompilerPlatformManifests, r.Outputs)
+	}
+	// Both architectures are observed (arm64 Colima; amd64 homelab KVM, hkjcca4y).
+	for _, platform := range []string{"linux/arm64", "linux/amd64"} {
+		if r.Outputs[platform] == "" {
+			t.Errorf("missing observed output for %s", platform)
+		}
 	}
 	// The launcher's install-path default must validate as a launcher config.
-	cfg := launcherConfig{Enabled: true, WorkerPath: r.InstallPath, WorkerSHA256: r.Outputs["linux/arm64"], WallTimeout: launcherMaxWall}
-	if err := cfg.validate(); err != nil {
-		t.Fatalf("recorded install path/pin not a valid launcher config: %v", err)
+	for platform, digest := range r.Outputs {
+		cfg := launcherConfig{Enabled: true, WorkerPath: r.InstallPath, WorkerSHA256: digest, WallTimeout: launcherMaxWall}
+		if err := cfg.validate(); err != nil {
+			t.Fatalf("recorded install path/%s pin not a valid launcher config: %v", platform, err)
+		}
 	}
 }
 

@@ -20,38 +20,41 @@ the task stays blocked as a manual reservation.
 - **Full Go suite:** 45/45 packages pass.
 - **Storage ratchet:** base `fe16c297`; the baseline test ran and passed.
 
-**SDK-owned work, each independently reviewed (report IDs):**
+**All SDK-owned work is complete and independently reviewed (report IDs):**
 
 | Scope | Commits | Review |
 |---|---|---|
 | SDK foundations, 104-op Go/TS/OpenAPI contract and fixtures | through `2f265f3d` | `xj7svqw3` PASS (bounded) |
 | Inactive worker lifecycle, SSE Close/Rebind fix | `2f265f3d..6d15274b` | `xswoha7x` FAIL → fixed `ea28dd9f`, `zi2kxzhn` PASS |
 | Worker serialization/sequencing | `6d15274b..2228f1f1` | `va815e0d` FAIL → fixed `654752e9`, confirmed in `zgck7qp2` |
-| Inactive worker/SDK range (facade, console, admission, plan/outcome, decoders) | `2228f1f1..b6f0c1ff` | `zgck7qp2` (sequencing, limits, admission, plans, decoders PASS; D1/D2 FAIL → below) |
+| Inactive worker/SDK range (facade, console, admission, plan/outcome, decoders) | `2228f1f1..b6f0c1ff` | `zgck7qp2` (D1/D2 FAIL → below; rest PASS) |
+| C–F owner-request packet (docs) | `ef83b9fc` | `kkpe2zs9` PASS (against DB.1 rev 1) |
 | A discovery, B stdio MCP via public SDK | `248f2fab`, `42802cfb` | `myyqriy7` PASS |
 | SDK error codes; stdio `insecure_transport` | `0accbaa8`, `3d6394d1` | `tno8zatm` PASS |
 | Approved SDK-U1–U3 policy; Linux-first attested launcher | `31c9d998..91c7b3e9` | `wdyetyqh` PASS |
 | Release packaging, pinned build, pool concurrency, init reaping | `91c7b3e9..b30ce8cd` | `85280tcu` PASS |
 | PDEATHSIG isolation, `sourceWritten`, opt-in systemd test | `b30ce8cd..a098fa16` | `1ikgd5xs` PASS |
-| systemd cleanup and judgement fix, main merge, lint test | `a471883d..ac9a90a2` | `twxijkp7` FAIL → fixed `a31347ac`, `fy2tvhll` PASS |
-| D1: worker depth rule, exactly one final message, empty-sequence decision | `043ea7a8`, `7551797c` | `nwwa27yh` PASS (D1) |
-| D2: provider effects derived from a whole-module call graph | `50c3708c..529699d7` | `nwwa27yh`/`pcteuxwj`/`c969if7r` FAIL → **`qytghjxc` PASS (accepted)** |
+| systemd judgement fix, main merge `74283be5`, lint test | `a471883d..ac9a90a2` | `twxijkp7` FAIL → fixed `a31347ac`, `fy2tvhll` PASS |
+| D1: worker depth rule, exactly one final message | `043ea7a8`, `7551797c` | `nwwa27yh` PASS (D1) |
+| D2: provider effects derived from a whole-module call graph | `50c3708c..529699d7` | `nwwa27yh`/`pcteuxwj`/`c969if7r` FAIL → `qytghjxc` PASS |
+| DB.1 rev 6 docs refresh; crypto-shredding payload sealer | `70aad822..b3d30fe4` | `m915iske` FAIL → fixed `a2d13a8a`/`b3d30fe4`, `11f27sak` PASS |
+| Deadline-nanoseconds test, key-period operator note | `b6078ca9` | test/doc-only follow-up to `11f27sak` |
+| x86_64 (amd64) build and execution evidence | `b6078ca9` on homelab KVM | `hkjcca4y` (all pass; recorded this commit) |
 
-- **Not independently reviewed:** `ef83b9fc`, the docs-only C–F owner-request
-  packet. It contains no code and was only the diff base of `wdyetyqh`; its SDK-U1–U3
-  decisions were later approved by the user and implemented in `31c9d998`
-  (reviewed).
-- **Docs-only follow-ups:** the comment fix and P3b record (this commit).
-- **Release pin:** `linux/arm64` `bec31a35…8e68`, reproduced independently in
-  `nwwa27yh`.
+- **User decisions:** SDK-U1–U3 (SCRIPT-DECISIONS-20261006), replay codes and
+  deadline-anchored retention (20261006b), and crypto-shredding with a separate
+  90-day audit (20261007). The crypto-shredding timing was accepted by the user
+  in **SCRIPT-DECISIONS-20261007b**: `Open` refuses at the exact deadline, and
+  the key is destroyed within at most 5 minutes after it.
+- **Release pins** (`runtime/script-worker/release.json`, image index
+  `sha256:363e1587…` with per-platform manifests): `linux/arm64`
+  `bec31a35…8e68` (reproduced independently in `nwwa27yh`) and `linux/amd64`
+  `27e94805…f2b2` (`hkjcca4y`).
 - **Accepted residual risk P3b:** documented in `docs/sdk-operation-matrix.md`,
   with the reviewer's suggested follow-up; not implemented.
 
-**Open — not SDK-owned or in progress elsewhere:**
+**Open — only other workstreams:**
 
-- **x86-64:** a homelab run is in progress. Rebuild from `runtime/script-worker`
-  at `043ea7a8` or later (amd64 `9564f7a7…` predates the D1 worker change), then
-  record `linux/amd64`. The local `brain-x86` profile is untouched.
 - **Blocked on other workstreams (exact interface needed):**
 
 | Owner / ID | State | Interface this SDK needs |
@@ -806,7 +809,8 @@ topology are in `internal/scriptexec/README.md` ("Linux-first production launche
 - Real Linux (Colima kernel 6.8 arm64, uid 65534), historical as of `91c7b3e9`:
   `TestNativeLauncher` 10/10 PASS, launch pin from an independent relocated
   rebuild (`401a6624…abca`, pre-`seal.h`). Current from `3ca51d12`: 11
-  subtests, pin `f81221bb…1972` from `release.json`.
+  subtests, pin `f81221bb…1972` from `release.json` (historical; arm64 is
+  `bec31a35…8e68` since `043ea7a8`, amd64 `27e94805…f2b2` since `hkjcca4y`).
   Memory: heap flood ends within bounds; fresh `TestQuickJSNativeAddressSpaceProbe`
   shows kernel ENOMEM at the attested 64MiB AS. Refactor regression:
   `TestQuickJSManagedParentIntegration` + `TestQuickJSManagedParentDeath` PASS. `TestQuickJSNativeChildExecDenied` PASS: the unsealed control really
@@ -840,7 +844,8 @@ and deadline-anchored late-finish retention.
 - **Reaping:** `TestQuickJSInitReaping` PASS: no init → `Z`; `--init` →
   `gone`. A systemd 255 transient unit (Colima VM) → `gone`, `result=signal`,
   no leftovers.
-- **x86_64: BLOCKED.** The build is reproducible (`9564f7a7…d552`), but
+- **x86_64: BLOCKED (historical; resolved 2026-10-07 by homelab KVM run
+  `hkjcca4y`, see final status).** The build is reproducible (`9564f7a7…d552`), but
   execution on a real x86_64 kernel didn't happen: Lima's usernet timeout
   (2 min) races a slow TCG boot (cloud-init at ~234s), and the direct-QEMU
   provisioned boot reached login without an SSH session in 30 min. Needs a

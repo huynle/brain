@@ -10,7 +10,7 @@ and its launcher refuses the zero configuration and every non-Linux OS.
 | `worker.c` | Worker: framed stdin/stdout IPC, closed `brain` facade, bounded console, fixed error codes |
 | `seal.h` | Shared deny-default seccomp + `RLIMIT_AS` seal; the confinement probe in `internal/scriptexec/testdata` compiles the same header |
 | `build.sh` | Reproducible compiler invocation (fixed locale/TZ/`SOURCE_DATE_EPOCH`, PIE, full RELRO/BIND_NOW, non-exec stack, stack protector, FORTIFY_SOURCE=3, path-prefix map) |
-| `release.json` | Pinned inputs and the expected output SHA-256 for each platform |
+| `release.json` | Pinned inputs (source, compiler image index plus per-platform manifest) and the expected output SHA-256 for each platform (`linux/arm64`, `linux/amd64`, both observed) |
 
 ## Reproducible build
 

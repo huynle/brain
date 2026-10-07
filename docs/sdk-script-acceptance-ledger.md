@@ -94,6 +94,17 @@ the task stays blocked as a manual reservation.
     unless allowlisted.
   - **Mutations:** all 21 behave as required (M1–M7 and N1–N13 fail; M5
     passes). Runtime ~6s.
+- Review `c969if7r` (`228bb1b6` FAIL: precision rules missed P1, P2, P4, P5
+  and P6) — fixed by over-approximating, not adding precision:
+  - unresolved function-valued arguments keep helper parameter calls
+    signature-matched;
+  - interface method values dispatch to every implementation;
+  - launcher-passed literals count toward background roots
+    (`startSingleGraphWorkers` = 8).
+
+  No new false positives appeared. All 27 mutations behave as required: M1–M7,
+  N1–N13 and P1–P6 fail, except M5, which passes. P3 is flagged as a startup
+  change (documented limit).
 - **Stale artifact:** the worker source changed in `043ea7a8`, so amd64
   `9564f7a7…` and any homelab x86-64 binary built from earlier source no longer
   match. Rebuild from `runtime/script-worker` at `043ea7a8` or later before

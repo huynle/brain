@@ -12,121 +12,61 @@ Branch `sdk-script-execution-v1`, writer `ses_eee03b0f7ffeQnbOPdx1BA4D9T`. Main
 stays disabled: no route, config key, capability or caller. Not merged to main;
 the task stays blocked as a manual reservation.
 
-**Integration checks at `5f4cf6af`:**
+**Integration at new main** (`5f4cf6af`, re-verified by `fy2tvhll`):
 
-- **Fast checks:** `just vet` and `just build` OK; `just lint` 0 issues (isolated
-  cache).
-- **Affected packages, `-race`:** 8/8 pass — `sdk/brain`, `sdkcontract` (+bootstrap;
-  real external Go/Node clients ran, no skips), `mcp`, `mcpserver`, `api`, `sse`,
-  `scriptexec`.
-- **TypeScript SDK:** typecheck OK; tests 43/43, 0 skipped; OpenAPI valid
-  (1 known legacy ambiguous-path warning); regeneration 0 diff.
-- **Full Go suite:** `CI=1 GOMAXPROCS=2 go test -p 1 ./...` → 45/45 packages pass,
-  0 fail.
-- **Storage ratchet:** `BRAIN_STORAGE_RATCHET_BASE=fe16c297…` (the merged main), so
-  `TestProductionUnscopedStorageBaseline` ran and passed instead of skipping.
+- **Fast checks:** vet/build OK; lint 0 issues.
+- **Affected `-race`:** 8/8 packages pass.
+- **TypeScript SDK:** 43/43; OpenAPI valid; generation 0 diff.
+- **Full Go suite:** 45/45 packages pass.
+- **Storage ratchet:** base `fe16c297`; the baseline test ran and passed.
 
-**Complete and independently reviewed (PASS):**
+**SDK-owned work, each independently reviewed (report IDs):**
 
-- `31c9d998..91c7b3e9` — approved U1–U3 policy enforcement plus the disabled
-  Linux-first attested launcher (`wdyetyqh`).
-- `91c7b3e9..b30ce8cd` — release packaging (`runtime/script-worker`, pin
-  `f81221bb…1972`, rebuilt independently), pooled concurrency, init reaping, gap
-  tests (`85280tcu`).
-- `b30ce8cd..a098fa16` — PDEATHSIG isolation, `sourceWritten` regression, opt-in
-  systemd test (`1ikgd5xs`).
-- Earlier SDK slice through `2f265f3d` (bounded PASS `xj7svqw3`).
-- A discovery `248f2fab` and B stdio `42802cfb` (`myyqriy7`): auth
-  401/403/200, manifest = OpenAPI 105 ops, Go/TS negotiation, stdio parity
-  with the old binary except one error string, hosted paths untouched.
+| Scope | Commits | Review |
+|---|---|---|
+| SDK foundations, 104-op Go/TS/OpenAPI contract and fixtures | through `2f265f3d` | `xj7svqw3` PASS (bounded) |
+| Inactive worker lifecycle, SSE Close/Rebind fix | `2f265f3d..6d15274b` | `xswoha7x` FAIL → fixed `ea28dd9f`, `zi2kxzhn` PASS |
+| Worker serialization/sequencing | `6d15274b..2228f1f1` | `va815e0d` FAIL → fixed `654752e9`, confirmed in `zgck7qp2` |
+| Inactive worker/SDK range (facade, console, admission, plan/outcome, decoders) | `2228f1f1..b6f0c1ff` | `zgck7qp2` (sequencing, limits, admission, plans, decoders PASS; D1/D2 FAIL → below) |
+| A discovery, B stdio MCP via public SDK | `248f2fab`, `42802cfb` | `myyqriy7` PASS |
+| SDK error codes; stdio `insecure_transport` | `0accbaa8`, `3d6394d1` | `tno8zatm` PASS |
+| Approved U1–U3 policy; Linux-first attested launcher | `31c9d998..91c7b3e9` | `wdyetyqh` PASS |
+| Release packaging, pinned build, pool concurrency, init reaping | `91c7b3e9..b30ce8cd` | `85280tcu` PASS |
+| PDEATHSIG isolation, `sourceWritten`, opt-in systemd test | `b30ce8cd..a098fa16` | `1ikgd5xs` PASS |
+| systemd cleanup and judgement fix, main merge, lint test | `a471883d..ac9a90a2` | `twxijkp7` FAIL → fixed `a31347ac`, `fy2tvhll` PASS |
+| D1: worker depth rule, exactly one final message, empty-sequence decision | `043ea7a8`, `7551797c` | `nwwa27yh` PASS (D1) |
+| D2: provider effects derived from a whole-module call graph | `50c3708c..529699d7` | `nwwa27yh`/`pcteuxwj`/`c969if7r` FAIL → **`qytghjxc` PASS (accepted)** |
 
-**Complete, awaiting independent review:**
+- **Not independently reviewed:** `ef83b9fc`, the docs-only C–F owner-request
+  packet. It contains no code and was only the diff base of `wdyetyqh`; its U1–U3
+  decisions were later approved by the user and implemented in `31c9d998`
+  (reviewed).
+- **Docs-only follow-ups:** the comment fix and P3b record (this commit).
+- **Release pin:** `linux/arm64` `bec31a35…8e68`, reproduced independently in
+  `nwwa27yh`.
+- **Accepted residual risk P3b:** documented in `docs/sdk-operation-matrix.md`,
+  with the reviewer's suggested follow-up; not implemented.
 
-- `a471883d`: review FAILED (`twxijkp7`), fixed in **`a31347ac`**. Survivors are
-  now judged before cleanup. On Colima the `KillMode=process` mutation fails
-  (holder alive, `cgroup_procs=1`) and still leaves 0 units/PIDs; the baseline
-  passes.
-- `5f4cf6af` — portable `Seccomp_filters` parser test (fixes the darwin lint
-  "unused" finding).
-- `74283be5` — main merge.
-- `0accbaa8` — stable error code in Go `Error()` and TS `BrainError.message`;
-  only valid machine codes are echoed, never message/request ID/details.
-- `3d6394d1` — stdio refuses `BRAIN_API_TOKEN` over plain http to a
-  non-loopback host at startup (`insecure_transport`; exact `localhost` or
-  loopback IP only). CHANGELOG/README document the intended stdio changes. No
-  override flag: no existing insecure-transport convention; use https or a
-  loopback tunnel.
-- C–F packet `ef83b9fc` (docs).
-- `2228f1f1..b6f0c1ff` (inactive worker/SDK range): reviewed **FAIL**
-  (`zgck7qp2`), fixed below. Sequencing, size limits, admission, plan
-  validation and decoders passed that review.
-- `043ea7a8` — D1: the worker enforces the parent's 64-level JSON depth rule;
-  every script-attributable stop ends with exactly one accepted terminal
-  (`result_invalid` / `limit_exceeded` / `script_failed`). The new code
-  `limit_exceeded` is allowed by the parent. `TestNativeLauncherFinality`
-  passes 14/14 on Linux (RED on the old worker). Release pin `linux/arm64` →
-  `bec31a35…8e68`, reproducible.
-- `7551797c` — empty plan/outcome lists are pinned as valid zero-mutation
-  sequences; build/managed-parent timeouts raised to 600s.
-- `50c3708c` — D2 first fix (15 rows, `event_fanout`, 105-row pin). Re-review
-  `nwwa27yh`: D1 PASS; D2 FAIL (`reminders.fire` lacked `web_push`; regex
-  scan bypassable).
-- `90466d28` — D2 fix:
-  - **Analysis:** a stdlib-only call graph (no `go.mod` change) traces every
-    SDK operation's real router handler to the embedding and Web Push sinks
-    across `internal/api` and `internal/service`.
-  - **Fail-closed rules:** background entry points must be on a reviewed list;
-    derivable tokens must be justified by a code path; `reminders.ack` is the
-    one reasoned flow exception.
-  - **Rows:** 12 corrected (reminder rows gain `web_push` via the scheduler and
-    poller; update paths gain synchronous embedding via the feature-schedule
-    gate).
-  - **Mutations:** the reviewer's M1–M4, M6 and M7 fail and M5 passes; the R1
-    regression and a new `internal/api` poller also fail.
-- `ae4c0e56` — D2 hardening after review `pcteuxwj` (`218a5e69` FAIL, 14/21
-  caught). Hardening stops here (policy-accuracy test, not a full verifier).
-  - **Coverage:** the whole module is analyzed. Exact reviewed lists cover
-    non-SDK routes, background goroutine roots (with counts), callback roots and
-    startup entry points.
-  - **Exception:** `reminders.ack` is excepted by a single reviewed cut edge.
-  - **Analysis:** literals are their own nodes (including package vars);
-    generic function values resolve by arity; reflective calls are forbidden
-    unless allowlisted.
-  - **Mutations:** all 21 behave as required (M1–M7 and N1–N13 fail; M5
-    passes). Runtime ~6s.
-- Review `c969if7r` (`228bb1b6` FAIL: precision rules missed P1, P2, P4, P5
-  and P6) — fixed by over-approximating, not adding precision:
-  - unresolved function-valued arguments keep helper parameter calls
-    signature-matched;
-  - interface method values dispatch to every implementation;
-  - launcher-passed literals count toward background roots
-    (`startSingleGraphWorkers` = 8).
+**Open — not SDK-owned or in progress elsewhere:**
 
-  No new false positives appeared. All 27 mutations behave as required: M1–M7,
-  N1–N13 and P1–P6 fail, except M5, which passes. P3 is flagged as a startup
-  change (documented limit).
-- **Stale artifact:** the worker source changed in `043ea7a8`, so amd64
-  `9564f7a7…` and any homelab x86-64 binary built from earlier source no longer
-  match. Rebuild from `runtime/script-worker` at `043ea7a8` or later before
-  recording `linux/amd64`.
-- **x86_64:** the reproducible amd64 build `9564f7a7…d552` exists, unpinned;
-  execution is running separately on the homelab.
-
-**Blocked on other workstreams (exact interface needed):**
+- **x86-64:** a homelab run is in progress. Rebuild from `runtime/script-worker`
+  at `043ea7a8` or later (amd64 `9564f7a7…` predates the D1 worker change), then
+  record `linux/amd64`. The local `brain-x86` profile is untouched.
+- **Blocked on other workstreams (exact interface needed):**
 
 | Owner / ID | State | Interface this SDK needs |
 |---|---|---|
-| DB.1 `hxcyvu0i` | rev 4 design, no DDL | **T1:** content-successor primitive allocation reusing DB1 methods/receipts/revision history; DB1 allocates extension ownership/profile (no guessed version). **T2:** one fixed transaction owning current auth/ACL/CAS + content + receipt + operation outcome + allocated outbox. **T4:** retention/erasure classes for receipt/hash/source/replay data plus irreversible admission-epoch retirement (backs U2 tombstones). **T5:** authoritative reservations for the single Linux coordinator. |
-| S09 `i8aurh42` | draft | **T2/T3:** same-writer check+commit fence, bounded read-frame/final-output release ordered with revoke, and a security-journal record. Admission-only fences are not enough. |
-| P6 `yp7llda1` | blocked (repair `21d2d1e7`) | **T6/U3:** explicit `script:execute` successor and issuance, bound to a verified owner/admin human principal and auth generation; credential33 unchanged; OAuth `mcp`/`admin:*` do not grant it. |
-| S10 `ap90gj4e` | open | Hosted MCP: an operation-specific, per-call/session authorized in-process adapter, never loopback identity reconstruction. Stdio (B) is done. |
-| P8 `8gxc3qi1` | draft | **F/T3/T6:** source-limited delegation/reservation/outbox/result APIs plus reusable, side-effect-free typed service preflight for each supported write (needed for dry-run). |
+| DB.1 `hxcyvu0i` | rev 4 design, no DDL | **T1:** content-successor primitive allocation reusing DB1 methods/receipts/revision history; DB1 allocates extension ownership/profile. **T2:** one fixed transaction owning current auth/ACL/CAS + content + receipt + operation outcome + allocated outbox. **T4:** retention/erasure classes + irreversible admission-epoch retirement (backs U2 tombstones). **T5:** authoritative reservations for the single Linux coordinator. |
+| S09 `i8aurh42` | draft | **T2/T3:** same-writer check+commit fence, bounded read-frame/final-output release ordered with revoke, security-journal record. |
+| P6 `yp7llda1` | blocked (repair `21d2d1e7`) | **T6/U3:** explicit `script:execute` successor and issuance, bound to a verified owner/admin human principal and auth generation; credential33 unchanged. |
+| S10 `ap90gj4e` | open | Hosted MCP: per-call/session authorized in-process adapter, never loopback identity reconstruction. Stdio (B) is done. |
+| P8 `8gxc3qi1` | draft | **F/T3/T6:** delegation/reservation/outbox/result APIs plus reusable side-effect-free typed service preflight (needed for dry-run). |
 | S16/S17/S18 (E) | draft | Live current resource/source-set ACL and publication decision under the S09 fence. |
-| D06 | separate gate | Reviewed VM isolation for hosted multi-tenant execution; local container/VM evidence never substitutes. |
+| D06 | separate gate | Reviewed VM isolation for hosted multi-tenant execution. |
 
 **Next after those land:** compose the service-backed broker (preflight →
 fenced commit → protected release), add the REST/SDK/MCP `brain_script_execute`
-surfaces, and run real multi-read/write, dry-run, revoke and timeout flows. Then
+surfaces, run real multi-read/write, dry-run, revoke and timeout flows, then
 independent acceptance and parent integration into main.
 
 ## Current controlling disposition — 2026-10-06

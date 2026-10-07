@@ -103,7 +103,22 @@ It is a policy-accuracy check, not a full verifier.
     attributed to their creator. Event subscriptions are covered by
     `event_fanout`. A hook installed at startup (review case P3) is flagged as
     a startup-entry change rather than against the operation that fires it.
-- **Reviews:** `zgck7qp2`, `nwwa27yh`, `pcteuxwj`, `c969if7r`. Global profile/scripting/preflight/telemetry fields apply to every row.
+- **Known gap P3b (accepted residual risk, not implemented):** suppose a
+  package-level hook variable in a lower package (e.g. `internal/service`) is
+  assigned at wiring time (e.g. in `apiserver.buildHTTPHandler`) to a closure
+  that reaches a provider, and is then called from an operation path. That path
+  is not attributed to the operation. Calls through function values only match
+  targets visible from the calling package, the closure is attributed to its
+  creator, and startup already carries those tokens. In practice this pattern
+  is covered by `event_fanout`: the codebase uses event subscriptions, not
+  wiring-time hooks. Reviewer's suggested follow-up: drop the `visible` filter
+  for non-niladic signatures, or keep a reviewed list of exported
+  function-typed package variables and fields assigned outside their own
+  package.
+- **Acceptance:** provider-effect derivation independently accepted at
+  `529699d7` (review `qytghjxc`: all 27 mutations correct, 89/105 operations
+  derive no effect, ~1s).
+- **Reviews:** `zgck7qp2`, `nwwa27yh`, `pcteuxwj`, `c969if7r`, `qytghjxc`. Global profile/scripting/preflight/telemetry fields apply to every row.
 This is descriptive inventory, **not an authorization registry**: all script
 exposure is false, all dry-run validators are unimplemented and inherited request
 telemetry is unreviewed. Provider `none` excludes inherited auth/request telemetry;

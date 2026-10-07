@@ -49,11 +49,28 @@ func (c *stubCommand) Type() string {
 // HelpCommand displays help information.
 type HelpCommand struct {
 	command string // specific command to show help for (empty = main help)
+	// explicit marks `brain help <topic>`: an unknown topic is a usage error.
+	// Flag-style help (`brain x y --help`) instead falls back to the nearest
+	// parent topic that has a page.
+	explicit bool
 }
 
 func (c *HelpCommand) Execute() error {
-	ShowHelp(c.command)
-	return nil
+	topic := strings.TrimSpace(c.command)
+	for {
+		if ShowHelp(topic) {
+			return nil
+		}
+		if c.explicit {
+			return &commands.UsageError{Message: fmt.Sprintf("brain: unknown command %q\nRun 'brain help' for a list of commands.", topic)}
+		}
+		i := strings.LastIndex(topic, " ")
+		if i < 0 {
+			topic = ""
+		} else {
+			topic = topic[:i]
+		}
+	}
 }
 
 func (c *HelpCommand) Type() string {
@@ -298,7 +315,7 @@ func parseBuiltinCommand(args []string) (Command, error) {
 	case "help":
 		// "brain help server" / "brain help server start" → show contextual help
 		topic := strings.TrimSpace(strings.Join(cmdArgs, " "))
-		return &HelpCommand{command: topic}, nil
+		return &HelpCommand{command: topic, explicit: true}, nil
 	default:
 		// For other built-in commands, return stub for now
 		return &stubCommand{cmdType: cmdName}, nil
@@ -510,6 +527,10 @@ func parseRunnerCommand(args []string) (Command, error) {
 		return &HelpCommand{command: "runner"}, nil
 	}
 	if !runnerSubcommands[subcommand] {
+		if runSubcommands[subcommand] {
+			// `brain runner <sub>` is an alias for `brain run <sub>`.
+			return parseRunCommand(args)
+		}
 		return unknownSubcommand("runner", subcommand), nil
 	}
 	subArgs := args[1:]

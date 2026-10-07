@@ -749,3 +749,27 @@ func TestRoute_RunLogsParsesTwoPositionals(t *testing.T) {
 		t.Errorf("Args %v Limit %d Foreground %v", rc.Args, rc.Flags.Limit, rc.Flags.Foreground)
 	}
 }
+
+// `brain runner` keeps its daemon commands and accepts every other `brain run`
+// subcommand as a true alias.
+func TestRoute_RunnerIsAliasForRunSubcommands(t *testing.T) {
+	for _, args := range [][]string{{"runner", "start"}, {"runner", "stop"}, {"runner", "status"}} {
+		cmd, err := route(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := cmd.(*commands.RunnerDaemonCommand); !ok {
+			t.Errorf("brain %v = %T, want the runner daemon command", args, cmd)
+		}
+	}
+	for _, args := range [][]string{{"runner", "pause", "demo"}, {"runner", "list"}, {"runner", "features", "demo"}, {"runner", "pause-all", "--yes"}} {
+		cmd, err := route(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rc, ok := cmd.(*commands.RunCommand)
+		if !ok || rc.Subcommand != args[1] {
+			t.Errorf("brain %v = %T (%s), want RunCommand %s", args, cmd, cmd.Type(), args[1])
+		}
+	}
+}

@@ -157,27 +157,17 @@ func TestShowHelp_AutomationSurfacesMentionSupportedTriggersAndGuards(t *testing
 	}
 }
 
-func TestShowHelp_MCPHasNoHelpTopic(t *testing.T) {
-	output := captureOutput(func() { ShowHelp("mcp") })
-	if !strings.Contains(output, "No help available for command: mcp") {
-		t.Fatalf("brain help mcp should be an unknown topic, got:\n%s", output)
+func TestShowHelp_UnknownTopicPrintsNothing(t *testing.T) {
+	for _, topic := range []string{"mcp", "goal", "definitely-not-a-command"} {
+		var known bool
+		out := captureOutput(func() { known = ShowHelp(topic) })
+		if known || out != "" {
+			t.Errorf("ShowHelp(%q) = %v, printed %q; want false and nothing", topic, known, out)
+		}
 	}
 	main := captureOutput(func() { ShowHelp("") })
 	if strings.Contains(main, "brain mcp") {
 		t.Errorf("main help still advertises brain mcp:\n%s", main)
-	}
-}
-
-func TestShowHelp_UnknownTopicFallsBackToMain(t *testing.T) {
-	output := captureOutput(func() {
-		ShowHelp("definitely-not-a-command")
-	})
-
-	if !strings.Contains(output, "No help available for command: definitely-not-a-command") {
-		t.Fatal("expected unknown-command message")
-	}
-	if !strings.Contains(output, "brain - Unified Brain CLI") {
-		t.Fatal("expected main help fallback")
 	}
 }
 
@@ -203,4 +193,75 @@ func TestRunHelp_NoPlaceholders(t *testing.T) {
 			t.Errorf("run help missing %q:\n%s", want, out)
 		}
 	}
+}
+
+func TestHelpExitCodes(t *testing.T) {
+	cases := []struct {
+		args       []string
+		code       int
+		wantStdout string
+		wantStderr string
+	}{
+		{[]string{"help", "bogus"}, 2, "", `brain: unknown command "bogus"`},
+		{[]string{"help", "mcp"}, 2, "", `brain: unknown command "mcp"`},
+		{[]string{"help", "run", "bogus"}, 2, "", `brain: unknown command "run bogus"`},
+		{[]string{"help", "run"}, 0, "brain run", ""},
+		{[]string{"help", "run", "pause"}, 0, "brain run pause <project>", ""},
+		// Flag-style help for a sub-topic without its own page falls back
+		// to the nearest parent page instead of the main help.
+		{[]string{"automation", "bogus", "--help"}, 0, "brain automation", ""},
+	}
+	for _, tc := range cases {
+		var stderr bytes.Buffer
+		var code int
+		out := captureOutput(func() { code = runCLI(tc.args, &stderr) })
+		if code != tc.code {
+			t.Errorf("brain %v exit = %d, want %d (stderr %q)", tc.args, code, tc.code, stderr.String())
+		}
+		if !strings.Contains(out, tc.wantStdout) || !strings.Contains(stderr.String(), tc.wantStderr) {
+			t.Errorf("brain %v stdout %q / stderr %q", tc.args, firstLine(out), stderr.String())
+		}
+		if tc.code == 2 && out != "" {
+			t.Errorf("brain %v printed to stdout on error: %q", tc.args, firstLine(out))
+		}
+	}
+}
+
+func TestRunSubcommandHelp(t *testing.T) {
+	for _, sub := range []string{"start", "status", "list", "ready", "features", "logs", "config", "pause", "resume", "pause-all", "resume-all", "stop"} {
+		for _, group := range []string{"run", "runner"} {
+			if group == "runner" && (sub == "start" || sub == "stop" || sub == "status") {
+				continue // runner's own daemon commands share the runner page
+			}
+			var stderr bytes.Buffer
+			var code int
+			out := captureOutput(func() { code = runCLI([]string{group, sub, "--help"}, &stderr) })
+			if code != 0 || stderr.Len() != 0 {
+				t.Errorf("brain %s %s --help: exit %d stderr %q", group, sub, code, stderr.String())
+			}
+			if !strings.HasPrefix(out, "brain run "+sub) {
+				t.Errorf("brain %s %s --help should print its own page, got %q", group, sub, firstLine(out))
+			}
+		}
+	}
+}
+
+func TestRunnerHelpDescribesBothRoles(t *testing.T) {
+	out := captureOutput(func() { ShowHelp("runner") })
+	for _, want := range []string{"brain runner start", "brain runner stop", "pause-all", "features"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("runner help missing %q:\n%s", want, out)
+		}
+	}
+	main := captureOutput(func() { ShowHelp("") })
+	if strings.Contains(main, "Alias for run") {
+		t.Errorf("main help still calls runner a plain alias:\n%s", main)
+	}
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }

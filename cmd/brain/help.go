@@ -24,7 +24,8 @@ CORE COMMANDS:
 
 RUNNER COMMANDS:
   run <subcommand> [project]     Runner management subcommands
-  runner <subcommand> [project]  Alias for run
+  runner start|stop|status       Background runners on this machine; other
+                                 subcommands are the same as 'brain run'
 
 SETUP & DIAGNOSTICS:
   init                           Initialize brain directory and templates
@@ -365,6 +366,10 @@ USAGE:
   brain runner stop [-n <name>]       Stop a background runner
   brain runner stop --all             Stop every runner on this machine
   brain runner status                 List the runners on this machine
+  brain runner <run-subcommand> ...   Every other 'brain run' subcommand works
+                                      here too (list, ready, features, logs,
+                                      config, pause, resume, pause-all,
+                                      resume-all); see 'brain help run'
 
 FLAGS:
   -n, --name <name>              Runner name (several runners per machine)
@@ -1156,8 +1161,13 @@ See: brain help api stop
 func normalizeHelpTopic(command string) string {
 	topic := strings.ToLower(strings.TrimSpace(command))
 	topic = strings.Join(strings.Fields(topic), " ")
-	if topic == "runner" {
-		return "run"
+	// `brain runner <sub>` is an alias for `brain run <sub>` except for its own
+	// daemon commands, which share the runner page.
+	if rest, ok := strings.CutPrefix(topic, "runner "); ok {
+		if rest == "start" || rest == "stop" || rest == "status" {
+			return "runner"
+		}
+		return "run " + rest
 	}
 	if topic == "tokens" {
 		return "token"
@@ -1168,62 +1178,66 @@ func normalizeHelpTopic(command string) string {
 	return topic
 }
 
-func ShowHelp(command string) {
-	switch normalizeHelpTopic(command) {
+func helpText(command string) (string, bool) {
+	topic := normalizeHelpTopic(command)
+	if text, ok := runSubcommandHelp[topic]; ok {
+		return text, true
+	}
+	switch topic {
 	case "":
-		fmt.Print(mainHelp)
+		return mainHelp, true
 	case "api":
-		fmt.Print(apiHelp)
+		return apiHelp, true
 	case "api start":
-		fmt.Print(apiStartHelp)
+		return apiStartHelp, true
 	case "api stop":
-		fmt.Print(apiStopHelp)
+		return apiStopHelp, true
 	case "api restart":
-		fmt.Print(apiRestartHelp)
+		return apiRestartHelp, true
 	case "api status":
-		fmt.Print(apiStatusHelp)
+		return apiStatusHelp, true
 	case "api logs":
-		fmt.Print(apiLogsHelp)
+		return apiLogsHelp, true
 	case "api health":
-		fmt.Print(apiHealthHelp)
+		return apiHealthHelp, true
 	case "run":
-		fmt.Print(runHelp)
+		return runHelp, true
 	case "runner", "runner start", "runner stop", "runner status":
-		fmt.Print(runnerHelp)
+		return runnerHelp, true
 	case "run start":
-		fmt.Print(runStartHelp)
+		return runStartHelp, true
 	case "init":
-		fmt.Print(initHelp)
+		return initHelp, true
 	case "doctor":
-		fmt.Print(doctorHelp)
+		return doctorHelp, true
 	case "config":
-		fmt.Print(configHelp)
+		return configHelp, true
 	case "install":
-		fmt.Print(installHelp)
+		return installHelp, true
 	case "uninstall":
-		fmt.Print(uninstallHelp)
+		return uninstallHelp, true
 	case "plugin-status":
-		fmt.Print(pluginStatusHelp)
+		return pluginStatusHelp, true
 	case "token":
-		fmt.Print(tokenHelp)
+		return tokenHelp, true
 	case "token create":
-		fmt.Print(tokenCreateHelp)
+		return tokenCreateHelp, true
 	case "token list":
-		fmt.Print(tokenListHelp)
+		return tokenListHelp, true
 	case "token revoke":
-		fmt.Print(tokenRevokeHelp)
+		return tokenRevokeHelp, true
 	case "migrate":
-		fmt.Print(migrateHelp)
+		return migrateHelp, true
 	case "migrate automations":
-		fmt.Print(migrateAutomationsHelp)
+		return migrateAutomationsHelp, true
 	case "migrate goals":
-		fmt.Print(migrateGoalsHelp)
+		return migrateGoalsHelp, true
 	case "automation":
-		fmt.Print(automationHelp)
+		return automationHelp, true
 	case "automation create":
-		fmt.Print(automationCreateHelp)
+		return automationCreateHelp, true
 	case "automation test":
-		fmt.Print(automationTestHelp)
+		return automationTestHelp, true
 	case "automation goal",
 		"automation goal set",
 		"automation goal list",
@@ -1236,29 +1250,37 @@ func ShowHelp(command string) {
 		"automation goal archive",
 		"automation goal clear",
 		"automation goal validate":
-		fmt.Print(automationGoalHelp)
+		return automationGoalHelp, true
 	case "attachments":
-		fmt.Print(attachmentsHelp)
+		return attachmentsHelp, true
 	case "dream":
-		fmt.Print(dreamHelp)
+		return dreamHelp, true
 	case "save":
-		fmt.Print(saveHelp)
+		return saveHelp, true
 	case "get":
-		fmt.Print(getHelp)
+		return getHelp, true
 	case "update":
-		fmt.Print(updateHelp)
+		return updateHelp, true
 	case "edit":
-		fmt.Print(editHelp)
+		return editHelp, true
 	case "search":
-		fmt.Print(searchHelp)
+		return searchHelp, true
 	case "list":
-		fmt.Print(listHelp)
+		return listHelp, true
 	case "embeddings", "embeddings backfill":
-		fmt.Print(embeddingsHelp)
+		return embeddingsHelp, true
 	case "stop":
-		fmt.Print(stopHelp)
-	default:
-		fmt.Printf("No help available for command: %s\n\n", command)
-		fmt.Print(mainHelp)
+		return stopHelp, true
 	}
+	return "", false
+}
+
+// ShowHelp prints the help page for a topic and reports whether one exists.
+// An unknown topic prints nothing.
+func ShowHelp(command string) bool {
+	text, ok := helpText(command)
+	if ok {
+		fmt.Print(text)
+	}
+	return ok
 }

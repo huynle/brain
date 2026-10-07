@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/sdk/brain"
 )
 
 // RegisterAttentionTools registers the durable per-user attention inbox tools.
@@ -54,27 +55,29 @@ func registerAttentionCreate(s *Server, client *APIClient) {
 		if title == "" || kind == "" {
 			return "", fmt.Errorf("provide both 'kind' and 'title'")
 		}
-		req := types.CreateAttentionRequest{
-			Recipient:  StringArg(args, "recipient", ""),
+		req := brain.CreateAttentionRequest{
+			Recipient:  optString(StringArg(args, "recipient", "")),
 			Kind:       kind,
-			Severity:   StringArg(args, "severity", ""),
+			Severity:   optString(StringArg(args, "severity", "")),
 			Title:      title,
-			Body:       StringArg(args, "body", ""),
-			Project:    StringArg(args, "project", ""),
-			TaskID:     StringArg(args, "task_id", ""),
-			FeatureID:  StringArg(args, "feature_id", ""),
-			SessionID:  StringArg(args, "session_id", ""),
-			RunnerID:   StringArg(args, "runner_id", ""),
-			InstanceID: StringArg(args, "instance_id", ""),
-			SourceType: StringArg(args, "source_type", ""),
-			SourceID:   StringArg(args, "source_id", ""),
-			DedupKey:   StringArg(args, "dedup_key", ""),
+			Body:       optString(StringArg(args, "body", "")),
+			Project:    optString(StringArg(args, "project", "")),
+			TaskId:     optString(StringArg(args, "task_id", "")),
+			FeatureId:  optString(StringArg(args, "feature_id", "")),
+			SessionId:  optString(StringArg(args, "session_id", "")),
+			RunnerId:   optString(StringArg(args, "runner_id", "")),
+			InstanceId: optString(StringArg(args, "instance_id", "")),
+			SourceType: optString(StringArg(args, "source_type", "")),
+			SourceId:   optString(StringArg(args, "source_id", "")),
+			DedupKey:   optString(StringArg(args, "dedup_key", "")),
 		}
-		var out types.Attention
-		if err := client.Request(ctx, http.MethodPost, "/attention", req, nil, &out); err != nil {
+		out, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.Attention, error) {
+			return sc.Attention().Create(ctx, req, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatAttention("Attention created", &out), nil
+		return formatAttention("Attention created", out), nil
 	})
 }
 
@@ -89,17 +92,16 @@ func registerAttentionList(s *Server, client *APIClient) {
 			"severity": {Type: "string", Enum: []string{"info", "warning", "critical"}, Description: "Filter to one severity."},
 		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		q := map[string]string{}
-		for _, k := range []string{"state", "project", "kind", "severity"} {
-			if v := StringArg(args, k, ""); v != "" {
-				q[k] = v
-			}
+		params := &brain.AttentionListParams{
+			State:    optString(StringArg(args, "state", "")),
+			Project:  optString(StringArg(args, "project", "")),
+			Kind:     optString(StringArg(args, "kind", "")),
+			Severity: optString(StringArg(args, "severity", "")),
 		}
-		var out struct {
-			Attention []types.Attention `json:"attention"`
-			Count     int               `json:"count"`
-		}
-		if err := client.Request(ctx, http.MethodGet, "/attention", nil, q, &out); err != nil {
+		out, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.AttentionListResponse, error) {
+			return sc.Attention().List(ctx, params)
+		})
+		if err != nil {
 			return "", err
 		}
 		if out.Count == 0 {
@@ -109,12 +111,12 @@ func registerAttentionList(s *Server, client *APIClient) {
 		fmt.Fprintf(&b, "%d attention item(s):\n", out.Count)
 		for i := range out.Attention {
 			a := &out.Attention[i]
-			fmt.Fprintf(&b, "- [%s/%s] %s (%s)", a.Severity, a.State, a.Title, a.ID)
-			if a.Project != "" {
-				fmt.Fprintf(&b, " project=%s", a.Project)
+			fmt.Fprintf(&b, "- [%s/%s] %s (%s)", a.Severity, a.State, a.Title, a.Id)
+			if v := derefString(a.Project); v != "" {
+				fmt.Fprintf(&b, " project=%s", v)
 			}
-			if a.TaskID != "" {
-				fmt.Fprintf(&b, " task=%s", a.TaskID)
+			if v := derefString(a.TaskId); v != "" {
+				fmt.Fprintf(&b, " task=%s", v)
 			}
 			b.WriteString("\n")
 		}
@@ -134,11 +136,13 @@ func registerAttentionGet(s *Server, client *APIClient) {
 		if id == "" {
 			return "", fmt.Errorf("provide an 'id'")
 		}
-		var out types.Attention
-		if err := client.Request(ctx, http.MethodGet, "/attention/"+url.PathEscape(id), nil, nil, &out); err != nil {
+		out, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.Attention, error) {
+			return sc.Attention().Get(ctx, id)
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatAttention("Attention", &out), nil
+		return formatAttention("Attention", out), nil
 	})
 }
 
@@ -154,11 +158,13 @@ func registerAttentionResolve(s *Server, client *APIClient) {
 		if id == "" {
 			return "", fmt.Errorf("provide an 'id'")
 		}
-		var out types.Attention
-		if err := client.Request(ctx, http.MethodPost, "/attention/"+url.PathEscape(id)+"/resolve", nil, nil, &out); err != nil {
+		out, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.Attention, error) {
+			return sc.Attention().Resolve(ctx, id, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatAttention("Attention resolved", &out), nil
+		return formatAttention("Attention resolved", out), nil
 	})
 }
 
@@ -175,27 +181,40 @@ func registerAttentionSnooze(s *Server, client *APIClient) {
 		if id == "" {
 			return "", fmt.Errorf("provide an 'id'")
 		}
+		// Stays on the legacy request client: the SDK's SnoozeAttentionRequest
+		// types snoozed_until as time.Time, but this tool forwards the caller's
+		// string verbatim (including empty/unparseable values, which today's
+		// server accepts), so the SDK call could not reproduce its behavior.
 		body := map[string]string{"snoozed_until": StringArg(args, "snoozed_until", "")}
 		var out types.Attention
 		if err := client.Request(ctx, http.MethodPost, "/attention/"+url.PathEscape(id)+"/snooze", body, nil, &out); err != nil {
 			return "", err
 		}
-		return formatAttention("Attention snoozed", &out), nil
+		return formatAttention("Attention snoozed", attentionFromLegacy(&out)), nil
 	})
 }
 
-func formatAttention(prefix string, a *types.Attention) string {
+// attentionFromLegacy adapts the legacy-decoded item used by attention_snooze
+// to the SDK shape the shared formatter renders.
+func attentionFromLegacy(a *types.Attention) *brain.Attention {
+	return &brain.Attention{
+		Title: a.Title, Id: a.ID, Recipient: a.Recipient, Kind: a.Kind, Severity: a.Severity, State: a.State,
+		Project: optString(a.Project), TaskId: optString(a.TaskID), Body: optString(a.Body),
+	}
+}
+
+func formatAttention(prefix string, a *brain.Attention) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: %s\n", prefix, a.Title)
-	fmt.Fprintf(&b, "ID: %s\nRecipient: %s\nKind: %s\nSeverity: %s\nState: %s\n", a.ID, a.Recipient, a.Kind, a.Severity, a.State)
-	if a.Project != "" {
-		fmt.Fprintf(&b, "Project: %s\n", a.Project)
+	fmt.Fprintf(&b, "ID: %s\nRecipient: %s\nKind: %s\nSeverity: %s\nState: %s\n", a.Id, a.Recipient, a.Kind, a.Severity, a.State)
+	if v := derefString(a.Project); v != "" {
+		fmt.Fprintf(&b, "Project: %s\n", v)
 	}
-	if a.TaskID != "" {
-		fmt.Fprintf(&b, "Task: %s\n", a.TaskID)
+	if v := derefString(a.TaskId); v != "" {
+		fmt.Fprintf(&b, "Task: %s\n", v)
 	}
-	if a.Body != "" {
-		fmt.Fprintf(&b, "\n%s\n", a.Body)
+	if v := derefString(a.Body); v != "" {
+		fmt.Fprintf(&b, "\n%s\n", v)
 	}
 	return b.String()
 }

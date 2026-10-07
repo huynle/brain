@@ -56,6 +56,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `--yes`/`-y`, and refuse without a terminal unless `--yes` is given;
   `resume-all` warns that individually paused projects resume too. New
   `brain run pause|resume <project>` use the per-project endpoints.
+- **CLI review follow-ups.** `resume-all` reports the pause scope from the
+  server's paused-project list (the server's `paused` flag is true when ANY
+  project is paused) and only says "All N projects are paused" when every
+  known project is. `pause-all`/`resume-all` reject positional arguments.
+  `brain run features` adds a WAITING column. `brain run config` shows the
+  underlying error. `brain run ready` without a project, `brain help <unknown>`,
+  `brain api <word>` and stray words after `api`/`dev` exit 2.
+  `brain run <sub> --help` prints per-subcommand help. `brain runner` accepts
+  every `brain run` subcommand (start/stop/status stay daemon commands).
+  `brain dev` now actually runs the API server in the foreground at debug log
+  level instead of silently doing nothing.
+
 - **Unknown commands fail.** `brain <unknown>` and unknown `brain run` /
   `brain runner` subcommands print `brain: unknown command "<x>"` (or
   `unknown subcommand`) and a pointer to `brain help` on stderr, nothing on

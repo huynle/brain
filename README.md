@@ -810,14 +810,23 @@ brain run pause <project>
 brain run resume <project>
 brain run pause-all                    # ALL projects server-wide; asks y/N
 brain run resume-all                   # also resumes individually paused projects
+
+# Development server: foreground, debug logging (what `just dev` runs)
+brain dev
 ```
+
+`brain runner <sub>` accepts every `brain run` subcommand too; only
+`runner start|stop|status` differ (they manage background runners on this
+machine). `brain run <sub> --help` prints that subcommand's page.
 
 `pause-all` and `resume-all` print what they will affect and ask for
 confirmation; `--yes`/`-y` skips the prompt, and without a terminal on stdin
-they refuse unless `--yes` is given. `brain run stop` was renamed to
+they refuse unless `--yes` is given. They take no project argument
+(`pause-all demo` is an error; use `pause demo`). `brain run stop` was renamed to
 `brain run pause-all`: it paused every project server-wide and never stopped the
-local runner. Unknown commands and subcommands (including the removed
-`brain mcp` and `brain goal` — use `brain automation goal`) exit with status 2.
+local runner. Unknown commands, subcommands, help topics and stray arguments (including the
+removed `brain mcp` and `brain goal` — use `brain automation goal`) exit with
+status 2.
 
 ### Runner Options
 

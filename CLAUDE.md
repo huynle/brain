@@ -37,7 +37,7 @@ go run ./cmd/brain-api  # Run API server without building
 - `brain-api/` - REST API server entry point
 
 - `brain/` - Main CLI with subcommands (server, runner, doctor, etc.)
-  Unknown commands/subcommands return `commands.UsageError` → exit 2 via `runCLI` (`cmd/brain/main.go`). `brain run pause-all`/`resume-all` are server-wide and confirm (y/N, `--yes`, refuse without a TTY); `brain run stop` is a rename stub. CLI tests run under a hermetic `TestMain` (temp HOME, `BRAIN_API_URL=http://127.0.0.1:1`) — never point CLI tests at a real API.
+  Unknown commands/subcommands return `commands.UsageError` → exit 2 via `runCLI` (`cmd/brain/main.go`). `brain run pause-all`/`resume-all` are server-wide and confirm (y/N, `--yes`, refuse without a TTY); `brain run stop` is a rename stub; `-all` commands reject positionals and take the pause scope from `pausedProjects` (the server's `paused` is true if ANY project is paused). `brain runner <run-sub>` aliases `brain run`. Pause/resume CLI tests use `startRealAPI` (in-process `apiserver.RunServer`) because mocks hid server semantics. CLI tests run under a hermetic `TestMain` (temp HOME, `BRAIN_API_URL=http://127.0.0.1:1`) — never point CLI tests at a real API.
 
 ### Core API (`internal/api/`)
 - `entries.go` - CRUD for brain entries

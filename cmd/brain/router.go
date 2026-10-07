@@ -103,9 +103,9 @@ var builtinCommands = map[string]bool{
 // route determines which command to execute based on CLI arguments.
 //
 // Routing priority:
-//  1. Zero args → help
-//  2. Built-in commands (api, run, mcp, etc.)
-//  3. Unknown/invalid input → help
+//  1. Zero args, -h/--help → help
+//  2. Built-in commands (api, run, automation, etc.)
+//  3. Anything else → unknown-command usage error (exit 2)
 //
 // Use "brain run start <project>" to launch a task runner.
 func route(args []string) (Command, error) {
@@ -121,14 +121,36 @@ func route(args []string) (Command, error) {
 		return parseBuiltinCommand(args)
 	}
 
-	// Flags without a command → help
-	if len(firstArg) > 0 && firstArg[0] == '-' {
+	if firstArg == "-h" || firstArg == "--help" {
 		return newHelpCommand(), nil
 	}
 
-	// Unknown → help
-	return newHelpCommand(), nil
+	return &unknownCommand{message: fmt.Sprintf("brain: unknown command %q\nRun 'brain help' for a list of commands.", firstArg)}, nil
 }
+
+// unknownCommand reports a usage mistake. It prints nothing on stdout, so a
+// stale client that launches it (e.g. an old stdio MCP config running
+// `brain mcp`) sees a clean failure rather than help text.
+type unknownCommand struct {
+	message string
+}
+
+func (c *unknownCommand) Execute() error { return &commands.UsageError{Message: c.message} }
+
+func (c *unknownCommand) Type() string { return "unknown" }
+
+func unknownSubcommand(group, sub string) Command {
+	return &unknownCommand{message: fmt.Sprintf("brain %s: unknown subcommand %q\nRun 'brain help %s' for usage.", group, sub, group)}
+}
+
+// runSubcommands are the valid `brain run <subcommand>` names.
+var runSubcommands = map[string]bool{
+	"start": true, "stop": true, "status": true, "list": true, "ready": true,
+	"features": true, "logs": true, "config": true,
+}
+
+// runnerSubcommands are the valid `brain runner <subcommand>` names.
+var runnerSubcommands = map[string]bool{"start": true, "stop": true, "status": true}
 
 // =============================================================================
 // Command Constructors
@@ -262,10 +284,7 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		}
 		return parseRunnerCommand(cmdArgs)
 	case "run":
-		if len(cmdArgs) == 0 {
-			return &stubCommand{cmdType: "run"}, nil
-		}
-		if isHelpArg(cmdArgs[0]) {
+		if len(cmdArgs) == 0 || isHelpArg(cmdArgs[0]) {
 			return &HelpCommand{command: "run"}, nil
 		}
 		// Granular "brain run <subcommand>" (start/stop/status/list/…).
@@ -426,6 +445,9 @@ func parseRunCommand(args []string) (Command, error) {
 	if isHelpArg(subcommand) {
 		return &HelpCommand{command: "run"}, nil
 	}
+	if !runSubcommands[subcommand] {
+		return unknownSubcommand("run", subcommand), nil
+	}
 	if len(args) > 1 && wantsHelp(args[1:]) {
 		return &HelpCommand{command: "run " + subcommand}, nil
 	}
@@ -457,6 +479,9 @@ func parseRunnerCommand(args []string) (Command, error) {
 	subcommand := args[0]
 	if isHelpArg(subcommand) {
 		return &HelpCommand{command: "runner"}, nil
+	}
+	if !runnerSubcommands[subcommand] {
+		return unknownSubcommand("runner", subcommand), nil
 	}
 	subArgs := args[1:]
 	if wantsHelp(subArgs) {

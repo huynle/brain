@@ -92,25 +92,6 @@ func TestRoute_ZeroArgs_RoutesToHelp(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: Unknown args route to help (not runner TUI)
-// ---------------------------------------------------------------------------
-
-func TestRoute_UnknownArg_RoutesToHelp(t *testing.T) {
-	// "all" without "start" prefix should be help, not runner TUI
-	for _, arg := range []string{"all", "my-project", "ft857"} {
-		t.Run(arg, func(t *testing.T) {
-			cmd, err := route([]string{arg})
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if cmd.Type() != "help" {
-				t.Errorf("route(%q) Type() = %q, want %q", arg, cmd.Type(), "help")
-			}
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Test: Built-in commands take precedence
 // ---------------------------------------------------------------------------
 
@@ -124,6 +105,7 @@ func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 	// Commands that return a different Type() than their name
 	aliasExpected := map[string]string{
 		"runner": "help", // "brain runner" alone → help; "brain runner start" → runner daemon
+		"run":    "help", // "brain run" alone → run help
 	}
 
 	for _, builtin := range builtins {
@@ -274,34 +256,6 @@ func TestRoute_ConfigCommand_ParsesConfigSubcommands(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: Unknown command routes to help
-// ---------------------------------------------------------------------------
-
-func TestRoute_UnknownCommand_RoutesToHelp(t *testing.T) {
-	args := []string{"unknown-command-12345"}
-	cmd, err := route(args)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cmd.Type() != "help" {
-		t.Errorf("Type() = %q, want %q", cmd.Type(), "help")
-	}
-}
-
-// The stdio MCP server was removed: MCP is served only from the API's /mcp.
-func TestRoute_MCPIsUnknownCommand(t *testing.T) {
-	for _, args := range [][]string{{"mcp"}, {"mcp", "--api-url", "http://localhost:3333"}} {
-		cmd, err := route(args)
-		if err != nil {
-			t.Fatalf("route(%v) error: %v", args, err)
-		}
-		if cmd.Type() != "help" {
-			t.Errorf("route(%v) Type() = %q, want help (unknown command)", args, cmd.Type())
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Test: isBuiltinCommand helper
 // ---------------------------------------------------------------------------
 
@@ -338,8 +292,8 @@ func TestRoute_APISubcommands(t *testing.T) {
 
 // Test: "brain start <project>" routes to runner TUI
 // `brain start` was the TUI dashboard entry point and is gone. It must now
-// behave like any other unrecognized word — help, not a silently different
-// runner mode — so a stale script or muscle-memory invocation fails loudly
+// behave like any other unrecognized word — an unknown-command error, not a
+// silently different runner mode — so a stale script or muscle-memory invocation fails loudly
 // instead of starting a headless runner nobody asked for.
 func TestRoute_StartNoLongerRoutesToARunner(t *testing.T) {
 	for _, args := range [][]string{
@@ -353,8 +307,8 @@ func TestRoute_StartNoLongerRoutesToARunner(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got := cmd.Type(); got != "help" {
-				t.Errorf("route(%v) Type() = %q, want help", args, got)
+			if got := cmd.Type(); got != "unknown" {
+				t.Errorf("route(%v) Type() = %q, want unknown", args, got)
 			}
 		})
 	}

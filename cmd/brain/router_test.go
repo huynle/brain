@@ -837,3 +837,30 @@ func TestParseRunCommand_NamedRunner(t *testing.T) {
 		t.Error("Flags.Headless = false, want true")
 	}
 }
+
+func TestRoute_RunPauseFamilyParsesArgs(t *testing.T) {
+	for _, tc := range []struct {
+		args    []string
+		sub     string
+		project string
+		yes     bool
+	}{
+		{[]string{"run", "pause-all", "--yes"}, "pause-all", "all", true},
+		{[]string{"run", "resume-all", "-y"}, "resume-all", "all", true},
+		{[]string{"run", "pause", "alpha"}, "pause", "alpha", false},
+		{[]string{"run", "resume", "alpha"}, "resume", "alpha", false},
+		{[]string{"run", "stop"}, "stop", "all", false},
+	} {
+		cmd, err := route(tc.args)
+		if err != nil {
+			t.Fatalf("route(%v): %v", tc.args, err)
+		}
+		rc, ok := cmd.(*commands.RunCommand)
+		if !ok {
+			t.Fatalf("route(%v) = %T, want *commands.RunCommand", tc.args, cmd)
+		}
+		if rc.Subcommand != tc.sub || rc.Project != tc.project || rc.Flags.Yes != tc.yes {
+			t.Errorf("route(%v) = sub %q project %q yes %v", tc.args, rc.Subcommand, rc.Project, rc.Flags.Yes)
+		}
+	}
+}

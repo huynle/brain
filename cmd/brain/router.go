@@ -147,6 +147,7 @@ func unknownSubcommand(group, sub string) Command {
 var runSubcommands = map[string]bool{
 	"start": true, "stop": true, "status": true, "list": true, "ready": true,
 	"features": true, "logs": true, "config": true,
+	"pause": true, "resume": true, "pause-all": true, "resume-all": true,
 }
 
 // runnerSubcommands are the valid `brain runner <subcommand>` names.
@@ -402,7 +403,7 @@ var runnerValueFlags = map[string]bool{
 	"--workdir": true, "-w": true, "--agent": true, "--model": true, "-m": true,
 	"--executor": true, "--pi-bin": true, "--pi-model": true, "--pi-thinking": true,
 	"--include": true, "-i": true, "--exclude": true, "-e": true,
-	"--feature-id": true, "-F": true,
+	"--feature-id": true, "-F": true, "--limit": true,
 }
 
 // splitRunnerProjectArg pulls the positional project out of a runner arg list,
@@ -435,6 +436,25 @@ func splitRunnerProjectArg(args []string) (string, []string) {
 	return project, flagArgs
 }
 
+// splitRunPositionals returns every positional argument (in order) and the
+// flag arguments, honoring flags that consume a value.
+func splitRunPositionals(args []string) (positionals, flagArgs []string) {
+	skipNext := false
+	for _, a := range args {
+		switch {
+		case skipNext:
+			skipNext = false
+			flagArgs = append(flagArgs, a)
+		case isFlag(a):
+			skipNext = runnerValueFlags[a]
+			flagArgs = append(flagArgs, a)
+		default:
+			positionals = append(positionals, a)
+		}
+	}
+	return positionals, flagArgs
+}
+
 // parseRunCommand creates a RunCommand from args.
 func parseRunCommand(args []string) (Command, error) {
 	if len(args) == 0 {
@@ -459,6 +479,7 @@ func parseRunCommand(args []string) (Command, error) {
 	// so "brain run start <project> --headless" works the same as
 	// "brain run start --headless <project>".
 	project, flagArgs := splitRunnerProjectArg(subArgs)
+	positionals, _ := splitRunPositionals(subArgs)
 
 	flags, err := ParseRunnerFlags(flagArgs)
 	if err != nil {
@@ -468,6 +489,7 @@ func parseRunCommand(args []string) (Command, error) {
 	return &commands.RunCommand{
 		Subcommand: subcommand,
 		Project:    project,
+		Args:       positionals,
 		Config:     convertToCommandsConfig(cfg),
 		Flags:      convertToCommandsRunnerFlags(flags),
 	}, nil
@@ -782,6 +804,8 @@ func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 		Exclude:      flags.Exclude,
 		FeatureIDs:   flags.FeatureIDs,
 		Follow:       flags.Follow,
+		Yes:          flags.Yes,
+		Limit:        flags.Limit,
 	}
 }
 

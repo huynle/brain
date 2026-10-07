@@ -397,7 +397,11 @@ USAGE:
 
 SUBCOMMANDS:
   start                          Start runner (implemented)
-  stop                           Stop runner (placeholder)
+  pause <project>                Pause task execution for one project
+  resume <project>               Resume task execution for one project
+  pause-all                      Pause ALL projects server-wide (asks to confirm)
+  resume-all                     Resume ALL projects, including individually
+                                 paused ones (asks to confirm)
   status                         Show runner status (placeholder)
   list                           List tasks (placeholder)
   ready                          List ready tasks (placeholder)
@@ -406,7 +410,12 @@ SUBCOMMANDS:
   config                         Show runner config (placeholder)
 
 COMMON FLAGS:
-  Same flags as: brain start --help
+  Same flags as: brain help run start
+  -y, --yes                      Skip the pause-all/resume-all confirmation
+                                 (required when stdin is not a terminal)
+
+pause/resume never start or stop a runner process. To stop a local runner,
+stop its process (or 'brain runner stop' for one started with 'brain runner start').
 
 SUBCOMMAND HELP:
   brain help run start

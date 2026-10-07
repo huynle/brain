@@ -304,57 +304,6 @@ func TestRunList_EmptyProject(t *testing.T) {
 }
 
 // =============================================================================
-// runStop tests
-// =============================================================================
-
-func TestRunStop_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/tasks/runner/pause" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST, got %s", r.Method)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	cmd := &RunCommand{
-		Subcommand: "stop",
-		Config: &UnifiedConfig{
-			Runner: runner.RunnerConfig{BrainAPIURL: srv.URL},
-		},
-		Flags: &RunnerFlags{},
-	}
-
-	err := cmd.runStop()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestRunStop_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("server error"))
-	}))
-	defer srv.Close()
-
-	cmd := &RunCommand{
-		Subcommand: "stop",
-		Config: &UnifiedConfig{
-			Runner: runner.RunnerConfig{BrainAPIURL: srv.URL},
-		},
-		Flags: &RunnerFlags{},
-	}
-
-	err := cmd.runStop()
-	if err == nil {
-		t.Fatal("expected error on API failure")
-	}
-}
-
-// =============================================================================
 // runStatus tests
 // =============================================================================
 

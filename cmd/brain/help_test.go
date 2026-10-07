@@ -180,3 +180,15 @@ func TestShowHelp_UnknownTopicFallsBackToMain(t *testing.T) {
 		t.Fatal("expected main help fallback")
 	}
 }
+
+func TestRunHelp_DescribesPauseFamily(t *testing.T) {
+	out := captureOutput(func() { ShowHelp("run") })
+	for _, want := range []string{"pause-all", "resume-all", "pause <project>", "resume <project>", "--yes"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("run help missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Stop runner") {
+		t.Errorf("run help still advertises stop as stopping the runner:\n%s", out)
+	}
+}

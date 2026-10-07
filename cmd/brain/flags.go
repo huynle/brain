@@ -57,6 +57,8 @@ type RunnerFlags struct {
 	Exclude      []string
 	FeatureIDs   []string
 	Follow       bool
+	Yes          bool
+	Limit        int
 }
 
 // TokenFlags for token command
@@ -166,6 +168,9 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 	fs.StringVar(&flags.PiModel, "pi-model", "", "Pi model")
 	fs.StringVar(&flags.PiThinking, "pi-thinking", "", "Pi thinking level (off, minimal, low, medium, high, xhigh)")
 	fs.BoolVar(&flags.Follow, "follow", false, "Follow logs")
+	fs.BoolVar(&flags.Yes, "yes", false, "Skip confirmation (pause-all/resume-all)")
+	fs.BoolVar(&flags.Yes, "y", false, "Skip confirmation (short)")
+	fs.IntVar(&flags.Limit, "limit", 0, "Maximum log lines (run logs)")
 
 	// Multi-value flags
 	fs.Func("include", "Include project pattern", func(s string) error {

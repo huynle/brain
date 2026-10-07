@@ -116,7 +116,7 @@ ERROR
 Error: request failed: Get "http://<LOOPBACK>/api/v1/webhooks?enabled=true": dial tcp <LOOPBACK>: connect: connection refused
 === dead api list all (webhook_list)
 ERROR
-Error: request failed: Get "http://<LOOPBACK>/api/v1/webhooks": dial tcp <LOOPBACK>: connect: connection refused
+Error: request failed: Get "http://<LOOPBACK>/api/v1/webhooks?enabled=false": dial tcp <LOOPBACK>: connect: connection refused
 === dead api deliveries default limit (webhook_deliveries)
 ERROR
 Error: request failed: Get "http://<LOOPBACK>/api/v1/webhooks/w1/deliveries": dial tcp <LOOPBACK>: connect: connection refused

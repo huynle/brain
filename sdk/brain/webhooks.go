@@ -25,7 +25,12 @@ func (s WebhooksService) Delete(ctx context.Context, id string, o RequestOptions
 	return result[SuccessResponse](s.c, ctx, "DELETE", "/webhooks/"+url.PathEscape(id), nil, nil, o)
 }
 func (s WebhooksService) Deliveries(ctx context.Context, id string, limit int) (*ListWebhookDeliveriesResponse, error) {
-	return result[ListWebhookDeliveriesResponse](s.c, ctx, "GET", "/webhooks/"+url.PathEscape(id)+"/deliveries", nil, url.Values{"limit": {strconv.Itoa(limit)}}, RequestOptions{})
+	// Non-positive limits are rejected by the server; omit to get its default (50).
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	return result[ListWebhookDeliveriesResponse](s.c, ctx, "GET", "/webhooks/"+url.PathEscape(id)+"/deliveries", nil, q, RequestOptions{})
 }
 func (s WebhooksService) Test(ctx context.Context, id string, o RequestOptions) (*WebhookDeliveryResponse, error) {
 	return result[WebhookDeliveryResponse](s.c, ctx, "POST", "/webhooks/"+url.PathEscape(id)+"/test", nil, nil, o)

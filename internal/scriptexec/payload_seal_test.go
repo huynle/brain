@@ -2,9 +2,14 @@ package scriptexec
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -77,10 +82,12 @@ func (m *memoryPayloadKeyStore) destroyThrough(now time.Time, period time.Durati
 
 var sealT0 = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 
+const testKeyPeriod = 5 * time.Minute
+
 func testSealer(t *testing.T) (*payloadSealer, *memoryPayloadKeyStore) {
 	t.Helper()
 	store := newMemoryPayloadKeyStore()
-	s, err := newPayloadSealer(store, time.Hour)
+	s, err := newPayloadSealer(store, testKeyPeriod)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,10 +162,10 @@ func TestPayloadSealRefusesAtDeadlineAndAfterKeyDestruction(t *testing.T) {
 	// The key covering that deadline is destroyed when its period ends, at
 	// most one period after the deadline.
 	destroyAt := s.KeyDestroyAt(sealed)
-	if destroyAt.Before(expires) || destroyAt.Sub(expires) > time.Hour {
+	if destroyAt.Before(expires) || destroyAt.Sub(expires) > payloadMaxKeyPeriod {
 		t.Fatalf("key destroy time %v not within one period after deadline %v", destroyAt, expires)
 	}
-	store.destroyThrough(destroyAt, time.Hour)
+	store.destroyThrough(destroyAt, testKeyPeriod)
 	// Even a caller that ignores the deadline (clock skew, bug) cannot decrypt.
 	if _, err := s.Open(b, sealT0, sealed); !errors.Is(err, errPayloadKeyDestroyed) {
 		t.Fatalf("open after key destruction: err=%v, want errPayloadKeyDestroyed", err)
@@ -200,7 +207,7 @@ func TestPayloadSealRefusalsAreBoundedAndContentFree(t *testing.T) {
 		t.Fatalf("boundary payload refused: %v", err)
 	}
 	// Wrong key length from the store is refused, not truncated or padded.
-	fresh, _ := newPayloadSealer(newMemoryPayloadKeyStore(), time.Hour)
+	fresh, _ := newPayloadSealer(newMemoryPayloadKeyStore(), testKeyPeriod)
 	fresh.store.(*memoryPayloadKeyStore).badLength = true
 	if _, err := fresh.Seal(ok, expires, sealT0, []byte(secret)); !errors.Is(err, errPayloadSealing) {
 		t.Fatalf("short key accepted: %v", err)
@@ -224,9 +231,163 @@ func TestPayloadSealerConfiguration(t *testing.T) {
 	if _, err := newPayloadSealer(nil, time.Hour); !errors.Is(err, errPayloadSealing) {
 		t.Fatal("nil key store accepted")
 	}
-	for _, period := range []time.Duration{0, -time.Hour, time.Second * 30, policyProtectedRetention + time.Hour} {
+	// SCRIPT-DECISIONS-20261007: the key must be destroyed at the deadline;
+	// with per-period keys that is met within one period, capped at 5 minutes.
+	for _, period := range []time.Duration{0, -time.Hour, time.Second * 30, 5*time.Minute + time.Nanosecond, time.Hour, policyProtectedRetention} {
 		if _, err := newPayloadSealer(newMemoryPayloadKeyStore(), period); !errors.Is(err, errPayloadSealing) {
 			t.Errorf("period %v accepted", period)
+		}
+	}
+	for _, period := range []time.Duration{time.Minute, 5 * time.Minute} {
+		if _, err := newPayloadSealer(newMemoryPayloadKeyStore(), period); err != nil {
+			t.Errorf("period %v refused: %v", period, err)
+		}
+	}
+	if payloadMaxKeyPeriod != 5*time.Minute {
+		t.Fatal("approved maximum key period is 5 minutes")
+	}
+}
+
+// Review m915iske F1: the deadline was encoded as uint64(UnixNano()), which
+// wraps, so ExpiresAt + 2^64ns (year 2611) authenticated and decrypted after
+// the deadline. A wrapped deadline must never open.
+func TestPayloadSealWrappedDeadlineRefused(t *testing.T) {
+	s, _ := testSealer(t)
+	b := payloadBinding{Tenant: "t1", Execution: "e1", Purpose: "result"}
+	expires := sealT0.Add(90 * time.Minute)
+	sealed, err := s.Seal(b, expires, sealT0, []byte("SECRET"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := sealed
+	wrapped.ExpiresAt = sealed.ExpiresAt.Add(time.Duration(math.MaxInt64)).Add(time.Duration(math.MaxInt64)).Add(2)
+	if uint64(wrapped.ExpiresAt.UnixNano()) != uint64(sealed.ExpiresAt.UnixNano()) {
+		t.Fatal("test setup: deadline does not wrap")
+	}
+	afterDeadline := expires.Add(time.Hour)
+	got, err := s.Open(b, afterDeadline, wrapped)
+	if err == nil || bytes.Contains(got, []byte("SECRET")) {
+		t.Fatalf("wrapped deadline decrypted after the real deadline: %q err=%v", got, err)
+	}
+	// Any deadline more than 24h ahead of now, or outside its key period, is
+	// refused before any key is used.
+	far := sealed
+	far.ExpiresAt = sealT0.Add(policyProtectedRetention + time.Second)
+	if _, err := s.Open(b, sealT0, far); !errors.Is(err, errPayloadSealing) {
+		t.Fatalf("deadline beyond now+24h accepted: %v", err)
+	}
+	// A genuinely sealed, period-consistent payload whose deadline is more
+	// than 24h ahead of the caller's clock (e.g. a backward clock) is refused:
+	// only the now+24h check catches this case.
+	if _, err := s.Open(b, expires.Add(-policyProtectedRetention-time.Minute), sealed); !errors.Is(err, errPayloadSealing) {
+		t.Fatalf("deadline more than 24h ahead of now accepted: %v", err)
+	}
+	early := sealed
+	early.ExpiresAt = sealed.PeriodStart.Add(-time.Nanosecond)
+	if _, err := s.Open(b, sealT0, early); !errors.Is(err, errPayloadSealing) {
+		t.Fatalf("deadline before its key period accepted: %v", err)
+	}
+	late := sealed
+	late.ExpiresAt = sealed.PeriodStart.Add(testKeyPeriod)
+	if _, err := s.Open(b, sealT0, late); !errors.Is(err, errPayloadSealing) {
+		t.Fatalf("deadline after its key period accepted: %v", err)
+	}
+	moved := sealed
+	moved.PeriodStart = sealed.PeriodStart.Add(-testKeyPeriod)
+	if _, err := s.Open(b, sealT0, moved); !errors.Is(err, errPayloadSealing) {
+		t.Fatalf("tampered key period accepted: %v", err)
+	}
+}
+
+// aliasKeyStore returns identical key material under two IDs, so only the
+// AAD binding of the key ID can tell them apart (review m915iske).
+type aliasKeyStore struct{ key []byte }
+
+func (a aliasKeyStore) KeyForPeriod(payloadKeyPeriod) (string, []byte, error) {
+	return "alias-a", bytes.Clone(a.key), nil
+}
+func (a aliasKeyStore) Key(id string) ([]byte, error) {
+	if id == "alias-a" || id == "alias-b" {
+		return bytes.Clone(a.key), nil
+	}
+	return nil, errPayloadKeyDestroyed
+}
+
+func TestPayloadSealBindsKeyIDAndDomain(t *testing.T) {
+	key := bytes.Repeat([]byte{7}, payloadKeyBytes)
+	s, err := newPayloadSealer(aliasKeyStore{key}, testKeyPeriod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := payloadBinding{Tenant: "t1", Execution: "e1", Purpose: "plan"}
+	sealed, err := s.Seal(b, sealT0.Add(time.Hour), sealT0, []byte("SECRET-PLAN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	relabeled := sealed
+	relabeled.KeyID = "alias-b" // same key bytes, different ID
+	if _, err := s.Open(b, sealT0, relabeled); !errors.Is(err, errPayloadSealing) {
+		t.Fatalf("key ID is not bound: err=%v", err)
+	}
+	// Independent specification of the documented AAD layout: any change to
+	// the domain string, field order or encoding breaks this decryption.
+	field := func(dst []byte, v string) []byte {
+		var n [8]byte
+		binary.BigEndian.PutUint64(n[:], uint64(len(v)))
+		return append(append(dst, n[:]...), v...)
+	}
+	var ad []byte
+	for _, v := range []string{"brain-script-payload-v1", sealed.KeyID, b.Tenant, b.Execution, b.Purpose} {
+		ad = field(ad, v)
+	}
+	var num [8]byte
+	binary.BigEndian.PutUint64(num[:], uint64(sealed.PeriodStart.Unix()))
+	ad = append(ad, num[:]...)
+	binary.BigEndian.PutUint64(num[:], uint64(testKeyPeriod))
+	ad = append(ad, num[:]...)
+	binary.BigEndian.PutUint64(num[:], uint64(sealed.ExpiresAt.Unix()))
+	ad = append(ad, num[:]...)
+	var nanos [4]byte
+	binary.BigEndian.PutUint32(nanos[:], uint32(sealed.ExpiresAt.Nanosecond()))
+	ad = append(ad, nanos[:]...)
+	block, _ := aes.NewCipher(key)
+	aead, _ := cipher.NewGCM(block)
+	plain, err := aead.Open(nil, sealed.Nonce, sealed.Ciphertext, ad)
+	if err != nil || string(plain) != "SECRET-PLAN" {
+		t.Fatalf("ciphertext not authenticated under the documented AAD layout: %v", err)
+	}
+	// The same layout without the domain string must NOT authenticate.
+	var noDomain []byte
+	for _, v := range []string{sealed.KeyID, b.Tenant, b.Execution, b.Purpose} {
+		noDomain = field(noDomain, v)
+	}
+	noDomain = append(noDomain, ad[len(ad)-28:]...)
+	if _, err := aead.Open(nil, sealed.Nonce, sealed.Ciphertext, noDomain); err == nil {
+		t.Fatal("domain separator is not bound")
+	}
+}
+
+func TestSealedPayloadFormattingHidesBytes(t *testing.T) {
+	s, _ := testSealer(t)
+	b := payloadBinding{Tenant: "tenant-SECRETVAL", Execution: "exec-SECRETVAL", Purpose: "result"}
+	sealed, err := s.Seal(b, sealT0.Add(time.Hour), sealT0, []byte("SECRET-PAYLOAD"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbidden := []string{
+		fmt.Sprint(sealed.Ciphertext), fmt.Sprint(sealed.Nonce),
+		hex.EncodeToString(sealed.Ciphertext[:8]), hex.EncodeToString(sealed.Nonce),
+		strings.ToUpper(hex.EncodeToString(sealed.Nonce)), string(sealed.Ciphertext[:8]),
+		"tenant-SECRETVAL", "exec-SECRETVAL", "SECRET-PAYLOAD",
+	}
+	for _, v := range []any{sealed, &sealed} {
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%x", "%X", "%q", "%d"} {
+			out := fmt.Sprintf(verb, v)
+			for _, f := range forbidden {
+				if f != "" && strings.Contains(out, f) {
+					t.Errorf("%s of %T leaks %q: %q", verb, v, f, out)
+				}
+			}
 		}
 	}
 }

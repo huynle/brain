@@ -23,9 +23,16 @@ import (
 // rotation and the destruction step — is requested from DB.1/DB.6.
 //
 // Timing: a payload is sealed under the key for the period containing its
-// deadline. Open refuses at the deadline itself (the deadline is
-// authenticated, so it cannot be extended); the key is destroyed when its
-// period ends, at most one period after the deadline.
+// DEADLINE (not its seal time). Open refuses at the exact deadline (the
+// deadline and its key period are authenticated, so neither can be moved);
+// the key is destroyed when its period ends. Key periods are capped at 5
+// minutes, so every key is destroyed within at most 5 minutes after the
+// deadlines it covers (SCRIPT-DECISIONS-20261007).
+//
+// The caller supplies now; a wrong clock can defeat the software refusal only
+// until the key is destroyed. Key zeroing is best-effort: the AES key schedule
+// inside cipher objects, garbage-collector copies and the key store's own copy
+// are not wiped by this package.
 
 var (
 	errPayloadSealing      = errors.New("script payload sealing refused")
@@ -38,7 +45,12 @@ const (
 	payloadNonceBytes    = 12
 	payloadBindingMaxLen = 256
 	payloadMinKeyPeriod  = time.Minute
-	payloadSealDomain    = "brain-script-payload-v1"
+	payloadMaxKeyPeriod  = 5 * time.Minute
+	// Deadlines are bounded to a sane absolute range so their encoding
+	// (int64 seconds + uint32 nanoseconds) can never wrap.
+	payloadMinUnix    = 946684800  // 2000-01-01T00:00:00Z
+	payloadMaxUnix    = 7258118400 // 2200-01-01T00:00:00Z
+	payloadSealDomain = "brain-script-payload-v1"
 )
 
 // payloadKeyPeriod identifies one key period [Start, Start+Length).
@@ -64,10 +76,11 @@ type payloadBinding struct {
 
 // sealedPayload is what may be persisted. It never contains plaintext.
 type sealedPayload struct {
-	KeyID      string
-	ExpiresAt  time.Time
-	Nonce      []byte
-	Ciphertext []byte
+	KeyID       string
+	PeriodStart time.Time // start of the key period containing ExpiresAt
+	ExpiresAt   time.Time
+	Nonce       []byte
+	Ciphertext  []byte
 }
 
 // Format never prints nonce or ciphertext bytes.
@@ -81,7 +94,7 @@ type payloadSealer struct {
 }
 
 func newPayloadSealer(store payloadKeyStore, period time.Duration) (*payloadSealer, error) {
-	if store == nil || period < payloadMinKeyPeriod || period > policyProtectedRetention {
+	if store == nil || period < payloadMinKeyPeriod || period > payloadMaxKeyPeriod {
 		return nil, errPayloadSealing
 	}
 	return &payloadSealer{store: store, period: period}, nil
@@ -96,6 +109,11 @@ func validBinding(b payloadBinding) bool {
 	return true
 }
 
+func validDeadline(t time.Time) bool {
+	u := t.Unix()
+	return u >= payloadMinUnix && u < payloadMaxUnix
+}
+
 func (s *payloadSealer) periodFor(expiresAt time.Time) payloadKeyPeriod {
 	return payloadKeyPeriod{Start: expiresAt.UTC().Truncate(s.period), Length: s.period}
 }
@@ -107,7 +125,12 @@ func (s *payloadSealer) KeyDestroyAt(p sealedPayload) time.Time {
 	return period.Start.Add(period.Length)
 }
 
-func associatedData(keyID string, b payloadBinding, expiresAt time.Time) []byte {
+// associatedData is the documented AAD layout (pinned by an independent
+// specification test): 8-byte big-endian length-prefixed domain, key ID,
+// tenant, execution, purpose; then period start (int64 seconds), period
+// length (int64 nanoseconds), deadline (int64 seconds) and deadline
+// nanoseconds (uint32), all big-endian. Callers validate the ranges first.
+func associatedData(keyID string, b payloadBinding, period payloadKeyPeriod, expiresAt time.Time) []byte {
 	var ad []byte
 	field := func(v string) {
 		var n [8]byte
@@ -120,9 +143,16 @@ func associatedData(keyID string, b payloadBinding, expiresAt time.Time) []byte 
 	field(b.Tenant)
 	field(b.Execution)
 	field(b.Purpose)
-	var t [8]byte
-	binary.BigEndian.PutUint64(t[:], uint64(expiresAt.UTC().UnixNano()))
-	return append(ad, t[:]...)
+	var n [8]byte
+	binary.BigEndian.PutUint64(n[:], uint64(period.Start.Unix()))
+	ad = append(ad, n[:]...)
+	binary.BigEndian.PutUint64(n[:], uint64(period.Length))
+	ad = append(ad, n[:]...)
+	binary.BigEndian.PutUint64(n[:], uint64(expiresAt.Unix()))
+	ad = append(ad, n[:]...)
+	var ns [4]byte
+	binary.BigEndian.PutUint32(ns[:], uint32(expiresAt.Nanosecond()))
+	return append(ad, ns[:]...)
 }
 
 func gcmFor(key []byte) (cipher.AEAD, error) {
@@ -153,10 +183,11 @@ func (s *payloadSealer) Seal(b payloadBinding, expiresAt, now time.Time, plainte
 	if !validBinding(b) || len(plaintext) == 0 || len(plaintext) > policyEnvelopeMaxBytes {
 		return sealedPayload{}, errPayloadSealing
 	}
-	if !expiresAt.After(now) || expiresAt.Sub(now) > policyProtectedRetention {
+	if !validDeadline(expiresAt) || !expiresAt.After(now) || expiresAt.Sub(now) > policyProtectedRetention {
 		return sealedPayload{}, errPayloadSealing
 	}
-	keyID, key, err := s.store.KeyForPeriod(s.periodFor(expiresAt))
+	period := s.periodFor(expiresAt)
+	keyID, key, err := s.store.KeyForPeriod(period)
 	defer zero(key)
 	if errors.Is(err, errPayloadKeyDestroyed) {
 		return sealedPayload{}, errPayloadKeyDestroyed
@@ -174,10 +205,11 @@ func (s *payloadSealer) Seal(b payloadBinding, expiresAt, now time.Time, plainte
 	}
 	expires := expiresAt.UTC()
 	return sealedPayload{
-		KeyID:      keyID,
-		ExpiresAt:  expires,
-		Nonce:      nonce,
-		Ciphertext: aead.Seal(nil, nonce, plaintext, associatedData(keyID, b, expires)),
+		KeyID:       keyID,
+		PeriodStart: period.Start,
+		ExpiresAt:   expires,
+		Nonce:       nonce,
+		Ciphertext:  aead.Seal(nil, nonce, plaintext, associatedData(keyID, b, period, expires)),
 	}, nil
 }
 
@@ -186,6 +218,14 @@ func (s *payloadSealer) Seal(b payloadBinding, expiresAt, now time.Time, plainte
 // key is destroyed it refuses permanently.
 func (s *payloadSealer) Open(b payloadBinding, now time.Time, p sealedPayload) ([]byte, error) {
 	if !validBinding(b) || p.KeyID == "" || len(p.Nonce) != payloadNonceBytes || len(p.Ciphertext) == 0 {
+		return nil, errPayloadSealing
+	}
+	// Range checks precede the deadline check so a forged far-future or
+	// out-of-period deadline is refused, never treated as "not yet expired".
+	period := s.periodFor(p.ExpiresAt)
+	if !validDeadline(p.ExpiresAt) || !validDeadline(p.PeriodStart) || !p.PeriodStart.Equal(period.Start) ||
+		p.ExpiresAt.Before(period.Start) || !p.ExpiresAt.Before(period.Start.Add(period.Length)) ||
+		p.ExpiresAt.Sub(now) > policyProtectedRetention {
 		return nil, errPayloadSealing
 	}
 	if !now.Before(p.ExpiresAt) {
@@ -203,7 +243,7 @@ func (s *payloadSealer) Open(b payloadBinding, now time.Time, p sealedPayload) (
 	if err != nil {
 		return nil, err
 	}
-	plaintext, err := aead.Open(nil, p.Nonce, p.Ciphertext, associatedData(p.KeyID, b, p.ExpiresAt))
+	plaintext, err := aead.Open(nil, p.Nonce, p.Ciphertext, associatedData(p.KeyID, b, period, p.ExpiresAt))
 	if err != nil {
 		return nil, errPayloadSealing
 	}

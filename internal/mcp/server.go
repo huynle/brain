@@ -68,6 +68,10 @@ type Server struct {
 	// the MCP client, i.e. whether a path the client names is a path this
 	// process can open. Set at construction; never mutated afterwards.
 	localFilesystem bool
+
+	// caller is what a hosted client declared about itself in request
+	// headers (see ParseCallerHeaders). Nil for stdio and headerless calls.
+	caller *CallerContext
 }
 
 // ServerOption configures optional Server behavior.
@@ -97,17 +101,18 @@ func NewServer(opts ...ServerOption) *Server {
 	return s
 }
 
-// requireLocalFilesystem rejects a tool argument naming a path on the caller's
-// machine when this server has no access to that machine. alternative names the
-// argument the caller should reach for instead.
-func (s *Server) requireLocalFilesystem(arg, alternative string) error {
-	if s.localFilesystem {
+// rejectLocalPathArg refuses a tool argument naming a path on the caller's
+// machine. Tools run inside the Brain API, so the path would resolve on the
+// API host's filesystem — failing, or silently touching a different file that
+// happens to exist there. alternative names what the caller should do instead.
+func rejectLocalPathArg(args map[string]any, arg, alternative string) error {
+	if _, ok := args[arg]; !ok {
 		return nil
 	}
-	return fmt.Errorf("%q is unavailable on this MCP server: it runs inside the Brain API, so the path would resolve on the API host's filesystem instead of yours — %s", arg, alternative)
+	return fmt.Errorf("%q is not supported: this MCP server runs inside the Brain API and cannot read or write files on your machine — %s", arg, alternative)
 }
 
-// ambientContextDescribesCaller reports whether GetCachedContext() describes
+// ambientContextDescribesCaller reports whether executionContext() describes
 // the client that made this call, rather than the process serving it.
 //
 // GetCachedContext is a process-global computed once from os.Getwd(). Under
@@ -115,13 +120,37 @@ func (s *Server) requireLocalFilesystem(arg, alternative string) error {
 // working directory. Under the in-process HTTP transport it is the Brain API
 // server's own directory and identity, shared by every client on it — so
 // stamping origin provenance from it would brand every task with the API
-// host's machine id and pin them all there.
-//
-// It shares the localFilesystem flag with requireLocalFilesystem because it
-// is the same underlying fact: only the stdio transport is co-located with
-// its caller.
+// host's machine id and pin them all there. A hosted call describes its
+// caller only through the caller headers.
 func (s *Server) ambientContextDescribesCaller() bool {
-	return s != nil && s.localFilesystem
+	return s != nil && (s.localFilesystem || s.caller != nil)
+}
+
+// executionContext is the context tool calls default from: the hosted
+// caller's declared context when it sent one, else the process's own.
+func (s *Server) executionContext() ExecutionContext {
+	if s != nil && s.caller != nil {
+		return s.caller.ExecutionContext()
+	}
+	return GetCachedContext()
+}
+
+// applyCallerProject defaults the project argument from the caller's working
+// folder when the tool takes one and the caller did not name a project.
+func (s *Server) applyCallerProject(tool Tool, args map[string]any) {
+	if s.caller == nil || StringArgAlias(args, "", "project", "project_id", "projectId") != "" {
+		return
+	}
+	project := s.caller.ExecutionContext().ProjectID
+	if project == "" {
+		return
+	}
+	for _, key := range []string{"project", "project_id"} {
+		if _, ok := tool.InputSchema.Properties[key]; ok {
+			args[key] = project
+			return
+		}
+	}
 }
 
 // RegisterTool registers a tool with its handler.
@@ -361,6 +390,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 	if args == nil {
 		args = make(map[string]any)
 	}
+	s.applyCallerProject(rt.tool, args)
 
 	text, err := rt.handler(ctx, args)
 	result := map[string]any{

@@ -8,6 +8,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Hosted MCP caller headers.** `/mcp` reads `X-Brain-Host-Id`,
+  `X-Brain-Client-Id`, `X-Brain-Workdir` and optional `X-Brain-Home`. Tasks
+  created through it are stamped `origin_machine_id`/`origin_client_id`/
+  `origin_path`, `machine_affinity: local` works when the host id is sent, and
+  tools default `project` from the working folder (main repo name, worktrees
+  included). Headers are validated, bounded routing hints: a malformed one is
+  ignored and reported by `context_get`, never trusted for auth. See README
+  "Caller headers" for the OpenCode V2 config.
+
 - **Multiple runners on one machine.** `brain runner start -n <name>` (or
   `--new`, which assigns the next free `runner-N`) starts an additional,
   independently-registered runner on a host that already has one. The name
@@ -37,6 +46,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   therefore the runner id) with a standalone runner on the same host.
 
 ### Changed
+
+- **MCP file arguments are base64 only.** `attachment_upload` no longer
+  accepts `file_path` (send `content` + `filename`), `attachment_download` no
+  longer accepts `output_path` (bytes return inline as base64), and
+  `plan_discover_docs` no longer globs the server's disk: pass the docs you
+  found as `doc_paths` (`additional_dirs` is rejected).
 
 - **Stdio MCP (`brain mcp`) now uses the public Go SDK's HTTP transport.**
   Tool names, DTOs and normal results are unchanged. These differences are

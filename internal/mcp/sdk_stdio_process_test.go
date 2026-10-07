@@ -96,11 +96,7 @@ func TestSDKStdioAuthenticatedProcessParity(t *testing.T) {
 		t.Fatalf("legacy/SDK error differs: %s %v", missing, sdkErr)
 	}
 	content := []byte("stdio local bytes\x00\xff")
-	input := filepath.Join(root, "input.txt")
-	if err := os.WriteFile(input, content, 0600); err != nil {
-		t.Fatal(err)
-	}
-	call("attachment_upload", map[string]any{"project": project, "file_path": input}, false)
+	call("attachment_upload", map[string]any{"project": project, "filename": "input.txt", "content": base64.StdEncoding.EncodeToString(content)}, false)
 	list, err := client.Attachments().List(context.Background(), project)
 	if err != nil || list.Attachments == nil || len(*list.Attachments) != 1 {
 		t.Fatalf("SDK attachments=%+v err=%v", list, err)
@@ -109,19 +105,6 @@ func TestSDKStdioAuthenticatedProcessParity(t *testing.T) {
 	inline := call("attachment_download", map[string]any{"project": project, "attachment_id": attachmentID}, false)
 	if !strings.Contains(inline, base64.StdEncoding.EncodeToString(content)) {
 		t.Fatal("inline bytes differ")
-	}
-	output := filepath.Join(root, "download", "output.txt")
-	call("attachment_download", map[string]any{"project": project, "attachment_id": attachmentID, "output_path": output}, false)
-	got, err := os.ReadFile(output)
-	if err != nil || !bytes.Equal(got, content) {
-		t.Fatalf("local download=%q err=%v", got, err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "PRD.md"), []byte("# local discovery"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	discovery := call("plan_discover_docs", map[string]any{}, false)
-	if !strings.Contains(discovery, "PRD.md") {
-		t.Fatalf("local discovery lost: %s", discovery)
 	}
 	readOnly := startSDKStdio(t, srv.URL, "read:*-stdio-fixture", t.TempDir())
 	readOnly("recall", map[string]any{"path": id}, false)

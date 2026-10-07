@@ -286,34 +286,79 @@ brain install claude --force      # update previously installed skills
 Claude Code picks up the skills automatically; existing files are never
 overwritten without `--force`. Remove them with `brain uninstall claude`.
 
+### Caller headers (machine-tied tasks and project detection)
+
+The hosted MCP server runs inside the Brain API, so it cannot see your machine,
+your working directory, or your files. Clients describe themselves with request
+headers instead. They are **routing hints only** — they pick a task's origin
+machine and a call's default project; they never grant access (that stays with
+the bearer/OAuth token).
+
+| Header | Value | Used for |
+| --- | --- | --- |
+| `X-Brain-Host-Id` | Contents of `~/.config/brain/machine-id` (`machine_<hex>`) — the id your local runner uses | `origin_machine_id`; enables `machine_affinity: local`/`preferred` |
+| `X-Brain-Client-Id` | Any stable id for this client install, e.g. `opencode-<hostname>` | `origin_client_id` |
+| `X-Brain-Workdir` | Absolute path of the directory you are working in | `origin_path`; default project when a tool's `project` is omitted |
+| `X-Brain-Home` | Your home directory (optional) | Expresses the task `workdir` home-relatively for runners on other machines |
+
+- IDs must be ≤128 chars of `[A-Za-z0-9._:-]`; paths must be clean absolute
+  paths ≤1024 bytes with no control characters. A malformed header is ignored
+  (the call still works) and `context_get` reports it.
+- The default project is the last segment of the main repo path:
+  `…/brain-api/.worktrees/<branch>` and `…/brain-api/.claude/worktrees/<x>`
+  both resolve to `brain-api`. Your home directory or `/` resolves to no
+  project. An explicit `project` argument always wins.
+- Without `X-Brain-Host-Id`, tasks carry no origin and
+  `machine_affinity: local` is refused with an error naming the header.
+- Hosted tools take files as base64 only: `attachment_upload` takes
+  `content` + `filename`, `attachment_download` returns base64 inline, and
+  `plan_discover_docs` takes the doc paths you found as `doc_paths`. The old
+  `file_path`, `output_path` and `additional_dirs` arguments are rejected.
+
 ### Connecting OpenCode
 
-OpenCode launches MCP servers as local subprocesses over stdio. Add the
-following to your OpenCode config (e.g. `~/.config/opencode/opencode.json`)
-under `mcp`:
+OpenCode connects to the hosted endpoint as a remote (Streamable HTTP) MCP
+server. In OpenCode V2 servers live under `mcp.servers`; header values support
+`{env:NAME}` substitution (the only substitution the V2 docs define), so export
+the identity once in your shell profile:
 
-```json
+```sh
+# ~/.zshrc (or ~/.bashrc)
+export BRAIN_HOST_ID="$(cat ~/.config/brain/machine-id)"
+export BRAIN_CLIENT_ID="opencode-$(hostname -s)"
+```
+
+Then in `~/.config/opencode/opencode.jsonc`:
+
+```jsonc
 {
   "mcp": {
-    "brain": {
-      "type": "local",
-      "command": ["brain", "mcp"],
-      "enabled": true,
-      "environment": {
-        "BRAIN_API_URL": "http://localhost:3333"
+    "servers": {
+      "brain": {
+        "type": "remote",
+        "url": "https://brain.huynle.com/mcp",
+        "headers": {
+          "X-Brain-Host-Id": "{env:BRAIN_HOST_ID}",
+          "X-Brain-Client-Id": "{env:BRAIN_CLIENT_ID}",
+          "X-Brain-Workdir": "{env:PWD}",
+          "X-Brain-Home": "{env:HOME}"
+        }
       }
     }
   }
 }
 ```
 
-The `brain mcp` subcommand reads the API URL from `~/.config/brain/config.yaml`,
-the `--api-url` flag or `BRAIN_API_URL`, and its bearer token from the
-`BRAIN_API_TOKEN` environment variable. No token is required for local brain
-servers. With a token set, stdio MCP refuses a plain `http://` URL to a
-non-loopback host at startup (`insecure_transport`): use `https://`, or a
-loopback URL such as an SSH tunnel. Redirects are refused, and a malformed URL
-fails at startup with `invalid_configuration`. See CHANGELOG ("Stdio MCP").
+OAuth is OpenCode's default for remote servers (`/mcps` → sign in). To use an
+API token instead, add `"oauth": false` and
+`"Authorization": "Bearer {env:BRAIN_API_TOKEN}"` to `headers`.
+
+`{env:PWD}` is the directory OpenCode was started from, resolved when the
+config loads. If one OpenCode process serves several projects, pin the folder
+per project instead: a project `opencode.jsonc` that redefines `brain` replaces
+the whole server object, so repeat `type`, `url` and all headers there with a
+literal `X-Brain-Workdir`. Use `~/.config/brain/machine-id`, not the older
+`host_id` file: runners match tasks against `machine-id`.
 
 > **Migrating from the old `brain.ts` plugin:** earlier brain releases
 > shipped a TypeScript plugin installed at `~/.config/opencode/plugin/brain.ts`.

@@ -9,8 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -1114,59 +1112,7 @@ func TestAttachmentToolSchemas(t *testing.T) {
 	}
 }
 
-func TestBrainAttachmentUpload_HandlerUsesMultipartHelper(t *testing.T) {
-	tmpDir := t.TempDir()
-	filePath := filepath.Join(tmpDir, "source.txt")
-	if err := os.WriteFile(filePath, []byte("hello attachment"), 0o600); err != nil {
-		t.Fatalf("write temp file: %v", err)
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/attachments" {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-			t.Fatalf("content type = %q, want multipart/form-data", r.Header.Get("Content-Type"))
-		}
-		if err := r.ParseMultipartForm(1 << 20); err != nil {
-			t.Fatalf("parse multipart: %v", err)
-		}
-		if got := r.FormValue("project_id"); got != "test-project" {
-			t.Errorf("project_id = %q, want test-project", got)
-		}
-		if !strings.Contains(r.FormValue("metadata"), "fixture") {
-			t.Errorf("metadata = %q, want fixture marker", r.FormValue("metadata"))
-		}
-		f, _, err := r.FormFile("file")
-		if err != nil {
-			t.Fatalf("missing file part: %v", err)
-		}
-		defer f.Close()
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"attachment": map[string]any{"id": "att_123", "filename": "source.txt", "content_type": "text/plain", "size": 16}})
-	}))
-	defer server.Close()
-
-	s := NewServer(WithLocalFilesystem())
-	client := NewAPIClient(server.URL)
-	RegisterBrainTools(s, client)
-
-	result, err := s.tools["attachment_upload"].handler(context.Background(), map[string]any{
-		"project_id": "test-project",
-		"file_path":  filePath,
-		"metadata":   map[string]any{"kind": "fixture"},
-	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
-	}
-	if !strings.Contains(result, "att_123") || !strings.Contains(result, "attachment_attach") {
-		t.Errorf("result should contain uploaded ID and attach hint, got: %s", result)
-	}
-}
-
 func TestBrainAttachmentAttachDetachListGetExtractTextDownload_RequestShapes(t *testing.T) {
-	tmpDir := t.TempDir()
-	outputPath := filepath.Join(tmpDir, "downloaded.pdf")
 	requests := make([]string, 0, 5)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
@@ -1272,7 +1218,7 @@ func TestBrainAttachmentAttachDetachListGetExtractTextDownload_RequestShapes(t *
 		{"attachment_backfill", map[string]any{"project_id": "test-project", "dry_run": true, "force": true, "batch_size": float64(5), "rate_limit_delay_ms": float64(25)}, "Failed: 1"},
 		{"attachment_extract", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "Status: ready"},
 		{"attachment_text", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "extracted text"},
-		{"attachment_download", map[string]any{"project_id": "test-project", "attachment_id": "att_123", "output_path": outputPath}, "Downloaded"},
+		{"attachment_download", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, base64.StdEncoding.EncodeToString([]byte("raw attachment bytes"))},
 	}
 	for _, call := range calls {
 		t.Run(call.tool, func(t *testing.T) {
@@ -1320,13 +1266,6 @@ func TestBrainAttachmentAttachDetachListGetExtractTextDownload_RequestShapes(t *
 			t.Errorf("request[%d] = %q, want %q", i, requests[i], wantRequests[i])
 		}
 	}
-	data, err := os.ReadFile(outputPath)
-	if err != nil {
-		t.Fatalf("read downloaded file: %v", err)
-	}
-	if string(data) != "raw attachment bytes" {
-		t.Fatalf("downloaded data = %q", string(data))
-	}
 }
 
 func TestBrainAttachmentTools_ValidateRequiredIDsBeforeRequest(t *testing.T) {
@@ -1352,7 +1291,7 @@ func TestBrainAttachmentTools_ValidateRequiredIDsBeforeRequest(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		{"attachment_upload", map[string]any{"project": "test-project"}, "provide 'content' (base64) with 'filename', or 'file_path' for a server-local file (and 'project' if no ambient project is available)"},
+		{"attachment_upload", map[string]any{"project": "test-project"}, "provide 'content' (base64) with 'filename' (and 'project' if no ambient project is available)"},
 		{"attachment_attach", map[string]any{"project": "test-project", "entry_id": "entry-123"}, "provide 'entry_id' and 'attachment_id' (and 'project' if no ambient project is available)"},
 		{"attachment_detach", map[string]any{"project": "test-project", "attachment_id": "att_123"}, "provide 'entry_id' and 'attachment_id' (and 'project' if no ambient project is available)"},
 		{"attachment_get", map[string]any{"project": "test-project"}, "provide 'attachment_id' (and 'project' if no ambient project is available)"},
@@ -3352,8 +3291,8 @@ func TestAttachmentTools_RejectLocalPathsOnHostedServer(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		{"attachment_upload", map[string]any{"project": "test-project", "file_path": "/etc/passwd"}, "\"file_path\" is unavailable"},
-		{"attachment_download", map[string]any{"project": "test-project", "attachment_id": "att_123", "output_path": "/tmp/out.bin"}, "\"output_path\" is unavailable"},
+		{"attachment_upload", map[string]any{"project": "test-project", "file_path": "/etc/passwd"}, "\"file_path\" is not supported"},
+		{"attachment_download", map[string]any{"project": "test-project", "attachment_id": "att_123", "output_path": "/tmp/out.bin"}, "\"output_path\" is not supported"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
@@ -3430,7 +3369,7 @@ func TestBrainAttachmentUpload_ContentArgumentValidation(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		{"both sources", map[string]any{"project": "p", "content": "aGk=", "file_path": "/tmp/x"}, "not both"},
+		{"file_path given", map[string]any{"project": "p", "content": "aGk=", "file_path": "/tmp/x"}, "\"file_path\" is not supported"},
 		{"missing filename", map[string]any{"project": "p", "content": "aGk="}, "'filename' is required"},
 		{"bad base64", map[string]any{"project": "p", "filename": "x.bin", "content": "not base64!!"}, "not valid base64"},
 		{"empty content", map[string]any{"project": "p", "filename": "x.bin", "content": "   "}, "provide 'content'"},

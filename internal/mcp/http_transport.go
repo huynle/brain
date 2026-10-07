@@ -125,6 +125,7 @@ func (h *HTTPHandler) handlePost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	server := h.serverFactory(client)
+	server.caller = ParseCallerHeaders(r.Header)
 
 	// Handle the request using the MCP server
 	resp := server.HandleRequest(r.Context(), &req)

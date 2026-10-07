@@ -30,7 +30,7 @@ Tools that take an optional 'project' parameter fall back to the project shown h
 			Properties: map[string]Property{},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		execCtx := GetCachedContext()
+		execCtx := s.executionContext()
 		lines := []string{
 			"## MCP Execution Context",
 			"",
@@ -81,7 +81,13 @@ Tools that take an optional 'project' parameter fall back to the project shown h
 				"- ⚠ Origin stamping is DISABLED for this session: this MCP server runs inside",
 				"  the Brain API, so the identity above describes the API host rather than you.",
 				"  Tasks created here carry no origin, and machine_affinity has nothing to",
-				"  resolve against. Use the stdio MCP server for machine-affine tasks.")
+				fmt.Sprintf("  resolve against. Send %s, %s and %s headers from your MCP", HeaderBrainHostID, HeaderBrainClientID, HeaderBrainWorkdir),
+				"  client config for machine-affine tasks and project auto-detection.")
+		}
+		if s.caller != nil {
+			for _, h := range s.caller.Rejected {
+				lines = append(lines, fmt.Sprintf("- ⚠ %s header ignored: malformed or too long", h))
+			}
 		}
 		if execCtx.Username != "" {
 			lines = append(lines, fmt.Sprintf("- Username: %s", execCtx.Username))

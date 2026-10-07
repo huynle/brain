@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -365,7 +363,7 @@ func registerPlanDiscoverDocs(s *Server, client *APIClient, state *PlanningState
 		Description: `Discover project documentation AND existing brain plans.
 
 This tool performs interactive discovery:
-1. Scans for PRD and architecture documents in common locations
+1. Sorts the project doc paths you supply into PRD and architecture documents
 2. Searches brain for existing plans (fuzzy match against objective)
 3. Searches brain for related explorations
 4. Returns numbered options for user to select
@@ -375,7 +373,7 @@ After discovery, use plan_confirm_docs() to confirm selections.
 Arguments:
 - prd_path: Custom PRD path (skips auto-discovery for PRD)
 - arch_path: Custom architecture doc path (skips auto-discovery for arch)
-- additional_dirs: Additional directories to scan for docs
+- doc_paths: Project-relative doc paths you found locally (e.g. by globbing docs/**/*.md, PRD.md, ARCHITECTURE.md, DESIGN.md). This server cannot read your filesystem, so list them yourself.
 - plan_query: Search query for existing plans (uses objective if not provided)
 - plan_id: Specific brain plan ID to load directly
 
@@ -383,71 +381,36 @@ Call this during INIT phase to load project context.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"prd_path":        {Type: "string", Description: "Custom PRD path (skips auto-discovery for PRD)"},
-				"arch_path":       {Type: "string", Description: "Custom architecture doc path (skips auto-discovery for arch)"},
-				"additional_dirs": {Type: "array", Items: &Property{Type: "string"}, Description: "Additional directories to scan for docs"},
-				"plan_query":      {Type: "string", Description: "Search query for existing plans (uses objective if not provided)"},
-				"plan_id":         {Type: "string", Description: "Specific brain plan ID to load directly"},
+				"prd_path":   {Type: "string", Description: "Custom PRD path (skips auto-discovery for PRD)"},
+				"arch_path":  {Type: "string", Description: "Custom architecture doc path (skips auto-discovery for arch)"},
+				"doc_paths":  {Type: "array", Items: &Property{Type: "string"}, Description: "Project-relative doc paths found locally; names containing prd/requirement are PRDs, arch/design are architecture docs"},
+				"plan_query": {Type: "string", Description: "Search query for existing plans (uses objective if not provided)"},
+				"plan_id":    {Type: "string", Description: "Specific brain plan ID to load directly"},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		discovery := &DiscoveryResults{}
 
-		// Get working directory
-		execCtx := GetCachedContext()
-		home, _ := os.UserHomeDir()
-		workdir := filepath.Join(home, execCtx.Workdir)
+		if err := rejectLocalPathArg(args, "additional_dirs", "list the docs yourself and pass them as 'doc_paths'"); err != nil {
+			return "", err
+		}
 
-		// Scan for PRD files
-		prdPath := StringArgAlias(args, "", "prd_path", "prdPath")
-		if prdPath != "" {
+		if prdPath := StringArgAlias(args, "", "prd_path", "prdPath"); prdPath != "" {
 			discovery.PRDFiles = []string{prdPath}
-		} else {
-			prdPatterns := []string{
-				"docs/prd/*.md", "docs/prd.md", "PRD.md", "prd.md",
-				"docs/requirements/*.md",
-			}
-			for _, pattern := range prdPatterns {
-				matches, _ := filepath.Glob(filepath.Join(workdir, pattern))
-				for _, m := range matches {
-					rel, _ := filepath.Rel(workdir, m)
-					discovery.PRDFiles = append(discovery.PRDFiles, rel)
-				}
-			}
 		}
-
-		// Scan for architecture files
-		archPath := StringArgAlias(args, "", "arch_path", "archPath")
-		if archPath != "" {
+		if archPath := StringArgAlias(args, "", "arch_path", "archPath"); archPath != "" {
 			discovery.ArchFiles = []string{archPath}
-		} else {
-			archPatterns := []string{
-				"docs/architecture/*.md", "docs/architecture.md",
-				"ARCHITECTURE.md", "architecture.md",
-				"docs/design/*.md", "DESIGN.md",
-			}
-			for _, pattern := range archPatterns {
-				matches, _ := filepath.Glob(filepath.Join(workdir, pattern))
-				for _, m := range matches {
-					rel, _ := filepath.Rel(workdir, m)
-					discovery.ArchFiles = append(discovery.ArchFiles, rel)
-				}
-			}
 		}
-
-		// Scan additional directories
-		additionalDirs := StringSliceArgAlias(args, "additional_dirs", "additionalDirs")
-		for _, dir := range additionalDirs {
-			fullDir := filepath.Join(workdir, dir)
-			matches, _ := filepath.Glob(filepath.Join(fullDir, "*.md"))
-			for _, m := range matches {
-				rel, _ := filepath.Rel(workdir, m)
-				// Categorize based on name
-				lower := strings.ToLower(filepath.Base(m))
-				if strings.Contains(lower, "prd") || strings.Contains(lower, "requirement") {
-					discovery.PRDFiles = append(discovery.PRDFiles, rel)
-				} else if strings.Contains(lower, "arch") || strings.Contains(lower, "design") {
-					discovery.ArchFiles = append(discovery.ArchFiles, rel)
+		for _, p := range StringSliceArgAlias(args, "doc_paths", "docPaths") {
+			lower := strings.ToLower(p)
+			switch {
+			case strings.Contains(lower, "prd") || strings.Contains(lower, "requirement"):
+				if StringArgAlias(args, "", "prd_path", "prdPath") == "" {
+					discovery.PRDFiles = append(discovery.PRDFiles, p)
+				}
+			case strings.Contains(lower, "arch") || strings.Contains(lower, "design"):
+				if StringArgAlias(args, "", "arch_path", "archPath") == "" {
+					discovery.ArchFiles = append(discovery.ArchFiles, p)
 				}
 			}
 		}

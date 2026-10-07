@@ -14,7 +14,7 @@ import (
 // runStopRenamed is the message for the removed `brain run stop`. It used to
 // call POST /tasks/runner/pause, pausing every project on the server while
 // leaving the local runner process running.
-const runStopRenamed = "`brain run stop` was renamed to `brain run pause-all` (it pauses all projects server-wide; it never stopped the local runner). To stop a local runner, stop its process."
+const runStopRenamed = "`brain run stop` was renamed to `brain run pause-all` (it pauses all projects server-wide; it never stopped the local runner). To stop a local runner, stop its process.\nFor a runner started with `brain runner start`, use `brain runner stop` (`--all` stops every runner on this machine)."
 
 func (c *RunCommand) out() io.Writer {
 	if c.Out != nil {

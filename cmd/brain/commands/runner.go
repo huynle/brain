@@ -376,7 +376,7 @@ func (c *RunCommand) runReady() error {
 
 	project := c.projectArg()
 	if project == "" {
-		return fmt.Errorf("project required: brain run ready <project>")
+		return &UsageError{Message: "brain run ready: project required: brain run ready <project>"}
 	}
 
 	tasks, err := client.GetReadyTasks(ctx, project, nil)

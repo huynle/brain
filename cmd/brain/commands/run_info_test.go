@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -43,12 +44,12 @@ func TestRunFeatures_PrintsTable(t *testing.T) {
 		t.Errorf("requests = %s", got)
 	}
 	o := out.String()
-	for _, want := range []string{"FEATURE", "TASKS", "COMPLETED", "READY", "BLOCKED", "STARTABLE", "auth", "billing", "payments"} {
+	for _, want := range []string{"FEATURE", "TASKS", "COMPLETED", "READY", "WAITING", "BLOCKED", "STARTABLE", "auth", "billing", "payments"} {
 		if !strings.Contains(o, want) {
 			t.Errorf("output missing %q:\n%s", want, o)
 		}
 	}
-	if !strings.Contains(strings.Join(strings.Fields(o), " "), "auth 2 1 1 0 yes billing 1 0 0 1 no") {
+	if !strings.Contains(strings.Join(strings.Fields(o), " "), "auth 2 1 1 0 0 yes billing 1 0 0 0 1 no") {
 		t.Errorf("auth row wrong:\n%s", o)
 	}
 }
@@ -144,5 +145,54 @@ func TestRunConfig_ErrorsWhenUnavailable(t *testing.T) {
 	})
 	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "task defaults") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// Real server: a task whose dependency is still pending is classified
+// "waiting" — not ready and not blocked — and must be counted.
+func TestRunFeatures_RealServer_CountsWaiting(t *testing.T) {
+	url := startRealAPI(t)
+	client := runner.NewAPIClient(runner.RunnerConfig{BrainAPIURL: url})
+	ctx := context.Background()
+	first, err := client.CreateEntry(ctx, types.CreateEntryRequest{Type: "task", Title: "first", Content: "x", Project: "demo", Status: "pending", FeatureID: "f1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateEntry(ctx, types.CreateEntryRequest{Type: "task", Title: "second", Content: "x", Project: "demo", Status: "pending", FeatureID: "f1", DependsOn: []string{first.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	cmd, out := pauseCmd(url, "features", []string{"demo"}, RunnerFlags{}, "", false)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	flat := strings.Join(strings.Fields(out.String()), " ")
+	if !strings.Contains(flat, "FEATURE TASKS COMPLETED READY WAITING BLOCKED STARTABLE") || !strings.Contains(flat, "f1 2 0 1 1 0") {
+		t.Errorf("want WAITING column with f1 = 2 tasks, 1 ready, 1 waiting:\n%s", out.String())
+	}
+}
+
+func TestRunConfig_ErrorIncludesCause(t *testing.T) {
+	cmd, _, _ := infoCmd(t, "config", nil, RunnerFlags{}, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+		_, _ = w.Write([]byte("short and stout"))
+	})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "418") || !strings.Contains(err.Error(), "short and stout") {
+		t.Fatalf("err = %v, want the HTTP status and body", err)
+	}
+	unreachable, _ := pauseCmd("http://127.0.0.1:1", "config", nil, RunnerFlags{}, "", false)
+	if err := unreachable.Execute(); err == nil || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("err = %v, want the dial error", err)
+	}
+}
+
+func TestRunReady_NoProjectIsUsageError(t *testing.T) {
+	cmd, _, reqs := infoCmd(t, "ready", nil, RunnerFlags{}, func(http.ResponseWriter, *http.Request) {})
+	var ue *UsageError
+	if err := cmd.Execute(); !errors.As(err, &ue) || !strings.Contains(ue.Message, "brain run ready <project>") {
+		t.Fatalf("err = %v, want usage error", err)
+	}
+	if len(*reqs) != 0 {
+		t.Errorf("unexpected requests %v", *reqs)
 	}
 }

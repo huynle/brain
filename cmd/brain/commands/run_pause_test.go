@@ -88,6 +88,9 @@ func TestRunStop_IsRenamedAndCallsNothing(t *testing.T) {
 	if !strings.Contains(ue.Message, want) {
 		t.Errorf("message = %q, want it to contain %q", ue.Message, want)
 	}
+	if !strings.Contains(ue.Message, "brain runner stop") {
+		t.Errorf("message should also cover runners started with 'brain runner start': %q", ue.Message)
+	}
 	if len(api.requests) != 0 {
 		t.Errorf("renamed stop must not touch the API: %v", api.requests)
 	}

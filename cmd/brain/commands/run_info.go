@@ -26,10 +26,12 @@ func (c *RunCommand) runFeatures() error {
 	}
 
 	w := tabwriter.NewWriter(c.out(), 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "FEATURE\tTASKS\tCOMPLETED\tREADY\tBLOCKED\tSTARTABLE")
+	fmt.Fprintln(w, "FEATURE\tTASKS\tCOMPLETED\tREADY\tWAITING\tBLOCKED\tSTARTABLE")
 	var unresolved []string
 	for _, f := range features {
-		completed, ready, blocked := 0, 0, 0
+		// Classification mirrors the server: ready (runnable now), waiting
+		// (dependencies still in progress) and blocked (unmet/blocked deps).
+		completed, ready, waiting, blocked := 0, 0, 0, 0
 		for _, t := range f.Tasks {
 			if t.Status == "completed" {
 				completed++
@@ -37,6 +39,8 @@ func (c *RunCommand) runFeatures() error {
 			switch t.Classification {
 			case "ready":
 				ready++
+			case "waiting":
+				waiting++
 			case "blocked":
 				blocked++
 			}
@@ -45,7 +49,7 @@ func (c *RunCommand) runFeatures() error {
 		if f.Ready {
 			startable = "yes"
 		}
-		fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%s\n", f.FeatureID, len(f.Tasks), completed, ready, blocked, startable)
+		fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%d\t%s\n", f.FeatureID, len(f.Tasks), completed, ready, waiting, blocked, startable)
 		for _, dep := range f.UnresolvedFeatureDeps {
 			unresolved = append(unresolved, fmt.Sprintf("%s depends on unknown feature %q", f.FeatureID, dep))
 		}
@@ -104,9 +108,9 @@ func (c *RunCommand) runConfig() error {
 	if err != nil {
 		return err
 	}
-	d, _ := client.GetTaskDefaults(context.Background())
-	if d == nil {
-		return fmt.Errorf("could not fetch task defaults from %s (GET /api/v1/config/task-defaults failed or is unsupported)", c.apiURL())
+	d, err := client.GetTaskDefaults(context.Background())
+	if err != nil {
+		return fmt.Errorf("could not fetch task defaults from %s: %w", c.apiURL(), err)
 	}
 	orDash := func(v string) string {
 		if v == "" {

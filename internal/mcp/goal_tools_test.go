@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/sdk/brain"
 )
 
 func TestRegisterGoalTools_CountNamesHandlersDescriptions(t *testing.T) {
@@ -591,8 +591,8 @@ func TestBrainGoalUpdate_SendsFeatureID(t *testing.T) {
 func TestFormatGoalProgress_GoalStatusAndFeatureStatus(t *testing.T) {
 	// A project-scoped goal reports no feature status at all; printing one was
 	// how a healthy goal spanning 12 features displayed "Feature: blocked".
-	projectScoped := formatGoalProgress(&types.GoalProgressResponse{
-		GoalID: "goal-123", GoalStatus: "pending", Total: 4, Completed: 3,
+	projectScoped := formatGoalProgress(&brain.GoalProgressResponse{
+		GoalId: "goal-123", GoalStatus: "pending", Total: 4, Completed: 3,
 	})
 	if !strings.Contains(projectScoped, "- Goal: pending") {
 		t.Errorf("project-scoped progress missing goal status:\n%s", projectScoped)
@@ -601,8 +601,9 @@ func TestFormatGoalProgress_GoalStatusAndFeatureStatus(t *testing.T) {
 		t.Errorf("project-scoped progress reports a feature status:\n%s", projectScoped)
 	}
 
-	featureScoped := formatGoalProgress(&types.GoalProgressResponse{
-		GoalID: "goal-123", FeatureID: "feat-1", GoalStatus: "in_progress", FeatureStatus: "in_progress",
+	feat, featStatus := "feat-1", "in_progress"
+	featureScoped := formatGoalProgress(&brain.GoalProgressResponse{
+		GoalId: "goal-123", FeatureId: &feat, GoalStatus: "in_progress", FeatureStatus: &featStatus,
 	})
 	if !strings.Contains(featureScoped, "- Feature: in_progress") {
 		t.Errorf("feature-scoped progress missing feature status:\n%s", featureScoped)

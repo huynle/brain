@@ -114,6 +114,12 @@ Error: webhook not found: <HOOK_ID>. Use webhook_list to see existing webhooks
 === dead api list (webhook_list)
 ERROR
 Error: request failed: Get "http://<LOOPBACK>/api/v1/webhooks?enabled=true": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api list all (webhook_list)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/webhooks": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api deliveries default limit (webhook_deliveries)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/webhooks/w1/deliveries": dial tcp <LOOPBACK>: connect: connection refused
 === dead api deliveries (webhook_deliveries)
 ERROR
 Error: request failed: Get "http://<LOOPBACK>/api/v1/webhooks/w1/deliveries?limit=2": dial tcp <LOOPBACK>: connect: connection refused

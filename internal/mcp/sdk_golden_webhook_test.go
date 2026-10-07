@@ -53,6 +53,8 @@ func TestGolden_WebhookTools(t *testing.T) {
 
 	dead := deadAPIMCP(t)
 	g.callAt(dead, "dead api list", "webhook_list", map[string]any{"enabled_only": true})
+	g.callAt(dead, "dead api list all", "webhook_list", map[string]any{})
+	g.callAt(dead, "dead api deliveries default limit", "webhook_deliveries", map[string]any{"id": "w1"})
 	g.callAt(dead, "dead api deliveries", "webhook_deliveries", map[string]any{"id": "w1", "limit": 2})
 	g.callAt(dead, "dead api delete", "webhook_delete", map[string]any{"id": "w1"})
 	g.check()

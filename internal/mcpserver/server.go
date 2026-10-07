@@ -29,7 +29,10 @@ func RunMCPServer(ctx context.Context, opts MCPOptions, stdin io.Reader, stdout 
 	server := mcp.NewServer(mcp.WithLocalFilesystem())
 
 	// Create API client
-	client := mcp.NewAPIClient(opts.APIURL)
+	client, err := mcp.NewStdioSDKClient(opts.APIURL)
+	if err != nil {
+		return fmt.Errorf("create stdio SDK client: %w", err)
+	}
 
 	// Register all tool groups
 	mcp.RegisterBrainTools(server, client)

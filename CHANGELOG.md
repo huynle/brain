@@ -36,6 +36,31 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   server's embedded runner, which otherwise shares the default state dir (and
   therefore the runner id) with a standalone runner on the same host.
 
+### Changed
+
+- **Stdio MCP (`brain mcp`) now uses the public Go SDK's HTTP transport.**
+  Tool names, DTOs and normal results are unchanged. These differences are
+  intentional:
+  - **Plain-http token refusal:** with `BRAIN_API_TOKEN` set, a plain `http://`
+    `BRAIN_API_URL` to a non-loopback host is refused at startup
+    (`insecure_transport`), so the token is never sent unencrypted off-host.
+    Use `https://`, or a loopback URL (`localhost`, `127.0.0.0/8`, `::1`), e.g.
+    through an SSH tunnel. Without a token, plain http is unchanged.
+  - **Bad `BRAIN_API_URL`:** a malformed URL (bad scheme, userinfo, query or
+    fragment) fails at startup with `invalid_configuration` instead of on first
+    use.
+  - **Redirects:** HTTP redirects are refused (`redirect_refused`) rather than
+    followed, so a token can't be forwarded to another origin. Structural path
+    traversal in request paths is refused too.
+  - **Bodyless mutations:** these now send an explicit empty body.
+  - **Error text:** SDK errors now read `brain: <code> (HTTP <status>)`, or
+    `brain: <code>` for client-side failures (e.g. `create stdio SDK client:
+    brain: invalid_configuration`). Only the stable machine code is shown; the
+    server message, request ID and field details stay out of default
+    formatting. The TypeScript `BrainError.message` uses the same format.
+
+  Hosted MCP is unaffected.
+
 ### Fixed
 
 - **`--executor`, `--pi-bin`, `--pi-model` and `--pi-thinking` reach the runner

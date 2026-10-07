@@ -1,0 +1,5478 @@
+openapi: 3.1.0
+info:
+  title: Brain public API
+  version: 1.0.0
+  description: >-
+    Supported single-mode HTTP contract. Tenant selection never grants
+    authority. Script execution is not exposed by this contract checkpoint.
+    Existing error bodies are retained; SDK adapters add stable codes and
+    request identifiers.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+x-brain-read:
+  x-brain-effect: read
+  x-brain-script: false
+  x-brain-profile: single
+x-brain-write:
+  x-brain-effect: write
+  x-brain-script: false
+  x-brain-profile: single
+paths:
+  /capabilities:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: capabilities.get
+      summary: Negotiate the public contract and discover wired operations
+      description: Authenticated read-scope discovery in single mode only (existing auth-disabled local behavior retained). Operation IDs describe wired handlers, not caller grants, resource existence or provider readiness. Script compiled, configured, deployment and caller availability are independent; all are currently false. Responses are no-store. SDKs require the exact contract version, refuse old servers without fallback, and bound discovery to 64 KiB.
+      responses:
+        '200': {description: Non-content support manifest, content: {application/json: {schema: {$ref: '#/components/schemas/CapabilityManifest'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /events/stream:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: events.stream
+      summary: Consume the bounded event stream without automatic reconnect
+      description: SSE data is an Event JSON object. Comments are heartbeats. Last-Event-ID requests best-effort replay from the volatile buffer, not a durable cursor or exactly-once delivery. SDK client lifetime, caller cancellation and timeout terminate the stream; callback return errors stop delivery. Bounds apply per frame, not to the total stream lifetime.
+      parameters:
+        - {name: project_id, in: query, schema: {type: string}}
+        - {name: feature_id, in: query, schema: {type: string}}
+        - {name: type, in: query, schema: {type: string}}
+        - {name: source, in: query, schema: {type: string}}
+        - {name: Last-Event-ID, in: header, schema: {type: string}}
+      responses:
+        '200': {description: SSE frames carrying Event JSON data, content: {text/event-stream: {schema: {type: string}}}}
+        default: {description: Legacy error before stream starts, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /entries/{id}/metadata:
+    patch:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: entries.updateMetadata
+      summary: Update explicitly allowed durable and runtime metadata
+      description: expected_revision is a precondition and is not persisted. Durable fields sync to Markdown; runtime/audit fields remain index-only. Unknown fields return 400 with field details. Runnable metadata may affect work; not script-exposed.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/MetadataUpdateRequest'}}}}
+      responses:
+        '200': {description: Updated entry, content: {application/json: {schema: {$ref: '#/components/schemas/BrainEntry'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /inject:
+    post:
+      x-brain-effect: provider
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: search.inject
+      summary: Retrieve bounded context for a query
+      description: Preserves legacy search/provider and read-tracking behavior; not a side-effect-free script read.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/InjectRequest'}}}}
+      responses:
+        '200': {description: Context and source entries, content: {application/json: {schema: {$ref: '#/components/schemas/InjectResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/delivery:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+      - {name: taskId, in: path, required: true, schema: {type: string}}
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.delivery
+      summary: Read delivery verification independently of implementation status
+      responses:
+        '200': {description: Delivery state and unmet requirements, content: {application/json: {schema: {$ref: '#/components/schemas/TaskDeliveryResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+    post:
+      x-brain-effect: provider
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.verifyDelivery
+      summary: Configure or verify delivery with revision precondition
+      description: Configure and integration update state; verify may call GitHub. Provider failure can still return 200 with verification_error and invalidated evidence. No merge or deployment occurs here.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryCommand'}}}}
+      responses:
+        '200': {description: Updated delivery and unmet requirements, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryUpdateResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /events/recent:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: events.recent
+      summary: Read filtered recent event buffer and coverage
+      description: Volatile buffer, not a durable complete audit. Positive limit defaults to 100 and is capped at 1000.
+      parameters:
+        - {name: project_id, in: query, schema: {type: string}}
+        - {name: feature_id, in: query, schema: {type: string}}
+        - {name: type, in: query, schema: {type: string}}
+        - {name: source, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer}}
+      responses:
+        '200': {description: Recent events, content: {application/json: {schema: {$ref: '#/components/schemas/RecentEventsResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /events/wait:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: events.wait
+      summary: Wait for a bounded event page using caller-bound opaque cursor
+      description: Cursor binds caller and exact filters. Omitted timeout_ms is 25000; zero polls immediately. No automatic retry. Events are server-redacted; cursor_expired and truncated require explicit caller handling.
+      parameters:
+        - {name: project_id, in: query, required: true, schema: {type: string}}
+        - {name: feature_id, in: query, schema: {type: string}}
+        - {name: task_id, in: query, schema: {type: string}}
+        - {name: type, in: query, schema: {type: string}}
+        - {name: source, in: query, schema: {type: string}}
+        - {name: after, in: query, schema: {type: string}}
+        - {name: timeout_ms, in: query, schema: {type: integer, minimum: 0, maximum: 25000}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+      responses:
+        '200': {description: Event page or timeout/shutdown outcome, content: {application/json: {schema: {$ref: '#/components/schemas/EventWaitResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /events/resource-health:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: events.resourceHealth
+      summary: Read recent runner resource samples
+      description: Null measurements mean unavailable, not zero. An empty list does not establish health. At most 100 unique runner/task samples.
+      parameters:
+        - {name: project_id, in: query, required: true, schema: {type: string}}
+        - {name: task_id, in: query, schema: {type: string}}
+      responses:
+        '200': {description: Samples and coverage limitations, content: {application/json: {schema: {$ref: '#/components/schemas/ResourceHealthResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /timeline:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: observability.timeline
+      summary: Read recorded events and projected schedule occurrences
+      description: Projections are not executions. Range must increase and span at most 366 days. Default range is 30 days before and after now.
+      parameters:
+        - {name: project, in: query, schema: {type: string}}
+        - {name: from, in: query, schema: {type: string, format: date-time}}
+        - {name: to, in: query, schema: {type: string, format: date-time}}
+      responses:
+        '200': {description: Actual and projected timeline items, content: {application/json: {schema: {$ref: '#/components/schemas/TimelineResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /projects/{projectId}/placement:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: projects.getPlacement
+      summary: Read project placement policy (soft default when no row exists)
+      responses:
+        '200': {description: Placement policy, content: {application/json: {schema: {$ref: '#/components/schemas/ProjectPlacement'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+    put:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: projects.setPlacement
+      summary: Replace project placement policy
+      description: Changes future work placement; does not dispatch work. Path project overrides the body project_id.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ProjectPlacement'}}}}
+      responses:
+        '200': {description: Saved policy, content: {application/json: {schema: {$ref: '#/components/schemas/ProjectPlacement'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/resume:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.resume
+      summary: Request abandoned task resume
+      description: Force bypasses abandonment, not live-claim safety. HTTP 200 may be a no-op; inspect resumed and reason. No executor is started by this HTTP handler.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody: {content: {application/json: {schema: {$ref: '#/components/schemas/ResumeTaskOptions'}}}}
+      responses:
+        '200': {description: Resume outcome, content: {application/json: {schema: {$ref: '#/components/schemas/ResumeTaskResult'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/resume-with-context:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.resumeWithContext
+      summary: Inject context into a live session or request a relaunch
+      description: Nonblank injected_context required. Resume mode is advisory until runner resolution. Results may be no-ops. Live injection is effectful.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ResumeWithContextOptions'}}}}
+      responses:
+        '200': {description: Context resume outcome, content: {application/json: {schema: {$ref: '#/components/schemas/ResumeWithContextResult'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/assignment:
+    put:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.assign
+      summary: Assign a task to a registered runner
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TaskAssignmentRequest'}}}}
+      responses:
+        '200': {description: Assignment state, content: {application/json: {schema: {$ref: '#/components/schemas/TaskAssignmentResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/assignment/clear:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.clearAssignment
+      summary: Clear task assignment with explicit intent
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ClearFeatureAssignmentRequest'}}}}
+      responses:
+        '200': {description: Cleared assignment state, content: {application/json: {schema: {$ref: '#/components/schemas/TaskAssignmentResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/trigger:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.trigger
+      summary: Trigger a task or create its next scheduled run
+      description: Inspect triggered and reason; HTTP success does not promise work started.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Trigger result, content: {application/json: {schema: {$ref: '#/components/schemas/TriggerResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/run:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.run
+      summary: Request immediate scheduler dispatch
+      description: HTTP 200 can report dispatched false. Unconfigured scheduler returns 501. No automatic SDK fallback to trigger or retry.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody: {content: {application/json: {schema: {$ref: '#/components/schemas/RunTaskRequest'}}}}
+      responses:
+        '200': {description: Dispatch outcome, content: {application/json: {schema: {$ref: '#/components/schemas/RunTaskResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/dispatch:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.dispatch
+      summary: Direct dispatch to a registered eligible runner
+      description: Creates a pre-claim and dispatch lease; never retried by SDK. Runner registration and placement are checked by the existing service, not proof of hosted runner ownership. Conflict bodies use success and error, not message.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DispatchRequest'}}}}
+      responses:
+        '200': {description: Dispatch lease, content: {application/json: {schema: {$ref: '#/components/schemas/SDKDispatchResponse'}}}}
+        '409': {description: Claim conflict, content: {application/json: {schema: {$ref: '#/components/schemas/DispatchConflictResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/{taskId}/logs:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.logs
+      summary: Read retained in-memory task logs
+      description: Omitted offset returns the newest limit lines. Explicit offset zero starts at oldest retained. Empty real task logs do not prove no output before a restart.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer}}
+        - {name: offset, in: query, schema: {type: integer}}
+      responses:
+        '200': {description: Log window, content: {application/json: {schema: {$ref: '#/components/schemas/LogQueryResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/features/{featureId}/resume:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.resume
+      summary: Resume feature tasks with per-task outcomes
+      description: Partial errors are skipped results, not a failed batch. Results may be truncated while aggregate counts remain complete.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      requestBody: {content: {application/json: {schema: {$ref: '#/components/schemas/ResumeTaskOptions'}}}}
+      responses:
+        '200': {description: Batch resume outcome, content: {application/json: {schema: {$ref: '#/components/schemas/ResumeFeatureResult'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/features/{featureId}/resume-with-context:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.resumeWithContext
+      summary: Inject context or request relaunch for each feature task
+      description: Partial outcomes and truncation mirror feature resume. Live injection is effectful, advisory modes are resolved by runner.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ResumeWithContextOptions'}}}}
+      responses:
+        '200': {description: Context resume batch, content: {application/json: {schema: {$ref: '#/components/schemas/ResumeWithContextFeatureResult'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/features/{featureId}/assignment:
+    put:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.assign
+      summary: Assign a feature to a registered runner
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/FeatureAssignmentRequest'}}}}
+      responses:
+        '200': {description: Feature assignment, content: {application/json: {schema: {$ref: '#/components/schemas/FeatureAssignmentResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/features/{featureId}/assignment/clear:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.clearAssignment
+      summary: Clear feature assignment with explicit clear intent
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ClearFeatureAssignmentRequest'}}}}
+      responses:
+        '200': {description: Cleared feature assignment, content: {application/json: {schema: {$ref: '#/components/schemas/FeatureAssignmentResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/features/{featureId}/checkout:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.checkout
+      summary: Create an indexed checkout task
+      description: Creates work rather than executing Git synchronously. Unknown body fields rejected. Supply explicit merge_policy to avoid inherited defaults.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      requestBody: {content: {application/json: {schema: {$ref: '#/components/schemas/FeatureCheckoutOptions'}}}}
+      responses:
+        '200': {description: Created or existing checkout task, content: {application/json: {schema: {$ref: '#/components/schemas/CheckoutFeatureResult'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/features/{featureId}/run:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+      - {name: featureId, in: path, required: true, schema: {type: string}}
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.run
+      summary: Request feature dispatch and optional dependent chain
+      description: Inspect dispatched and reason. Missing scheduler returns 501. No automatic retry or trigger fallback.
+      requestBody: {content: {application/json: {schema: {$ref: '#/components/schemas/RunFeatureRequest'}}}}
+      responses:
+        '200': {description: Per-task dispatch results, content: {application/json: {schema: {$ref: '#/components/schemas/RunFeatureResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+    delete:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.cancel
+      summary: Cancel future additions to a dependent chain
+      description: Already-dispatched tasks continue. This does not cancel running tasks.
+      responses:
+        '200': {description: Chain cancellation result, content: {application/json: {schema: {$ref: '#/components/schemas/CancelChainResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/chains:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.chains
+      summary: List standing dependent chains
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Chains with current derived membership, content: {application/json: {schema: {$ref: '#/components/schemas/DependentChainsResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/run:
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: projects.run
+      summary: Dispatch ready project features
+      description: Per-feature partial outcomes; absence of eligible runners can be a successful HTTP response with no dispatch.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      requestBody: {content: {application/json: {schema: {$ref: '#/components/schemas/RunProjectRequest'}}}}
+      responses:
+        '200': {description: Feature dispatch outcomes, content: {application/json: {schema: {$ref: '#/components/schemas/RunProjectResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+  /tasks/{projectId}/status:
+    post:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.status
+      summary: Read requested task statuses and report unresolved IDs
+      description: taskIds must be nonempty. Legacy waitFor and timeout fields are accepted but do not wait.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MultiTaskStatusRequest'}
+      responses:
+        '200':
+          description: Requested tasks and completion state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MultiTaskStatusResponse'}
+        default:
+          description: Legacy API error adapted by the SDK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyErrorResponse'}
+  /tasks/{projectId}/{taskId}/metadata:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.metadata
+      summary: Read execution metadata without task title or content
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Legacy task execution metadata
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TaskMetadataResponse'}
+        default:
+          description: Legacy API error adapted by the SDK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyErrorResponse'}
+  /tasks/{projectId}/{taskId}/claim-status:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.claimStatus
+      summary: Inspect a task claim without acquiring or renewing it
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Claim state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClaimStatusResponse'}
+        default:
+          description: Legacy API error adapted by the SDK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyErrorResponse'}
+  /tasks/{projectId}/features:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.list
+      summary: List computed feature groups
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Feature groups
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FeatureListResponse'}
+        default:
+          description: Legacy API error adapted by the SDK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyErrorResponse'}
+  /tasks/{projectId}/features/ready:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.ready
+      summary: List ready feature groups without dispatching work
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Ready feature groups
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FeatureListResponse'}
+        default:
+          description: Legacy API error adapted by the SDK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyErrorResponse'}
+  /tasks/{projectId}/features/{featureId}:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: features.get
+      summary: Read a computed feature group
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Feature wrapper
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FeatureResponse'}
+        default:
+          description: Legacy API error adapted by the SDK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LegacyErrorResponse'}
+  /tasks:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: projects.list
+      summary: List projects visible to the current single-mode service
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Project names
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectListResponse'
+  /stats:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: observability.stats
+      summary: Get legacy single-mode counts and storage paths
+      parameters:
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: projects
+          in: query
+          description: Comma-separated scope, superseding project and global
+          schema:
+            type: string
+        - name: global
+          in: query
+          schema:
+            type: boolean
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Legacy statistics, including host paths; not script-safe
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsResponse'
+  /orphans:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: graph.orphans
+      summary: List entries without incoming links
+      parameters:
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Positive limits are capped at 100 by the handler
+          schema:
+            type: integer
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Orphan entries
+          content:
+            application/json:
+              schema:
+                type: [array, 'null']
+                items:
+                  $ref: '#/components/schemas/BrainEntry'
+  /stale:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: observability.stale
+      summary: List never-verified or old-verified entries
+      parameters:
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: days
+          in: query
+          description: Nonpositive or omitted selects 30 days
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Stale entries
+          content:
+            application/json:
+              schema:
+                type: [array, 'null']
+                items:
+                  $ref: '#/components/schemas/BrainEntry'
+  /tasks/{project}/ready:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.ready
+      summary: List ready tasks without claiming them
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: feature_id
+          in: query
+          style: form
+          explode: true
+          schema:
+            $ref: '#/components/schemas/TaskFeatureFilter'
+        - name: executors
+          in: query
+          description: Comma-separated executor names
+          schema:
+            type: string
+        - name: runner_id
+          in: query
+          schema:
+            type: string
+        - name: generated_by_prefix
+          in: query
+          schema:
+            type: string
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Ready tasks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskSelectionResponse'
+  /tasks/{project}/next:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.next
+      summary: Get next ready task without claiming it
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: feature_id
+          in: query
+          style: form
+          explode: true
+          schema:
+            $ref: '#/components/schemas/TaskFeatureFilter'
+        - name: executors
+          in: query
+          description: Comma-separated executor names
+          schema:
+            type: string
+        - name: runner_id
+          in: query
+          schema:
+            type: string
+        - name: generated_by_prefix
+          in: query
+          schema:
+            type: string
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Next ready task, or null when no task is ready
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/ResolvedTask'
+                  - type: 'null'
+        '404':
+          description: No ready tasks available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegacyErrorResponse'
+  /tasks/{project}/waiting:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.waiting
+      summary: List tasks waiting for dependencies
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Waiting tasks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskSelectionResponse'
+  /tasks/{project}/blocked:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.blocked
+      summary: List blocked tasks
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Blocked tasks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskSelectionResponse'
+  /health:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: health.get
+      summary: Get server health
+      security: []
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Server health (not script availability)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /entries:
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: entries.list
+      summary: List entries
+      parameters:
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: tags
+          in: query
+          schema:
+            type: string
+        - name: feature_id
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+        - name: global
+          in: query
+          schema:
+            type: boolean
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+        - name: sortOrder
+          in: query
+          schema:
+            type: string
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: A page of entries; truncated is not end-of-pagination
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListEntriesResponse'
+    post:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: entries.create
+      summary: Create an entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEntryRequest'
+      responses:
+        '201':
+          description: Persisted entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateEntryResponse'
+        default:
+          description: Legacy REST error, normalized by the SDK transport
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegacyErrorResponse'
+  /entries/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: entries.get
+      summary: Get an entry by ID or legacy path
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Entry, including current revision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrainEntry'
+    patch:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: entries.update
+      summary: Update an entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEntryRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Updated entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrainEntry'
+    delete:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: entries.delete
+      summary: Delete a confirmed entry
+      parameters:
+        - name: confirm
+          in: query
+          required: true
+          schema:
+            type: boolean
+            const: true
+        - name: force
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '204':
+          description: Entry deleted; no response body
+  /search:
+    post:
+      x-brain-effect: provider
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: search.query
+      summary: Search visible entries
+      description: >-
+        Semantic/hybrid strategy may call an embedding provider; not a safe
+        dry-run read.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Matching entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+  /tasks/{projectId}:
+    delete:
+      x-brain-effect: write
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: projects.delete
+      summary: Delete a project and its entries across all types
+      description: Destructive operation requires confirm equal to projectId (not true). Reports partial failures. Force bypasses the legacy live-claim guard; this is not hosted authorization or a filesystem erasure guarantee.
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: confirm, in: query, required: true, schema: {type: string}}
+        - {name: force, in: query, schema: {type: boolean}}
+      responses:
+        '200': {description: Deletion counts and errors, content: {application/json: {schema: {$ref: '#/components/schemas/DeleteProjectResponse'}}}}
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.list
+      summary: List resolved project tasks
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Resolved tasks and dependencies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskListResponse'
+  /tasks/{projectId}/{taskId}:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: taskId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      x-brain-effect: read
+      x-brain-script: false
+      x-brain-profile: single
+      operationId: tasks.get
+      summary: Get a resolved task
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Resolved task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolvedTask'
+  /entries/{id}/move:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: entries.move
+      summary: Move an entry between projects
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MoveEntryRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Move result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MoveResult'
+  /entries/bulk-update:
+    post:
+      operationId: entries.bulkUpdate
+      summary: Update a bounded set of entries
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkUpdateRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Per-entry outcomes; inspect failed and truncated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkUpdateResponse'
+  /entries/bulk-delete:
+    post:
+      operationId: entries.bulkDelete
+      summary: Delete a bounded set of entries
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkDeleteRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Per-entry outcomes; inspect failed and truncated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkDeleteResponse'
+  /entries/{id}/sections:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: sections.list
+      summary: List section headings
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Section headings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SectionsResponse'
+  /entries/{id}/sections/{title}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: title
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: sections.get
+      summary: Get a section by heading title
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: includeSubsections
+          in: query
+          schema:
+            type: boolean
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Section content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SectionContentResponse'
+  /entries/{id}/backlinks:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: graph.backlinks
+      summary: Get entries linking to this entry
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Entry array
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BrainEntry'
+  /entries/{id}/outlinks:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: graph.outlinks
+      summary: Get entries linked from this entry
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Entry array
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BrainEntry'
+  /entries/{id}/related:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: graph.related
+      summary: Get related entries
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Entry array
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BrainEntry'
+  /attachments:
+    get:
+      operationId: attachments.list
+      summary: List project attachment metadata
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: project_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Attachment metadata list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAttachmentsResponse'
+    post:
+      operationId: attachments.upload
+      summary: Upload attachment bytes without local path interpretation
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - project_id
+                - file
+              properties:
+                project_id:
+                  type: string
+                metadata:
+                  type: string
+                  description: JSON-encoded object with string values
+                file:
+                  type: string
+                  format: binary
+                  x-go-type: '[]byte'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '201':
+          description: Stored attachment metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAttachmentResponse'
+  /attachments/{attachmentID}:
+    parameters:
+      - name: attachmentID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: attachments.get
+      summary: Get project attachment metadata
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Attachment metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+    delete:
+      operationId: attachments.delete
+      summary: Delete an unreferenced attachment
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Deletion result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentDeletionResponse'
+  /attachments/{attachmentID}/content:
+    parameters:
+      - name: attachmentID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: attachments.download
+      summary: Download bounded attachment bytes
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Raw content; actual media type follows stored metadata
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+                x-go-type: '[]byte'
+  /attachments/{attachmentID}/text:
+    parameters:
+      - name: attachmentID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: attachments.text
+      summary: Download already-extracted text without invoking extraction
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Stored derived text
+          content:
+            text/plain:
+              schema:
+                type: string
+  /attachments/{attachmentID}/extract:
+    parameters:
+      - name: attachmentID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: attachments.extract
+      summary: Run extraction and persist derived text
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachmentExtractionRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Derived text and linked-entry outcomes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentExtractionResult'
+  /entries/{id}/attachments:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: attachments.forEntry
+      summary: List entry attachment references
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Entry references
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachEntryAttachmentResponse'
+    post:
+      operationId: attachments.attach
+      summary: Attach an existing project attachment to an entry
+      description: >-
+        attachment.role must be non-empty; metadata DTO omission does not waive
+        service validation.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachEntryAttachmentRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Updated entry references
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachEntryAttachmentResponse'
+  /entries/{id}/attachments/{attachmentID}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: attachmentID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: string
+    delete:
+      operationId: attachments.detach
+      summary: Remove an attachment reference from an entry
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: role
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Updated entry references
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachEntryAttachmentResponse'
+  /goals:
+    get:
+      operationId: goals.list
+      summary: List visible goals by project, feature and status
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: feature_id
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Goal summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListGoalsResponse'
+    post:
+      operationId: goals.create
+      summary: Create a goal automation
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGoalRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '201':
+          description: Created goal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalSummary'
+  /goals/{goalId}:
+    parameters:
+      - name: goalId
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      operationId: goals.update
+      summary: Update a goal automation
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateGoalRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Updated goal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalSummary'
+    delete:
+      operationId: goals.delete
+      summary: Delete a goal automation
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Goal deletion result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteGoalResponse'
+  /goals/{goalId}/progress:
+    parameters:
+      - name: goalId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: goals.progress
+      summary: Read goal-scoped linked-task progress
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Goal progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalProgressResponse'
+  /goals/{goalId}/audit:
+    parameters:
+      - name: goalId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: goals.audit
+      summary: Read bounded goal reconcile audit history
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 50
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Goal audit history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalAuditResponse'
+  /goals/{goalId}/run:
+    parameters:
+      - name: goalId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: goals.run
+      summary: Reconcile a goal; may submit work or steer a session
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Reconcile decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalReconcileAudit'
+  /reminders:
+    get:
+      operationId: reminders.list
+      summary: List reminders
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Reminder summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderListResponse'
+    post:
+      operationId: reminders.create
+      summary: Create a reminder
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReminderRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '201':
+          description: Created reminder
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderSummary'
+  /reminders/{reminderId}:
+    parameters:
+      - name: reminderId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: reminders.get
+      summary: Get a reminder
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Reminder
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderSummary'
+    patch:
+      operationId: reminders.update
+      summary: Update a reminder
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReminderRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Updated reminder
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderSummary'
+    delete:
+      operationId: reminders.delete
+      summary: Delete a reminder
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Deletion outcome
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletionResponse'
+  /reminders/{reminderId}/ack:
+    parameters:
+      - name: reminderId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: reminders.ack
+      summary: Acknowledge a reminder
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Reminder state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderSummary'
+  /reminders/{reminderId}/snooze:
+    parameters:
+      - name: reminderId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: reminders.snooze
+      summary: Snooze a reminder until a new timestamp
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SnoozeReminderRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Reminder state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderSummary'
+  /reminders/{reminderId}/fire:
+    parameters:
+      - name: reminderId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: reminders.fire
+      summary: Fire a reminder now; may publish notices or submit work
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Reminder state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderSummary'
+  /attention:
+    get:
+      operationId: attention.list
+      summary: List attention for the authenticated recipient
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: kind
+          in: query
+          schema:
+            type: string
+        - name: severity
+          in: query
+          schema:
+            type: string
+        - name: source_type
+          in: query
+          schema:
+            type: string
+        - name: include_snoozed
+          in: query
+          schema:
+            type: boolean
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Attention items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttentionListResponse'
+    post:
+      operationId: attention.create
+      summary: Create attention under existing publication policy
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAttentionRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '201':
+          description: Created attention
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attention'
+  /attention/counts:
+    get:
+      operationId: attention.counts
+      summary: Get authenticated recipient attention counts
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttentionCounts'
+  /attention/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: attention.get
+      summary: Get authenticated recipient attention item
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Attention item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attention'
+  /attention/{id}/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: attention.read
+      summary: Mark attention read
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Attention state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attention'
+  /attention/{id}/unread:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: attention.unread
+      summary: Mark attention unread
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Attention state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attention'
+  /attention/{id}/snooze:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: attention.snooze
+      summary: Snooze attention until a timestamp
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SnoozeAttentionRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Attention state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attention'
+  /attention/{id}/resolve:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: attention.resolve
+      summary: Resolve attention
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Attention state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attention'
+  /attention/{id}/dismiss:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: attention.dismiss
+      summary: Dismiss attention
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Attention state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attention'
+  /webhooks:
+    get:
+      operationId: webhooks.list
+      summary: List webhook subscriptions
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: enabled
+          in: query
+          schema:
+            type: boolean
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Webhooks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWebhooksResponse'
+    post:
+      operationId: webhooks.create
+      summary: Create webhook subscription for future outbound delivery
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWebhookRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '201':
+          description: Created webhook
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookResponse'
+  /webhooks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: webhooks.get
+      summary: Read webhook subscription
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Webhook
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookResponse'
+    patch:
+      operationId: webhooks.update
+      summary: Update webhook subscription
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWebhookRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Updated webhook
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookResponse'
+    delete:
+      operationId: webhooks.delete
+      summary: Delete webhook subscription
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Deletion result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+  /webhooks/{id}/deliveries:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: webhooks.deliveries
+      summary: List webhook deliveries
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 50
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Delivery history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWebhookDeliveriesResponse'
+  /webhooks/{id}/test:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: webhooks.test
+      summary: Send a synthetic event to the webhook destination
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Delivery result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookDeliveryResponse'
+  /automations/run:
+    post:
+      operationId: automations.run
+      summary: Run an automation through server task generation
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RunAutomationRequest'}}}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200': {description: Generated tasks, content: {application/json: {schema: {$ref: '#/components/schemas/RunAutomationResponse'}}}}
+        '409': {description: Generation skipped, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationSkippedResponse'}}}}
+  /automation-runs:
+    get:
+      operationId: automations.runs
+      summary: List automation runs; truncated means the bounded scan was exhausted
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: project, in: query, schema: {type: string}}
+        - {name: status, in: query, schema: {type: string}}
+        - {name: automation_id, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, default: 100}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200': {description: Run entries, content: {application/json: {schema: {$ref: '#/components/schemas/ListEntriesResponse'}}}}
+  /automation-runs/{runId}:
+    parameters: [{name: runId, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: automations.getRun
+      summary: Read one automation run entry
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200': {description: Run entry, content: {application/json: {schema: {$ref: '#/components/schemas/BrainEntry'}}}}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    CapabilityManifest:
+      type: object
+      additionalProperties: false
+      required: [contract_version, operations, scripts]
+      properties:
+        contract_version: {type: string, minLength: 1, maxLength: 64}
+        operations:
+          type: array
+          maxItems: 10000
+          uniqueItems: true
+          items: {type: string, pattern: '^[a-z][a-zA-Z0-9]{0,63}\.[a-z][a-zA-Z0-9]{0,63}$'}
+        scripts: {$ref: '#/components/schemas/ScriptAvailability'}
+    ScriptAvailability:
+      type: object
+      additionalProperties: false
+      description: Independent support dimensions, not permission grants. available equals their conjunction. Every dimension is false until production script composition is implemented and accepted.
+      required: [compiled, configured, deployment_available, caller_authorized, available]
+      properties:
+        compiled: {type: boolean}
+        configured: {type: boolean}
+        deployment_available: {type: boolean}
+        caller_authorized: {type: boolean}
+        available: {type: boolean}
+    MetadataUpdateRequest:
+      type: object
+      additionalProperties: false
+      description: Exact metadata endpoint key allowlist. Omitted fields are unchanged. Use ordinary entry update for other frontmatter. Audit/runtime JSON fields preserve server-defined contents.
+      properties:
+        expected_revision: {type: string}
+        status: {type: string}
+        priority: {type: string}
+        tags: {type: array, items: {type: string}}
+        depends_on: {type: array, items: {type: string}}
+        title: {type: string}
+        feature_id: {type: string}
+        feature_priority: {type: string}
+        feature_depends_on: {type: array, items: {type: string}}
+        note: {type: string}
+        append: {type: string}
+        starts_at: {type: string}
+        expires_at: {type: string}
+        run_once_at: {type: string}
+        timezone: {type: string}
+        automation_run_id: {type: string}
+        completed_at: {type: string}
+        sessions: {type: object, additionalProperties: {$ref: '#/components/schemas/SessionInfo'}}
+        next_run: {type: string}
+        schedule: {type: string}
+        schedule_enabled: {type: boolean}
+        complete_on_idle: {type: boolean}
+        direct_prompt: {type: string}
+        runs: {type: array, items: {}}
+        max_runs: {type: integer}
+        last_reconcile: {}
+        exit_code: {type: integer}
+        script_output: {type: string}
+        mr_url: {type: string}
+        resume_requested: {type: boolean}
+        resume_requested_at: {type: string}
+        resume_mode: {type: string}
+        resume_injected_context: {type: string}
+        resume_prefer_same_session: {type: boolean}
+        resume_executor_override: {type: string}
+        abandoned_at: {type: string}
+        abandoned_reason: {type: string}
+        attempt_count: {type: integer}
+        last_failed_at: {type: string}
+    DeliveryCommand:
+      type: object
+      additionalProperties: false
+      required: [action, expected_revision]
+      properties:
+        action: {type: string, enum: [configure, verify, integration]}
+        expected_revision: {type: integer}
+        policy: {$ref: '#/components/schemas/DeliveryVerification'}
+        artifact: {type: string}
+        passed: {type: boolean}
+        evidence_reference: {type: string}
+    DeliveryUpdateResponse:
+      type: object
+      required: [delivery, unmet]
+      properties:
+        delivery: {anyOf: [{$ref: '#/components/schemas/DeliveryVerification'}, {type: 'null'}]}
+        unmet: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+    TaskDeliveryResponse:
+      allOf:
+        - {$ref: '#/components/schemas/DeliveryUpdateResponse'}
+        - type: object
+          required: [task_id, implementation_status]
+          properties:
+            task_id: {type: string}
+            implementation_status: {type: string}
+    RecentEventsResponse:
+      type: object
+      required: [events, count, coverage]
+      properties:
+        events: {anyOf: [{type: array, items: {$ref: '#/components/schemas/Event'}}, {type: 'null'}]}
+        count: {type: integer}
+        coverage: {$ref: '#/components/schemas/EventCoverage'}
+    EventWaitResponse:
+      type: object
+      required: [events, next_cursor, cursor_expired, timed_out, shutdown, truncated]
+      properties:
+        events: {type: array, items: {$ref: '#/components/schemas/Event'}}
+        next_cursor: {type: string}
+        cursor_expired: {type: boolean}
+        timed_out: {type: boolean}
+        shutdown: {type: boolean}
+        truncated: {type: boolean}
+    ResourceSample:
+      type: object
+      required: [sampled_at, rss_bytes, process_count, limit_bytes, last_activity, command_summary, warning]
+      properties:
+        instance_id: {type: string}
+        session_id: {type: string}
+        executor: {type: string}
+        sampled_at: {type: string, format: date-time}
+        rss_bytes: {anyOf: [{type: integer, format: int64}, {type: 'null'}]}
+        process_count: {anyOf: [{type: integer}, {type: 'null'}]}
+        limit_bytes: {type: integer, format: int64}
+        last_activity: {anyOf: [{type: string, format: date-time}, {type: 'null'}]}
+        command_summary: {anyOf: [{type: string}, {type: 'null'}]}
+        unavailable_reason: {type: string}
+        termination_reason: {type: string}
+        warning: {type: boolean}
+    ResourceObservation:
+      type: object
+      required: [runner_id, task_id, sample, fresh]
+      properties:
+        runner_id: {type: string}
+        task_id: {type: string}
+        feature_id: {type: string}
+        sample: {$ref: '#/components/schemas/ResourceSample'}
+        fresh: {type: boolean}
+    ResourceHealthResponse:
+      type: object
+      required: [observed_at, samples, truncated, coverage, availability, warning_fraction, clear_fraction]
+      properties:
+        observed_at: {type: string, format: date-time}
+        samples: {type: array, items: {$ref: '#/components/schemas/ResourceObservation'}}
+        truncated: {type: boolean}
+        coverage: {$ref: '#/components/schemas/EventCoverage'}
+        availability: {type: string}
+        warning_fraction: {type: number}
+        clear_fraction: {type: number}
+    TimelineItem:
+      type: object
+      required: [id, type, source, timestamp, temporal_state]
+      properties:
+        id: {type: string}
+        type: {type: string}
+        source: {type: string}
+        timestamp: {type: string, format: date-time}
+        project_id: {type: string}
+        task_id: {type: string}
+        task_path: {type: string}
+        task_title: {type: string}
+        feature_id: {type: string}
+        runner_id: {type: string}
+        reason: {type: string}
+        summary: {type: string}
+        metadata: {anyOf: [{type: object, additionalProperties: {type: string}}, {type: 'null'}]}
+        temporal_state: {type: string}
+        temporal_kind: {type: string}
+        source_kind: {type: string}
+        source_id: {type: string}
+        source_path: {type: string}
+        timezone: {type: string}
+        projection_rule: {type: string}
+        occurrence_count: {type: integer}
+        window_start: {anyOf: [{type: string, format: date-time}, {type: 'null'}]}
+        window_end: {anyOf: [{type: string, format: date-time}, {type: 'null'}]}
+    TimelineWarning:
+      type: object
+      required: [message]
+      properties:
+        source_id: {type: string}
+        message: {type: string}
+    TimelineResponse:
+      type: object
+      required: [from, to, generated_at, items, warnings, truncated]
+      properties:
+        from: {type: string, format: date-time}
+        to: {type: string, format: date-time}
+        generated_at: {type: string, format: date-time}
+        items: {anyOf: [{type: array, items: {$ref: '#/components/schemas/TimelineItem'}}, {type: 'null'}]}
+        warnings: {anyOf: [{type: array, items: {$ref: '#/components/schemas/TimelineWarning'}}, {type: 'null'}]}
+        truncated: {type: boolean}
+    CheckoutFeatureResult: {"properties":{"created":{"type":"boolean"},"generatedKey":{"type":"string"},"superseded":{"type":"boolean"},"supersededTaskId":{"type":"string"},"task":{"anyOf":[{"$ref":"#/components/schemas/CreateEntryResponse"},{"type":"null"}]}},"required":["created","generatedKey"],"type":"object"}
+    ClearFeatureAssignmentRequest: {"properties":{"intent":{"type":"string"}},"required":["intent"],"type":"object"}
+    DeleteProjectResponse: {"properties":{"deleted":{"type":"integer"},"directory_removed":{"type":"boolean"},"errors":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"failed":{"type":"integer"},"index_rows_removed":{"format":"int64","type":"integer"},"project":{"type":"string"},"state_rows_removed":{"anyOf":[{"additionalProperties":{"format":"int64","type":"integer"},"type":"object"},{"type":"null"}]}},"required":["project","deleted","failed","directory_removed"],"type":"object"}
+    DependentChain: {"properties":{"pausedAtRequest":{"type":"boolean"},"projectId":{"type":"string"},"queued":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"requestedAt":{"format":"int64","type":"integer"},"rootFeatureId":{"type":"string"},"skipped":{"anyOf":[{"additionalProperties":{"type":"string"},"type":"object"},{"type":"null"}]},"truncated":{"type":"boolean"},"waitsOnExternal":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]}},"required":["projectId","rootFeatureId","requestedAt","pausedAtRequest","queued"],"type":"object"}
+    DependentQueue: {"properties":{"queued":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"skipped":{"anyOf":[{"additionalProperties":{"type":"string"},"type":"object"},{"type":"null"}]},"truncated":{"type":"boolean"},"waitsOnExternal":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]}},"required":["queued"],"type":"object"}
+    DispatchRequest: {"properties":{"targetRunnerId":{"type":"string"}},"required":["targetRunnerId"],"type":"object"}
+    Event: {"properties":{"feature_id":{"type":"string"},"from_status":{"type":"string"},"id":{"type":"string"},"metadata":{"anyOf":[{"additionalProperties":{"type":"string"},"type":"object"},{"type":"null"}]},"project_id":{"type":"string"},"reason":{"type":"string"},"runner_id":{"type":"string"},"source":{"type":"string"},"task_id":{"type":"string"},"task_path":{"type":"string"},"task_title":{"type":"string"},"timestamp":{"format":"date-time","type":"string"},"to_status":{"type":"string"},"type":{"type":"string"}},"required":["id","type","source","timestamp"],"type":"object"}
+    EventCoverage: {"properties":{"buffered":{"type":"integer"},"capacity":{"type":"integer"},"oldest":{"type":"string"}},"required":["buffered","capacity"],"type":"object"}
+    FeatureAssignmentRequest: {"properties":{"force":{"type":"boolean"},"intent":{"type":"string"},"runner_id":{"type":"string"}},"required":["runner_id"],"type":"object"}
+    FeatureAssignmentResponse: {"properties":{"assigned_at":{"type":"string"},"feature_id":{"type":"string"},"previous_runner":{"type":"string"},"project_id":{"type":"string"},"runner_id":{"type":"string"},"source":{"type":"string"},"status":{"type":"string"},"updated_at":{"type":"string"}},"required":["project_id","feature_id","source","status"],"type":"object"}
+    FeatureCheckoutOptions: {"properties":{"checkout_mode":{"type":"string"},"delivery_mode":{"type":"string"},"execution_branch":{"type":"string"},"execution_mode":{"type":"string"},"merge_policy":{"type":"string"},"merge_strategy":{"type":"string"},"merge_target_branch":{"type":"string"},"open_pr_before_merge":{"type":"boolean"},"remote_branch_policy":{"type":"string"}},"type":"object"}
+    InjectEntry: {"properties":{"id":{"type":"string"},"path":{"type":"string"},"title":{"type":"string"},"type":{"type":"string"}},"required":["id","path","title","type"],"type":"object"}
+    InjectRequest: {"properties":{"maxChars":{"anyOf":[{"type":"integer"},{"type":"null"}]},"maxEntries":{"anyOf":[{"type":"integer"},{"type":"null"}]},"project":{"type":"string"},"query":{"type":"string"},"type":{"type":"string"}},"required":["query"],"type":"object"}
+    InjectResponse: {"properties":{"context":{"type":"string"},"entries":{"anyOf":[{"items":{"$ref":"#/components/schemas/InjectEntry"},"type":"array"},{"type":"null"}]},"total":{"type":"integer"},"truncated":{"type":"boolean"}},"required":["context","entries","total"],"type":"object"}
+    LogLine: {"properties":{"content":{"type":"string"},"level":{"type":"string"},"timestamp":{"type":"string"}},"required":["timestamp","level","content"],"type":"object"}
+    LogQueryResponse: {"properties":{"limit":{"type":"integer"},"lines":{"anyOf":[{"items":{"$ref":"#/components/schemas/LogLine"},"type":"array"},{"type":"null"}]},"offset":{"type":"integer"},"total":{"type":"integer"}},"required":["lines","total","offset","limit"],"type":"object"}
+    ProjectPlacement: {"properties":{"affinity":{"type":"string"},"allowed_machines":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"preferred_machines":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"project_id":{"type":"string"},"required_capabilities":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"required_labels":{"anyOf":[{"additionalProperties":{"type":"string"},"type":"object"},{"type":"null"}]},"resources":{"anyOf":[{"additionalProperties":{},"type":"object"},{"type":"null"}]},"workspace_policy":{"type":"string"}},"required":["project_id","affinity"],"type":"object"}
+    ResumeFeatureResult: {"properties":{"feature_id":{"type":"string"},"results":{"anyOf":[{"items":{"$ref":"#/components/schemas/ResumeTaskResult"},"type":"array"},{"type":"null"}]},"total_results":{"type":"integer"},"total_resumed":{"type":"integer"},"total_skipped":{"type":"integer"},"truncated":{"type":"boolean"}},"required":["feature_id","total_resumed","total_skipped","results"],"type":"object"}
+    ResumeTaskOptions: {"properties":{"force":{"type":"boolean"}},"type":"object"}
+    ResumeTaskResult: {"properties":{"abandon_reason":{"type":"string"},"prior_sessions_count":{"type":"integer"},"prior_status":{"type":"string"},"reason":{"type":"string"},"resumed":{"type":"boolean"},"task_id":{"type":"string"}},"required":["task_id","resumed"],"type":"object"}
+    ResumeWithContextOptions: {"properties":{"executor_override":{"type":"string"},"force":{"type":"boolean"},"injected_context":{"type":"string"},"prefer_same_session":{"type":"boolean"}},"required":["injected_context"],"type":"object"}
+    ResumeWithContextResult:
+      allOf:
+        - {$ref: '#/components/schemas/ResumeTaskResult'}
+        - type: object
+          required: [resume_mode]
+          properties:
+            resume_mode: {type: string}
+            target_session_id: {type: string}
+            injected_live: {type: boolean}
+    ResumeWithContextFeatureResult:
+      type: object
+      required: [feature_id, total_resumed, total_skipped, results]
+      properties:
+        feature_id: {type: string}
+        total_resumed: {type: integer}
+        total_skipped: {type: integer}
+        total_results: {type: integer}
+        truncated: {type: boolean}
+        results: {anyOf: [{type: array, items: {$ref: '#/components/schemas/ResumeWithContextResult'}}, {type: 'null'}]}
+    RunFeatureRequest: {"properties":{"force":{"type":"boolean"},"includeDependents":{"type":"boolean"}},"type":"object"}
+    RunFeatureResponse: {"properties":{"blockedByFeatures":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"cascadeActive":{"type":"boolean"},"dependents":{"anyOf":[{"$ref":"#/components/schemas/DependentQueue"},{"type":"null"}]},"detail":{"type":"string"},"dispatched":{"type":"boolean"},"dispatchedCount":{"type":"integer"},"featureId":{"type":"string"},"outstanding":{"anyOf":[{"type":"integer"},{"type":"null"}]},"projectId":{"type":"string"},"queued":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"reason":{"type":"string"},"results":{"anyOf":[{"items":{"$ref":"#/components/schemas/RunTaskResponse"},"type":"array"},{"type":"null"}]},"skippedCount":{"type":"integer"},"waitingOnFeatures":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]}},"required":["dispatched","projectId","featureId","dispatchedCount","skippedCount"],"type":"object"}
+    RunProjectRequest: {"properties":{"force":{"type":"boolean"}},"type":"object"}
+    RunProjectResponse: {"properties":{"featuresConsidered":{"type":"integer"},"featuresDispatched":{"type":"integer"},"featuresSkipped":{"type":"integer"},"projectId":{"type":"string"},"reason":{"type":"string"},"results":{"anyOf":[{"items":{"$ref":"#/components/schemas/RunFeatureResponse"},"type":"array"},{"type":"null"}]},"totalTasksDispatched":{"type":"integer"}},"required":["projectId","featuresConsidered","featuresDispatched","featuresSkipped","totalTasksDispatched"],"type":"object"}
+    RunTaskRequest: {"properties":{"force":{"type":"boolean"}},"type":"object"}
+    RunTaskResponse: {"properties":{"detail":{"type":"string"},"dispatched":{"type":"boolean"},"expiresAt":{"type":"string"},"leaseId":{"type":"string"},"leaseState":{"type":"string"},"projectId":{"type":"string"},"reason":{"type":"string"},"runnerId":{"type":"string"},"taskId":{"type":"string"}},"required":["dispatched","taskId","projectId"],"type":"object"}
+    TaskAssignmentRequest: {"properties":{"force":{"type":"boolean"},"intent":{"type":"string"},"runner_id":{"type":"string"}},"required":["runner_id"],"type":"object"}
+    TaskAssignmentResponse: {"properties":{"assigned_at":{"type":"string"},"previous_runner":{"type":"string"},"project_id":{"type":"string"},"runner_id":{"type":"string"},"scope":{"type":"string"},"source":{"type":"string"},"status":{"type":"string"},"task_id":{"type":"string"},"updated_at":{"type":"string"}},"required":["project_id","task_id","scope","source","status"],"type":"object"}
+    TriggerResponse: {"properties":{"nextRun":{"type":"string"},"reason":{"type":"string"},"runId":{"type":"string"},"success":{"type":"boolean"},"taskId":{"type":"string"},"triggered":{"type":"boolean"}},"required":["success","taskId","triggered"],"type":"object"}
+    SDKDispatchResponse:
+      type: object
+      required: [success, runnerId, leaseId, expiresAt]
+      properties:
+        success: {type: boolean}
+        runnerId: {type: string}
+        leaseId: {type: string}
+        expiresAt: {type: string}
+    DispatchConflictResponse:
+      type: object
+      required: [success, error]
+      properties:
+        success: {type: boolean}
+        error: {type: string}
+    CancelChainResponse:
+      type: object
+      required: [success, cancelled, projectId, rootFeatureId, detail]
+      properties:
+        success: {type: boolean}
+        cancelled: {type: boolean}
+        projectId: {type: string}
+        rootFeatureId: {type: string}
+        detail: {type: string}
+    DependentChainsResponse:
+      type: object
+      required: [chains]
+      properties:
+        chains: {type: array, items: {$ref: '#/components/schemas/DependentChain'}}
+    ClaimStatusResponse:
+      type: object
+      required: [taskId, claimed, isStale]
+      properties:
+        taskId: {type: string}
+        claimed: {type: boolean}
+        isStale: {type: boolean}
+        runnerId: {type: string}
+        claimedAt: {type: string}
+    MultiTaskStatusRequest:
+      type: object
+      required: [taskIds]
+      properties:
+        taskIds: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        timeout: {type: integer}
+        waitFor: {type: string}
+    MultiTaskStatusResponse:
+      type: object
+      required: [tasks, allCompleted]
+      properties:
+        tasks: {anyOf: [{type: array, items: {$ref: '#/components/schemas/ResolvedTask'}}, {type: 'null'}]}
+        allCompleted: {type: boolean}
+        notFound: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+    Feature:
+      type: object
+      required: [featureId, tasks, ready]
+      properties:
+        featureId: {type: string}
+        tasks: {anyOf: [{type: array, items: {$ref: '#/components/schemas/ResolvedTask'}}, {type: 'null'}]}
+        ready: {type: boolean}
+        stats: {anyOf: [{$ref: '#/components/schemas/TaskStats'}, {type: 'null'}]}
+        unresolved_feature_deps: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+    FeatureListResponse:
+      type: object
+      required: [features]
+      properties:
+        features: {anyOf: [{type: array, items: {$ref: '#/components/schemas/Feature'}}, {type: 'null'}]}
+    FeatureResponse:
+      type: object
+      required: [feature]
+      properties:
+        feature: {$ref: '#/components/schemas/Feature'}
+    TaskMetadataResponse:
+      type: object
+      required: [path, agent, model, execution_mode, git_branch, git_remote, merge_policy, merge_strategy, merge_target_branch, remote_branch_policy, complete_on_idle, open_pr_before_merge, target_workdir, resolved_workdir, direct_prompt, executor, feature_id, feature_priority, feature_depends_on, depends_on, resolved_deps, unresolved_deps, blocked_by, blocked_by_reason, waiting_on, in_cycle, status, priority, classification, created, tags, sessions, env, extensions]
+      properties:
+        path: {type: string}
+        agent: {type: string}
+        model: {type: string}
+        execution_mode: {type: string}
+        git_branch: {type: string}
+        git_remote: {type: string}
+        merge_policy: {type: string}
+        merge_strategy: {type: string}
+        merge_target_branch: {type: string}
+        remote_branch_policy: {type: string}
+        complete_on_idle: {anyOf: [{type: boolean}, {type: 'null'}]}
+        open_pr_before_merge: {anyOf: [{type: boolean}, {type: 'null'}]}
+        target_workdir: {type: string}
+        resolved_workdir: {type: string}
+        direct_prompt: {type: string}
+        executor: {type: string}
+        feature_id: {type: string}
+        feature_priority: {type: string}
+        feature_depends_on: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        depends_on: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        resolved_deps: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        unresolved_deps: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        blocked_by: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        blocked_by_reason: {type: string}
+        waiting_on: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        in_cycle: {type: boolean}
+        status: {type: string}
+        priority: {type: string}
+        classification: {type: string}
+        created: {type: string}
+        tags: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        sessions: {anyOf: [{type: object, additionalProperties: {$ref: '#/components/schemas/SessionInfo'}}, {type: 'null'}]}
+        env: {anyOf: [{type: object, additionalProperties: {type: string}}, {type: 'null'}]}
+        extensions: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        origin_machine_id: {type: string}
+        origin_client_id: {type: string}
+        origin_path: {type: string}
+        machine_affinity: {type: string}
+        checkout_mode: {type: string}
+        dispatch_lease: {anyOf: [{$ref: '#/components/schemas/DispatchLease'}, {type: 'null'}]}
+        placement_reasons: {anyOf: [{type: array, items: {$ref: '#/components/schemas/PlacementReason'}}, {type: 'null'}]}
+        last_placement_reason: {anyOf: [{$ref: '#/components/schemas/PlacementReason'}, {type: 'null'}]}
+        blocked_by_features: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        waiting_on_features: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        unresolved_feature_deps: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+    ProjectListResponse:
+      type: object
+      required: [projects]
+      properties:
+        projects:
+          anyOf:
+            - type: array
+              items:
+                type: string
+            - type: 'null'
+    StatsResponse:
+      type: object
+      required: [brainDir, dbPath, totalEntries, globalEntries, projectEntries, byType, orphanCount, trackedEntries, staleCount]
+      properties:
+        brainDir:
+          type: string
+        dbPath:
+          type: string
+        totalEntries:
+          type: integer
+        globalEntries:
+          type: integer
+        projectEntries:
+          type: integer
+        byType:
+          anyOf:
+            - type: object
+              additionalProperties:
+                type: integer
+            - type: 'null'
+        orphanCount:
+          type: integer
+        trackedEntries:
+          type: integer
+        staleCount:
+          type: integer
+    TaskFeatureFilter:
+      type: array
+      items:
+        type: string
+    TaskSelectionResponse:
+      type: object
+      required: [tasks]
+      properties:
+        tasks:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/ResolvedTask'
+    RunAutomationRequest:
+      type: object
+      required: [path]
+      properties:
+        path: {type: string}
+        project: {type: string}
+    RunAutomationResponse:
+      type: object
+      required: [task_id, task_ids]
+      properties:
+        task_id: {type: string}
+        task_ids: {type: array, items: {type: string}}
+    AutomationSkippedResponse:
+      type: object
+      required: [skipped, message]
+      properties:
+        skipped: {type: boolean}
+        message: {type: string}
+    SuccessResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+    ListWebhooksResponse:
+      type: object
+      required:
+        - webhooks
+      properties:
+        webhooks:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookResponse'
+    ListWebhookDeliveriesResponse:
+      type: object
+      required:
+        - deliveries
+      properties:
+        deliveries:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookDeliveryResponse'
+    DeletionResponse:
+      type: object
+      required:
+        - deleted
+      properties:
+        deleted:
+          type: boolean
+    SnoozeReminderRequest:
+      type: object
+      required:
+        - remind_at
+      properties:
+        remind_at:
+          type: string
+          format: date-time
+    SnoozeAttentionRequest:
+      type: object
+      required:
+        - snoozed_until
+      properties:
+        snoozed_until:
+          type: string
+          format: date-time
+    AttentionListResponse:
+      type: object
+      required:
+        - attention
+        - count
+      properties:
+        attention:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attention'
+        count:
+          type: integer
+    ListGoalsResponse:
+      type: object
+      required:
+        - goals
+        - count
+      properties:
+        goals:
+          type:
+            - array
+            - 'null'
+          items:
+            $ref: '#/components/schemas/GoalSummary'
+        count:
+          type: integer
+    DeleteGoalResponse:
+      type: object
+      required:
+        - success
+        - goal_id
+      properties:
+        success:
+          type: boolean
+        goal_id:
+          type: string
+    GoalAuditResponse:
+      type: object
+      required:
+        - audit
+        - count
+      properties:
+        audit:
+          type:
+            - array
+            - 'null'
+          items:
+            $ref: '#/components/schemas/GoalReconcileAudit'
+        count:
+          type: integer
+    LegacyErrorResponse:
+      type: object
+      description: >-
+        Existing REST error envelope; SDKs adapt HTTP status to a machine code
+        and preserve field details without changing the server wire format.
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+          description: Optional; some legacy conflicts contain only error and success.
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationDetail'
+        code:
+          type: string
+          description: >-
+            Optional future-compatible machine code; legacy endpoints usually
+            omit it.
+        request_id:
+          type: string
+          description: Optional fallback when X-Request-ID is absent.
+    ValidationDetail:
+      type: object
+      required:
+        - field
+        - message
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+    AttachmentDeletionResponse:
+      type: object
+      required:
+        - deleted
+      properties:
+        deleted:
+          type: boolean
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+        - embedding
+      properties:
+        status:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        embedding:
+          $ref: '#/components/schemas/EmbeddingHealthStatus'
+    EmbeddingHealthStatus:
+      type: object
+      required:
+        - enabled
+        - status
+      properties:
+        enabled:
+          type: boolean
+        status:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+    AttachmentDerived:
+      properties:
+        content_type:
+          type: string
+        created:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        size:
+          format: int64
+          type: integer
+        storage_key:
+          type: string
+      required:
+        - id
+        - kind
+      type: object
+    AttachmentDerivedText:
+      properties:
+        content_type:
+          type: string
+        created:
+          type: string
+        error:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        metadata:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        modified:
+          type: string
+        status:
+          type: string
+        text:
+          type: string
+      required:
+        - status
+      type: object
+    AttachmentReference:
+      properties:
+        caption:
+          type: string
+        content_type:
+          type: string
+        derived:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttachmentDerived'
+              type: array
+            - type: 'null'
+        derived_text:
+          anyOf:
+            - $ref: '#/components/schemas/AttachmentDerivedText'
+            - type: 'null'
+        download_url:
+          type: string
+        filename:
+          type: string
+        id:
+          type: string
+        metadata:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        role:
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+        text_url:
+          type: string
+      required:
+        - id
+      type: object
+    AutomationAction:
+      properties:
+        agent:
+          type: string
+        command:
+          type: string
+        complete_on_idle:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        direct_prompt:
+          type: string
+        execution_mode:
+          type: string
+        executor:
+          type: string
+        model:
+          type: string
+        requires_capability:
+          type: string
+        session_mode:
+          type: string
+        set_status:
+          type: string
+        target_workdir:
+          type: string
+        timeout:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    AutomationRetry:
+      properties:
+        backoff:
+          type: string
+        delay:
+          type: string
+        max_attempts:
+          type: integer
+      type: object
+    BacklinkEntry:
+      properties:
+        id:
+          type: string
+        path:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+      required:
+        - id
+        - path
+        - title
+        - type
+      type: object
+    BrainEntry:
+      properties:
+        access_count:
+          type: integer
+        action:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationAction'
+            - type: 'null'
+        agent:
+          type: string
+        attachments:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttachmentReference'
+              type: array
+            - type: 'null'
+        attempt_count:
+          type: integer
+        automation_run_id:
+          type: string
+        backlinks:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/BacklinkEntry'
+              type: array
+            - type: 'null'
+        checkout_mode:
+          type: string
+        complete_on_idle:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        completed_at:
+          type: string
+        content:
+          type: string
+        created:
+          type: string
+        delivery_mode:
+          type: string
+        delivery_verification:
+          anyOf:
+            - $ref: '#/components/schemas/DeliveryVerification'
+            - type: 'null'
+        depends_on:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        direct_prompt:
+          type: string
+        embedding_status:
+          type: string
+        execution_mode:
+          type: string
+        executor:
+          type: string
+        expires_at:
+          type: string
+        extensions:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        feature_depends_on:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        feature_expires_at:
+          type: string
+        feature_id:
+          type: string
+        feature_priority:
+          type: string
+        feature_run_once_at:
+          type: string
+        feature_schedule:
+          type: string
+        feature_starts_at:
+          type: string
+        feature_timezone:
+          type: string
+        generated:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        generated_by:
+          type: string
+        generated_key:
+          type: string
+        generated_kind:
+          type: string
+        git_branch:
+          type: string
+        git_remote:
+          type: string
+        goal:
+          anyOf:
+            - $ref: '#/components/schemas/GoalConfig'
+            - type: 'null'
+        id:
+          type: string
+        last_failed_at:
+          type: string
+        last_verified:
+          type: string
+        machine_affinity:
+          type: string
+        max_runs:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        merge_policy:
+          type: string
+        merge_strategy:
+          type: string
+        merge_target_branch:
+          type: string
+        model:
+          type: string
+        modified:
+          type: string
+        next_run:
+          type: string
+        open_pr_before_merge:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        origin_client_id:
+          type: string
+        origin_machine_id:
+          type: string
+        origin_path:
+          type: string
+        parent_id:
+          type: string
+        path:
+          type: string
+        priority:
+          type: string
+        project_id:
+          type: string
+        reminder:
+          anyOf:
+            - $ref: '#/components/schemas/ReminderConfig'
+            - type: 'null'
+        remote_branch_policy:
+          type: string
+        requires_capability:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        resume_executor_override:
+          type: string
+        resume_injected_context:
+          type: string
+        resume_mode:
+          type: string
+        resume_prefer_same_session:
+          type: boolean
+        resume_requested:
+          type: boolean
+        resume_requested_at:
+          type: string
+        retry:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationRetry'
+            - type: 'null'
+        revision:
+          type: string
+        run_finalizations:
+          anyOf:
+            - additionalProperties:
+                $ref: '#/components/schemas/RunFinalization'
+              type: object
+            - type: 'null'
+        run_once_at:
+          type: string
+        runs:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/CronRun'
+              type: array
+            - type: 'null'
+        schedule:
+          type: string
+        schedule_enabled:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        session_mode:
+          type: string
+        sessions:
+          anyOf:
+            - additionalProperties:
+                $ref: '#/components/schemas/SessionInfo'
+              type: object
+            - type: 'null'
+        starts_at:
+          type: string
+        status:
+          type: string
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        target_workdir:
+          type: string
+        timezone:
+          type: string
+        title:
+          type: string
+        trigger:
+          anyOf:
+            - $ref: '#/components/schemas/TriggerConfig'
+            - type: 'null'
+        type:
+          type: string
+        user_original_request:
+          type: string
+        workdir:
+          type: string
+      required:
+        - id
+        - path
+        - title
+        - type
+        - status
+        - content
+        - tags
+      type: object
+    CreateEntryRequest:
+      properties:
+        action:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationAction'
+            - type: 'null'
+        agent:
+          type: string
+        assignment_intent:
+          type: string
+        attachments:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttachmentReference'
+              type: array
+            - type: 'null'
+        automation_run_id:
+          type: string
+        checkout_mode:
+          type: string
+        complete_on_idle:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        content:
+          type: string
+        delivery_mode:
+          type: string
+        depends_on:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        direct_prompt:
+          type: string
+        execution_mode:
+          type: string
+        executor:
+          type: string
+        expires_at:
+          type: string
+        extensions:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        feature_depends_on:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        feature_expires_at:
+          type: string
+        feature_id:
+          type: string
+        feature_priority:
+          type: string
+        feature_run_once_at:
+          type: string
+        feature_schedule:
+          type: string
+        feature_starts_at:
+          type: string
+        feature_timezone:
+          type: string
+        generated:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        generated_by:
+          type: string
+        generated_key:
+          type: string
+        generated_kind:
+          type: string
+        git_branch:
+          type: string
+        git_remote:
+          type: string
+        global:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        goal:
+          anyOf:
+            - $ref: '#/components/schemas/GoalConfig'
+            - type: 'null'
+        machine_affinity:
+          type: string
+        max_runs:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        merge_policy:
+          type: string
+        merge_strategy:
+          type: string
+        merge_target_branch:
+          type: string
+        model:
+          type: string
+        next_run:
+          type: string
+        open_pr_before_merge:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        origin_client_id:
+          type: string
+        origin_machine_id:
+          type: string
+        origin_path:
+          type: string
+        priority:
+          type: string
+        project:
+          type: string
+        relatedEntries:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        reminder:
+          anyOf:
+            - $ref: '#/components/schemas/ReminderConfig'
+            - type: 'null'
+        remote_branch_policy:
+          type: string
+        requires_capability:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        retry:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationRetry'
+            - type: 'null'
+        run_finalizations:
+          anyOf:
+            - additionalProperties:
+                $ref: '#/components/schemas/RunFinalization'
+              type: object
+            - type: 'null'
+        run_once_at:
+          type: string
+        runner_id:
+          type: string
+        runs:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/CronRun'
+              type: array
+            - type: 'null'
+        schedule:
+          type: string
+        schedule_enabled:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        session_mode:
+          type: string
+        starts_at:
+          type: string
+        status:
+          type: string
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        target_workdir:
+          type: string
+        timezone:
+          type: string
+        title:
+          type: string
+        trigger:
+          anyOf:
+            - $ref: '#/components/schemas/TriggerConfig'
+            - type: 'null'
+        type:
+          type: string
+        user_original_request:
+          type: string
+        workdir:
+          type: string
+      required:
+        - type
+        - title
+        - content
+      type: object
+    CreateEntryResponse:
+      properties:
+        id:
+          type: string
+        link:
+          type: string
+        path:
+          type: string
+        status:
+          type: string
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        title:
+          type: string
+        type:
+          type: string
+      required:
+        - id
+        - path
+        - title
+        - type
+        - status
+        - link
+      type: object
+    CronRun:
+      properties:
+        completed:
+          type: string
+        duration:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        failed_task:
+          type: string
+        run_id:
+          type: string
+        skip_reason:
+          type: string
+        started:
+          type: string
+        status:
+          type: string
+        tasks:
+          anyOf:
+            - type: integer
+            - type: 'null'
+      required:
+        - run_id
+        - status
+        - started
+      type: object
+    DeliveryEvidence:
+      properties:
+        checks:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        head:
+          type: string
+        integration_artifact:
+          type: string
+        integration_passed:
+          type: boolean
+        integration_reference:
+          type: string
+        integration_verifier:
+          type: string
+        merge_commit:
+          type: string
+        merged:
+          type: boolean
+        review_accepted:
+          type: boolean
+        source:
+          type: string
+        target:
+          type: string
+        verified_at:
+          format: date-time
+          type: string
+        verifier:
+          type: string
+      required:
+        - head
+        - target
+        - merge_commit
+        - checks
+        - review_accepted
+        - merged
+        - integration_passed
+        - verified_at
+        - verifier
+        - source
+      type: object
+    DeliveryVerification:
+      properties:
+        evidence:
+          anyOf:
+            - $ref: '#/components/schemas/DeliveryEvidence'
+            - type: 'null'
+        head:
+          type: string
+        pull_request:
+          type: integer
+        repository:
+          type: string
+        required:
+          type: string
+        required_checks:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        revision:
+          type: integer
+        target:
+          type: string
+        verification_error:
+          type: string
+      required:
+        - revision
+        - required
+        - repository
+        - pull_request
+        - head
+        - target
+        - required_checks
+      type: object
+    DispatchLease:
+      properties:
+        acked_at:
+          format: int64
+          type: integer
+        assigned_machine_id:
+          type: string
+        assigned_runner_id:
+          type: string
+        expires_at:
+          format: int64
+          type: integer
+        id:
+          type: string
+        last_error:
+          type: string
+        leaseId:
+          type: string
+        project_id:
+          type: string
+        pushed_at:
+          format: int64
+          type: integer
+        rejected_at:
+          format: int64
+          type: integer
+        state:
+          type: string
+        task_id:
+          type: string
+      required:
+        - leaseId
+        - project_id
+        - task_id
+        - assigned_runner_id
+        - assigned_machine_id
+        - state
+        - pushed_at
+        - expires_at
+      type: object
+    GoalConfig:
+      properties:
+        blocked_statuses:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        complete_statuses:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        criteria:
+          type: string
+        id:
+          type: string
+        steering:
+          anyOf:
+            - $ref: '#/components/schemas/GoalSteering'
+            - type: 'null'
+        task_id:
+          type: string
+        trigger_source:
+          type: string
+        validation:
+          type: string
+        workdir:
+          type: string
+      required:
+        - id
+      type: object
+    GoalSteering:
+      properties:
+        cooldown_minutes:
+          type: integer
+        enabled:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+      type: object
+    ListEntriesResponse:
+      properties:
+        entries:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/BrainEntry'
+              type: array
+            - type: 'null'
+        limit:
+          type: integer
+        offset:
+          type: integer
+        total:
+          type: integer
+        truncated:
+          type: boolean
+      required:
+        - entries
+        - total
+        - limit
+        - offset
+      type: object
+    PlacementReason:
+      properties:
+        created_at:
+          format: int64
+          type: integer
+        decision:
+          type: string
+        id:
+          format: int64
+          type: integer
+        machine_id:
+          type: string
+        missing_labels:
+          type: string
+        project_id:
+          type: string
+        reason:
+          type: string
+        required_labels:
+          type: string
+        runner_id:
+          type: string
+        runner_labels:
+          type: string
+        task_id:
+          type: string
+      required:
+        - project_id
+        - task_id
+        - decision
+        - created_at
+      type: object
+    ReminderConfig:
+      properties:
+        action:
+          type: string
+        agent:
+          type: string
+        execution_mode:
+          type: string
+        executor:
+          type: string
+        fire_count:
+          type: integer
+        fired_at:
+          type: string
+        generated_task_id:
+          type: string
+        id:
+          type: string
+        model:
+          type: string
+        prompt:
+          type: string
+        remind_at:
+          type: string
+        repeat:
+          type: string
+        repeat_until:
+          type: string
+        target_workdir:
+          type: string
+        timezone:
+          type: string
+      required:
+        - id
+      type: object
+    ResolvedTask:
+      properties:
+        abandon_reason:
+          type: string
+        action:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationAction'
+            - type: 'null'
+        agent:
+          type: string
+        assigned_runner_id:
+          type: string
+        assignment_scope:
+          type: string
+        attempt_count:
+          type: integer
+        blocked_by:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        blocked_by_features:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        blocked_by_reason:
+          type: string
+        checkout_mode:
+          type: string
+        classification:
+          type: string
+        complete_on_idle:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        completed_at:
+          type: string
+        content:
+          type: string
+        created:
+          type: string
+        delivery_mode:
+          type: string
+        delivery_verification:
+          anyOf:
+            - $ref: '#/components/schemas/DeliveryVerification'
+            - type: 'null'
+        depends_on:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        direct_prompt:
+          type: string
+        dispatch_lease:
+          anyOf:
+            - $ref: '#/components/schemas/DispatchLease'
+            - type: 'null'
+        env:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        execution_mode:
+          type: string
+        executor:
+          type: string
+        expires_at:
+          type: string
+        extensions:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        feature_depends_on:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        feature_expires_at:
+          type: string
+        feature_id:
+          type: string
+        feature_priority:
+          type: string
+        feature_run_once_at:
+          type: string
+        feature_schedule:
+          type: string
+        feature_starts_at:
+          type: string
+        feature_timezone:
+          type: string
+        generated:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        generated_by:
+          type: string
+        generated_key:
+          type: string
+        generated_kind:
+          type: string
+        git_branch:
+          type: string
+        git_remote:
+          type: string
+        id:
+          type: string
+        in_cycle:
+          type: boolean
+        is_abandoned:
+          type: boolean
+        last_failed_at:
+          type: string
+        last_placement_reason:
+          anyOf:
+            - $ref: '#/components/schemas/PlacementReason'
+            - type: 'null'
+        machine_affinity:
+          type: string
+        max_runs:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        merge_policy:
+          type: string
+        merge_strategy:
+          type: string
+        merge_target_branch:
+          type: string
+        model:
+          type: string
+        modified:
+          type: string
+        next_run:
+          type: string
+        open_pr_before_merge:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        origin_client_id:
+          type: string
+        origin_machine_id:
+          type: string
+        origin_path:
+          type: string
+        parent_id:
+          type: string
+        path:
+          type: string
+        placement_reasons:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/PlacementReason'
+              type: array
+            - type: 'null'
+        priority:
+          type: string
+        projectId:
+          type: string
+        remote_branch_policy:
+          type: string
+        requires_capability:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        resolved_deps:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        resolved_workdir:
+          type: string
+        resume_executor_override:
+          type: string
+        resume_injected_context:
+          type: string
+        resume_mode:
+          type: string
+        resume_prefer_same_session:
+          type: boolean
+        resume_requested:
+          type: boolean
+        resume_requested_at:
+          type: string
+        retry:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationRetry'
+            - type: 'null'
+        run_once_at:
+          type: string
+        runs:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/CronRun'
+              type: array
+            - type: 'null'
+        schedule:
+          type: string
+        schedule_enabled:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        sessions:
+          anyOf:
+            - additionalProperties:
+                $ref: '#/components/schemas/SessionInfo'
+              type: object
+            - type: 'null'
+        starts_at:
+          type: string
+        status:
+          type: string
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        target_workdir:
+          type: string
+        timezone:
+          type: string
+        title:
+          type: string
+        trigger:
+          anyOf:
+            - $ref: '#/components/schemas/TriggerConfig'
+            - type: 'null'
+        undispatchable_reason:
+          type: string
+        unresolved_deps:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        unresolved_feature_deps:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        user_original_request:
+          type: string
+        waiting_on:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        waiting_on_features:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        workdir:
+          type: string
+      required:
+        - id
+        - path
+        - title
+        - priority
+        - status
+        - depends_on
+        - created
+        - workdir
+        - git_remote
+        - git_branch
+        - direct_prompt
+        - agent
+        - model
+        - resolved_deps
+        - unresolved_deps
+        - classification
+        - blocked_by
+        - waiting_on
+        - in_cycle
+        - resolved_workdir
+      type: object
+    RunFinalization:
+      properties:
+        finalized_at:
+          type: string
+        session_id:
+          type: string
+        status:
+          type: string
+      required:
+        - status
+        - finalized_at
+      type: object
+    SearchRequest:
+      properties:
+        feature_id:
+          type: string
+        global:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        include:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        limit:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        priority:
+          type: string
+        project:
+          type: string
+        projects:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        query:
+          type: string
+        status:
+          type: string
+        strategy:
+          type: string
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        type:
+          type: string
+      required:
+        - query
+      type: object
+    SearchResponse:
+      properties:
+        results:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/SearchResult'
+              type: array
+            - type: 'null'
+        total:
+          type: integer
+      required:
+        - results
+        - total
+      type: object
+    SearchResult:
+      properties:
+        attachments:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttachmentReference'
+              type: array
+            - type: 'null'
+        id:
+          type: string
+        match_source:
+          type: string
+        path:
+          type: string
+        snippet:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+      required:
+        - id
+        - path
+        - title
+        - type
+        - status
+        - snippet
+      type: object
+    SessionInfo:
+      properties:
+        cron_id:
+          type: string
+        hostname:
+          type: string
+        machine_id:
+          type: string
+        parent_id:
+          type: string
+        run_id:
+          type: string
+        runner_id:
+          type: string
+        timestamp:
+          type: string
+        workdir:
+          type: string
+      required:
+        - timestamp
+      type: object
+    TaskListResponse:
+      properties:
+        count:
+          type: integer
+        cycles:
+          anyOf:
+            - items:
+                anyOf:
+                  - items:
+                      type: string
+                    type: array
+                  - type: 'null'
+              type: array
+            - type: 'null'
+        stats:
+          anyOf:
+            - $ref: '#/components/schemas/TaskStats'
+            - type: 'null'
+        tasks:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/ResolvedTask'
+              type: array
+            - type: 'null'
+      required:
+        - tasks
+        - count
+      type: object
+    TaskStats:
+      properties:
+        blocked:
+          type: integer
+        not_pending:
+          type: integer
+        ready:
+          type: integer
+        status_blocked:
+          type: integer
+        total:
+          type: integer
+        waiting:
+          type: integer
+      required:
+        - total
+        - ready
+        - waiting
+        - blocked
+        - status_blocked
+        - not_pending
+      type: object
+    TriggerConfig:
+      properties:
+        cooldown:
+          type: string
+        event:
+          type: string
+        events:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        filter:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        ignore_automation_events:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        max_concurrent:
+          type: integer
+        once_per:
+          type: string
+        schedule:
+          type: string
+        timezone:
+          type: string
+        type:
+          type: string
+        webhook:
+          type: string
+      type: object
+    UpdateEntryRequest:
+      properties:
+        action:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationAction'
+            - type: 'null'
+        agent:
+          anyOf:
+            - type: string
+            - type: 'null'
+        append:
+          anyOf:
+            - type: string
+            - type: 'null'
+        attachments:
+          anyOf:
+            - anyOf:
+                - items:
+                    $ref: '#/components/schemas/AttachmentReference'
+                  type: array
+                - type: 'null'
+            - type: 'null'
+        automation_run_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+        checkout_mode:
+          anyOf:
+            - type: string
+            - type: 'null'
+        complete_on_idle:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        content:
+          anyOf:
+            - type: string
+            - type: 'null'
+        delivery_mode:
+          anyOf:
+            - type: string
+            - type: 'null'
+        depends_on:
+          anyOf:
+            - anyOf:
+                - items:
+                    type: string
+                  type: array
+                - type: 'null'
+            - type: 'null'
+        direct_prompt:
+          anyOf:
+            - type: string
+            - type: 'null'
+        execution_mode:
+          anyOf:
+            - type: string
+            - type: 'null'
+        executor:
+          anyOf:
+            - type: string
+            - type: 'null'
+        expected_revision:
+          type: string
+        expires_at:
+          anyOf:
+            - type: string
+            - type: 'null'
+        extensions:
+          anyOf:
+            - anyOf:
+                - items:
+                    type: string
+                  type: array
+                - type: 'null'
+            - type: 'null'
+        feature_depends_on:
+          anyOf:
+            - anyOf:
+                - items:
+                    type: string
+                  type: array
+                - type: 'null'
+            - type: 'null'
+        feature_expires_at:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_priority:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_run_once_at:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_schedule:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_starts_at:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_timezone:
+          anyOf:
+            - type: string
+            - type: 'null'
+        generated:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        generated_by:
+          anyOf:
+            - type: string
+            - type: 'null'
+        generated_key:
+          anyOf:
+            - type: string
+            - type: 'null'
+        generated_kind:
+          anyOf:
+            - type: string
+            - type: 'null'
+        git_branch:
+          anyOf:
+            - type: string
+            - type: 'null'
+        git_remote:
+          anyOf:
+            - type: string
+            - type: 'null'
+        goal:
+          anyOf:
+            - $ref: '#/components/schemas/GoalConfig'
+            - type: 'null'
+        machine_affinity:
+          anyOf:
+            - type: string
+            - type: 'null'
+        max_runs:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        merge_policy:
+          anyOf:
+            - type: string
+            - type: 'null'
+        merge_strategy:
+          anyOf:
+            - type: string
+            - type: 'null'
+        merge_target_branch:
+          anyOf:
+            - type: string
+            - type: 'null'
+        model:
+          anyOf:
+            - type: string
+            - type: 'null'
+        next_run:
+          anyOf:
+            - type: string
+            - type: 'null'
+        note:
+          anyOf:
+            - type: string
+            - type: 'null'
+        open_pr_before_merge:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        origin_client_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+        origin_machine_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+        origin_path:
+          anyOf:
+            - type: string
+            - type: 'null'
+        priority:
+          anyOf:
+            - type: string
+            - type: 'null'
+        reminder:
+          anyOf:
+            - $ref: '#/components/schemas/ReminderConfig'
+            - type: 'null'
+        remote_branch_policy:
+          anyOf:
+            - type: string
+            - type: 'null'
+        retry:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationRetry'
+            - type: 'null'
+        run_finalizations:
+          anyOf:
+            - additionalProperties:
+                $ref: '#/components/schemas/RunFinalization'
+              type: object
+            - type: 'null'
+        run_once_at:
+          anyOf:
+            - type: string
+            - type: 'null'
+        runs:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/CronRun'
+              type: array
+            - type: 'null'
+        schedule:
+          anyOf:
+            - type: string
+            - type: 'null'
+        schedule_enabled:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        sessions:
+          anyOf:
+            - additionalProperties:
+                $ref: '#/components/schemas/SessionInfo'
+              type: object
+            - type: 'null'
+        starts_at:
+          anyOf:
+            - type: string
+            - type: 'null'
+        status:
+          anyOf:
+            - type: string
+            - type: 'null'
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        target_workdir:
+          anyOf:
+            - type: string
+            - type: 'null'
+        timezone:
+          anyOf:
+            - type: string
+            - type: 'null'
+        title:
+          anyOf:
+            - type: string
+            - type: 'null'
+        trigger:
+          anyOf:
+            - $ref: '#/components/schemas/TriggerConfig'
+            - type: 'null'
+        user_original_request:
+          anyOf:
+            - type: string
+            - type: 'null'
+        workdir:
+          anyOf:
+            - type: string
+            - type: 'null'
+      type: object
+    BulkDeleteRequest:
+      properties:
+        dry_run:
+          type: boolean
+        filter:
+          anyOf:
+            - $ref: '#/components/schemas/BulkUpdateFilter'
+            - type: 'null'
+        force:
+          type: boolean
+        limit:
+          type: integer
+        paths:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+      type: object
+    BulkDeleteResponse:
+      properties:
+        deleted:
+          type: integer
+        dry_run:
+          type: boolean
+        failed:
+          type: integer
+        matched_total:
+          type: integer
+        results:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/BulkUpdateResult'
+              type: array
+            - type: 'null'
+        total:
+          type: integer
+        truncated:
+          type: boolean
+      required:
+        - deleted
+        - failed
+        - total
+        - dry_run
+        - results
+      type: object
+    BulkUpdateEntry:
+      properties:
+        path:
+          type: string
+        updates:
+          $ref: '#/components/schemas/UpdateEntryRequest'
+      required:
+        - path
+        - updates
+      type: object
+    BulkUpdateFilter:
+      properties:
+        agent:
+          anyOf:
+            - type: string
+            - type: 'null'
+        execution_mode:
+          anyOf:
+            - type: string
+            - type: 'null'
+        executor:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+        generated_by:
+          anyOf:
+            - type: string
+            - type: 'null'
+        generated_key:
+          anyOf:
+            - type: string
+            - type: 'null'
+        priority:
+          anyOf:
+            - type: string
+            - type: 'null'
+        project:
+          anyOf:
+            - type: string
+            - type: 'null'
+        status:
+          anyOf:
+            - type: string
+            - type: 'null'
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        type:
+          anyOf:
+            - type: string
+            - type: 'null'
+      type: object
+    BulkUpdateRequest:
+      properties:
+        dry_run:
+          type: boolean
+        entries:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/BulkUpdateEntry'
+              type: array
+            - type: 'null'
+        filter:
+          anyOf:
+            - $ref: '#/components/schemas/BulkUpdateFilter'
+            - type: 'null'
+        force:
+          type: boolean
+        limit:
+          type: integer
+        updates:
+          anyOf:
+            - $ref: '#/components/schemas/UpdateEntryRequest'
+            - type: 'null'
+      type: object
+    BulkUpdateResponse:
+      properties:
+        dry_run:
+          type: boolean
+        failed:
+          type: integer
+        matched_total:
+          type: integer
+        results:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/BulkUpdateResult'
+              type: array
+            - type: 'null'
+        total:
+          type: integer
+        truncated:
+          type: boolean
+        updated:
+          type: integer
+      required:
+        - updated
+        - failed
+        - total
+        - dry_run
+        - results
+      type: object
+    BulkUpdateResult:
+      properties:
+        error:
+          type: string
+        id:
+          type: string
+        path:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+      required:
+        - path
+        - id
+        - title
+        - status
+      type: object
+    MoveEntryRequest:
+      properties:
+        project:
+          type: string
+      required:
+        - project
+      type: object
+    MoveResult:
+      properties:
+        from:
+          type: string
+        id:
+          type: string
+        newPath:
+          type: string
+        oldPath:
+          type: string
+        project:
+          type: string
+        success:
+          type: boolean
+        title:
+          type: string
+        to:
+          type: string
+      required:
+        - success
+        - from
+        - to
+        - oldPath
+        - newPath
+        - project
+        - id
+        - title
+      type: object
+    SectionContentResponse:
+      properties:
+        content:
+          type: string
+        includeSubsections:
+          type: boolean
+        path:
+          type: string
+        title:
+          type: string
+      required:
+        - title
+        - content
+        - path
+        - includeSubsections
+      type: object
+    SectionHeader:
+      properties:
+        level:
+          type: integer
+        title:
+          type: string
+      required:
+        - title
+        - level
+      type: object
+    SectionsResponse:
+      properties:
+        path:
+          type: string
+        sections:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/SectionHeader'
+              type: array
+            - type: 'null'
+      required:
+        - sections
+        - path
+      type: object
+    AttachEntryAttachmentRequest:
+      properties:
+        attachment:
+          $ref: '#/components/schemas/AttachmentReference'
+      required:
+        - attachment
+      type: object
+    AttachEntryAttachmentResponse:
+      properties:
+        attachments:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttachmentReference'
+              type: array
+            - type: 'null'
+        entry_id:
+          type: string
+        path:
+          type: string
+      required:
+        - entry_id
+        - path
+        - attachments
+      type: object
+    Attachment:
+      properties:
+        content_type:
+          type: string
+        created:
+          type: string
+        derived:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttachmentDerived'
+              type: array
+            - type: 'null'
+        filename:
+          type: string
+        id:
+          type: string
+        metadata:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        modified:
+          type: string
+        sha256:
+          type: string
+        size:
+          format: int64
+          type: integer
+        storage_key:
+          type: string
+      required:
+        - id
+        - filename
+        - content_type
+        - size
+      type: object
+    AttachmentExtractionRequest:
+      properties:
+        attachment_id:
+          type: string
+        content_type:
+          type: string
+        entry_id:
+          type: string
+        filename:
+          type: string
+        metadata:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        project_id:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - attachment_id
+        - content_type
+      type: object
+    AttachmentExtractionResult:
+      properties:
+        attachment:
+          $ref: '#/components/schemas/Attachment'
+        derived_text:
+          $ref: '#/components/schemas/AttachmentDerivedText'
+        linked_entries:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttachmentLinkedEntry'
+              type: array
+            - type: 'null'
+      required:
+        - attachment
+        - derived_text
+      type: object
+    AttachmentLinkedEntry:
+      properties:
+        path:
+          type: string
+        role:
+          type: string
+      required:
+        - path
+      type: object
+    CreateAttachmentResponse:
+      properties:
+        attachment:
+          $ref: '#/components/schemas/Attachment'
+      required:
+        - attachment
+      type: object
+    ListAttachmentsResponse:
+      properties:
+        attachments:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/Attachment'
+              type: array
+            - type: 'null'
+        total:
+          type: integer
+      required:
+        - attachments
+        - total
+      type: object
+    CreateGoalRequest:
+      properties:
+        action:
+          $ref: '#/components/schemas/AutomationAction'
+        config:
+          $ref: '#/components/schemas/GoalConfig'
+        content:
+          type: string
+        feature_id:
+          type: string
+        project:
+          type: string
+        title:
+          type: string
+      required:
+        - project
+        - title
+        - config
+        - action
+      type: object
+    GoalProgressResponse:
+      properties:
+        blocked:
+          type: integer
+        completed:
+          type: integer
+        entry_id:
+          type: string
+        feature_id:
+          type: string
+        feature_status:
+          type: string
+        goal_id:
+          type: string
+        goal_status:
+          type: string
+        in_progress:
+          type: integer
+        pending:
+          type: integer
+        project:
+          type: string
+        task_id:
+          type: string
+        tasks:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/LinkedTaskSnapshot'
+              type: array
+            - type: 'null'
+        total:
+          type: integer
+      required:
+        - goal_id
+        - entry_id
+        - goal_status
+        - total
+        - pending
+        - in_progress
+        - completed
+        - blocked
+        - tasks
+      type: object
+    GoalReconcileAudit:
+      properties:
+        decision:
+          type: string
+        event_id:
+          type: string
+        feature_id:
+          type: string
+        generated_task_id:
+          type: string
+        goal_id:
+          type: string
+        linked_tasks:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/LinkedTaskSnapshot'
+              type: array
+            - type: 'null'
+        project:
+          type: string
+        reason:
+          type: string
+        sessions_skipped:
+          type: integer
+        sessions_steered:
+          type: integer
+        timestamp:
+          type: string
+        triggering_event:
+          type: string
+      required:
+        - timestamp
+        - goal_id
+        - triggering_event
+        - decision
+        - reason
+        - linked_tasks
+      type: object
+    GoalSummary:
+      properties:
+        action:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationAction'
+            - type: 'null'
+        config:
+          anyOf:
+            - $ref: '#/components/schemas/GoalConfig'
+            - type: 'null'
+        entry_id:
+          type: string
+        feature_id:
+          type: string
+        goal_id:
+          type: string
+        project:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+        trigger:
+          anyOf:
+            - $ref: '#/components/schemas/TriggerConfig'
+            - type: 'null'
+      required:
+        - entry_id
+        - goal_id
+        - title
+        - status
+      type: object
+    LinkedTaskSnapshot:
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+      required:
+        - id
+        - title
+        - status
+      type: object
+    UpdateGoalRequest:
+      properties:
+        action:
+          anyOf:
+            - $ref: '#/components/schemas/AutomationAction'
+            - type: 'null'
+        blocked_statuses:
+          anyOf:
+            - anyOf:
+                - items:
+                    type: string
+                  type: array
+                - type: 'null'
+            - type: 'null'
+        complete_statuses:
+          anyOf:
+            - anyOf:
+                - items:
+                    type: string
+                  type: array
+                - type: 'null'
+            - type: 'null'
+        content:
+          anyOf:
+            - type: string
+            - type: 'null'
+        criteria:
+          anyOf:
+            - type: string
+            - type: 'null'
+        feature_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+        status:
+          anyOf:
+            - type: string
+            - type: 'null'
+        steering:
+          anyOf:
+            - $ref: '#/components/schemas/GoalSteering'
+            - type: 'null'
+        task_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+        title:
+          anyOf:
+            - type: string
+            - type: 'null'
+        trigger_source:
+          anyOf:
+            - type: string
+            - type: 'null'
+        validation:
+          anyOf:
+            - type: string
+            - type: 'null'
+        workdir:
+          anyOf:
+            - type: string
+            - type: 'null'
+      type: object
+    Attention:
+      properties:
+        actions:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttentionAction'
+              type: array
+            - type: 'null'
+        body:
+          type: string
+        created_at:
+          type: string
+        dedup_key:
+          type: string
+        feature_id:
+          type: string
+        id:
+          type: string
+        instance_id:
+          type: string
+        kind:
+          type: string
+        project:
+          type: string
+        read_at:
+          type: string
+        recipient:
+          type: string
+        resolved_at:
+          type: string
+        revision:
+          type: integer
+        runner_id:
+          type: string
+        session_id:
+          type: string
+        severity:
+          type: string
+        snoozed_until:
+          type: string
+        source_id:
+          type: string
+        source_type:
+          type: string
+        state:
+          type: string
+        task_id:
+          type: string
+        title:
+          type: string
+        updated_at:
+          type: string
+      required:
+        - id
+        - recipient
+        - kind
+        - severity
+        - title
+        - state
+        - created_at
+        - updated_at
+        - revision
+      type: object
+    AttentionAction:
+      properties:
+        kind:
+          type: string
+        label:
+          type: string
+        params:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+      required:
+        - kind
+        - label
+      type: object
+    AttentionCounts:
+      properties:
+        critical:
+          type: integer
+        total:
+          type: integer
+        unread:
+          type: integer
+      required:
+        - unread
+        - total
+        - critical
+      type: object
+    CreateAttentionRequest:
+      properties:
+        actions:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/AttentionAction'
+              type: array
+            - type: 'null'
+        body:
+          type: string
+        dedup_key:
+          type: string
+        feature_id:
+          type: string
+        instance_id:
+          type: string
+        kind:
+          type: string
+        project:
+          type: string
+        recipient:
+          type: string
+        runner_id:
+          type: string
+        session_id:
+          type: string
+        severity:
+          type: string
+        source_id:
+          type: string
+        source_type:
+          type: string
+        task_id:
+          type: string
+        title:
+          type: string
+      required:
+        - kind
+        - title
+      type: object
+    CreateReminderRequest:
+      properties:
+        config:
+          $ref: '#/components/schemas/ReminderConfig'
+        content:
+          type: string
+        feature_id:
+          type: string
+        global:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        project:
+          type: string
+        tags:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        title:
+          type: string
+      required:
+        - title
+        - config
+      type: object
+    ReminderListResponse:
+      properties:
+        count:
+          type: integer
+        reminders:
+          anyOf:
+            - items:
+                $ref: '#/components/schemas/ReminderSummary'
+              type: array
+            - type: 'null'
+      required:
+        - reminders
+        - count
+      type: object
+    ReminderSummary:
+      properties:
+        action:
+          type: string
+        entry_id:
+          type: string
+        feature_id:
+          type: string
+        fire_count:
+          type: integer
+        fired_at:
+          type: string
+        generated_task_id:
+          type: string
+        late_by_seconds:
+          format: int64
+          type: integer
+        path:
+          type: string
+        project:
+          type: string
+        prompt:
+          type: string
+        remind_at:
+          type: string
+        reminder_id:
+          type: string
+        repeat:
+          type: string
+        repeat_until:
+          type: string
+        state:
+          type: string
+        status:
+          type: string
+        timezone:
+          type: string
+        title:
+          type: string
+      required:
+        - entry_id
+        - reminder_id
+        - title
+        - status
+        - state
+        - action
+      type: object
+    UpdateReminderRequest:
+      properties:
+        action:
+          anyOf:
+            - type: string
+            - type: 'null'
+        agent:
+          anyOf:
+            - type: string
+            - type: 'null'
+        content:
+          anyOf:
+            - type: string
+            - type: 'null'
+        execution_mode:
+          anyOf:
+            - type: string
+            - type: 'null'
+        executor:
+          anyOf:
+            - type: string
+            - type: 'null'
+        model:
+          anyOf:
+            - type: string
+            - type: 'null'
+        prompt:
+          anyOf:
+            - type: string
+            - type: 'null'
+        remind_at:
+          anyOf:
+            - type: string
+            - type: 'null'
+        repeat:
+          anyOf:
+            - type: string
+            - type: 'null'
+        repeat_until:
+          anyOf:
+            - type: string
+            - type: 'null'
+        status:
+          anyOf:
+            - type: string
+            - type: 'null'
+        target_workdir:
+          anyOf:
+            - type: string
+            - type: 'null'
+        timezone:
+          anyOf:
+            - type: string
+            - type: 'null'
+        title:
+          anyOf:
+            - type: string
+            - type: 'null'
+      type: object
+    CreateWebhookRequest:
+      properties:
+        enabled:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        events:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        filter:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        name:
+          type: string
+        secret:
+          type: string
+        url:
+          type: string
+      required:
+        - name
+        - url
+        - events
+      type: object
+    UpdateWebhookRequest:
+      properties:
+        enabled:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+        events:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        filter:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        name:
+          anyOf:
+            - type: string
+            - type: 'null'
+        secret:
+          anyOf:
+            - type: string
+            - type: 'null'
+        url:
+          anyOf:
+            - type: string
+            - type: 'null'
+      type: object
+    WebhookDeliveryResponse:
+      properties:
+        created_at:
+          type: string
+        error:
+          type: string
+        event_type:
+          type: string
+        id:
+          type: string
+        latency_ms:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        status_code:
+          anyOf:
+            - type: integer
+            - type: 'null'
+        success:
+          type: boolean
+        webhook_id:
+          type: string
+      required:
+        - id
+        - webhook_id
+        - event_type
+        - success
+        - created_at
+      type: object
+    WebhookResponse:
+      properties:
+        created_at:
+          type: string
+        enabled:
+          type: boolean
+        events:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: 'null'
+        filter:
+          anyOf:
+            - additionalProperties:
+                type: string
+              type: object
+            - type: 'null'
+        id:
+          type: string
+        name:
+          type: string
+        updated_at:
+          type: string
+        url:
+          type: string
+      required:
+        - id
+        - name
+        - url
+        - events
+        - enabled
+        - created_at
+        - updated_at
+      type: object

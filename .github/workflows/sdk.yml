@@ -1,0 +1,36 @@
+name: SDK contract
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sdk:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - run: npm ci --ignore-scripts --prefix sdk/typescript
+      - run: npm --prefix sdk/typescript run validate
+      - run: go generate ./sdk/brain
+      - run: npm --prefix sdk/typescript run generate
+      - name: Generation drift
+        run: git diff --exit-code -- sdk/brain/schema.gen.go sdk/typescript/src/schema.gen.ts
+      - run: npm --prefix sdk/typescript test
+      - run: npm --prefix sdk/typescript run typecheck
+      - name: Public clients and authenticated REST integration
+        env:
+          BRAIN_SDK_NODE_INTEGRATION: '1'
+          CI: '1'
+        run: go test -race ./sdk/brain ./internal/sdkcontract/... -count=1 -v

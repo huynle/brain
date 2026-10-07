@@ -1,0 +1,16 @@
+{
+  "source_url": "https://bellard.org/quickjs/quickjs-2026-06-04.tar.xz",
+  "source_sha256": "b376e839b322978313d929fd20663b11ba58b75df5a46c126dd19ea2fa70ad2a",
+  "compiler_image": "sha256:363e1587494626837fa7f9a23bdb453d13b0ff3c67c705c2805cfc69c2d2fad7",
+  "compiler_platform_manifests": {
+    "linux/amd64": "sha256:17b7fd60fd812617654c64b95f9b2dde94f103313073b672bc40fdad6dccbaa2",
+    "linux/arm64": "sha256:5705a4b5da9077d28001f4ad6293b6ff7fcd4221ec3a05ad599e1d5182c606ef"
+  },
+  "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+  "entry": "worker.c",
+  "install_path": "/usr/libexec/brain/brain-script-worker",
+  "outputs": {
+    "linux/arm64": "bec31a35c0645b0dc8b86282329a9205bc6ce5d01ff451680d204e5b3da58e68",
+    "linux/amd64": "27e948050882c176a9204872bd80d4696cd533ee372ca95f58ad8832df74f2b2"
+  }
+}

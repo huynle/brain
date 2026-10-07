@@ -791,39 +791,45 @@ First-class attachments are split across SQLite metadata (`brain.db`) and blob f
 ### Runner Commands
 
 ```bash
-# Start runner (foreground or headless)
-brain-runner start [project] [-f|-b]
+# Run a runner in this terminal, or as a background daemon
+brain run start [project|all] [-f|-b|--tmux|--dashboard]
+brain runner start [project|all]       # daemonized; --new / -n <name> for more
+brain runner stop [-n <name>|--all]    # stop a local daemonized runner
+brain runner status                    # runners on this machine
 
-# Stop running daemon
-brain-runner stop [project]
+# Inspect the queue on the configured Brain API
+brain run status                       # pause state + registered runners
+brain run list [project]               # projects, or a project's tasks
+brain run ready <project>              # ready tasks
+brain run features <project>           # features with task progress
+brain run logs <project> <taskId>      # latest task log lines (--limit N; one-shot)
+brain run config                       # server task defaults
 
-# Check status
-brain-runner status [project]
-
-# Execute single task
-brain-runner run-one [project]
-
-# List tasks by state
-brain-runner list [project]    # all tasks
-brain-runner ready [project]   # ready to execute
-brain-runner waiting [project] # waiting on dependencies
-brain-runner blocked [project] # blocked tasks
-
-# View logs
-brain-runner logs [-f]
+# Pause / resume task dispatch (server-side; never starts or stops a process)
+brain run pause <project>
+brain run resume <project>
+brain run pause-all                    # ALL projects server-wide; asks y/N
+brain run resume-all                   # also resumes individually paused projects
 ```
+
+`pause-all` and `resume-all` print what they will affect and ask for
+confirmation; `--yes`/`-y` skips the prompt, and without a terminal on stdin
+they refuse unless `--yes` is given. `brain run stop` was renamed to
+`brain run pause-all`: it paused every project server-wide and never stopped the
+local runner. Unknown commands and subcommands (including the removed
+`brain mcp` and `brain goal` — use `brain automation goal`) exit with status 2.
 
 ### Runner Options
 
 | Option | Description |
 |--------|-------------|
-| `-f, --foreground` | Run in foreground (default) |
-| `-b, --background` | Run as daemon |
+| `-f, --foreground` | Attach the runner to this shell |
+| `-b, --headless` | Spawn tasks as plain background processes (default) |
 | `-p, --max-parallel N` | Max concurrent tasks across ALL projects |
-| `--poll-interval N` | Seconds between polls (default: 30) |
+| `--poll-interval N` | Seconds between polls |
 | `-w, --workdir DIR` | Working directory |
-| `--dry-run` | Log actions without executing |
-| `-v, --verbose` | Enable verbose logging |
+| `-n, --name NAME` | Runner name (several runners per machine) |
+| `-i/--include`, `-e/--exclude GLOB` | Project filters for `all` |
 
 ## Automations
 

@@ -25,6 +25,7 @@ just dev             # Run brain-api server
 
 # Task Runner
 brain run list <project>                    # List tasks
+brain run pause <project> / pause-all --yes   # Pause dispatch (pause-all = every project, server-wide)
 
 # API Server
 ./bin/brain-api      # Start API server
@@ -37,6 +38,7 @@ go run ./cmd/brain-api  # Run API server without building
 - `brain-api/` - REST API server entry point
 
 - `brain/` - Main CLI with subcommands (server, runner, doctor, etc.)
+  Unknown commands/subcommands return `commands.UsageError` → exit 2 via `runCLI` (`cmd/brain/main.go`). `brain run pause-all`/`resume-all` are server-wide and confirm (y/N, `--yes`, refuse without a TTY); `brain run stop` is a rename stub. CLI tests run under a hermetic `TestMain` (temp HOME, `BRAIN_API_URL=http://127.0.0.1:1`) — never point CLI tests at a real API.
 - MCP is served only by brain-api at `/mcp` (Streamable HTTP, `internal/mcp/http_transport.go`); there is no stdio `brain mcp`. Clients send `X-Brain-Host-Id`/`X-Brain-Client-Id`/`X-Brain-Workdir` headers (`internal/mcp/caller.go`) for task origin and project detection; files travel as base64 only.
 
 ### Core API (`internal/api/`)

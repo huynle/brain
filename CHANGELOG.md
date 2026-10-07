@@ -49,6 +49,25 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- **`brain run stop` renamed to `brain run pause-all`.** It called
+  `POST /tasks/runner/pause`, pausing every project on the server while leaving
+  the local runner running. `brain run stop` now exits 2 with a rename notice.
+  `pause-all` and the new `resume-all` show what they affect, ask y/N, accept
+  `--yes`/`-y`, and refuse without a terminal unless `--yes` is given;
+  `resume-all` warns that individually paused projects resume too. New
+  `brain run pause|resume <project>` use the per-project endpoints.
+- **Unknown commands fail.** `brain <unknown>` and unknown `brain run` /
+  `brain runner` subcommands print `brain: unknown command "<x>"` (or
+  `unknown subcommand`) and a pointer to `brain help` on stderr, nothing on
+  stdout, and exit 2. Bare `brain`, `-h`/`--help` and bare `brain run` still
+  show help and exit 0.
+- **`brain run features|logs|config` implemented.** `features <project>` and
+  `config` print tables from `GET /tasks/<project>/features` and
+  `GET /config/task-defaults`; `logs <project> <taskId> [--limit N]` prints the
+  latest lines from `GET /tasks/<project>/<taskId>/logs` (one-shot: the endpoint
+  does not stream, so `-f` prints a notice). `brain run ready` without a
+  project now errors instead of querying a project named `all`.
+
 - **MCP file arguments are base64 only.** `attachment_upload` no longer
   accepts `file_path` (send `content` + `filename`), `attachment_download` no
   longer accepts `output_path` (bytes return inline as base64), and
@@ -73,6 +92,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   first positional and skips the value of every value-taking runner flag.
 
 ### Removed
+
+- **`brain goal` alias.** Use `brain automation goal`; `brain goal` is now an
+  unknown command whose error says so.
 
 - **`brain mcp` (stdio MCP server).** MCP is served only from the API's
   `/mcp` endpoint (e.g. https://brain.huynle.com/mcp), so tool changes ship

@@ -120,7 +120,7 @@ Report:
 - Ready starting tasks.
 - Dependency and parallelization summary.
 - Remaining blockers or production risks.
-- Suggested execution command, such as `brain start <project>` or `brain run list <project>`.
+- Suggested execution command, such as `brain run start <project>` or `brain run list <project>`.
 
 ## Delegation Rules
 

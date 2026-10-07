@@ -204,6 +204,19 @@ func deriveEgress(g *egressGraph, handlers map[string]string, chiRoutes []string
 			d.backgroundCount[g.reviewName(root)]++
 		}
 	}
+	// Workers started through a shared launcher (launch(func(){...})) sit
+	// behind one go statement: also count every sink-reaching function
+	// literal inside a background root's enclosing function, so adding one
+	// changes the reviewed count.
+	for _, key := range sortedKeys(g.declared) {
+		name, isLit := g.enclosing[key]
+		if !isLit || g.goRoots[key] || len(g.tokens[key]) == 0 {
+			continue
+		}
+		if _, background := d.background[name]; background {
+			d.backgroundCount[name]++
+		}
+	}
 	stop := map[string]bool{}
 	for k := range g.goRoots {
 		stop[k] = true
@@ -306,7 +319,7 @@ var reviewedNonSDKRoutes = map[string]string{
 }
 
 type reviewedRoot struct {
-	count  int      // sink-reaching goroutine/callback roots under this name
+	count  int      // sink-reaching goroutine/callback roots plus sink-reaching literals under this name
 	tokens string   // exact derived tokens
 	ops    []string // operations whose state drives it (nil: non-SDK)
 }
@@ -317,7 +330,7 @@ type reviewedRoot struct {
 var reviewedBackground = map[string]reviewedRoot{
 	"(*" + pkgAPI + ".Handler).StartPush":                                   {1, "web_push", []string{"reminders.create", "reminders.update", "reminders.snooze", "reminders.fire"}}, // fired-reminder push poller
 	"(*" + pkgService + ".AttentionDispatcher).Start":                       {1, "web_push", []string{"attention.create"}},
-	modulePath + "/internal/apiserver.startSingleGraphWorkers":              {1, "embedding_background+embedding_sync", []string{"reminders.create", "reminders.update", "reminders.snooze", "goals.create", "goals.update", "event_fanout"}}, // launch(): automations, goals ticker, reminder scheduler, webhooks, triggers
+	modulePath + "/internal/apiserver.startSingleGraphWorkers":              {8, "embedding_background+embedding_sync", []string{"reminders.create", "reminders.update", "reminders.snooze", "goals.create", "goals.update", "event_fanout"}}, // launcher go root + launch closure + 5 launch(func(){...}) workers (automations, goals ticker, reminder scheduler, webhook + trigger dispatchers) + shutdown closure (over-approximated)
 	"(*" + pkgAPI + ".conversationJobs).run":                                {2, "embedding_background+embedding_sync", nil},                                                                                                                  // assistant jobs: not in the SDK contract
 	"(*" + pkgService + ".BulkJobService).Start":                            {1, "embedding_background+embedding_sync", nil},                                                                                                                  // bulk-jobs API: not in the SDK contract
 	modulePath + "/cmd/brain/commands.runServerWithOptionalRunner":          {1, "embedding_background+embedding_sync+web_push", nil},                                                                                                         // whole server started in a goroutine

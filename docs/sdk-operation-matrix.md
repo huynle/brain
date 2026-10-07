@@ -91,10 +91,19 @@ It is a policy-accuracy check, not a full verifier.
 - **Fail-closed rules:** `reminders.ack` is excepted by one reviewed call edge,
   not by token. `TestNoUnreviewedReflectiveCalls` forbids reflective calls
   outside an allowlist.
-- **Known limits:** reflection; callbacks created in a higher-level package and
-  invoked by a lower one are attributed to their creator (event subscriptions
-  are covered by `event_fanout`).
-- **Reviews:** `zgck7qp2`, `nwwa27yh`, `pcteuxwj`. Global profile/scripting/preflight/telemetry fields apply to every row.
+- **Over-approximation rules** (review `c969if7r`):
+  - a helper's calls through a function parameter are signature-matched
+    unless every caller passed a resolved function or literal;
+  - interface method values dispatch to every module implementation;
+  - background counts include every sink-reaching literal in the root's
+    function, so a new `launch(func(){…})` worker fails review.
+- **Known limits:**
+  - reflection;
+  - callbacks created in a higher-level package and invoked by a lower one are
+    attributed to their creator. Event subscriptions are covered by
+    `event_fanout`. A hook installed at startup (review case P3) is flagged as
+    a startup-entry change rather than against the operation that fires it.
+- **Reviews:** `zgck7qp2`, `nwwa27yh`, `pcteuxwj`, `c969if7r`. Global profile/scripting/preflight/telemetry fields apply to every row.
 This is descriptive inventory, **not an authorization registry**: all script
 exposure is false, all dry-run validators are unimplemented and inherited request
 telemetry is unreviewed. Provider `none` excludes inherited auth/request telemetry;

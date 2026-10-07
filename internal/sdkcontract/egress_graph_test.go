@@ -41,9 +41,10 @@ import (
 //     subscriptions are covered by the policy's event_fanout declaration;
 //   - niladic func() values resolve within the calling package only;
 //   - a call through a parameter of a function that is never address-taken
-//     adds no edges: each static caller carries the function-valued argument
-//     it passes (context-sensitive attribution for higher-order helpers such
-//     as worker runners).
+//     adds no edges ONLY when every static caller passed a resolved value
+//     (a function, method value or literal, which the caller then carries);
+//     a variable, field or pass-through argument makes it signature-matched;
+//   - interface method values expand to every module implementation.
 type egressGraph struct {
 	edges     map[string]map[string]bool
 	sigs      map[string]string // node -> signature (without receiver)
@@ -274,6 +275,19 @@ func buildEgressGraph(t testing.TB) *egressGraph {
 		}
 	}
 	paramOwner := map[*types.Var]string{} // FuncDecl parameter -> owning function
+	paramIndex := map[*types.Var]int{}
+	unresolvedParam := map[string]bool{} // "owner#i": some caller passed an unresolved function value
+	type pendingCall struct {
+		from, owner, pkg string
+		idx              int
+		typ              types.Type
+	}
+	var pending []pendingCall
+	type ifaceValue struct {
+		fn  *types.Func
+		typ types.Type
+	}
+	var ifaceValues []ifaceValue
 	closureLit := map[*ast.FuncLit]bool{}
 	closureTargets := map[*types.Var][]string{}
 	for _, c := range all {
@@ -287,11 +301,18 @@ func buildEgressGraph(t testing.TB) *egressGraph {
 				fn := c.info.Defs[fd.Name].(*types.Func)
 				key := funcKey(fn)
 				g.declared[key] = true
+				idx := 0
 				for _, field := range fd.Type.Params.List {
+					if len(field.Names) == 0 {
+						idx++
+						continue
+					}
 					for _, name := range field.Names {
 						if v, ok := c.info.Defs[name].(*types.Var); ok {
 							paramOwner[v] = key
+							paramIndex[v] = idx
 						}
+						idx++
 					}
 				}
 				sig := fn.Type().(*types.Signature)
@@ -416,6 +437,9 @@ func buildEgressGraph(t testing.TB) *egressGraph {
 				}
 				if tv, ok := c.info.Types[expr]; ok {
 					addressTaken(funcKey(fn), tv.Type)
+					if recv := fn.Type().(*types.Signature).Recv(); recv != nil && types.IsInterface(recv.Type()) {
+						ifaceValues = append(ifaceValues, ifaceValue{fn, tv.Type})
+					}
 				}
 				if isRouter {
 					g.routerRef[funcKey(fn)] = true
@@ -425,6 +449,62 @@ func buildEgressGraph(t testing.TB) *egressGraph {
 				}
 				return true
 			})
+		}
+	}
+	// implementations returns every module method implementing an interface
+	// method (by method set names), as used for direct interface calls.
+	implementations := func(fn *types.Func) []string {
+		recv := fn.Type().(*types.Signature).Recv()
+		if recv == nil || !types.IsInterface(recv.Type()) {
+			return nil
+		}
+		iface := recv.Type().Underlying().(*types.Interface)
+		var out []string
+		for _, m := range methodsByName[fn.Name()] {
+			have := methodNames[recvOf(m)]
+			implements := true
+			for i := 0; i < iface.NumMethods(); i++ {
+				if !have[iface.Method(i).Name()] {
+					implements = false
+					break
+				}
+			}
+			if implements {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	// An interface method VALUE (h.brain.UpdateMetadata) may be any module
+	// implementation: register each as address-taken with the value's type.
+	for _, v := range ifaceValues {
+		for _, m := range implementations(v.fn) {
+			addressTaken(m, v.typ)
+			// The interface method node itself dispatches to every
+			// implementation, so a path reaching the value (argument, local
+			// variable, signature-matched dynamic call) reaches them all.
+			g.edge(funcKey(v.fn), m)
+		}
+	}
+	// addSigEdges: a call through a function value of type typ, made in pkg,
+	// may reach any visible address-taken target with the same signature.
+	addSigEdges := func(from, pkg string, typ types.Type) {
+		sig := typeSig(typ)
+		targets := bySig[sig]
+		if hasTypeParam(typ) {
+			targets = byArity[arity(typ)]
+		}
+		for target := range targets {
+			// Niladic func() values (cancel, once.Do, launch hooks) are
+			// pervasive; resolve them within the calling package. Each literal
+			// still has a creation edge from the code that creates it.
+			if sig == "func()" && !inPackage(target, pkg) {
+				continue
+			}
+			if !visible[pkg][nodePkg(target)] {
+				continue
+			}
+			g.edge(from, target)
 		}
 	}
 	// Pass 2: edges. Each FuncDecl body and each literal is its own node.
@@ -477,38 +557,55 @@ func buildEgressGraph(t testing.TB) *egressGraph {
 						g.edge(from, key)
 						// The caller chooses what a higher-order callee runs:
 						// attribute function-valued arguments to the caller.
-						for _, arg := range x.Args {
-							switch a := ast.Unparen(arg).(type) {
+						sig := fn.Type().(*types.Signature)
+						for i, arg := range x.Args {
+							a := ast.Unparen(arg)
+							tv, ok := c.info.Types[a]
+							if !ok {
+								continue
+							}
+							if _, isFunc := tv.Type.Underlying().(*types.Signature); !isFunc {
+								continue
+							}
+							resolved := false
+							switch av := a.(type) {
 							case *ast.FuncLit:
-								// creation edge is added when the literal is walked
+								resolved = true // creation edge is added when the literal is walked
 							case *ast.Ident, *ast.SelectorExpr:
-								if af, ok := resolve(c.info, a).(*types.Func); ok {
+								if af, ok := resolve(c.info, av).(*types.Func); ok {
 									if af.Origin() != nil {
 										af = af.Origin()
 									}
 									g.edge(from, funcKey(af))
+									for _, m := range implementations(af) {
+										g.edge(from, m)
+									}
+									resolved = true
+								} else if id, ok := av.(*ast.Ident); ok {
+									if v, ok := c.info.Uses[id].(*types.Var); ok && closureTargets[v] != nil {
+										for _, target := range closureTargets[v] {
+											g.edge(from, target)
+										}
+										resolved = true
+									}
 								}
 							}
+							if !resolved {
+								// A variable, field or pass-through parameter: the
+								// callee's calls through this parameter must stay
+								// signature-matched (over-approximation).
+								pi := i
+								if pi >= sig.Params().Len() {
+									pi = sig.Params().Len() - 1
+								}
+								unresolvedParam[fmt.Sprintf("%s#%d", key, pi)] = true
+							}
 						}
-						sig := fn.Type().(*types.Signature)
 						if g.sigs[key] == "" {
 							g.sigs[key] = sigString(sig)
 						}
-						if recv := sig.Recv(); recv != nil && types.IsInterface(recv.Type()) {
-							iface := recv.Type().Underlying().(*types.Interface)
-							for _, m := range methodsByName[fn.Name()] {
-								have := methodNames[recvOf(m)]
-								implements := true
-								for i := 0; i < iface.NumMethods(); i++ {
-									if !have[iface.Method(i).Name()] {
-										implements = false
-										break
-									}
-								}
-								if implements {
-									g.edge(from, m)
-								}
-							}
+						for _, m := range implementations(fn) {
+							g.edge(from, m) // direct interface call: every implementation
 						}
 						return true
 					}
@@ -526,32 +623,17 @@ func buildEgressGraph(t testing.TB) *egressGraph {
 					// effects of the argument it passed (see above).
 					if id, ok := fun.(*ast.Ident); ok {
 						if v, ok := c.info.Uses[id].(*types.Var); ok {
-							if owner, isParam := paramOwner[v]; isParam && !g.address[owner] {
+							if owner, isParam := paramOwner[v]; isParam {
+								if tv, ok := c.info.Types[fun]; ok {
+									pending = append(pending, pendingCall{from, owner, c.path, paramIndex[v], tv.Type})
+								}
 								return true
 							}
 						}
 					}
 					// Dynamic call through a function value: fail closed.
 					if tv, ok := c.info.Types[fun]; ok {
-						sig := typeSig(tv.Type)
-						targets := bySig[sig]
-						if hasTypeParam(tv.Type) {
-							targets = byArity[arity(tv.Type)]
-						}
-						for target := range targets {
-							// Niladic func() values (cancel, once.Do, launch hooks)
-							// are pervasive; resolve them within the calling
-							// package. Each literal still has a creation edge
-							// from the code that creates it, so its effects stay
-							// attributed to that creator.
-							if sig == "func()" && !inPackage(target, c.path) {
-								continue
-							}
-							if !visible[c.path][nodePkg(target)] {
-								continue
-							}
-							g.edge(from, target)
-						}
+						addSigEdges(from, c.path, tv.Type)
 					}
 					return true
 				}
@@ -581,6 +663,14 @@ func buildEgressGraph(t testing.TB) *egressGraph {
 		}
 		if g.declared[c.path+".$varinit"] {
 			g.entries = append(g.entries, c.path+".$varinit")
+		}
+	}
+	// Calls through a helper's function parameter are skipped only when the
+	// helper is never address-taken AND every caller passed a resolved value;
+	// otherwise they are signature-matched like any dynamic call.
+	for _, pc := range pending {
+		if g.address[pc.owner] || unresolvedParam[fmt.Sprintf("%s#%d", pc.owner, pc.idx)] {
+			addSigEdges(pc.from, pc.pkg, pc.typ)
 		}
 	}
 	sort.Strings(g.entries)

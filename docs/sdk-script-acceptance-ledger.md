@@ -83,6 +83,17 @@ the task stays blocked as a manual reservation.
     gate).
   - **Mutations:** the reviewer's M1–M4, M6 and M7 fail and M5 passes; the R1
     regression and a new `internal/api` poller also fail.
+- `ae4c0e56` — D2 hardening after review `pcteuxwj` (`218a5e69` FAIL, 14/21
+  caught). Hardening stops here (policy-accuracy test, not a full verifier).
+  - **Coverage:** the whole module is analyzed. Exact reviewed lists cover
+    non-SDK routes, background goroutine roots (with counts), callback roots and
+    startup entry points.
+  - **Exception:** `reminders.ack` is excepted by a single reviewed cut edge.
+  - **Analysis:** literals are their own nodes (including package vars);
+    generic function values resolve by arity; reflective calls are forbidden
+    unless allowlisted.
+  - **Mutations:** all 21 behave as required (M1–M7 and N1–N13 fail; M5
+    passes). Runtime ~6s.
 - **Stale artifact:** the worker source changed in `043ea7a8`, so amd64
   `9564f7a7…` and any homelab x86-64 binary built from earlier source no longer
   match. Rebuild from `runtime/script-worker` at `043ea7a8` or later before

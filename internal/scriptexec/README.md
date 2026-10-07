@@ -375,6 +375,14 @@ plaintext reaches the database, its WAL or `VACUUM INTO` backups.
     (`errPayloadExpired`).
 - **Clock:** callers supply `now`, so a wrong clock defeats the software
   refusal only until the key is destroyed.
+- **Operator note — changing the key period:** the key period length is
+  bound into every sealed payload's authenticated data, and its period start
+  must match the configured period. Changing the period setting therefore
+  makes every payload sealed under the old setting, i.e. all payloads younger
+  than 24h, unreadable: `Open` refuses them with `errPayloadSealing`. They are
+  lost early, never exposed. Change the period only when losing those
+  payloads is acceptable, or wait 24h after the last seal under the old
+  setting.
 - **Errors:** fixed and content-free. A sealed payload never formats its bytes
   (checked across verbs for value and pointer).
 - **Zeroing is best-effort:** the sealer overwrites its key copies after use,

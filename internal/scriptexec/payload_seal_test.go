@@ -394,3 +394,51 @@ func TestSealedPayloadFormattingHidesBytes(t *testing.T) {
 		}
 	}
 }
+
+// Review 11f27sak: tamper ONLY with the deadline's nanoseconds (same second,
+// same key period). Only the nanoseconds AAD field distinguishes the two.
+func TestPayloadSealBindsDeadlineNanoseconds(t *testing.T) {
+	s, _ := testSealer(t)
+	b := payloadBinding{Tenant: "t1", Execution: "e1", Purpose: "result"}
+	expires := sealT0.Add(90*time.Minute + 123*time.Nanosecond)
+	sealed, err := s.Seal(b, expires, sealT0, []byte("SECRET"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ns := range []int{124, 0, 999_999_999} {
+		tampered := sealed
+		tampered.ExpiresAt = time.Date(expires.Year(), expires.Month(), expires.Day(), expires.Hour(), expires.Minute(), expires.Second(), ns, time.UTC)
+		if tampered.ExpiresAt.Unix() != sealed.ExpiresAt.Unix() || !tampered.PeriodStart.Equal(sealed.PeriodStart) {
+			t.Fatal("test setup: only nanoseconds may differ")
+		}
+		if got, err := s.Open(b, sealT0, tampered); !errors.Is(err, errPayloadSealing) || got != nil {
+			t.Errorf("deadline nanoseconds %d accepted: %q err=%v", ns, got, err)
+		}
+	}
+	if got, err := s.Open(b, sealT0, sealed); err != nil || string(got) != "SECRET" {
+		t.Fatalf("untampered payload: %q err=%v", got, err)
+	}
+}
+
+// Operator note (README): changing the key period makes payloads sealed under
+// the old setting unreadable — refused, never exposed. This holds whether
+// the recomputed period start differs or (for an aligned deadline) only the
+// bound period length differs.
+func TestPayloadSealPeriodChangeRefusesOldPayloads(t *testing.T) {
+	store := newMemoryPayloadKeyStore()
+	old, _ := newPayloadSealer(store, 5*time.Minute)
+	changed, _ := newPayloadSealer(store, time.Minute)
+	b := payloadBinding{Tenant: "t1", Execution: "e1", Purpose: "result"}
+	for _, expires := range []time.Time{sealT0.Add(92 * time.Minute), sealT0.Add(90 * time.Minute)} { // unaligned, aligned to both periods
+		sealed, err := old.Seal(b, expires, sealT0, []byte("SECRET"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := changed.Open(b, sealT0, sealed); !errors.Is(err, errPayloadSealing) || got != nil {
+			t.Errorf("deadline %v: payload sealed under the old period opened after a period change: %q err=%v", expires, got, err)
+		}
+		if got, err := old.Open(b, sealT0, sealed); err != nil || string(got) != "SECRET" {
+			t.Fatalf("same setting must still open: %v", err)
+		}
+	}
+}

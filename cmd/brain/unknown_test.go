@@ -15,6 +15,11 @@ func usageErrorOf(t *testing.T, args ...string) *commands.UsageError {
 	t.Helper()
 	cmd, err := route(args)
 	if err == nil {
+		// Only execute commands that cannot do I/O: a real command here
+		// would talk to whatever API the environment points at.
+		if _, ok := cmd.(*unknownCommand); !ok {
+			t.Fatalf("brain %s routed to %T (%s), want an unknown-command usage error", strings.Join(args, " "), cmd, cmd.Type())
+		}
 		err = cmd.Execute()
 	}
 	var ue *commands.UsageError

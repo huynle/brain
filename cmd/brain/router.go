@@ -89,7 +89,6 @@ var builtinCommands = map[string]bool{
 	"search":        true,
 	"list":          true,
 	"automation":    true,
-	"goal":          true, // deprecated alias for "automation goal"
 	"attachments":   true,
 	"migrate":       true,
 	"embeddings":    true,
@@ -125,7 +124,17 @@ func route(args []string) (Command, error) {
 		return newHelpCommand(), nil
 	}
 
-	return &unknownCommand{message: fmt.Sprintf("brain: unknown command %q\nRun 'brain help' for a list of commands.", firstArg)}, nil
+	msg := fmt.Sprintf("brain: unknown command %q\nRun 'brain help' for a list of commands.", firstArg)
+	if hint, ok := removedCommandHints[firstArg]; ok {
+		msg += "\n" + hint
+	}
+	return &unknownCommand{message: msg}, nil
+}
+
+// removedCommandHints point users of a removed command at its replacement.
+var removedCommandHints = map[string]string{
+	"goal": "'brain goal' was removed; use 'brain automation goal' instead.",
+	"mcp":  "'brain mcp' was removed; MCP is served by the Brain API at /mcp (see README \"Connecting OpenCode\").",
 }
 
 // unknownCommand reports a usage mistake. It prints nothing on stdout, so a
@@ -259,10 +268,6 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		return parsePluginStatusCommand(cmdArgs)
 	case "automation":
 		return parseAutomationCommand(cmdArgs)
-	case "goal":
-		// Deprecated alias: "brain goal <sub>" delegates to
-		// "brain automation goal <sub>" and prints a deprecation notice.
-		return parseGoalCommand(cmdArgs)
 	case "attachments":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "attachments"}, nil
@@ -1358,50 +1363,6 @@ func parseAutomationGoalCommand(args []string) (Command, error) {
 		GoalID:     goalID,
 		Config:     convertToCommandsConfig(cfg),
 		Flags:      convertToCommandsGoalFlags(flags),
-	}, nil
-}
-
-// =============================================================================
-// Deprecation Alias: brain goal -> brain automation goal
-// =============================================================================
-
-// deprecatedAliasCommand wraps an underlying Command and prints a deprecation
-// notice (to stderr, so stdout/JSON output is unaffected) before delegating
-// Execute to the wrapped command.
-type deprecatedAliasCommand struct {
-	inner  Command
-	notice string
-}
-
-func (c *deprecatedAliasCommand) Execute() error {
-	if c.notice != "" {
-		fmt.Fprintln(os.Stderr, c.notice)
-	}
-	return c.inner.Execute()
-}
-
-func (c *deprecatedAliasCommand) Type() string {
-	return c.inner.Type()
-}
-
-// parseGoalCommand is a thin deprecation shim that delegates "brain goal <sub>"
-// to "brain automation goal <sub>". Help requests pass through to the
-// underlying automation-goal help so users see the canonical command.
-func parseGoalCommand(args []string) (Command, error) {
-	inner, err := parseAutomationGoalCommand(args)
-	if err != nil {
-		return nil, err
-	}
-
-	// Help commands should render directly without a deprecation notice so the
-	// help output stays clean.
-	if _, ok := inner.(*HelpCommand); ok {
-		return inner, nil
-	}
-
-	return &deprecatedAliasCommand{
-		inner:  inner,
-		notice: "Warning: 'brain goal' is deprecated; use 'brain automation goal' instead.",
 	}, nil
 }
 

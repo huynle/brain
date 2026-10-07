@@ -70,7 +70,6 @@ AUTOMATIONS:
   automation goal set <p> <obj>  Create a goal automation
   automation goal list [p]       List goal automations
   automation goal run <p> <id>   Reconcile a goal now (alias: reconcile)
-  goal <sub>                     Deprecated alias for 'automation goal <sub>'
 
 MIGRATION:
   migrate automations            Convert hardcoded monitors to automation entries
@@ -1237,11 +1236,6 @@ func ShowHelp(command string) {
 		"automation goal archive",
 		"automation goal clear",
 		"automation goal validate":
-		fmt.Print(automationGoalHelp)
-	case "goal":
-		// Deprecated alias for "automation goal".
-		fmt.Println("Note: 'brain goal' is deprecated; use 'brain automation goal' instead.")
-		fmt.Println()
 		fmt.Print(automationGoalHelp)
 	case "attachments":
 		fmt.Print(attachmentsHelp)

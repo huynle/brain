@@ -71,21 +71,30 @@ future resource checks, preconditions, conservative effects and provider class.
 coverage and scope agreement, including read-scoped attention writes.
 `TestOperationPolicyProviderEffectsArePinned` pins all 105 provider values
 (closed `+`-joined token set). `TestOperationProviderEffectsDerivedFromCallGraph`
-derives embedding (synchronous or background) and Web Push effects from code,
-so the hand pin can't hide an omission:
-- **Handlers:** each operation's real router handler.
-- **Call graph:** a conservative standard-library CHA-style graph over
-  `internal/api` and `internal/service`. Interface and function-value calls fail
-  closed.
-- **Sinks:** `indexEmbeddingsForEntry`, `IndexEmbeddings*`, embedding `Embed`,
-  `scheduleEmbeddingRefresh`, phonepush `Enqueue`.
-- **Fail-closed rules:**
-  - every background entry point (pollers, dispatchers, schedulers) must be
-    reviewed and mapped to the operations whose state drives it;
-  - every derivable token in a row must be justified by a code path;
-  - `reminders.ack` is the single reviewed flow-sensitive exception.
-- **Event fan-out:** subscribed webhooks and event-triggered automations are
-  declared once as `event_fanout` (reviews `zgck7qp2`, `nwwa27yh`). Global profile/scripting/preflight/telemetry fields apply to every row.
+derives embedding (synchronous or background) and Web Push effects from code.
+It is a policy-accuracy check, not a full verifier.
+- **Graph:** a stdlib-only call graph over every non-test module package.
+  - Interface calls resolve by method set; function values by name-free
+    signature, limited to the calling package and its imports.
+  - Generic function values resolve by arity.
+  - Literals are their own nodes, including package-level vars.
+  - Function-valued arguments are attributed to their caller.
+- **Sinks:** `indexEmbeddingsForEntry`, `IndexEmbeddings*`,
+  `Embed(context.Context, []string)`, `scheduleEmbeddingRefresh`, phonepush
+  `Enqueue`.
+- **Exact reviewed lists:**
+  - the 105 operation rows;
+  - non-SDK routes (chi routes plus everything referenced from `router.go`);
+  - background goroutine roots, with per-function root counts;
+  - callback roots;
+  - startup entry points.
+- **Fail-closed rules:** `reminders.ack` is excepted by one reviewed call edge,
+  not by token. `TestNoUnreviewedReflectiveCalls` forbids reflective calls
+  outside an allowlist.
+- **Known limits:** reflection; callbacks created in a higher-level package and
+  invoked by a lower one are attributed to their creator (event subscriptions
+  are covered by `event_fanout`).
+- **Reviews:** `zgck7qp2`, `nwwa27yh`, `pcteuxwj`. Global profile/scripting/preflight/telemetry fields apply to every row.
 This is descriptive inventory, **not an authorization registry**: all script
 exposure is false, all dry-run validators are unimplemented and inherited request
 telemetry is unreviewed. Provider `none` excludes inherited auth/request telemetry;

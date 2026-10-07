@@ -3,6 +3,7 @@ package sdkcontract
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/importer"
 	"go/parser"
@@ -14,40 +15,154 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
-// egressGraph is a conservative, standard-library-only call graph over
-// internal/api and internal/service (review nwwa27yh). It is CHA-like:
+// egressGraph is a conservative, standard-library-only call graph over EVERY
+// non-test package in the module (reviews nwwa27yh, pcteuxwj). It is a
+// policy-accuracy check, not a full verifier. Resolution:
 //   - static calls resolve to their *types.Func;
-//   - interface method calls resolve to every analyzed concrete method with the
-//     same name whose receiver has all of the interface's method names;
-//   - calls through function values (variables, fields, parameters, results)
-//     resolve to every address-taken analyzed function with the same signature.
+//   - interface method calls resolve to every module method of that name
+//     whose receiver has all of the interface's method names;
+//   - calls through function values resolve to every address-taken module
+//     function or function literal with an identical signature, or, when the
+//     called value's type mentions a type parameter, with the same arity;
+//   - every function literal (including package-level var initializers) is its
+//     own address-taken node, with an edge from the code that creates it.
 //
-// Function literals are attributed to their enclosing declaration, so
-// closures, goroutines and defers are included. Nodes are keyed by
-// types.Func.FullName so packages loaded from source and from export data
-// agree. It over-approximates by design: unexpected reachability must be
-// reviewed, never silently ignored.
+// Known limits (documented, not hidden):
+//   - reflection (reflect.Value.Call/Method/MethodByName) is not modeled;
+//     TestNoUnreviewedReflectiveCalls forbids it outside an allowlist;
+//   - a call through a function value resolves only to targets declared in the
+//     calling package or the packages it imports. A callback created in a
+//     higher-level package and invoked by a lower-level one is attributed to
+//     its creator (every literal has a creation edge), not its invoker; event
+//     subscriptions are covered by the policy's event_fanout declaration;
+//   - niladic func() values resolve within the calling package only;
+//   - a call through a parameter of a function that is never address-taken
+//     adds no edges: each static caller carries the function-valued argument
+//     it passes (context-sensitive attribution for higher-order helpers such
+//     as worker runners).
 type egressGraph struct {
-	edges    map[string]map[string]bool
-	sigs     map[string]string // function key -> signature (without receiver)
-	callers  map[string]map[string]bool
-	declared map[string]bool // functions declared in analyzed packages
+	edges     map[string]map[string]bool
+	sigs      map[string]string // node -> signature (without receiver)
+	callers   map[string]map[string]bool
+	declared  map[string]bool            // module FuncDecls and literals
+	enclosing map[string]string          // literal node -> enclosing declaration (stable review name)
+	goRoots   map[string]bool            // targets of go statements
+	entries   []string                   // main.main, init, package var initializers
+	address   map[string]bool            // address-taken module nodes
+	reflect   []string                   // reflective call sites "file:line in node"
+	routerRef map[string]bool            // functions referenced from internal/api/router.go
+	tokens    map[string]map[string]bool // node -> provider tokens reachable (memoized)
 }
 
-const modulePath = "github.com/huynle/brain-api"
+var (
+	egressOnce  sync.Once
+	egressCache *egressGraph
+	egressErr   string
+)
 
-var egressPackages = []string{modulePath + "/internal/service", modulePath + "/internal/api"}
+// sharedEgressGraph builds the whole-module graph once per test process.
+func sharedEgressGraph(t *testing.T) *egressGraph {
+	t.Helper()
+	egressOnce.Do(func() {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					egressErr = fmt.Sprint(r)
+				}
+			}()
+			egressCache = buildEgressGraphOrPanic()
+		}()
+	})
+	if egressCache == nil {
+		t.Fatalf("egress graph: %s", egressErr)
+	}
+	return egressCache
+}
+
+// panicT adapts buildEgressGraph's fatal reporting for the shared builder.
+type panicT struct{ testing.TB }
+
+func (panicT) Helper()                           {}
+func (panicT) Fatal(args ...any)                 { panic(fmt.Sprint(args...)) }
+func (panicT) Fatalf(format string, args ...any) { panic(fmt.Sprintf(format, args...)) }
+
+func buildEgressGraphOrPanic() *egressGraph { return buildEgressGraph(panicT{}) }
+
+const modulePath = "github.com/huynle/brain-api"
 
 func qualifier(p *types.Package) string { return p.Path() }
 
 func funcKey(f *types.Func) string { return f.FullName() }
 
-func buildEgressGraph(t *testing.T) *egressGraph {
+// sigString renders a signature WITHOUT receiver or parameter names, so a
+// method, a named function and an unnamed func type compare equal.
+func sigString(sig *types.Signature) string {
+	strip := func(tuple *types.Tuple) *types.Tuple {
+		vars := make([]*types.Var, tuple.Len())
+		for i := range vars {
+			vars[i] = types.NewVar(token.NoPos, nil, "", tuple.At(i).Type())
+		}
+		return types.NewTuple(vars...)
+	}
+	return types.TypeString(types.NewSignatureType(nil, nil, nil, strip(sig.Params()), strip(sig.Results()), sig.Variadic()), qualifier)
+}
+
+// typeSig normalizes any function-valued type for signature matching.
+func typeSig(t types.Type) string {
+	if sig, ok := t.Underlying().(*types.Signature); ok {
+		return sigString(sig)
+	}
+	return types.TypeString(t, qualifier)
+}
+
+func hasTypeParam(t types.Type) bool {
+	found := false
+	var visit func(types.Type)
+	visit = func(t types.Type) {
+		if found || t == nil {
+			return
+		}
+		switch u := t.(type) {
+		case *types.TypeParam:
+			found = true
+		case *types.Signature:
+			for i := 0; i < u.Params().Len(); i++ {
+				visit(u.Params().At(i).Type())
+			}
+			for i := 0; i < u.Results().Len(); i++ {
+				visit(u.Results().At(i).Type())
+			}
+		case *types.Slice:
+			visit(u.Elem())
+		case *types.Pointer:
+			visit(u.Elem())
+		case *types.Map:
+			visit(u.Key())
+			visit(u.Elem())
+		case *types.Chan:
+			visit(u.Elem())
+		case *types.Array:
+			visit(u.Elem())
+		}
+	}
+	visit(t)
+	return found
+}
+
+func arity(t types.Type) string {
+	if sig, ok := t.Underlying().(*types.Signature); ok {
+		return fmt.Sprintf("%d/%d", sig.Params().Len(), sig.Results().Len())
+	}
+	return ""
+}
+
+func buildEgressGraph(t testing.TB) *egressGraph {
 	t.Helper()
-	cmd := exec.Command("go", "list", "-export", "-deps", "-json", "./internal/api", "./internal/service")
+	cmd := exec.Command("go", "list", "-export", "-deps", "-json", "./...")
 	cmd.Dir = "../.."
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -56,11 +171,12 @@ func buildEgressGraph(t *testing.T) *egressGraph {
 		t.Fatalf("go list -export: %v %s", err, stderr.String())
 	}
 	type listed struct {
-		ImportPath, Export, Dir string
-		GoFiles                 []string
+		ImportPath, Export, Dir, Name string
+		GoFiles, CgoFiles, Deps       []string
+		Module                        *struct{ Path string }
 	}
 	exports := map[string]string{}
-	sources := map[string]listed{}
+	var modulePkgs []listed
 	dec := json.NewDecoder(bytes.NewReader(out))
 	for {
 		var p listed
@@ -70,7 +186,24 @@ func buildEgressGraph(t *testing.T) *egressGraph {
 			t.Fatal(err)
 		}
 		exports[p.ImportPath] = p.Export
-		sources[p.ImportPath] = p
+		if p.Module != nil && p.Module.Path == modulePath && len(p.GoFiles) > 0 {
+			if len(p.CgoFiles) > 0 {
+				t.Fatalf("%s uses cgo: not analyzable here", p.ImportPath)
+			}
+			modulePkgs = append(modulePkgs, p)
+		}
+	}
+	sort.Slice(modulePkgs, func(i, j int) bool { return modulePkgs[i].ImportPath < modulePkgs[j].ImportPath })
+	// visible[p] = p plus every package it imports (transitively): the only
+	// places a function value called in p can have been created without
+	// first passing through p's own API (creation edges cover the rest).
+	visible := map[string]map[string]bool{}
+	for _, p := range modulePkgs {
+		v := map[string]bool{p.ImportPath: true}
+		for _, dep := range p.Deps {
+			v[dep] = true
+		}
+		visible[p.ImportPath] = v
 	}
 	fset := token.NewFileSet()
 	imp := importer.ForCompiler(fset, "gc", func(path string) (io.ReadCloser, error) {
@@ -80,17 +213,17 @@ func buildEgressGraph(t *testing.T) *egressGraph {
 		}
 		return os.Open(file)
 	})
-	g := &egressGraph{edges: map[string]map[string]bool{}, sigs: map[string]string{}, callers: map[string]map[string]bool{}, declared: map[string]bool{}}
+	g := &egressGraph{edges: map[string]map[string]bool{}, sigs: map[string]string{}, callers: map[string]map[string]bool{}, declared: map[string]bool{}, enclosing: map[string]string{}, goRoots: map[string]bool{}, address: map[string]bool{}, routerRef: map[string]bool{}}
 	type checked struct {
-		files []*ast.File
-		info  *types.Info
+		path, name string
+		files      []*ast.File
+		info       *types.Info
 	}
 	var all []checked
-	for _, path := range egressPackages {
-		src := sources[path]
+	for _, p := range modulePkgs {
 		var files []*ast.File
-		for _, name := range src.GoFiles {
-			f, err := parser.ParseFile(fset, filepath.Join(src.Dir, name), nil, 0)
+		for _, name := range p.GoFiles {
+			f, err := parser.ParseFile(fset, filepath.Join(p.Dir, name), nil, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -98,33 +231,81 @@ func buildEgressGraph(t *testing.T) *egressGraph {
 		}
 		info := &types.Info{Uses: map[*ast.Ident]types.Object{}, Defs: map[*ast.Ident]types.Object{}, Selections: map[*ast.SelectorExpr]*types.Selection{}, Types: map[ast.Expr]types.TypeAndValue{}}
 		conf := types.Config{Importer: imp, Error: func(error) {}}
-		if _, err := conf.Check(path, fset, files, info); err != nil {
-			t.Fatalf("type-check %s: %v", path, err)
+		if _, err := conf.Check(p.ImportPath, fset, files, info); err != nil {
+			t.Fatalf("type-check %s: %v", p.ImportPath, err)
 		}
-		all = append(all, checked{files, info})
+		all = append(all, checked{p.ImportPath, p.Name, files, info})
 	}
-	// Pass 1: declarations, concrete methods by name, address-taken values.
-	methodsByName := map[string][]*types.Func{}
-	methodNames := map[string]map[string]bool{}  // receiver named type -> method names
-	addressTaken := map[string]map[string]bool{} // signature -> function keys
+	litKey := func(pkg string, lit *ast.FuncLit) string {
+		pos := fset.Position(lit.Pos())
+		return fmt.Sprintf("%s.$lit@%s:%d:%d", pkg, filepath.Base(pos.Filename), pos.Line, pos.Column)
+	}
+	resolve := func(info *types.Info, fun ast.Expr) types.Object {
+		switch e := fun.(type) {
+		case *ast.Ident:
+			return info.Uses[e]
+		case *ast.SelectorExpr:
+			if sel := info.Selections[e]; sel != nil {
+				return sel.Obj()
+			}
+			return info.Uses[e.Sel]
+		case *ast.IndexExpr:
+			return resolveBase(info, e.X)
+		case *ast.IndexListExpr:
+			return resolveBase(info, e.X)
+		}
+		return nil
+	}
+	// Pass 1: declarations, method sets by name, address-taken values.
+	methodsByName := map[string][]string{}
+	methodNames := map[string]map[string]bool{}
+	bySig := map[string]map[string]bool{}
+	byArity := map[string]map[string]bool{}
+	addressTaken := func(key string, typ types.Type) {
+		g.address[key] = true
+		for _, idx := range []struct {
+			m map[string]map[string]bool
+			k string
+		}{{bySig, typeSig(typ)}, {byArity, arity(typ)}} {
+			if idx.m[idx.k] == nil {
+				idx.m[idx.k] = map[string]bool{}
+			}
+			idx.m[idx.k][key] = true
+		}
+	}
+	paramOwner := map[*types.Var]string{} // FuncDecl parameter -> owning function
+	closureLit := map[*ast.FuncLit]bool{}
+	closureTargets := map[*types.Var][]string{}
 	for _, c := range all {
 		for _, f := range c.files {
+			isRouter := c.path == modulePath+"/internal/api" && filepath.Base(fset.Position(f.Pos()).Filename) == "router.go"
 			for _, d := range f.Decls {
 				fd, ok := d.(*ast.FuncDecl)
 				if !ok {
 					continue
 				}
 				fn := c.info.Defs[fd.Name].(*types.Func)
-				g.declared[funcKey(fn)] = true
+				key := funcKey(fn)
+				g.declared[key] = true
+				for _, field := range fd.Type.Params.List {
+					for _, name := range field.Names {
+						if v, ok := c.info.Defs[name].(*types.Var); ok {
+							paramOwner[v] = key
+						}
+					}
+				}
 				sig := fn.Type().(*types.Signature)
-				g.sigs[funcKey(fn)] = types.TypeString(types.NewSignatureType(nil, nil, nil, sig.Params(), sig.Results(), sig.Variadic()), qualifier)
+				g.sigs[key] = sigString(sig)
 				if recv := sig.Recv(); recv != nil {
-					methodsByName[fn.Name()] = append(methodsByName[fn.Name()], fn)
+					methodsByName[fn.Name()] = append(methodsByName[fn.Name()], key)
 					named := recvName(recv.Type())
 					if methodNames[named] == nil {
 						methodNames[named] = map[string]bool{}
 					}
 					methodNames[named][fn.Name()] = true
+				}
+				if (c.name == "main" && fd.Name.Name == "main" && fd.Recv == nil) || (fd.Name.Name == "init" && fd.Recv == nil) {
+					g.entries = append(g.entries, key)
 				}
 			}
 			callFuns := map[ast.Expr]bool{}
@@ -134,7 +315,83 @@ func buildEgressGraph(t *testing.T) *egressGraph {
 				}
 				return true
 			})
+			// Local closure variables: a function literal assigned to a
+			// function-local variable that is ONLY ever called cannot escape;
+			// calls through it resolve exactly to its literals.
+			localLits := map[*types.Var][]*ast.FuncLit{}
+			impure := map[*types.Var]bool{}
+			record := func(lhs ast.Expr, rhs ast.Expr) {
+				id, ok := lhs.(*ast.Ident)
+				if !ok {
+					return
+				}
+				obj := c.info.Defs[id]
+				if obj == nil {
+					obj = c.info.Uses[id]
+				}
+				v, ok := obj.(*types.Var)
+				if !ok || v.Parent() == nil || v.Parent() == v.Pkg().Scope() {
+					return
+				}
+				if lit, ok := ast.Unparen(rhs).(*ast.FuncLit); ok {
+					localLits[v] = append(localLits[v], lit)
+				} else {
+					impure[v] = true
+				}
+			}
 			ast.Inspect(f, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.AssignStmt:
+					if len(x.Lhs) == len(x.Rhs) {
+						for i := range x.Lhs {
+							record(x.Lhs[i], x.Rhs[i])
+						}
+					}
+				case *ast.ValueSpec:
+					if len(x.Names) == len(x.Values) {
+						for i := range x.Names {
+							record(x.Names[i], x.Values[i])
+						}
+					}
+				}
+				return true
+			})
+			ast.Inspect(f, func(n ast.Node) bool {
+				id, ok := n.(*ast.Ident)
+				if !ok || callFuns[id] {
+					return true
+				}
+				if v, ok := c.info.Uses[id].(*types.Var); ok && localLits[v] != nil {
+					impure[v] = true // escapes: used as a value, not only called
+				}
+				return true
+			})
+			for v, lits := range localLits {
+				if impure[v] {
+					continue
+				}
+				for _, lit := range lits {
+					closureLit[lit] = true
+				}
+				for _, lit := range lits {
+					closureTargets[v] = append(closureTargets[v], litKey(c.path, lit))
+				}
+			}
+			ast.Inspect(f, func(n ast.Node) bool {
+				if lit, ok := n.(*ast.FuncLit); ok {
+					key := litKey(c.path, lit)
+					g.declared[key] = true
+					if tv, ok := c.info.Types[lit]; ok {
+						g.sigs[key] = typeSig(tv.Type)
+						// A literal invoked in place (func(){}(), go/defer
+						// func(){}()) is never stored, so no other call can
+						// reach it. Only literals used as values are targets.
+						if !callFuns[lit] && !closureLit[lit] {
+							addressTaken(key, tv.Type)
+						}
+					}
+					return true
+				}
 				expr, ok := n.(ast.Expr)
 				if !ok || callFuns[expr] {
 					return true
@@ -154,78 +411,93 @@ func buildEgressGraph(t *testing.T) *egressGraph {
 				if !ok {
 					return true
 				}
-				tv, ok := c.info.Types[expr]
-				if !ok {
-					return true
+				if fn.Origin() != nil {
+					fn = fn.Origin()
 				}
-				sig := types.TypeString(tv.Type, qualifier)
-				if addressTaken[sig] == nil {
-					addressTaken[sig] = map[string]bool{}
+				if tv, ok := c.info.Types[expr]; ok {
+					addressTaken(funcKey(fn), tv.Type)
 				}
-				addressTaken[sig][funcKey(fn)] = true
+				if isRouter {
+					g.routerRef[funcKey(fn)] = true
+				}
 				if _, isSel := expr.(*ast.SelectorExpr); isSel {
-					return false // do not double-count the selector's Sel ident
+					return false
 				}
 				return true
 			})
 		}
 	}
-	// Pass 2: call edges.
+	// Pass 2: edges. Each FuncDecl body and each literal is its own node.
 	for _, c := range all {
-		for _, f := range c.files {
-			for _, d := range f.Decls {
-				fd, ok := d.(*ast.FuncDecl)
-				if !ok || fd.Body == nil {
-					continue
-				}
-				from := funcKey(c.info.Defs[fd.Name].(*types.Func))
-				ast.Inspect(fd.Body, func(n ast.Node) bool {
-					call, ok := n.(*ast.CallExpr)
-					if !ok {
-						return true
+		var walk func(from string, body ast.Node)
+		walk = func(from string, body ast.Node) {
+			ast.Inspect(body, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.FuncLit:
+					key := litKey(c.path, x)
+					g.edge(from, key)
+					if encl, ok := g.enclosing[from]; ok {
+						g.enclosing[key] = encl
+					} else {
+						g.enclosing[key] = from
 					}
-					fun := ast.Unparen(call.Fun)
+					walk(key, x.Body)
+					return false
+				case *ast.GoStmt:
+					fun := ast.Unparen(x.Call.Fun)
+					if lit, ok := fun.(*ast.FuncLit); ok {
+						g.goRoots[litKey(c.path, lit)] = true
+					} else if fn, ok := resolve(c.info, fun).(*types.Func); ok {
+						if fn.Origin() != nil {
+							fn = fn.Origin()
+						}
+						g.goRoots[funcKey(fn)] = true
+					}
+					return true
+				case *ast.CallExpr:
+					fun := ast.Unparen(x.Fun)
 					if tv, ok := c.info.Types[fun]; ok && (tv.IsType() || tv.IsBuiltin()) {
 						return true
 					}
 					if _, lit := fun.(*ast.FuncLit); lit {
-						return true // body is walked as part of this declaration
+						return true // the literal node is created and walked; edge exists
 					}
-					var obj types.Object
-					switch e := fun.(type) {
-					case *ast.Ident:
-						obj = c.info.Uses[e]
-					case *ast.SelectorExpr:
-						if sel := c.info.Selections[e]; sel != nil {
-							obj = sel.Obj()
-						} else {
-							obj = c.info.Uses[e.Sel]
-						}
-					case *ast.IndexExpr, *ast.IndexListExpr:
-						// generic instantiation: resolve the base identifier
-						var base ast.Expr
-						if ix, ok := e.(*ast.IndexExpr); ok {
-							base = ix.X
-						} else {
-							base = e.(*ast.IndexListExpr).X
-						}
-						if id, ok := ast.Unparen(base).(*ast.Ident); ok {
-							obj = c.info.Uses[id]
-						}
-					}
-					if fn, ok := obj.(*types.Func); ok {
-						sig := fn.Type().(*types.Signature)
+					if fn, ok := resolve(c.info, fun).(*types.Func); ok {
 						if fn.Origin() != nil {
 							fn = fn.Origin()
 						}
-						g.edge(from, funcKey(fn))
-						if g.sigs[funcKey(fn)] == "" {
-							g.sigs[funcKey(fn)] = types.TypeString(types.NewSignatureType(nil, nil, nil, sig.Params(), sig.Results(), sig.Variadic()), qualifier)
+						if fn.Pkg() != nil && fn.Pkg().Path() == "reflect" {
+							switch fn.Name() {
+							case "Call", "CallSlice", "Method", "MethodByName":
+								pos := fset.Position(x.Pos())
+								g.reflect = append(g.reflect, fmt.Sprintf("%s:%d %s.%s", filepath.Base(pos.Filename), pos.Line, c.path, fn.Name()))
+							}
+						}
+						key := funcKey(fn)
+						g.edge(from, key)
+						// The caller chooses what a higher-order callee runs:
+						// attribute function-valued arguments to the caller.
+						for _, arg := range x.Args {
+							switch a := ast.Unparen(arg).(type) {
+							case *ast.FuncLit:
+								// creation edge is added when the literal is walked
+							case *ast.Ident, *ast.SelectorExpr:
+								if af, ok := resolve(c.info, a).(*types.Func); ok {
+									if af.Origin() != nil {
+										af = af.Origin()
+									}
+									g.edge(from, funcKey(af))
+								}
+							}
+						}
+						sig := fn.Type().(*types.Signature)
+						if g.sigs[key] == "" {
+							g.sigs[key] = sigString(sig)
 						}
 						if recv := sig.Recv(); recv != nil && types.IsInterface(recv.Type()) {
 							iface := recv.Type().Underlying().(*types.Interface)
 							for _, m := range methodsByName[fn.Name()] {
-								have := methodNames[recvName(m.Type().(*types.Signature).Recv().Type())]
+								have := methodNames[recvOf(m)]
 								implements := true
 								for i := 0; i < iface.NumMethods(); i++ {
 									if !have[iface.Method(i).Name()] {
@@ -234,24 +506,163 @@ func buildEgressGraph(t *testing.T) *egressGraph {
 									}
 								}
 								if implements {
-									g.edge(from, funcKey(m))
+									g.edge(from, m)
 								}
 							}
 						}
 						return true
 					}
+					// Call through a non-escaping local closure: exact targets.
+					if id, ok := fun.(*ast.Ident); ok {
+						if v, ok := c.info.Uses[id].(*types.Var); ok && closureTargets[v] != nil {
+							for _, target := range closureTargets[v] {
+								g.edge(from, target)
+							}
+							return true
+						}
+					}
+					// Call through a parameter of a module function whose every
+					// call site is static: each caller already carries the
+					// effects of the argument it passed (see above).
+					if id, ok := fun.(*ast.Ident); ok {
+						if v, ok := c.info.Uses[id].(*types.Var); ok {
+							if owner, isParam := paramOwner[v]; isParam && !g.address[owner] {
+								return true
+							}
+						}
+					}
 					// Dynamic call through a function value: fail closed.
 					if tv, ok := c.info.Types[fun]; ok {
-						for target := range addressTaken[types.TypeString(tv.Type, qualifier)] {
+						sig := typeSig(tv.Type)
+						targets := bySig[sig]
+						if hasTypeParam(tv.Type) {
+							targets = byArity[arity(tv.Type)]
+						}
+						for target := range targets {
+							// Niladic func() values (cancel, once.Do, launch hooks)
+							// are pervasive; resolve them within the calling
+							// package. Each literal still has a creation edge
+							// from the code that creates it, so its effects stay
+							// attributed to that creator.
+							if sig == "func()" && !inPackage(target, c.path) {
+								continue
+							}
+							if !visible[c.path][nodePkg(target)] {
+								continue
+							}
 							g.edge(from, target)
 						}
 					}
 					return true
-				})
+				}
+				return true
+			})
+		}
+		for _, f := range c.files {
+			for _, d := range f.Decls {
+				switch decl := d.(type) {
+				case *ast.FuncDecl:
+					if decl.Body != nil {
+						walk(funcKey(c.info.Defs[decl.Name].(*types.Func)), decl.Body)
+					}
+				case *ast.GenDecl:
+					// Package-level initializers run at program start.
+					initKey := c.path + ".$varinit"
+					for _, spec := range decl.Specs {
+						if vs, ok := spec.(*ast.ValueSpec); ok {
+							for _, v := range vs.Values {
+								g.declared[initKey] = true
+								walk(initKey, v)
+							}
+						}
+					}
+				}
+			}
+		}
+		if g.declared[c.path+".$varinit"] {
+			g.entries = append(g.entries, c.path+".$varinit")
+		}
+	}
+	sort.Strings(g.entries)
+	g.propagateTokens()
+	return g
+}
+
+// propagateTokens computes, for every node, the provider tokens a forward
+// traversal (as in reach, without cuts/stops) would find: tokens flow backward
+// from each sink along caller edges, never passing THROUGH a background
+// refresh node (forward traversal stops there).
+func (g *egressGraph) propagateTokens() {
+	g.tokens = map[string]map[string]bool{}
+	nodes := map[string]bool{}
+	for n := range g.edges {
+		nodes[n] = true
+		for m := range g.edges[n] {
+			nodes[m] = true
+		}
+	}
+	for _, tok := range []string{"embedding_sync", "embedding_background", "web_push"} {
+		var queue []string
+		seen := map[string]bool{}
+		for n := range nodes {
+			if g.sinkToken(n) == tok {
+				seen[n] = true
+				queue = append(queue, n)
+			}
+		}
+		for len(queue) > 0 {
+			n := queue[0]
+			queue = queue[1:]
+			if tok != "embedding_background" && g.sinkToken(n) == "embedding_background" {
+				continue // forward traversal never continues past background refresh
+			}
+			if g.tokens[n] == nil {
+				g.tokens[n] = map[string]bool{}
+			}
+			g.tokens[n][tok] = true
+			for caller := range g.callers[n] {
+				if !seen[caller] {
+					seen[caller] = true
+					queue = append(queue, caller)
+				}
 			}
 		}
 	}
-	return g
+}
+
+// nodePkg returns the package path of a node key.
+func nodePkg(key string) string {
+	if i := strings.Index(key, ".$"); i >= 0 {
+		return key[:i]
+	}
+	trimmed := strings.TrimPrefix(strings.TrimPrefix(key, "("), "*")
+	if i := strings.Index(trimmed, ")."); i >= 0 {
+		trimmed = trimmed[:i]
+	}
+	if i := strings.LastIndex(trimmed, "."); i >= 0 {
+		return trimmed[:i]
+	}
+	return trimmed
+}
+
+// inPackage reports whether a node key belongs to pkg: "pkg.F", "pkg.$lit@…",
+// "(pkg.T).M" or "(*pkg.T).M".
+func inPackage(key, pkg string) bool {
+	trimmed := strings.TrimPrefix(strings.TrimPrefix(key, "("), "*")
+	return strings.HasPrefix(trimmed, pkg+".") && !strings.Contains(strings.TrimPrefix(trimmed, pkg+"."), "/")
+}
+
+func resolveBase(info *types.Info, x ast.Expr) types.Object {
+	switch e := ast.Unparen(x).(type) {
+	case *ast.Ident:
+		return info.Uses[e]
+	case *ast.SelectorExpr:
+		if sel := info.Selections[e]; sel != nil {
+			return sel.Obj()
+		}
+		return info.Uses[e.Sel]
+	}
+	return nil
 }
 
 func recvName(t types.Type) string {
@@ -262,6 +673,18 @@ func recvName(t types.Type) string {
 		return n.Obj().Pkg().Path() + "." + n.Obj().Name()
 	}
 	return types.TypeString(t, qualifier)
+}
+
+// recvOf extracts the receiver type name from a method FullName key such as
+// "(*pkg.T).M" or "(pkg.T).M".
+func recvOf(key string) string {
+	inner := strings.TrimPrefix(key, "(")
+	inner = strings.TrimPrefix(inner, "*")
+	end := strings.Index(inner, ").")
+	if end < 0 {
+		return ""
+	}
+	return inner[:end]
 }
 
 func (g *egressGraph) edge(from, to string) {
@@ -275,8 +698,8 @@ func (g *egressGraph) edge(from, to string) {
 	g.callers[to][from] = true
 }
 
-// sinkToken classifies provider sinks. Background refresh is terminal: what
-// it calls runs asynchronously and is reported as embedding_background.
+// sinkToken classifies provider sinks by name AND signature. Background
+// refresh is terminal: what it calls runs asynchronously.
 func (g *egressGraph) sinkToken(key string) string {
 	name := key[strings.LastIndex(key, ".")+1:]
 	switch {
@@ -284,7 +707,7 @@ func (g *egressGraph) sinkToken(key string) string {
 		return "embedding_background"
 	case name == "indexEmbeddingsForEntry", strings.HasPrefix(name, "IndexEmbeddings"):
 		return "embedding_sync"
-	case name == "Embed" && strings.Contains(key, "/internal/service"):
+	case name == "Embed" && g.sigs[key] == "func(context.Context, []string) ([][]float32, error)":
 		return "embedding_sync"
 	case name == "Enqueue" && strings.Contains(g.sigs[key], "phonepush.PushMessage"):
 		return "web_push"
@@ -292,9 +715,12 @@ func (g *egressGraph) sinkToken(key string) string {
 	return ""
 }
 
+type cutEdge struct{ from, to string }
+
 // reach returns the provider tokens reachable from root and one witness path
-// per token.
-func (g *egressGraph) reach(root string) map[string][]string {
+// per token. Traversal does not cross cut edges, and does not enter stop
+// nodes (other than the root itself).
+func (g *egressGraph) reach(root string, cuts map[cutEdge]bool, stop map[string]bool) map[string][]string {
 	found := map[string][]string{}
 	parent := map[string]string{root: ""}
 	queue := []string{root}
@@ -313,7 +739,10 @@ func (g *egressGraph) reach(root string) map[string][]string {
 				continue
 			}
 		}
-		for next := range g.edges[n] {
+		for _, next := range sortedKeys(g.edges[n]) {
+			if cuts[cutEdge{n, next}] || stop[next] {
+				continue
+			}
 			if _, seen := parent[next]; !seen {
 				parent[next] = n
 				queue = append(queue, next)
@@ -321,6 +750,35 @@ func (g *egressGraph) reach(root string) map[string][]string {
 		}
 	}
 	return found
+}
+
+// closure returns every node reachable from roots (not crossing stop nodes).
+func (g *egressGraph) closure(roots []string, stop map[string]bool) map[string]bool {
+	seen := map[string]bool{}
+	stack := append([]string(nil), roots...)
+	for _, r := range roots {
+		seen[r] = true
+	}
+	for len(stack) > 0 {
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for next := range g.edges[n] {
+			if !seen[next] && !stop[next] {
+				seen[next] = true
+				stack = append(stack, next)
+			}
+		}
+	}
+	return seen
+}
+
+// reviewName gives a stable, line-independent name for a node: literals are
+// reported as their enclosing declaration.
+func (g *egressGraph) reviewName(key string) string {
+	if encl, ok := g.enclosing[key]; ok {
+		return encl
+	}
+	return key
 }
 
 func sortedKeys[V any](m map[string]V) []string {

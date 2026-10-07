@@ -20,9 +20,10 @@ evidence: docs/sdk-operation-matrix.md
 # "Triggered" includes later background work driven by the operation's state:
 # reminder create/update/snooze are fired by the scheduler (embedding + push);
 # goal create/update drive the goal ticker. These three tokens are DERIVED from a
-# conservative call graph over internal/api + internal/service
-# (policy_provider/egress_routes tests); reminders.ack is the one reviewed
-# flow-sensitive exception (status-only update).
+# conservative whole-module call graph (internal/sdkcontract egress tests).
+# Exact reviewed lists also cover non-SDK routes, background goroutine roots,
+# callback roots and startup entry points. reminders.ack's single exception is
+# one reviewed call edge (AckReminder -> UpdateReminder, status-only).
 #   webhook_http / extraction_provider / external_delivery_verification: direct calls
 #   downstream_*          may cause runnable work whose executor reaches providers
 # Every event-emitting operation may additionally reach subscribed webhooks and

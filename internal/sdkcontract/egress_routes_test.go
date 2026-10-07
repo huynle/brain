@@ -1,12 +1,12 @@
 package sdkcontract
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"reflect"
 	"regexp"
 	"runtime"
-	"sort"
 	"strings"
 	"testing"
 
@@ -140,6 +140,125 @@ func operationHandlers(t *testing.T, g *egressGraph) (map[string]string, []strin
 	return out, all
 }
 
+// egressDerivation is everything the call graph says reaches a provider sink.
+// Maps are review name -> "+"-joined sorted tokens.
+type egressDerivation struct {
+	ops        map[string]map[string][]string // SDK operation -> token -> witness
+	nonSDK     map[string]string
+	background map[string]string
+	callbacks  map[string]string
+	// number of sink-reaching roots merged under each review name
+	backgroundCount map[string]int
+	callbackCount   map[string]int
+	startup         map[string]string
+}
+
+func tokenString(found map[string][]string) string { return strings.Join(sortedKeys(found), "+") }
+
+func deriveEgress(g *egressGraph, handlers map[string]string, chiRoutes []string, cuts map[string][]cutEdge) egressDerivation {
+	d := egressDerivation{ops: map[string]map[string][]string{}, nonSDK: map[string]string{}, background: map[string]string{}, callbacks: map[string]string{}, startup: map[string]string{}, backgroundCount: map[string]int{}, callbackCount: map[string]int{}}
+	sdk := map[string]bool{}
+	for op, h := range handlers {
+		sdk[h] = true
+		cutSet := map[cutEdge]bool{}
+		for _, c := range cuts[op] {
+			cutSet[c] = true
+		}
+		d.ops[op] = g.reach(h, cutSet, nil)
+	}
+	routeRoots := map[string]bool{}
+	for _, r := range chiRoutes {
+		routeRoots[r] = true
+	}
+	for r := range g.routerRef {
+		routeRoots[r] = true
+	}
+	for h := range sdk {
+		routeRoots[h] = true
+	}
+	for _, r := range sortedKeys(routeRoots) {
+		if sdk[r] {
+			continue
+		}
+		if toks := g.tokens[r]; len(toks) > 0 {
+			d.nonSDK[r] = strings.Join(sortedKeys(toks), "+")
+		}
+	}
+	routeReach := g.closure(sortedKeys(routeRoots), nil)
+	merge := func(m map[string]string, name, toks string) {
+		if prev := m[name]; prev != "" {
+			set := map[string]bool{}
+			for _, t := range strings.Split(prev+"+"+toks, "+") {
+				set[t] = true
+			}
+			toks = strings.Join(sortedKeys(set), "+")
+		}
+		m[name] = toks
+	}
+	for _, root := range sortedKeys(g.goRoots) {
+		if routeReach[root] {
+			continue
+		}
+		if toks := g.tokens[root]; len(toks) > 0 {
+			merge(d.background, g.reviewName(root), strings.Join(sortedKeys(toks), "+"))
+			d.backgroundCount[g.reviewName(root)]++
+		}
+	}
+	stop := map[string]bool{}
+	for k := range g.goRoots {
+		stop[k] = true
+	}
+	for k := range routeRoots {
+		stop[k] = true
+	}
+	for _, e := range g.entries {
+		if found := g.reach(e, nil, stop); len(found) > 0 {
+			d.startup[e] = tokenString(found)
+		}
+	}
+	var everything []string
+	everything = append(everything, sortedKeys(routeRoots)...)
+	everything = append(everything, sortedKeys(g.goRoots)...)
+	everything = append(everything, g.entries...)
+	live := g.closure(everything, nil)
+	for _, n := range sortedKeys(g.address) {
+		if live[n] || !g.declared[n] {
+			continue
+		}
+		if toks := g.tokens[n]; len(toks) > 0 {
+			merge(d.callbacks, g.reviewName(n), strings.Join(sortedKeys(toks), "+"))
+			d.callbackCount[g.reviewName(n)]++
+		}
+	}
+	return d
+}
+
+func TestEgressExploration(t *testing.T) {
+	if os.Getenv("BRAIN_EGRESS_EXPLORE") == "" {
+		t.Skip("exploration only")
+	}
+	g := sharedEgressGraph(t)
+	handlers, chi := operationHandlers(t, g)
+	d := deriveEgress(g, handlers, chi, nil)
+	short := func(s string) string { return strings.ReplaceAll(s, modulePath+"/", "") }
+	for _, op := range sortedKeys(d.ops) {
+		if len(d.ops[op]) > 0 {
+			t.Logf("OP %s: %s", op, tokenString(d.ops[op]))
+		}
+	}
+	for _, sec := range []struct {
+		name string
+		m    map[string]string
+	}{{"NONSDK", d.nonSDK}, {"BACKGROUND", d.background}, {"CALLBACK", d.callbacks}, {"STARTUP", d.startup}} {
+		for _, k := range sortedKeys(sec.m) {
+			t.Logf("%s %s: %s", sec.name, short(k), sec.m[k])
+		}
+	}
+	for _, r := range g.reflect {
+		t.Logf("REFLECT %s", r)
+	}
+}
+
 // derivableTokens are provider effects the call graph can see. Others
 // (webhook_http, extraction_provider, external_delivery_verification,
 // downstream_*) remain pinned by TestOperationPolicyProviderEffectsArePinned.
@@ -156,49 +275,71 @@ func tokenSatisfied(row []string, derived string) bool {
 	return false
 }
 
-// reviewedBackground lists every background entry point (poller, dispatcher,
-// scheduler, startup path, or non-SDK surface) that reaches a provider sink
-// without an HTTP request, mapped to the operations whose state drives it.
-// Entries with no operations are reviewed non-SDK paths; "event_fanout" is
-// covered by the policy's top-level event_fanout declaration. The set must
-// equal the derived background entry points exactly: a new one fails.
-var reviewedBackground = map[string][]string{
-	"(*" + modulePath + "/internal/api.Handler).StartPush":                            {"reminders.create", "reminders.update", "reminders.snooze", "reminders.fire"}, // collectPush: Web Push for fired reminders
-	"(*" + modulePath + "/internal/service.ReminderService).Start":                    {"reminders.create", "reminders.update", "reminders.snooze"},                   // scheduler fires due reminders
-	"(*" + modulePath + "/internal/service.AttentionDispatcher).Start":                {"attention.create"},                                                           // attention.created -> Web Push
-	"(*" + modulePath + "/internal/service.GoalService).Start":                        {"goals.create", "goals.update"},                                               // goal ticker reconcile
-	"(*" + modulePath + "/internal/service.AutomationService).Start":                  {"event_fanout"},                                                               // event-triggered automations
-	"(*" + modulePath + "/internal/service.BulkJobService).Start":                     nil,                                                                            // bulk-jobs API is not in the SDK contract
-	"(*" + modulePath + "/internal/service.AttachmentServiceImpl).StoreDerivedText":   nil,                                                                            // no caller in the repository
-	"(*" + modulePath + "/internal/service.BrainServiceImpl).EnsureBrainMergeRequest": nil,                                                                            // no production caller
-	modulePath + "/internal/service.EnsureBuiltInFeatureCheckoutAutomation":           nil,                                                                            // startup built-in automation registration
-	modulePath + "/internal/service.EnsureBuiltInFeatureCheckoutSimpleAutomation":     nil,
-	modulePath + "/internal/service.EnsureBuiltInFeatureDeliveryAutomation":           nil,
-	"(*" + modulePath + "/internal/api.AssistantService).StartConversationJobs":       nil, // assistant is not in the SDK contract
-	"(*" + modulePath + "/internal/api.Handler).HandleAssistantChat":                  nil,
-	"(*" + modulePath + "/internal/api.Handler).HandleAssistantChatStream":            nil,
-	"(*" + modulePath + "/internal/api.Handler).HandleAssistantStatus":                nil,
-	modulePath + "/internal/api.handleBulkUpdate":                                     nil, // assistant tool dispatch
-	modulePath + "/internal/api.handleSearchBrain":                                    nil,
-	modulePath + "/internal/api.handleUpdateEntry":                                    nil,
+const (
+	pkgAPI     = modulePath + "/internal/api"
+	pkgService = modulePath + "/internal/service"
+)
+
+// reviewedCuts are flow-sensitive exceptions tied to ONE reviewed call edge.
+// Reachability for the operation is recomputed without exactly that edge; any
+// other path to a sink (e.g. a new direct Save) still fails. A cut is stale if
+// the edge disappears or removing it no longer removes a derived token.
+var reviewedCuts = map[string][]cutEdge{
+	// AckReminder -> UpdateReminder sets status only: body/attachments are
+	// unchanged (metadata sync, no provider) and feature-schedule gate fields are
+	// never set (reviews 1ikgd5xs, nwwa27yh).
+	"reminders.ack": {{"(*" + pkgService + ".ReminderService).AckReminder", "(*" + pkgService + ".ReminderService).UpdateReminder"}},
 }
 
-// reviewedFlowExceptions are derived tokens a row may omit because the
-// flow-insensitive graph over-approximates a reviewed, condition-guarded path.
-// Each must still be derived (no stale exceptions) and carry a reason.
-var reviewedFlowExceptions = map[string]map[string]string{
-	"reminders.ack": {
-		"embedding_sync":       "AckReminder -> UpdateReminder sets status only; feature-schedule gate fields are never set (review nwwa27yh/1ikgd5xs)",
-		"embedding_background": "status-only Update: body/attachments unchanged -> scheduleEmbeddingMetadataSync, no provider call",
-	},
+// reviewedNonSDKRoutes: every router handler outside the 105-operation
+// contract that reaches a provider sink, with its exact derived tokens.
+var reviewedNonSDKRoutes = map[string]string{
+	"(*" + pkgAPI + ".Handler).HandleAssistantChat":                "embedding_background+embedding_sync",
+	"(*" + pkgAPI + ".Handler).HandleAssistantChatStream":          "embedding_background+embedding_sync",
+	"(*" + pkgAPI + ".Handler).HandleAssistantStatus":              "embedding_background+embedding_sync",
+	"(*" + pkgAPI + ".Handler).HandleBackfillAttachmentExtraction": "embedding_sync",
+	"(*" + pkgAPI + ".Handler).HandleCreateMonitor":                "embedding_background+embedding_sync",
+	"(*" + pkgAPI + ".Handler).HandleEmbeddingBackfill":            "embedding_sync",
+	"(*" + pkgAPI + ".Handler).HandleEntrySyncMutation":            "embedding_background+embedding_sync",
+	"(*" + pkgAPI + ".Handler).HandleSchedulerStatus":              "embedding_background+embedding_sync",
+	"(*" + pkgAPI + ".Handler).HandleToggleMonitor":                "embedding_background+embedding_sync",
 }
 
-// TestOperationProviderEffectsDerivedFromCallGraph derives each SDK
-// operation's embedding/Web Push reachability from code (real router handler
-// -> conservative call graph -> provider sinks) and requires the policy row to
-// cover it. It also requires every derivable token in a row to be justified
-// by a handler path or a reviewed background mapping, and every background
-// entry point to be reviewed.
+type reviewedRoot struct {
+	count  int      // sink-reaching goroutine/callback roots under this name
+	tokens string   // exact derived tokens
+	ops    []string // operations whose state drives it (nil: non-SDK)
+}
+
+// reviewedBackground: every goroutine root in the module that reaches a sink
+// without an HTTP request, named by its (line-independent) enclosing
+// declaration, with the exact number of such roots there.
+var reviewedBackground = map[string]reviewedRoot{
+	"(*" + pkgAPI + ".Handler).StartPush":                                   {1, "web_push", []string{"reminders.create", "reminders.update", "reminders.snooze", "reminders.fire"}}, // fired-reminder push poller
+	"(*" + pkgService + ".AttentionDispatcher).Start":                       {1, "web_push", []string{"attention.create"}},
+	modulePath + "/internal/apiserver.startSingleGraphWorkers":              {1, "embedding_background+embedding_sync", []string{"reminders.create", "reminders.update", "reminders.snooze", "goals.create", "goals.update", "event_fanout"}}, // launch(): automations, goals ticker, reminder scheduler, webhooks, triggers
+	"(*" + pkgAPI + ".conversationJobs).run":                                {2, "embedding_background+embedding_sync", nil},                                                                                                                  // assistant jobs: not in the SDK contract
+	"(*" + pkgService + ".BulkJobService).Start":                            {1, "embedding_background+embedding_sync", nil},                                                                                                                  // bulk-jobs API: not in the SDK contract
+	modulePath + "/cmd/brain/commands.runServerWithOptionalRunner":          {1, "embedding_background+embedding_sync+web_push", nil},                                                                                                         // whole server started in a goroutine
+	"(*" + modulePath + "/internal/apiserver.tenantGraphManager).construct": {1, "embedding_background+embedding_sync", nil},                                                                                                                  // tenant-mode graph construction (public startup is single-mode)
+	modulePath + "/internal/apiserver.wireSupervisorControlEvents":          {1, "embedding_background+embedding_sync", nil},                                                                                                                  // runner-bridge control observer: not in the SDK contract
+}
+
+// reviewedCallbacks: address-taken code reaching a sink that nothing in the
+// module calls (invoked by external code or a table lookup).
+var reviewedCallbacks = map[string]reviewedRoot{
+	modulePath + "/internal/apiserver.tenantWorkloadHTTP": {1, "embedding_background+embedding_sync", nil}, // tenant-mode HTTP entry (sealed allowlist), registered outside router.go
+}
+
+// reviewedStartup: program entry points' synchronous effects (stopping at
+// goroutine and route roots), e.g. built-in automation registration.
+var reviewedStartup = map[string]string{
+	modulePath + "/cmd/brain.main": "embedding_background+embedding_sync",
+}
+
+// TestOperationProviderEffectsDerivedFromCallGraph derives embedding and Web
+// Push effects across the whole module and requires the policy and the
+// reviewed root lists to match it.
 func TestOperationProviderEffectsDerivedFromCallGraph(t *testing.T) {
 	data, err := os.ReadFile("../../api/operation-policy.yaml")
 	if err != nil {
@@ -211,11 +352,12 @@ func TestOperationProviderEffectsDerivedFromCallGraph(t *testing.T) {
 	if err := yaml.Unmarshal(data, &policy); err != nil {
 		t.Fatal(err)
 	}
-	g := buildEgressGraph(t)
-	handlers, allRoutes := operationHandlers(t, g)
+	g := sharedEgressGraph(t)
+	handlers, chi := operationHandlers(t, g)
 	if len(handlers) != 105 {
 		t.Fatalf("resolved %d operation handlers, want 105", len(handlers))
 	}
+	d := deriveEgress(g, handlers, chi, reviewedCuts)
 	justified := map[string]map[string]bool{}
 	justify := func(op, tok string) {
 		if justified[op] == nil {
@@ -230,46 +372,63 @@ func TestOperationProviderEffectsDerivedFromCallGraph(t *testing.T) {
 			continue
 		}
 		row := strings.Split(policy.Operations[op][4], "+")
-		found := g.reach(h)
-		for _, tok := range sortedKeys(found) {
+		for _, tok := range sortedKeys(d.ops[op]) {
 			justify(op, tok)
-			if tokenSatisfied(row, tok) {
-				continue
-			}
-			if reason := reviewedFlowExceptions[op][tok]; reason != "" {
-				continue
-			}
-			t.Errorf("%s reaches %s via %s but its provider column %q omits it", op, tok, strings.Join(found[tok], " -> "), policy.Operations[op][4])
-		}
-		for tok := range reviewedFlowExceptions[op] {
-			if _, ok := found[tok]; !ok {
-				t.Errorf("stale flow exception %s/%s: no longer derived", op, tok)
+			if !tokenSatisfied(row, tok) {
+				t.Errorf("%s reaches %s via %s but its provider column %q omits it", op, tok, strings.Join(d.ops[op][tok], " -> "), policy.Operations[op][4])
 			}
 		}
 	}
-	tops := backgroundTops(g, allRoutes)
-	if strings.Join(tops, "\n") != strings.Join(sortedKeys(reviewedBackground), "\n") {
-		t.Fatalf("background provider entry points changed; review api/operation-policy.yaml.\nderived:\n%s\nreviewed:\n%s", strings.Join(tops, "\n"), strings.Join(sortedKeys(reviewedBackground), "\n"))
+	for op, cuts := range reviewedCuts {
+		uncut := g.reach(handlers[op], nil, nil)
+		for _, c := range cuts {
+			if !g.edges[c.from][c.to] {
+				t.Errorf("stale cut for %s: edge %s -> %s no longer exists", op, c.from, c.to)
+			}
+		}
+		if len(uncut) == len(d.ops[op]) {
+			t.Errorf("stale cut for %s: removing the reviewed edge removes no token", op)
+		}
 	}
-	for _, top := range tops {
-		tokens := g.reach(top)
-		for _, op := range reviewedBackground[top] {
-			if op == "event_fanout" {
-				if len(policy.EventFanout) == 0 {
-					t.Errorf("%s is event fan-out but event_fanout is not declared", top)
+	exact := func(kind string, got, want map[string]string) {
+		if strings.Join(sortedPairs(got), "\n") != strings.Join(sortedPairs(want), "\n") {
+			t.Errorf("%s provider reachability changed; review it.\nderived:\n%s\nreviewed:\n%s", kind, strings.Join(sortedPairs(got), "\n"), strings.Join(sortedPairs(want), "\n"))
+		}
+	}
+	exact("non-SDK routes", d.nonSDK, reviewedNonSDKRoutes)
+	exact("startup entry points", d.startup, reviewedStartup)
+	exactRoots := func(kind string, gotTokens map[string]string, gotCount map[string]int, want map[string]reviewedRoot) {
+		got, wantFlat := map[string]string{}, map[string]string{}
+		for k, v := range gotTokens {
+			got[k] = fmt.Sprintf("%d %s", gotCount[k], v)
+		}
+		for k, v := range want {
+			wantFlat[k] = fmt.Sprintf("%d %s", v.count, v.tokens)
+		}
+		exact(kind, got, wantFlat)
+		for name, r := range want {
+			for _, op := range r.ops {
+				if op == "event_fanout" {
+					if len(policy.EventFanout) == 0 {
+						t.Errorf("%s is event fan-out but event_fanout is not declared", name)
+					}
+					continue
 				}
-				continue
-			}
-			row := strings.Split(policy.Operations[op][4], "+")
-			for tok := range tokens {
-				justify(op, tok)
-				if !tokenSatisfied(row, tok) {
-					t.Errorf("%s (background %s) reaches %s but its provider column %q omits it", op, top, tok, policy.Operations[op][4])
+				row := strings.Split(policy.Operations[op][4], "+")
+				for _, tok := range strings.Split(gotTokens[name], "+") {
+					if tok == "" {
+						continue
+					}
+					justify(op, tok)
+					if !tokenSatisfied(row, tok) {
+						t.Errorf("%s (driven by %s) reaches %s but its provider column %q omits it", op, name, tok, policy.Operations[op][4])
+					}
 				}
 			}
 		}
 	}
-	// No hand-claimed derivable token without a code path.
+	exactRoots("background goroutine roots", d.background, d.backgroundCount, reviewedBackground)
+	exactRoots("callback roots", d.callbacks, d.callbackCount, reviewedCallbacks)
 	for op, row := range policy.Operations {
 		for _, tok := range strings.Split(row[4], "+") {
 			if derivableTokens[tok] && !justified[op][tok] {
@@ -279,44 +438,24 @@ func TestOperationProviderEffectsDerivedFromCallGraph(t *testing.T) {
 	}
 }
 
-// backgroundTops returns analyzed functions that reach a provider sink, are
-// not reachable from any HTTP route handler, and have no analyzed caller: the
-// entry points of pollers, dispatchers, schedulers and startup paths.
-func backgroundTops(g *egressGraph, routeHandlers []string) []string {
-	fromRoutes := map[string]bool{}
-	var stack []string
-	for _, r := range routeHandlers {
-		if !fromRoutes[r] {
-			fromRoutes[r] = true
-			stack = append(stack, r)
+func sortedPairs(m map[string]string) []string {
+	var out []string
+	for _, k := range sortedKeys(m) {
+		out = append(out, k+" = "+m[k])
+	}
+	return out
+}
+
+// reviewedReflection: reflective calls are a known limit of the static
+// analysis (reflect.Value.Call/CallSlice/Method/MethodByName can reach any
+// method). None exist in the module; any new one must be reviewed here.
+var reviewedReflection = map[string]bool{}
+
+func TestNoUnreviewedReflectiveCalls(t *testing.T) {
+	g := sharedEgressGraph(t)
+	for _, site := range g.reflect {
+		if !reviewedReflection[site] {
+			t.Errorf("unreviewed reflective call (egress analysis cannot follow it): %s", site)
 		}
 	}
-	for len(stack) > 0 {
-		n := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		for next := range g.edges[n] {
-			if !fromRoutes[next] {
-				fromRoutes[next] = true
-				stack = append(stack, next)
-			}
-		}
-	}
-	var tops []string
-	for key := range g.declared {
-		if fromRoutes[key] || len(g.reach(key)) == 0 {
-			continue
-		}
-		hasCaller := false
-		for caller := range g.callers[key] {
-			if g.declared[caller] {
-				hasCaller = true
-				break
-			}
-		}
-		if !hasCaller {
-			tops = append(tops, key)
-		}
-	}
-	sort.Strings(tops)
-	return tops
 }

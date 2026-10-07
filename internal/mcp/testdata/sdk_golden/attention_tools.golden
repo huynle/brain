@@ -1,0 +1,115 @@
+=== create missing kind (attention_create)
+ERROR
+Error: provide both 'kind' and 'title'
+=== create invalid severity (attention_create)
+ERROR
+Error: invalid severity "apocalyptic"
+=== create (attention_create)
+OK
+Attention created: Look at this
+ID: <ATTN1>
+Recipient: local
+Kind: custom
+Severity: warning
+State: unread
+Project: <golden-attention>
+Task: tsk00001
+
+details here
+
+=== create minimal (attention_create)
+OK
+Attention created: Minimal
+ID: <ATTN2>
+Recipient: local
+Kind: custom
+Severity: info
+State: unread
+Project: <golden-attention>
+
+=== get (attention_get)
+OK
+Attention: Look at this
+ID: <ATTN1>
+Recipient: local
+Kind: custom
+Severity: warning
+State: unread
+Project: <golden-attention>
+Task: tsk00001
+
+details here
+
+=== get missing arg (attention_get)
+ERROR
+Error: provide an 'id'
+=== get unknown (attention_get)
+ERROR
+Error: attention item not found
+=== list project (attention_list)
+OK
+2 attention item(s):
+- [info/unread] Minimal (<ATTN2>) project=<golden-attention>
+- [warning/unread] Look at this (<ATTN1>) project=<golden-attention> task=tsk00001
+
+=== list severity (attention_list)
+OK
+1 attention item(s):
+- [warning/unread] Look at this (<ATTN1>) project=<golden-attention> task=tsk00001
+
+=== list empty (attention_list)
+OK
+No attention items.
+=== list invalid state (attention_list)
+OK
+No attention items.
+=== snooze (attention_snooze)
+OK
+Attention snoozed: Minimal
+ID: <ATTN2>
+Recipient: local
+Kind: custom
+Severity: info
+State: snoozed
+Project: <golden-attention>
+
+=== snooze invalid (attention_snooze)
+OK
+Attention snoozed: Minimal
+ID: <ATTN2>
+Recipient: local
+Kind: custom
+Severity: info
+State: snoozed
+Project: <golden-attention>
+
+=== snooze unknown (attention_snooze)
+ERROR
+Error: attention "nonexistent" not found
+=== resolve (attention_resolve)
+OK
+Attention resolved: Look at this
+ID: <ATTN1>
+Recipient: local
+Kind: custom
+Severity: warning
+State: resolved
+Project: <golden-attention>
+Task: tsk00001
+
+details here
+
+=== resolve unknown (attention_resolve)
+ERROR
+Error: attention "nonexistent" not found
+=== list resolved (attention_list)
+OK
+1 attention item(s):
+- [warning/resolved] Look at this (<ATTN1>) project=<golden-attention> task=tsk00001
+
+=== dead api list (attention_list)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/attention?kind=k&project=p": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api resolve (attention_resolve)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/attention/a1/resolve": dial tcp <LOOPBACK>: connect: connection refused

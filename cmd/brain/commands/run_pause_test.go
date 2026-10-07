@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -231,5 +232,82 @@ func TestRunPauseResumeProject_RequiresAProject(t *testing.T) {
 	}
 	if len(api.requests) != 0 {
 		t.Errorf("no request expected: %v", api.requests)
+	}
+}
+
+// Real server: with ONE of two projects paused, /runner/status reports
+// paused=true. resume-all must not claim every project is paused.
+func TestRunResumeAll_RealServer_OneOfTwoPaused(t *testing.T) {
+	url := startRealAPI(t, "alpha", "beta")
+	pause, _ := pauseCmd(url, "pause", []string{"alpha"}, RunnerFlags{}, "", false)
+	if err := pause.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	cmd, out := pauseCmd(url, "resume-all", nil, RunnerFlags{}, "n\n", true)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	o := out.String()
+	if strings.Contains(strings.ToLower(o), "all projects are paused") {
+		t.Errorf("one of two projects paused, but output claims all are:\n%s", o)
+	}
+	if !strings.Contains(o, "Currently paused projects (1)") || !strings.Contains(o, "alpha") || strings.Contains(o, "  beta") {
+		t.Errorf("should list exactly alpha:\n%s", o)
+	}
+}
+
+func TestRunResumeAll_RealServer_AllPaused(t *testing.T) {
+	url := startRealAPI(t, "alpha", "beta")
+	pauseAll, _ := pauseCmd(url, "pause-all", nil, RunnerFlags{Yes: true}, "", false)
+	if err := pauseAll.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	cmd, out := pauseCmd(url, "resume-all", nil, RunnerFlags{Yes: true}, "", false)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "All 2 projects are paused") {
+		t.Errorf("every project was paused; output should say so:\n%s", out.String())
+	}
+	status, err := runner.NewAPIClient(runner.RunnerConfig{BrainAPIURL: url}).GetRunnerStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.PausedProjects) != 0 {
+		t.Errorf("resume-all left projects paused: %v", status.PausedProjects)
+	}
+}
+
+// pause-all/resume-all take no project: a stray positional must fail as a
+// usage error before any request, even with --yes.
+func TestRunPauseAllResumeAll_RejectPositionals(t *testing.T) {
+	url := startRealAPI(t, "demo", "other")
+	client := runner.NewAPIClient(runner.RunnerConfig{BrainAPIURL: url})
+	for _, sub := range []string{"pause-all", "resume-all"} {
+		cmd, _ := pauseCmd(url, sub, []string{"demo"}, RunnerFlags{Yes: true}, "", false)
+		err := cmd.Execute()
+		var ue *UsageError
+		if !errors.As(err, &ue) {
+			t.Fatalf("%s demo: err = %v, want usage error", sub, err)
+		}
+		want := "brain run " + strings.TrimSuffix(sub, "-all") + " <project>"
+		if !strings.Contains(ue.Message, want) {
+			t.Errorf("%s demo: message %q should point at %q", sub, ue.Message, want)
+		}
+		status, err := client.GetRunnerStatus(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(status.PausedProjects) != 0 {
+			t.Fatalf("%s demo changed server state: paused %v", sub, status.PausedProjects)
+		}
+	}
+	api, fakeURL := newPauseAPI(t)
+	for _, sub := range []string{"pause-all", "resume-all"} {
+		cmd, _ := pauseCmd(fakeURL, sub, []string{"demo"}, RunnerFlags{Yes: true}, "", false)
+		_ = cmd.Execute()
+	}
+	if len(api.requests) != 0 {
+		t.Errorf("rejected commands must make no request: %v", api.requests)
 	}
 }

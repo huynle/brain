@@ -80,7 +80,21 @@ func (c *RunCommand) projectArg() string {
 	return c.Project
 }
 
+// rejectProjectArgs refuses positionals on a server-wide command: someone who
+// typed `pause-all demo` meant `pause demo`, and --yes would otherwise skip
+// the only prompt that says "every project".
+func (c *RunCommand) rejectProjectArgs(single string) error {
+	if len(c.Args) == 0 {
+		return nil
+	}
+	return &UsageError{Message: fmt.Sprintf("brain run %s: takes no arguments (got %q); it acts on every project server-wide.\nFor one project, use `brain run %s <project>`.",
+		c.Subcommand, strings.Join(c.Args, " "), single)}
+}
+
 func (c *RunCommand) runPauseAll() error {
+	if err := c.rejectProjectArgs("pause"); err != nil {
+		return err
+	}
 	if err := c.requireConfirmable("pause all projects"); err != nil {
 		return err
 	}
@@ -113,6 +127,9 @@ func (c *RunCommand) runPauseAll() error {
 }
 
 func (c *RunCommand) runResumeAll() error {
+	if err := c.rejectProjectArgs("resume"); err != nil {
+		return err
+	}
 	if err := c.requireConfirmable("resume all projects"); err != nil {
 		return err
 	}
@@ -129,8 +146,12 @@ func (c *RunCommand) runResumeAll() error {
 		fmt.Fprintln(c.out(), "No projects are paused; nothing to resume.")
 		return nil
 	}
-	if status.Paused {
-		fmt.Fprintln(c.out(), "All projects are paused server-wide.")
+	// The server reports paused=true whenever ANY project is paused, so the
+	// scope comes from pausedProjects, compared with the known projects.
+	if len(status.PausedProjects) == 0 {
+		fmt.Fprintln(c.out(), "Task execution is paused server-wide.")
+	} else if known, err := client.ListProjects(ctx); err == nil && len(known) > 0 && allIn(known, status.PausedProjects) {
+		fmt.Fprintf(c.out(), "All %d projects are paused.\n", len(known))
 	}
 	if len(status.PausedProjects) > 0 {
 		fmt.Fprintf(c.out(), "Currently paused projects (%d):\n", len(status.PausedProjects))
@@ -192,4 +213,18 @@ func (c *RunCommand) apiURL() string {
 		return u
 	}
 	return c.Config.MCP.APIURL
+}
+
+// allIn reports whether every element of want appears in have.
+func allIn(want, have []string) bool {
+	set := make(map[string]bool, len(have))
+	for _, h := range have {
+		set[h] = true
+	}
+	for _, w := range want {
+		if !set[w] {
+			return false
+		}
+	}
+	return true
 }

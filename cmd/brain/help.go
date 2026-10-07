@@ -400,6 +400,10 @@ USAGE:
   brain run <subcommand> [project|all] [flags]
   brain runner <subcommand> [project|all] [flags]
 
+brain runner start/stop/status manage local background runners on this
+machine (see 'brain help runner'); other subcommands are aliases of brain run
+(e.g. 'brain runner pause demo' = 'brain run pause demo').
+
 SUBCOMMANDS:
   start [project|all]            Start a runner
   pause <project>                Pause task execution for one project

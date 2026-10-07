@@ -8,6 +8,9 @@ import (
 )
 
 func (c *RunCommand) runFeatures() error {
+	if err := c.rejectExtraArgs(1, "brain run features <project>"); err != nil {
+		return err
+	}
 	project := c.projectArg()
 	if project == "" {
 		return &UsageError{Message: "brain run features: project required: brain run features <project>"}
@@ -67,6 +70,9 @@ func (c *RunCommand) runFeatures() error {
 const defaultLogLimit = 100
 
 func (c *RunCommand) runLogs() error {
+	if err := c.rejectExtraArgs(2, "brain run logs <project> <taskId> [--limit N]"); err != nil {
+		return err
+	}
 	if len(c.Args) < 2 {
 		return &UsageError{Message: "brain run logs: usage: brain run logs <project> <taskId> [--limit N]"}
 	}

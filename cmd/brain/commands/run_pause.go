@@ -71,6 +71,15 @@ func (c *RunCommand) requireConfirmable(action string) error {
 	return fmt.Errorf("refusing to %s without confirmation: stdin is not a terminal (pass --yes to confirm)", action)
 }
 
+// rejectExtraArgs refuses positionals beyond the max a subcommand documents,
+// before any request: `run pause demo other` must not silently pause only demo.
+func (c *RunCommand) rejectExtraArgs(max int, usage string) error {
+	if len(c.Args) <= max {
+		return nil
+	}
+	return &UsageError{Message: fmt.Sprintf("brain run %s: unexpected argument %q\nUsage: %s", c.Subcommand, c.Args[max], usage)}
+}
+
 // projectArg returns the explicit project positional, or "" when none was
 // given ("all" is the router's placeholder for "no project").
 func (c *RunCommand) projectArg() string {
@@ -177,6 +186,9 @@ func (c *RunCommand) runResumeAll() error {
 }
 
 func (c *RunCommand) runPauseProject() error {
+	if err := c.rejectExtraArgs(1, "brain run pause <project>"); err != nil {
+		return err
+	}
 	project := c.projectArg()
 	if project == "" {
 		return &UsageError{Message: "brain run pause: project required: brain run pause <project>\n(To pause every project server-wide, use `brain run pause-all`.)"}
@@ -193,6 +205,9 @@ func (c *RunCommand) runPauseProject() error {
 }
 
 func (c *RunCommand) runResumeProject() error {
+	if err := c.rejectExtraArgs(1, "brain run resume <project>"); err != nil {
+		return err
+	}
 	project := c.projectArg()
 	if project == "" {
 		return &UsageError{Message: "brain run resume: project required: brain run resume <project>\n(To resume every project server-wide, use `brain run resume-all`.)"}

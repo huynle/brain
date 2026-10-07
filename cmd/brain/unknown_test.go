@@ -70,6 +70,8 @@ func TestRunCLIExitCodes(t *testing.T) {
 		{[]string{"run", "bogus"}, 2, `brain run: unknown subcommand "bogus"`},
 		{[]string{"run", "pause-all", "demo", "--yes"}, 2, "takes no arguments"},
 		{[]string{"run", "resume-all", "--yes", "demo"}, 2, "takes no arguments"},
+		{[]string{"run", "pause", "demo", "other"}, 2, `unexpected argument "other"`},
+		{[]string{"runner", "logs", "demo", "t1", "x"}, 2, `unexpected argument "x"`},
 	}
 	for _, tc := range cases {
 		var stderr bytes.Buffer

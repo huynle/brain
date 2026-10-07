@@ -265,3 +265,13 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+func TestRunHelp_ExplainsRunnerAlias(t *testing.T) {
+	out := captureOutput(func() { ShowHelp("run") })
+	flat := strings.Join(strings.Fields(out), " ")
+	for _, want := range []string{"brain runner start/stop/status manage local background runners", "other subcommands are aliases of brain run"} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("run help missing %q:\n%s", want, out)
+		}
+	}
+}

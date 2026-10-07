@@ -314,3 +314,28 @@ func TestRunPauseAllResumeAll_RejectPositionals(t *testing.T) {
 		t.Errorf("rejected commands must make no request: %v", api.requests)
 	}
 }
+
+// Per-project commands take exactly their documented positionals; extras
+// (`run pause demo other`) are usage errors with no request.
+func TestRunProjectCommands_RejectExtraPositionals(t *testing.T) {
+	api, url := newPauseAPI(t)
+	for _, tc := range []struct {
+		sub  string
+		args []string
+	}{
+		{"pause", []string{"demo", "other"}},
+		{"resume", []string{"demo", "other"}},
+		{"features", []string{"demo", "other"}},
+		{"logs", []string{"demo", "task1", "extra"}},
+	} {
+		cmd, _ := pauseCmd(url, tc.sub, tc.args, RunnerFlags{}, "", false)
+		err := cmd.Execute()
+		var ue *UsageError
+		if !errors.As(err, &ue) || !strings.Contains(ue.Message, "unexpected argument") || !strings.Contains(ue.Message, tc.args[len(tc.args)-1]) {
+			t.Errorf("brain run %s %v: err = %v, want usage error naming the extra argument", tc.sub, tc.args, err)
+		}
+	}
+	if len(api.requests) != 0 {
+		t.Errorf("rejected commands must make no request: %v", api.requests)
+	}
+}

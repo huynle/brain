@@ -113,12 +113,15 @@ func TestPayloadSealRoundTripAndBinding(t *testing.T) {
 	// Every bound field is authenticated: a different tenant, execution or
 	// purpose, or tampered expiry, key ID, nonce or ciphertext, fails closed.
 	for name, mutate := range map[string]func(*payloadBinding, *sealedPayload){
-		"tenant":     func(b *payloadBinding, _ *sealedPayload) { b.Tenant = "t2" },
-		"execution":  func(b *payloadBinding, _ *sealedPayload) { b.Execution = "e2" },
-		"purpose":    func(b *payloadBinding, _ *sealedPayload) { b.Purpose = "logs" },
-		"expiry":     func(_ *payloadBinding, p *sealedPayload) { p.ExpiresAt = p.ExpiresAt.Add(time.Hour) },
-		"nonce":      func(_ *payloadBinding, p *sealedPayload) { p.Nonce = bytes.Clone(p.Nonce); p.Nonce[0] ^= 1 },
-		"ciphertext": func(_ *payloadBinding, p *sealedPayload) { p.Ciphertext = bytes.Clone(p.Ciphertext); p.Ciphertext[0] ^= 1 },
+		"tenant":    func(b *payloadBinding, _ *sealedPayload) { b.Tenant = "t2" },
+		"execution": func(b *payloadBinding, _ *sealedPayload) { b.Execution = "e2" },
+		"purpose":   func(b *payloadBinding, _ *sealedPayload) { b.Purpose = "logs" },
+		"expiry":    func(_ *payloadBinding, p *sealedPayload) { p.ExpiresAt = p.ExpiresAt.Add(time.Hour) },
+		"nonce":     func(_ *payloadBinding, p *sealedPayload) { p.Nonce = bytes.Clone(p.Nonce); p.Nonce[0] ^= 1 },
+		"ciphertext": func(_ *payloadBinding, p *sealedPayload) {
+			p.Ciphertext = bytes.Clone(p.Ciphertext)
+			p.Ciphertext[0] ^= 1
+		},
 	} {
 		bb, pp := b, sealed
 		mutate(&bb, &pp)
@@ -375,7 +378,7 @@ func TestSealedPayloadFormattingHidesBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	forbidden := []string{
-		fmt.Sprint(sealed.Ciphertext), fmt.Sprint(sealed.Nonce),
+		fmt.Sprintf("%d", sealed.Ciphertext), fmt.Sprintf("%d", sealed.Nonce), // decimal slice form, as %v prints
 		hex.EncodeToString(sealed.Ciphertext[:8]), hex.EncodeToString(sealed.Nonce),
 		strings.ToUpper(hex.EncodeToString(sealed.Nonce)), string(sealed.Ciphertext[:8]),
 		"tenant-SECRETVAL", "exec-SECRETVAL", "SECRET-PAYLOAD",

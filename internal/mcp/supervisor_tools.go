@@ -51,7 +51,7 @@ func registerSessionChildren(s *Server, client *APIClient) {
 
 func registerResourceHealth(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{Name: "resource_health", Description: "Read bounded recent task process-tree RSS and memory-pressure observations for a project. Reuses the existing memory guard; no new sampling or capacity changes. Null is unavailable, never zero. Freshness is explicit; quiet activity is not proof of a stall. Old runners and disabled guards have no samples.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"project": {Type: "string"}, "task_id": {Type: "string"}}, Required: []string{"project"}}}, func(ctx context.Context, args map[string]any) (string, error) {
-		project := ResolveProjectArg(args)
+		project := ResolveProjectArg(ctx, args)
 		if project == "" {
 			return "", fmt.Errorf("project is required")
 		}
@@ -65,7 +65,7 @@ func registerResourceHealth(s *Server, client *APIClient) {
 
 func registerEventWait(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{Name: "events_wait", Description: "Wait up to 25 seconds for new project/task/feature events using an opaque reconnect cursor. Initial calls return retained history. Expired cursors explicitly require a fresh state snapshot. Output is bounded; events follow server ring order. No new polling loop. Read scope required.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"project": {Type: "string"}, "task_id": {Type: "string"}, "feature_id": {Type: "string"}, "type": {Type: "string"}, "after": {Type: "string"}, "timeout_ms": {Type: "number"}, "limit": {Type: "number"}}, Required: []string{"project"}}}, func(ctx context.Context, args map[string]any) (string, error) {
-		project := ResolveProjectArg(args)
+		project := ResolveProjectArg(ctx, args)
 		if project == "" {
 			return "", fmt.Errorf("project is required")
 		}
@@ -83,7 +83,7 @@ func registerEventWait(s *Server, client *APIClient) {
 
 func registerDeliveryTools(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{Name: "delivery_gate", Description: "Read implementation status separately from opt-in verified delivery gates, including unmet evidence. Does not merge or deploy.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"project": {Type: "string"}, "task_id": {Type: "string"}}, Required: []string{"project", "task_id"}}}, func(ctx context.Context, args map[string]any) (string, error) {
-		project, task := ResolveProjectArg(args), StringArg(args, "task_id", "")
+		project, task := ResolveProjectArg(ctx, args), StringArg(args, "task_id", "")
 		if project == "" || task == "" {
 			return "", fmt.Errorf("project and task_id required")
 		}
@@ -94,7 +94,7 @@ func registerDeliveryTools(s *Server, client *APIClient) {
 		return string(out), nil
 	})
 	s.RegisterTool(Tool{Name: "delivery_verify", Description: "Read-only GitHub provider verification and durable Brain evidence update for a configured task delivery gate. Requires admin scope and expected_revision. Never merges, pushes or deploys. Provider failure invalidates previous evidence and reports unmet gates.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"project": {Type: "string"}, "task_id": {Type: "string"}, "expected_revision": {Type: "number"}}, Required: []string{"project", "task_id", "expected_revision"}}}, func(ctx context.Context, args map[string]any) (string, error) {
-		project, task := ResolveProjectArg(args), StringArg(args, "task_id", "")
+		project, task := ResolveProjectArg(ctx, args), StringArg(args, "task_id", "")
 		if project == "" || task == "" {
 			return "", fmt.Errorf("project and task_id required")
 		}
@@ -116,7 +116,7 @@ func registerSupervisorReads(s *Server, client *APIClient) {
 			required = append(required, "task_id")
 		}
 		s.RegisterTool(Tool{Name: name, Description: "Read-only structured supervisor " + path + ". Reports unavailable/unknown sources explicitly; does not reserve capacity, create claims, or dispatch work. Requires read scope.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"project": {Type: "string"}, "task_id": {Type: "string"}, "feature_id": {Type: "string"}, "limit": {Type: "number"}, "after_task": {Type: "string"}, "manual": {Type: "boolean"}}, Required: required}}, func(ctx context.Context, args map[string]any) (string, error) {
-			query := map[string]string{"project_id": ResolveProjectArg(args), "limit": strconv.Itoa(IntArg(args, "limit", 50))}
+			query := map[string]string{"project_id": ResolveProjectArg(ctx, args), "limit": strconv.Itoa(IntArg(args, "limit", 50))}
 			for _, key := range []string{"task_id", "feature_id", "after_task"} {
 				query[key] = StringArg(args, key, "")
 			}
@@ -158,7 +158,7 @@ func registerSupervisorLedgers(s *Server, client *APIClient) {
 		s.RegisterTool(Tool{Name: name, Description: "Read or update the durable " + path + " ledger. GET requires read scope; writes require admin scope. Explicit revisions prevent stale edits. Checkpoint answers are not verification. Budget units cover admitted work only; opaque executor tokens and cost are unknown.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"project": {Type: "string"}, "id": {Type: "string"}, "after": {Type: "string"}, "command": {Type: "object", Description: "Optional REST command object. Checkpoints: action request/answer/verify/supersede, expected_revision, checkpoint {id,project,artifact,question,answer,verification_reference}. Budgets: action configure/reserve/commit/cancel, expected_revision, budget {id,project,timezone,unit,limit}, reservation_id,parent_id,units."}}}}, func(ctx context.Context, args map[string]any) (string, error) {
 			method := http.MethodGet
 			var body any
-			query := map[string]string{"project": ResolveProjectArg(args), "id": StringArg(args, "id", ""), "after": StringArg(args, "after", "")}
+			query := map[string]string{"project": ResolveProjectArg(ctx, args), "id": StringArg(args, "id", ""), "after": StringArg(args, "after", "")}
 			if command, ok := args["command"].(map[string]any); ok {
 				method = http.MethodPost
 				body = command
@@ -172,7 +172,7 @@ func registerSupervisorLedgers(s *Server, client *APIClient) {
 		})
 	}
 	s.RegisterTool(Tool{Name: "delivery_record", Description: "Configure an opt-in delivery policy or record integration evidence for the exact verified merge artifact. Admin scope and expected_revision required. Provider evidence cannot be supplied by this tool; use delivery_verify.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"project": {Type: "string"}, "task_id": {Type: "string"}, "command": {Type: "object", Description: "action configure with policy {required,repository,pull_request,head,target,required_checks}; or action integration with artifact,passed,evidence_reference. Include expected_revision."}}, Required: []string{"project", "task_id", "command"}}}, func(ctx context.Context, args map[string]any) (string, error) {
-		project, task := ResolveProjectArg(args), StringArg(args, "task_id", "")
+		project, task := ResolveProjectArg(ctx, args), StringArg(args, "task_id", "")
 		command, ok := args["command"].(map[string]any)
 		if project == "" || task == "" || !ok {
 			return "", fmt.Errorf("project, task_id and command required")

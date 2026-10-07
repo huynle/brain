@@ -104,8 +104,15 @@ func validCallerPath(v string) bool {
 var worktreeContainers = []string{"/.worktrees/", "/.claude/worktrees/"}
 
 // ExecutionContext derives the per-call execution context from the caller's
-// headers, using the same rules the removed stdio server applied to its launch
-// directory: main repo path, home-relative workdir, project = last segment.
+// headers, keeping the removed stdio server's guard against misfiling.
+//
+// That server named a project only when git vouched for the directory, so a
+// container sitting in /app never became project "app". The hosted server
+// cannot run git on the client's disk, so the declared home stands in: a
+// project is derived only for a workdir strictly under X-Brain-Home, with
+// linked worktrees mapped back to their repo, and never for home itself.
+// Anything outside home — /app, /tmp, /workspace — or a call without a usable
+// home yields no project.
 func (c *CallerContext) ExecutionContext() ExecutionContext {
 	ec := ExecutionContext{HostID: c.HostID, ClientID: c.ClientID, AbsPath: c.Workdir}
 	if c.Workdir == "" {
@@ -122,16 +129,19 @@ func (c *CallerContext) ExecutionContext() ExecutionContext {
 	}
 
 	ec.Workdir = main
-	if c.Home != "" && c.Home != "/" {
-		if main == c.Home {
-			ec.Workdir = ""
-		} else if rel, ok := strings.CutPrefix(main, c.Home+"/"); ok {
-			ec.Workdir = rel
-		}
+	if c.Home == "" || c.Home == "/" {
+		return ec
 	}
-	if main != "/" && main != c.Home {
-		ec.ProjectID = callerProjectName(path.Base(main))
+	if main == c.Home {
+		ec.Workdir = ""
+		return ec
 	}
+	rel, underHome := strings.CutPrefix(main, c.Home+"/")
+	if !underHome {
+		return ec
+	}
+	ec.Workdir = rel
+	ec.ProjectID = callerProjectName(path.Base(main))
 	return ec
 }
 

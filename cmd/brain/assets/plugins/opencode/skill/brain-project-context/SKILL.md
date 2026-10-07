@@ -49,10 +49,11 @@ deliberately — guessing is how unrelated entries end up filed under a project
 named after a folder.
 
 The project is resolved from the `X-Brain-Workdir` header your MCP client
-config sends (the main repo's folder name; worktrees under `.worktrees/` map to
-their repo). Without that header it falls back to the API server's own
-directory, which is shared by every client — treat that as a default to
-override, not as an answer.
+config sends, only when that folder is under `X-Brain-Home` (the main repo's
+folder name; worktrees under `.worktrees/` map to their repo). Without any
+`X-Brain-*` header it falls back to the API server's own directory, which is
+shared by every client — treat that as a default to override, not as an
+answer.
 
 ### 2. Load the project dream
 

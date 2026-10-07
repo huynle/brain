@@ -1,10 +1,12 @@
 package mcp
 
 import (
+	"context"
 	"net/url"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // ExecutionContext holds the project and caller context MCP tool calls
@@ -153,8 +155,12 @@ func gitCommand(dir string, args ...string) (string, error) {
 	return string(out), nil
 }
 
-// CachedContext holds the lazily-initialized execution context.
-var cachedContext *ExecutionContext
+// cachedContext holds the lazily-initialized context of the Brain API
+// process itself. Guarded by cachedContextMu: hosted calls run concurrently.
+var (
+	cachedContextMu sync.Mutex
+	cachedContext   *ExecutionContext
+)
 
 // ContextDir is the directory used for execution context detection.
 var ContextDir = func() string {
@@ -164,6 +170,8 @@ var ContextDir = func() string {
 
 // GetCachedContext returns the execution context, computing it once.
 func GetCachedContext() ExecutionContext {
+	cachedContextMu.Lock()
+	defer cachedContextMu.Unlock()
 	if cachedContext == nil {
 		ctx := GetExecutionContext(ContextDir())
 		cachedContext = &ctx
@@ -171,22 +179,44 @@ func GetCachedContext() ExecutionContext {
 	return *cachedContext
 }
 
-// ResolveProject returns the project ID from args or falls back to cached context.
-func ResolveProject(args map[string]any) string {
-	if p, ok := args["project"].(string); ok && p != "" {
-		return p
+type callerContextKey struct{}
+
+// withCaller records the hosted caller on the tool call's context so project
+// resolution can tell "no headers" from "headers that named no project".
+func withCaller(ctx context.Context, c *CallerContext) context.Context {
+	if c == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, callerContextKey{}, c)
+}
+
+// DefaultProject is the project a tool call targets when it names none — the
+// same answer context_get reports. A call carrying any caller header gets the
+// project its headers resolve to, possibly none; it never inherits the Brain
+// API process's own project. Only headerless calls fall back to that.
+func DefaultProject(ctx context.Context) string {
+	if c, ok := ctx.Value(callerContextKey{}).(*CallerContext); ok {
+		return c.ExecutionContext().ProjectID
 	}
 	return GetCachedContext().ProjectID
 }
 
+// ResolveProject returns the project ID from args or falls back to DefaultProject.
+func ResolveProject(ctx context.Context, args map[string]any) string {
+	if p, ok := args["project"].(string); ok && p != "" {
+		return p
+	}
+	return DefaultProject(ctx)
+}
+
 // ResolveProjectArg returns the project ID from args, preferring the canonical
 // "project" key, accepting legacy "project_id"/"projectId" spellings, and
-// falling back to the ambient launch-directory context.
-func ResolveProjectArg(args map[string]any) string {
+// falling back to DefaultProject.
+func ResolveProjectArg(ctx context.Context, args map[string]any) string {
 	if p := StringArgAlias(args, "", "project", "project_id", "projectId"); p != "" {
 		return p
 	}
-	return GetCachedContext().ProjectID
+	return DefaultProject(ctx)
 }
 
 // argAlias returns the first non-nil raw value among keys.

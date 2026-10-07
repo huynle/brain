@@ -262,11 +262,18 @@ func TestCallerProjectDetection(t *testing.T) {
 		{"/Users/huy/projects/brain-api", "/Users/huy", "brain-api", "projects/brain-api"},
 		{"/Users/huy/projects/brain-api/.worktrees/hosted-mcp-only", "/Users/huy", "brain-api", "projects/brain-api"},
 		{"/Users/huy/projects/brain-api/.claude/worktrees/x-1", "/Users/huy", "brain-api", "projects/brain-api"},
-		{"/srv/repos/demo", "", "demo", "/srv/repos/demo"},
 		{"/Users/huy", "/Users/huy", "", ""},
-		{"/", "", "", "/"},
-		{"/Users/huy2/projects/x", "/Users/huy", "x", "/Users/huy2/projects/x"},
 		{"/Users/huy/My Project!", "/Users/huy", "", "My Project!"},
+		{"/Users/huy/.worktrees/x", "/Users/huy", "", ""},
+		// Outside home there is no git to vouch for the folder, so no project:
+		// this is the guard behind the projects/app misfiling incident.
+		{"/srv/repos/demo", "", "", "/srv/repos/demo"},
+		{"/Users/huy/projects/brain-api", "", "", "/Users/huy/projects/brain-api"},
+		{"/", "", "", "/"},
+		{"/app", "/root", "", "/app"},
+		{"/tmp", "/Users/huy", "", "/tmp"},
+		{"/workspace/.worktrees/x", "/", "", "/workspace"},
+		{"/Users/huy2/projects/x", "/Users/huy", "", "/Users/huy2/projects/x"},
 	}
 	for _, tc := range cases {
 		c := &CallerContext{Workdir: tc.workdir, Home: tc.home}
@@ -386,4 +393,120 @@ func containsRequest(reqs []string, fragment string) bool {
 		}
 	}
 	return false
+}
+
+// withAmbientProject stands in for the Brain API process's own working
+// directory resolving to a project, as it does when brain-api runs inside a
+// checkout.
+func withAmbientProject(t *testing.T, project string) {
+	t.Helper()
+	cachedContextMu.Lock()
+	cachedContext = &ExecutionContext{ProjectID: project}
+	cachedContextMu.Unlock()
+	t.Cleanup(func() {
+		cachedContextMu.Lock()
+		cachedContext = nil
+		cachedContextMu.Unlock()
+	})
+}
+
+// Any caller header means the call speaks for a client; the API host's own
+// project must never stand in for one the headers failed to name.
+func TestHostedMCP_CallerHeadersNeverFallBackToServerProject(t *testing.T) {
+	withAmbientProject(t, "api-host-project")
+	cases := map[string]map[string]string{
+		"workdir is home": {HeaderBrainWorkdir: "/Users/u", HeaderBrainHome: "/Users/u"},
+		"root workdir":    {HeaderBrainWorkdir: "/"},
+		"host id only":    {HeaderBrainHostID: "machine_cafebabe"},
+		"bad folder name": {HeaderBrainWorkdir: "/Users/u/My Proj!", HeaderBrainHome: "/Users/u"},
+		"outside home":    {HeaderBrainWorkdir: "/app", HeaderBrainHome: "/root"},
+		"rejected header": {HeaderBrainWorkdir: "relative/path"},
+	}
+	for name, headers := range cases {
+		t.Run(name, func(t *testing.T) {
+			stub, api := newStubBrainAPI(t)
+			mcpURL := hostedMCP(t, api.URL)
+			callHostedTool(t, mcpURL, headers, "tasks", map[string]any{})
+			res := callHostedTool(t, mcpURL, headers, "attachment_upload", map[string]any{"filename": "a.txt", "content": "aGk="})
+			if !res.IsError {
+				t.Errorf("attachment_upload succeeded with no caller project: %s", res.Text)
+			}
+			if containsRequest(stub.allRequests(), "api-host-project") {
+				t.Errorf("a header-bearing call used the API host's project: %v", stub.allRequests())
+			}
+			ctxRes := callHostedTool(t, mcpURL, headers, "context_get", map[string]any{})
+			if !strings.Contains(ctxRes.Text, "COULD NOT DETERMINE") {
+				t.Errorf("context_get should agree there is no project:\n%s", ctxRes.Text)
+			}
+		})
+	}
+}
+
+// Headerless calls keep today's behavior until the user decides otherwise.
+func TestHostedMCP_HeaderlessCallsKeepServerProjectFallback(t *testing.T) {
+	withAmbientProject(t, "api-host-project")
+	stub, api := newStubBrainAPI(t)
+	mcpURL := hostedMCP(t, api.URL)
+	callHostedTool(t, mcpURL, nil, "tasks", map[string]any{})
+	if !containsRequest(stub.allRequests(), "/tasks/api-host-project") {
+		t.Errorf("headerless call lost the server-project fallback: %v", stub.allRequests())
+	}
+}
+
+func TestHostedMCP_AdditionalDirsCamelCaseRejected(t *testing.T) {
+	_, api := newStubBrainAPI(t)
+	mcpURL := hostedMCP(t, api.URL)
+	res := callHostedTool(t, mcpURL, validCallerHeaders(), "plan_discover_docs", map[string]any{"additionalDirs": []any{"docs"}})
+	if !res.IsError || !strings.Contains(res.Text, "additionalDirs") {
+		t.Errorf("additionalDirs should be rejected by name: %+v", res)
+	}
+}
+
+func TestToolDescriptionsDoNotClaimLaunchDirectory(t *testing.T) {
+	h := NewHTTPHandler(NewAPIClient("http://127.0.0.1"))
+	s := h.serverFactory(NewAPIClient("http://127.0.0.1"))
+	for _, rt := range s.RegisteredTools() {
+		if strings.Contains(rt.Tool.Description, "launch directory") {
+			t.Errorf("%s description mentions the launch directory", rt.Tool.Name)
+		}
+		for name, p := range rt.Tool.InputSchema.Properties {
+			if strings.Contains(p.Description, "launch directory") {
+				t.Errorf("%s.%s description mentions the launch directory", rt.Tool.Name, name)
+			}
+		}
+	}
+}
+
+// Concurrent hosted calls must not race on the lazily computed server context.
+func TestHostedMCP_ConcurrentHeaderlessCallsDoNotRace(t *testing.T) {
+	prevDir := ContextDir
+	dir := t.TempDir()
+	ContextDir = func() string { return dir }
+	cachedContextMu.Lock()
+	cachedContext = nil
+	cachedContextMu.Unlock()
+	t.Cleanup(func() {
+		ContextDir = prevDir
+		cachedContextMu.Lock()
+		cachedContext = nil
+		cachedContextMu.Unlock()
+	})
+	_, api := newStubBrainAPI(t)
+	mcpURL := hostedMCP(t, api.URL)
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"context_get","arguments":{}}}`
+			resp, err := http.Post(mcpURL, "application/json", strings.NewReader(body))
+			if err != nil {
+				t.Errorf("POST /mcp: %v", err)
+				return
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}()
+	}
+	wg.Wait()
 }

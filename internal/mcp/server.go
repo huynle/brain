@@ -265,7 +265,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 	}
 	s.applyCallerProject(rt.tool, args)
 
-	text, err := rt.handler(ctx, args)
+	text, err := rt.handler(withCaller(ctx, s.caller), args)
 	result := map[string]any{
 		"content": []map[string]string{
 			{"type": "text", "text": text},

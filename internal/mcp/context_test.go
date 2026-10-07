@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"testing"
 )
 
@@ -154,13 +155,13 @@ func TestResolveProject(t *testing.T) {
 
 	// With explicit project
 	args := map[string]any{"project": "custom-project"}
-	if got := ResolveProject(args); got != "custom-project" {
+	if got := ResolveProject(context.Background(), args); got != "custom-project" {
 		t.Errorf("ResolveProject(explicit) = %q, want %q", got, "custom-project")
 	}
 
 	// Without project, falls back to cached
 	args = map[string]any{}
-	if got := ResolveProject(args); got != "test-project" {
+	if got := ResolveProject(context.Background(), args); got != "test-project" {
 		t.Errorf("ResolveProject(fallback) = %q, want %q", got, "test-project")
 	}
 }

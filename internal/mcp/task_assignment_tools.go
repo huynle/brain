@@ -29,7 +29,7 @@ func registerBrainRunnerCandidates(s *Server, client *APIClient) {
 	props["target_workdir"] = Property{Type: "string", Description: "Target workdir for a proposed task"}
 	props["include_rejected"] = Property{Type: "boolean", Description: "Include incompatible runners and reasons"}
 	s.RegisterTool(Tool{Name: "runner_candidates", Description: "List runners compatible with an existing standalone task or a proposed task specification.", InputSchema: InputSchema{Type: "object", Properties: props}}, func(ctx context.Context, args map[string]any) (string, error) {
-		project, taskID := ResolveProject(args), StringArg(args, "task_id", "")
+		project, taskID := ResolveProject(ctx, args), StringArg(args, "task_id", "")
 		var resp types.RunnerCandidatesResponse
 		method := http.MethodGet
 		path := "/tasks/" + url.PathEscape(project) + "/" + url.PathEscape(taskID) + "/runner-candidates"
@@ -57,7 +57,7 @@ func registerBrainTaskAssign(s *Server, client *APIClient) {
 	props["intent"] = Property{Type: "string", Enum: []string{"assign", "reassign"}, Description: "Use reassign to replace an existing pin"}
 	props["force"] = Property{Type: "boolean", Description: "Allow a compatible runner that is temporarily offline"}
 	s.RegisterTool(Tool{Name: "task_assign", Description: "Assign or reassign a standalone task to a compatible runner.", InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"task_id", "runner_id"}}}, func(ctx context.Context, args map[string]any) (string, error) {
-		project, taskID, runnerID := ResolveProject(args), StringArg(args, "task_id", ""), StringArg(args, "runner_id", "")
+		project, taskID, runnerID := ResolveProject(ctx, args), StringArg(args, "task_id", ""), StringArg(args, "runner_id", "")
 		if taskID == "" || runnerID == "" {
 			return "", fmt.Errorf("task_id and runner_id are required")
 		}
@@ -74,7 +74,7 @@ func registerBrainTaskAssign(s *Server, client *APIClient) {
 func registerBrainTaskClearAssignment(s *Server, client *APIClient) {
 	props := taskAssignmentProperties()
 	s.RegisterTool(Tool{Name: "task_clear_assignment", Description: "Clear a standalone task runner assignment.", InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"task_id"}}}, func(ctx context.Context, args map[string]any) (string, error) {
-		project, taskID := ResolveProject(args), StringArg(args, "task_id", "")
+		project, taskID := ResolveProject(ctx, args), StringArg(args, "task_id", "")
 		if taskID == "" {
 			return "", fmt.Errorf("task_id is required")
 		}

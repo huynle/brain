@@ -391,8 +391,10 @@ Call this during INIT phase to load project context.`,
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		discovery := &DiscoveryResults{}
 
-		if err := rejectLocalPathArg(args, "additional_dirs", "list the docs yourself and pass them as 'doc_paths'"); err != nil {
-			return "", err
+		for _, arg := range []string{"additional_dirs", "additionalDirs"} {
+			if err := rejectLocalPathArg(args, arg, "list the docs yourself and pass them as 'doc_paths'"); err != nil {
+				return "", err
+			}
 		}
 
 		if prdPath := StringArgAlias(args, "", "prd_path", "prdPath"); prdPath != "" {

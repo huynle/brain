@@ -299,15 +299,23 @@ the bearer/OAuth token).
 | `X-Brain-Host-Id` | Contents of `~/.config/brain/machine-id` (`machine_<hex>`) — the id your local runner uses | `origin_machine_id`; enables `machine_affinity: local`/`preferred` |
 | `X-Brain-Client-Id` | Any stable id for this client install, e.g. `opencode-<hostname>` | `origin_client_id` |
 | `X-Brain-Workdir` | Absolute path of the directory you are working in | `origin_path`; default project when a tool's `project` is omitted |
-| `X-Brain-Home` | Your home directory (optional) | Expresses the task `workdir` home-relatively for runners on other machines |
+| `X-Brain-Home` | Your home directory | Required for project detection; also expresses the task `workdir` home-relatively for runners on other machines |
 
 - IDs must be ≤128 chars of `[A-Za-z0-9._:-]`; paths must be clean absolute
   paths ≤1024 bytes with no control characters. A malformed header is ignored
   (the call still works) and `context_get` reports it.
-- The default project is the last segment of the main repo path:
-  `…/brain-api/.worktrees/<branch>` and `…/brain-api/.claude/worktrees/<x>`
-  both resolve to `brain-api`. Your home directory or `/` resolves to no
-  project. An explicit `project` argument always wins.
+- The default project is derived only when `X-Brain-Workdir` is strictly
+  under `X-Brain-Home`: it is the folder name of the main repo, so
+  `~/projects/brain-api/.worktrees/<branch>` and
+  `~/projects/brain-api/.claude/worktrees/<x>` both resolve to `brain-api`.
+  Home itself, anything outside home (`/app`, `/tmp`, `/workspace`, `/srv/…`),
+  or a missing home resolves to **no project** — the server cannot ask git
+  whether the folder is a repo, and guessing from a container folder name is
+  how entries once got misfiled under `projects/app`. An explicit `project`
+  argument always wins.
+- Once a request carries any `X-Brain-*` header, every tool defaults to the
+  project shown by `context_get` — possibly none — and never to the API
+  server's own working-directory project.
 - Without `X-Brain-Host-Id`, tasks carry no origin and
   `machine_affinity: local` is refused with an error naming the header.
 - Hosted tools take files as base64 only: `attachment_upload` takes

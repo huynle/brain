@@ -30,7 +30,7 @@ func registerBrainFeatureRunnerCandidates(s *Server, client *APIClient) {
 		Description: "List runners compatible with every unfinished task in a feature. Compatibility is distinct from temporary availability.",
 		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"feature_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		project := ResolveProject(args)
+		project := ResolveProject(ctx, args)
 		featureID := StringArg(args, "feature_id", "")
 		if featureID == "" {
 			return "", fmt.Errorf("provide a 'feature_id'")
@@ -85,7 +85,7 @@ func registerBrainFeatures(s *Server, client *APIClient) {
 		Description: "List feature groups for a project, including readiness, task counts, and representative tasks.",
 		InputSchema: InputSchema{Type: "object", Properties: props},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		project := ResolveProject(args)
+		project := ResolveProject(ctx, args)
 		path := "/tasks/" + url.PathEscape(project) + "/features"
 		title := fmt.Sprintf("Features for project: %s", project)
 		empty := "No features found"
@@ -109,7 +109,7 @@ func registerBrainFeatureReady(s *Server, client *APIClient) {
 		Description: "List feature groups that are ready to run for a project.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"project": {Type: "string", Description: "Override auto-detected project"}, "limit": {Type: "number", Description: "Maximum features to include in the summary"}}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		project := ResolveProject(args)
+		project := ResolveProject(ctx, args)
 		var resp types.FeatureListResponse
 		if err := client.Request(ctx, http.MethodGet, "/tasks/"+url.PathEscape(project)+"/features/ready", nil, nil, &resp); err != nil {
 			return "", err
@@ -125,7 +125,7 @@ func registerBrainFeatureGet(s *Server, client *APIClient) {
 		Description: "Show one feature's readiness, task counts, and task dependency state.",
 		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"feature_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		project := ResolveProject(args)
+		project := ResolveProject(ctx, args)
 		featureID := StringArg(args, "feature_id", "")
 		if featureID == "" {
 			return "", fmt.Errorf("provide a 'feature_id'")
@@ -155,7 +155,7 @@ func registerBrainFeatureCheckout(s *Server, client *APIClient) {
 		Description: "Create or reuse a feature checkout task for review and merge orchestration.",
 		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"feature_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		project := ResolveProject(args)
+		project := ResolveProject(ctx, args)
 		featureID := StringArg(args, "feature_id", "")
 		if featureID == "" {
 			return "", fmt.Errorf("provide a 'feature_id'")
@@ -190,7 +190,7 @@ func registerBrainFeatureAssign(s *Server, client *APIClient) {
 		Description: "Assign or reassign every unfinished task in a feature to a compatible runner.",
 		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"feature_id", "runner_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		project := ResolveProject(args)
+		project := ResolveProject(ctx, args)
 		featureID := StringArg(args, "feature_id", "")
 		runnerID := StringArg(args, "runner_id", "")
 		if featureID == "" {
@@ -218,7 +218,7 @@ func registerBrainFeatureClearAssignment(s *Server, client *APIClient) {
 		Description: "Clear the runner assignment covering every unfinished task in a feature.",
 		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"feature_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		project := ResolveProject(args)
+		project := ResolveProject(ctx, args)
 		featureID := StringArg(args, "feature_id", "")
 		if featureID == "" {
 			return "", fmt.Errorf("provide a 'feature_id'")

@@ -13,7 +13,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   created through it are stamped `origin_machine_id`/`origin_client_id`/
   `origin_path`, `machine_affinity: local` works when the host id is sent, and
   tools default `project` from the working folder (main repo name, worktrees
-  included). Headers are validated, bounded routing hints: a malformed one is
+  included) when it is under `X-Brain-Home`; home itself or anything outside
+  it gives no project. Header-bearing calls never fall back to the API
+  server's own working-directory project. Headers are validated, bounded routing hints: a malformed one is
   ignored and reported by `context_get`, never trusted for auth. See README
   "Caller headers" for the OpenCode V2 config.
 

@@ -43,7 +43,7 @@ Tools that take an optional 'project' parameter fall back to the project shown h
 		if execCtx.ProjectID == "" {
 			lines = append(lines,
 				"- Project: ⚠ COULD NOT DETERMINE",
-				fmt.Sprintf("  No usable %s header names a project folder, so there is no safe", HeaderBrainWorkdir),
+				fmt.Sprintf("  No project folder under %s was sent in %s, so there is no safe", HeaderBrainHome, HeaderBrainWorkdir),
 				"  default project. Pass 'project' explicitly on every tool call; omitting it",
 				"  will not fall back to a guess.")
 		} else {

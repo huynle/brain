@@ -306,14 +306,14 @@ caller-chosen `machine_affinity` (`local` | `preferred` | `none`).
   from another host would otherwise open an unrelated directory. `MachineID` is
   derived in `NewExecutorRegistry`, the one chokepoint both runnercli entry
   points share; empty means "unknown machine", which never matches.
-- **Stamping is gated on the transport** (`Server.ambientContextDescribesCaller`,
-  sharing the `WithLocalFilesystem` flag). `GetCachedContext` is a
-  process-global from `os.Getwd()`; under the in-process HTTP transport that is
-  the API host, shared by every client, so stamping it would brand every task
-  with the API host's machine id and — at `local` — pin them all there. Over HTTP,
-  `machine_affinity=local` is refused at creation rather than queued unrunnable.
-  Note the pre-existing `workdir`/`git_remote`/`git_branch` stamping at the same
-  call site is NOT gated this way.
+- **Stamping comes only from caller headers**
+  (`Server.ambientContextDescribesCaller` is true only when the request sent
+  `X-Brain-*` headers). `GetCachedContext` is the Brain API process's own
+  context, shared by every client, so stamping it would brand every task with
+  the API host's identity and — at `local` — pin them all there. Without a valid
+  `X-Brain-Host-Id`, `machine_affinity=local` is refused at creation rather than
+  queued unrunnable. Note the `workdir`/`git_remote`/`git_branch` stamping at
+  the same call site still uses `GetCachedContext` for headerless calls.
 - **Generated tasks carry no origin** by design — automation and goal
   `createTask` deliberately omit it, since server-generated work has no human
   caller and stamping would pin it to the API box.
@@ -365,11 +365,15 @@ client:
   (`internal/mcp/caller.go`): `X-Brain-Host-Id`, `X-Brain-Client-Id`,
   `X-Brain-Workdir`, `X-Brain-Home`. They are validated, bounded routing
   hints — never auth. `save` stamps `origin_*` only from them, and
-  `machine_affinity: local` needs a valid host id. `handleToolsCall` defaults a
-  tool's `project` arg from the workdir header (main repo basename; `.worktrees`
-  and `.claude/worktrees` folded) when the caller omits it.
-- Without headers, `GetCachedContext` (the API process's own cwd) is still the
-  project fallback for `ResolveProject`, but it never supplies origin identity.
+  `machine_affinity: local` needs a valid host id.
+- Default project: `DefaultProject(ctx)` is the single resolver behind
+  `ResolveProject`/`ResolveProjectArg` and matches `context_get`.
+  `handleToolsCall` puts the caller on the tool ctx (`withCaller`). With any
+  caller header, the project comes only from `CallerContext.ExecutionContext`:
+  workdir strictly under `X-Brain-Home`, worktrees folded to the main repo
+  basename, otherwise none — never the API process's own project. Only
+  headerless calls fall back to `GetCachedContext` (mutex-guarded; hosted calls
+  are concurrent).
 
 ### Index freshness (who writes to the brain dir)
 

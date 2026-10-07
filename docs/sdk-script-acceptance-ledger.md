@@ -68,9 +68,21 @@ the task stays blocked as a manual reservation.
   `bec31a35…8e68`, reproducible.
 - `7551797c` — empty plan/outcome lists are pinned as valid zero-mutation
   sequences; build/managed-parent timeouts raised to 600s.
-- `50c3708c` — D2: provider column corrected for 15 rows, `event_fanout`
-  declared, all 105 rows pinned, and a service-egress AST derivation added
-  (reverting a row or adding an unreviewed egress path both fail).
+- `50c3708c` — D2 first fix (15 rows, `event_fanout`, 105-row pin). Re-review
+  `nwwa27yh`: D1 PASS; D2 FAIL (`reminders.fire` lacked `web_push`; regex
+  scan bypassable).
+- `90466d28` — D2 fix:
+  - **Analysis:** a stdlib-only call graph (no `go.mod` change) traces every
+    SDK operation's real router handler to the embedding and Web Push sinks
+    across `internal/api` and `internal/service`.
+  - **Fail-closed rules:** background entry points must be on a reviewed list;
+    derivable tokens must be justified by a code path; `reminders.ack` is the
+    one reasoned flow exception.
+  - **Rows:** 12 corrected (reminder rows gain `web_push` via the scheduler and
+    poller; update paths gain synchronous embedding via the feature-schedule
+    gate).
+  - **Mutations:** the reviewer's M1–M4, M6 and M7 fail and M5 passes; the R1
+    regression and a new `internal/api` poller also fail.
 - **Stale artifact:** the worker source changed in `043ea7a8`, so amd64
   `9564f7a7…` and any homelab x86-64 binary built from earlier source no longer
   match. Rebuild from `runtime/script-worker` at `043ea7a8` or later before

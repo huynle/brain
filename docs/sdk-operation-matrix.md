@@ -69,12 +69,23 @@ nullable timestamp DTOs have real JSON round-trip parity tests.
 future resource checks, preconditions, conservative effects and provider class.
 `TestOperationPolicyInventoryIsCompleteAndUnavailable` checks contract/matrix
 coverage and scope agreement, including read-scoped attention writes.
-`TestOperationPolicyProviderEffectsArePinnedAndDerived` pins all 105 provider
-values (closed `+`-joined token set). It also derives the set of
-`internal/service` functions reaching embeddings (synchronous or background),
-entry `Save`/`Update` or Web Push, and fails until each new one is reviewed.
-Event fan-out to subscribed webhooks and event-triggered automations is
-declared once as `event_fanout` (corrected 2026-10-07, review `zgck7qp2`). Global profile/scripting/preflight/telemetry fields apply to every row.
+`TestOperationPolicyProviderEffectsArePinned` pins all 105 provider values
+(closed `+`-joined token set). `TestOperationProviderEffectsDerivedFromCallGraph`
+derives embedding (synchronous or background) and Web Push effects from code,
+so the hand pin can't hide an omission:
+- **Handlers:** each operation's real router handler.
+- **Call graph:** a conservative standard-library CHA-style graph over
+  `internal/api` and `internal/service`. Interface and function-value calls fail
+  closed.
+- **Sinks:** `indexEmbeddingsForEntry`, `IndexEmbeddings*`, embedding `Embed`,
+  `scheduleEmbeddingRefresh`, phonepush `Enqueue`.
+- **Fail-closed rules:**
+  - every background entry point (pollers, dispatchers, schedulers) must be
+    reviewed and mapped to the operations whose state drives it;
+  - every derivable token in a row must be justified by a code path;
+  - `reminders.ack` is the single reviewed flow-sensitive exception.
+- **Event fan-out:** subscribed webhooks and event-triggered automations are
+  declared once as `event_fanout` (reviews `zgck7qp2`, `nwwa27yh`). Global profile/scripting/preflight/telemetry fields apply to every row.
 This is descriptive inventory, **not an authorization registry**: all script
 exposure is false, all dry-run validators are unimplemented and inherited request
 telemetry is unreviewed. Provider `none` excludes inherited auth/request telemetry;

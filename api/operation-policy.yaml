@@ -12,9 +12,17 @@ evidence: docs/sdk-operation-matrix.md
 # Content may create runnable tasks/automations; never infer work/spend permission.
 # Provider column: "+"-joined tokens from a closed set, pinned and derived from
 # internal/service by internal/sdkcontract/policy_provider_test.go:
-#   embedding_sync        Save -> indexEmbeddingsForEntry (synchronous, when configured)
-#   embedding_background  Update/metadata/attachment changes -> scheduleEmbeddingRefresh
-#   web_push              attention.created -> AttentionDispatcher -> phonepush
+#   embedding_sync        indexEmbeddingsForEntry / IndexEmbeddings* / embedding Embed
+#                         (Save, and Update via the feature-schedule gate)
+#   embedding_background  scheduleEmbeddingRefresh (body/attachment changes)
+#   web_push              phonepush Enqueue: attention.created -> AttentionDispatcher,
+#                         and the 10s push poller for fired reminders (StartPush)
+# "Triggered" includes later background work driven by the operation's state:
+# reminder create/update/snooze are fired by the scheduler (embedding + push);
+# goal create/update drive the goal ticker. These three tokens are DERIVED from a
+# conservative call graph over internal/api + internal/service
+# (policy_provider/egress_routes tests); reminders.ack is the one reviewed
+# flow-sensitive exception (status-only update).
 #   webhook_http / extraction_provider / external_delivery_verification: direct calls
 #   downstream_*          may cause runnable work whose executor reaches providers
 # Every event-emitting operation may additionally reach subscribed webhooks and
@@ -25,12 +33,12 @@ operations:
   health.get: [public, none, none, read, none]
   entries.list: [read, visible_entry_set_and_count, filters_limit_offset, read, none]
   entries.get: [read, entry_read, id_or_legacy_path, read, none]
-  entries.create: [admin, destination_edit_and_runnable_type_authority, service_validation, content_and_possible_work, embedding_sync+downstream_if_runnable]
-  entries.update: [admin, source_destination_edit_and_runnable_fields, optional_expected_revision, content_and_possible_work, embedding_background+downstream_if_runnable]
-  entries.updateMetadata: [admin, entry_edit_and_work_sensitive_keys, optional_expected_revision_and_exact_field_allowlist, content_and_possible_work, embedding_background+downstream_if_runnable]
+  entries.create: [admin, destination_edit_and_runnable_type_authority, service_validation, content_and_possible_work, embedding_sync+embedding_background+downstream_if_runnable]
+  entries.update: [admin, source_destination_edit_and_runnable_fields, optional_expected_revision, content_and_possible_work, embedding_sync+embedding_background+downstream_if_runnable]
+  entries.updateMetadata: [admin, entry_edit_and_work_sensitive_keys, optional_expected_revision_and_exact_field_allowlist, content_and_possible_work, embedding_sync+embedding_background+downstream_if_runnable]
   entries.move: [admin, source_destination_edit_and_audience, project_only_no_revision, content, none]
   entries.delete: [admin, entry_delete_and_live_claim, confirm_force_no_revision, content, none]
-  entries.bulkUpdate: [admin, each_entry_edit_and_runnable_fields, nonempty_filter_partial_outcomes, content_and_possible_work, embedding_background+downstream_if_runnable]
+  entries.bulkUpdate: [admin, each_entry_edit_and_runnable_fields, nonempty_filter_partial_outcomes, content_and_possible_work, embedding_sync+embedding_background+downstream_if_runnable]
   entries.bulkDelete: [admin, each_entry_delete, nonempty_filter_partial_outcomes, content, none]
   search.query: [read, visible_results_counts_snippets, search_mode, read_and_possible_provider, embedding_for_semantic_hybrid]
   search.inject: [read, visible_content_and_telemetry, service_validation, read_and_possible_provider, embedding_requires_review]
@@ -78,8 +86,8 @@ operations:
   goals.list: [read, visible_goal_set, filters_limit_offset, read, none]
   goals.progress: [read, goal_and_linked_tasks, goal_id, read, none]
   goals.audit: [read, goal_and_output_sources, goal_id, read, none]
-  goals.create: [admin, destination_edit_and_automation_submit, service_validation, content_and_work, embedding_sync+downstream_executor]
-  goals.update: [admin, goal_edit_and_automation_submit, service_validation, content_and_work, embedding_background+downstream_executor]
+  goals.create: [admin, destination_edit_and_automation_submit, service_validation, content_and_work, embedding_sync+embedding_background+downstream_executor]
+  goals.update: [admin, goal_edit_and_automation_submit, service_validation, content_and_work, embedding_sync+embedding_background+downstream_executor]
   goals.delete: [admin, goal_delete, goal_id, content, none]
   goals.run: [admin, goal_submit_and_downstream_effects, service_validation, work_and_provider, embedding_sync+embedding_background+downstream_executor]
   automations.run: [write, automation_submit_and_effect_delegation, direct_run_validation, work_and_provider, embedding_sync+embedding_background+downstream_executor]
@@ -87,12 +95,12 @@ operations:
   automations.getRun: [read, execution_and_output_sources, run_id, read, none]
   reminders.list: [read, visible_reminders, filters_limit_offset, read, none]
   reminders.get: [read, reminder_read, reminder_id, read, none]
-  reminders.create: [admin, reminder_edit_and_action_authority, service_validation, content_work_notice, embedding_sync+downstream_action]
-  reminders.update: [admin, reminder_edit_and_action_authority, service_validation, content_work_notice, embedding_background+downstream_action]
+  reminders.create: [admin, reminder_edit_and_action_authority, service_validation, content_work_notice, embedding_sync+embedding_background+web_push+downstream_action]
+  reminders.update: [admin, reminder_edit_and_action_authority, service_validation, content_work_notice, embedding_sync+embedding_background+web_push+downstream_action]
   reminders.delete: [admin, reminder_delete, reminder_id, content, none]
   reminders.ack: [admin, reminder_act, reminder_id, state, none]
-  reminders.snooze: [admin, reminder_act, snooze_validation, state_and_work, none]
-  reminders.fire: [admin, reminder_act_and_action_authority, service_validation, work_provider_notice, embedding_sync+embedding_background+downstream_action]
+  reminders.snooze: [admin, reminder_act, snooze_validation, state_and_work, embedding_sync+embedding_background+web_push+downstream_action]
+  reminders.fire: [admin, reminder_act_and_action_authority, service_validation, work_provider_notice, embedding_sync+embedding_background+web_push+downstream_action]
   attention.list: [read, verified_recipient_and_sources, filters_limit_offset, read, none]
   attention.counts: [read, verified_recipient_and_hidden_counts, recipient_binding, read, none]
   attention.get: [read, verified_recipient_and_sources, recipient_binding, read, none]
@@ -110,8 +118,8 @@ operations:
   attachments.extract: [admin, source_read_and_extraction_spend, extraction_validation, provider_and_derived_content, extraction_provider+embedding_sync]
   attachments.delete: [admin, attachment_delete, project_attachment_id, cas_content, none]
   attachments.forEntry: [read, entry_attachment_and_sources, project_entry_id, read, none]
-  attachments.attach: [admin, entry_edit_and_source_publication, relationship_validation, content_relationship, embedding_background]
-  attachments.detach: [admin, entry_edit, nonempty_role, content_relationship, embedding_background]
+  attachments.attach: [admin, entry_edit_and_source_publication, relationship_validation, content_relationship, embedding_sync+embedding_background]
+  attachments.detach: [admin, entry_edit, nonempty_role, content_relationship, embedding_sync+embedding_background]
   webhooks.list: [authenticated_handler_policy, subscription_sources, filters_limit_offset, read, none]
   webhooks.get: [authenticated_handler_policy, subscription_read, webhook_id, read, none]
   webhooks.create: [authenticated_handler_policy, subscription_manage_and_audience, destination_validation, state_and_future_egress, webhook_http]

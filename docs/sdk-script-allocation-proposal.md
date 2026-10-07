@@ -45,14 +45,30 @@ This replaces the earlier filesystem-era/broad table request in this file.
     p95 ≤ 30 s; D34 revocation/deletion replay journal 120 days.
   - D29–D31 are rev 6 §6 technical defaults (event-ref redaction, sync floor,
     Phase B DDL approach), also settled for this packet's purposes.
-- **Two retention conflicts are OPEN pending a user decision** (the parent is
-  asking; not resolved here):
-  - **Backups vs SDK-U1:** D26/D32 keep database backups 90 days, but SDK-U1
-    limits protected script results/logs/plans/digests to 24 hours. Backups
-    would retain those payloads up to 90 days.
-  - **Event log vs SDK-U1 audit:** D20 keeps `event_log` 1 year, but SDK-U1
-    allows only a 90-day content-free audit. Script events written there would
-    outlive that window.
+- **Retention conflicts resolved — SCRIPT-DECISIONS-20261007 (user-approved
+  policy; persisted in `qfcda7ct`, `vggevclc`, `hxcyvu0i`, `i8aurh42`):**
+  - **Backups vs SDK-U1 → crypto-shredding.** Protected script payloads are
+    stored only encrypted, under a short-lived key held **outside** the
+    backed-up database. The key is destroyed at the 24h deadline, so no
+    plaintext payload reaches the DB, WAL or `VACUUM INTO` backups, and 90-day
+    backups (D26/D32) hold only undecryptable ciphertext once the key is gone.
+  - **Event log vs SDK-U1 audit → separate audit records.** The content-free
+    script audit lives in its own records, purged at 90 days. Nothing
+    script-specific goes to the 1-year `event_log` (D20) beyond generic
+    content-free event fan-out.
+  - **Technical requests to DB.1/DB.6** (allocation, not decided here):
+    - a key-storage location **excluded from database backups and the WAL**
+      (not a database table, not inside the `VACUUM INTO` copy);
+    - a key rotation and **destruction step** (e.g. alongside `MaintenanceStep`
+      or DB.6 lifecycle) that irreversibly destroys a period key once every
+      payload deadline it covers has passed, and refuses to reissue it;
+    - a **90-day purge** for the script audit records, separate from the
+      `event_log` 1-year prune.
+  - **SDK-owned part implemented (inactive, pure):** `internal/scriptexec`
+    payload sealing helper (AES-256-GCM, per-period keys behind a key-store
+    interface, tenant/execution/purpose/deadline as associated data, refusal at
+    the deadline and after key destruction, content-free errors). No database,
+    schema or key-file location is chosen.
 - SDK branch `sdk-script-execution-v1` stays exclusively owned here. A248f2fab and
   B42802cfb are author-verified only. No DB-writer edits, competing catalog,
   dependency/status changes, runner dispatch or independent-worker-review retry.

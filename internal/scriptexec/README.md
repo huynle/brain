@@ -346,6 +346,33 @@ no DB1 table/profile, `script:execute` grant, S09 fence or launcher.
   exact `owner`/`admin` role with explicit script opt-in. Auth-off/credential-free
   submission is refused (deferred); ordinary auth-off REST is untouched.
 
+## Protected payload sealing (inactive) — SCRIPT-DECISIONS-20261007
+
+`payload_seal.go` implements the SDK-owned part of crypto-shredding.
+Protected results, logs, plans and digests are only stored sealed under a
+short-lived **period key held outside the backed-up database**, so no
+plaintext reaches the database, its WAL or `VACUUM INTO` backups.
+
+- **Encryption:** AES-256-GCM with a random 96-bit nonce per seal. The
+  associated data is domain-separated and length-prefixed: key ID, tenant,
+  execution, purpose and the payload deadline. Swapping any of them, or the
+  key ID, nonce or ciphertext, fails closed.
+- **Deadline:** must lie in (now, now+24h] (SDK-U1). The plaintext is bounded
+  by the 256 KiB envelope.
+- **Key periods:** a payload is sealed under the key for the period containing
+  its deadline. `Open` refuses **at the deadline** even if that key still
+  exists (`errPayloadExpired`). The key is destroyed when its period ends, at
+  most one period (1 minute to 24 hours, configurable) after the deadline.
+  After that, every copy, including old backups, is undecryptable
+  (`errPayloadKeyDestroyed`), and a destroyed period is never reissued.
+- **Errors:** fixed and content-free. A sealed payload never formats its
+  bytes; key copies are zeroed after use.
+- **Key store:** an interface only. The in-memory store exists in tests. Key
+  custody is requested from DB.1/DB.6 and not chosen here: a location excluded
+  from database backups and the WAL, rotation, the destruction step, and the
+  separate 90-day script audit purge.
+- **Status:** no caller, schema or key-file location.
+
 ## Pure request preparation (inactive)
 
 `PrepareRequest` checks UTF-8 source byte size and server-supplied timeout and

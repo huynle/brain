@@ -102,7 +102,9 @@ or completion is authorized for these partial A/B slices.
 - The next SDK-relevant gate is DB.1 allocating the script extensions requested
   here: a receipt namespace beyond `sync`/`reminder`/`project_drift`, a private
   `blob_refs` ref kind, and the T1/T2/T4/T5 contracts.
-- **Two retention conflicts are OPEN** pending a user decision (see below).
+- The two retention conflicts are **resolved** (SCRIPT-DECISIONS-20261007,
+  below). Their DB.1/DB.6 requests are added: backup-excluded key storage, key
+  destruction step, 90-day audit purge.
 The SDK-owned [C–F disposition packet](sdk-script-allocation-proposal.md) replaces
 the older broad table/filesystem proposal with precise DB1 reuse, transaction,
 retention and typed-method requests. **User decisions SDK-U1–U3 are APPROVED policy
@@ -133,13 +135,32 @@ deadline-anchored (expiry ≤ admission deadline+24h).
 (`wdyetyqh`, `85280tcu`, `1ikgd5xs`, `fy2tvhll`); not wired to any route and not
 activation.
 
-**OPEN retention conflicts (pending user decision; not resolved here):**
-- **Backups vs SDK-U1:** DB.1 D26/D32 keep database backups 90 days (hourly 7
-  days, then daily), but SDK-U1 limits protected script results/logs/plans/
-  digests to 24 hours. Backups would retain those payloads up to 90 days.
-- **Event log vs SDK-U1 audit:** DB.1 D20 keeps `event_log` 1 year, but SDK-U1
-  allows only a 90-day content-free audit. Script events written there would
-  outlive that window.
+**SCRIPT-DECISIONS-20261007 (user-approved; resolves the two retention
+conflicts with DB.1):**
+- **Retention conflicts resolved — SCRIPT-DECISIONS-20261007 (user-approved
+  policy; persisted in `qfcda7ct`, `vggevclc`, `hxcyvu0i`, `i8aurh42`):**
+  - **Backups vs SDK-U1 → crypto-shredding.** Protected script payloads are
+    stored only encrypted, under a short-lived key held **outside** the
+    backed-up database. The key is destroyed at the 24h deadline, so no
+    plaintext payload reaches the DB, WAL or `VACUUM INTO` backups, and 90-day
+    backups (D26/D32) hold only undecryptable ciphertext once the key is gone.
+  - **Event log vs SDK-U1 audit → separate audit records.** The content-free
+    script audit lives in its own records, purged at 90 days. Nothing
+    script-specific goes to the 1-year `event_log` (D20) beyond generic
+    content-free event fan-out.
+  - **Technical requests to DB.1/DB.6** (allocation, not decided here):
+    - a key-storage location **excluded from database backups and the WAL**
+      (not a database table, not inside the `VACUUM INTO` copy);
+    - a key rotation and **destruction step** (e.g. alongside `MaintenanceStep`
+      or DB.6 lifecycle) that irreversibly destroys a period key once every
+      payload deadline it covers has passed, and refuses to reissue it;
+    - a **90-day purge** for the script audit records, separate from the
+      `event_log` 1-year prune.
+  - **SDK-owned part implemented (inactive, pure):** `internal/scriptexec`
+    payload sealing helper (AES-256-GCM, per-period keys behind a key-store
+    interface, tenant/execution/purpose/deadline as associated data, refusal at
+    the deadline and after key destruction, content-free errors). No database,
+    schema or key-file location is chosen.
 
 ## Classification
 

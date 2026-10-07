@@ -577,3 +577,17 @@ func TestEmbeddedRunnerConfig_RunnerName(t *testing.T) {
 		t.Errorf("Name = %q, want embedded", runnerCfg.Name)
 	}
 }
+
+func TestDevCommand_ForegroundDebug(t *testing.T) {
+	cfg := &UnifiedConfig{}
+	cfg.Server.Port = 4321
+	cfg.Server.Host = "localhost"
+	cfg.Server.LogLevel = "info" // defaultConfig always sets one
+	api := (&DevCommand{Config: cfg}).apiCommand()
+	if api.Config.Server.LogLevel != "debug" {
+		t.Errorf("LogLevel = %q, want debug", api.Config.Server.LogLevel)
+	}
+	if api.Flags.Daemon || api.Flags.Port != 4321 || api.Flags.Host != "localhost" {
+		t.Errorf("flags = %+v, want foreground on the configured host/port", api.Flags)
+	}
+}

@@ -704,14 +704,12 @@ func (c *DevCommand) Type() string {
 	return "dev"
 }
 
-func (c *DevCommand) Execute() error {
-	// Set debug log level
-	if c.Config.Server.LogLevel == "" {
-		c.Config.Server.LogLevel = "debug"
-	}
-
-	// Create an API command with foreground mode (no daemon)
-	apiCmd := &APICommand{
+// apiCommand returns a foreground API command with debug logging. The level
+// is forced: config loading always supplies one, so an "only if empty" check
+// never applied it.
+func (c *DevCommand) apiCommand() *APICommand {
+	c.Config.Server.LogLevel = "debug"
+	return &APICommand{
 		Config: c.Config,
 		Flags: &APIFlags{
 			Port:   c.Config.Server.Port,
@@ -719,6 +717,10 @@ func (c *DevCommand) Execute() error {
 			Daemon: false, // Always foreground
 		},
 	}
+}
+
+func (c *DevCommand) Execute() error {
+	apiCmd := c.apiCommand()
 
 	fmt.Println("Starting server in development mode (debug logging, foreground)")
 	fmt.Println("Press Ctrl+C to stop")

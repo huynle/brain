@@ -214,6 +214,14 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		}
 		// "brain stop <project>" → stop runner for project (stub for now)
 		return parseStopCommand(cmdArgs)
+	case "dev":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "dev"}, nil
+		}
+		if len(cmdArgs) > 0 {
+			return &unknownCommand{message: fmt.Sprintf("brain dev: unexpected argument %q\nRun 'brain help dev' for usage.", cmdArgs[0])}, nil
+		}
+		return &commands.DevCommand{Config: convertToCommandsConfig(defaultConfig())}, nil
 	case "init":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "init"}, nil
@@ -351,6 +359,9 @@ func parseAPICommand(args []string) (Command, error) {
 
 	if wantsHelp(args) {
 		return &HelpCommand{command: "api"}, nil
+	}
+	if len(args) > 0 && !isFlag(args[0]) {
+		return unknownSubcommand("api", args[0]), nil
 	}
 
 	// Default: start API server in foreground

@@ -136,6 +136,9 @@ func ParseAPIFlags(args []string) (*APIFlags, error) {
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
+	if fs.NArg() > 0 {
+		return nil, unexpectedAPIArg(fs.Arg(0))
+	}
 
 	return flags, nil
 }
@@ -443,10 +446,20 @@ func ParseLifecycleFlags(args []string) (*LifecycleFlags, error) {
 				flags.Executor = args[i+1]
 				i++
 			}
+		default:
+			// Every value-taking flag is consumed above, so a bare word here
+			// is a stray argument, not a flag value.
+			if !isFlag(arg) {
+				return nil, unexpectedAPIArg(arg)
+			}
 		}
 	}
 
 	return flags, nil
+}
+
+func unexpectedAPIArg(arg string) error {
+	return &commands.UsageError{Message: fmt.Sprintf("brain api: unexpected argument %q\nRun 'brain help api' for usage.", arg)}
 }
 
 // convertToCommandsLifecycleFlags converts main.LifecycleFlags to commands.LifecycleFlags.

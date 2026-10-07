@@ -21,6 +21,7 @@ CORE COMMANDS:
   api status                     Show server process status
   api logs                       Show server logs
   api health                     Call /api/v1/health
+  dev                            Run the API server in the foreground with debug logging
 
 RUNNER COMMANDS:
   run <subcommand> [project]     Runner management subcommands
@@ -1206,6 +1207,8 @@ func helpText(command string) (string, bool) {
 		return runnerHelp, true
 	case "run start":
 		return runStartHelp, true
+	case "dev":
+		return devHelp, true
 	case "init":
 		return initHelp, true
 	case "doctor":
@@ -1284,3 +1287,13 @@ func ShowHelp(command string) bool {
 	}
 	return ok
 }
+
+const devHelp = `brain dev - Run the API server in development mode
+
+USAGE:
+  brain dev
+
+Starts the Brain API server in the foreground (never daemonized) with debug
+logging, using the configured host and port. Stop it with Ctrl+C.
+Equivalent to 'brain api' with log level debug; 'just dev' runs this.
+`

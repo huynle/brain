@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -770,6 +771,40 @@ func TestRoute_RunnerIsAliasForRunSubcommands(t *testing.T) {
 		rc, ok := cmd.(*commands.RunCommand)
 		if !ok || rc.Subcommand != args[1] {
 			t.Errorf("brain %v = %T (%s), want RunCommand %s", args, cmd, cmd.Type(), args[1])
+		}
+	}
+}
+
+// `brain dev` (used by `just dev`) runs the API server in the foreground with
+// debug logging; it used to fall through to a silent no-op stub.
+func TestRoute_DevRunsDevCommand(t *testing.T) {
+	cmd, err := route([]string{"dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cmd.(*commands.DevCommand); !ok {
+		t.Fatalf("brain dev = %T, want *commands.DevCommand", cmd)
+	}
+	help, err := route([]string{"dev", "--help"})
+	if err != nil || help.Type() != "help" {
+		t.Fatalf("brain dev --help = %v, %v", help, err)
+	}
+}
+
+// Routing must not execute anything here: a correctly routed `api` starts a
+// server. Only the unknown/usage results are inspected.
+func TestRoute_APIUnknownWordIsUsageError(t *testing.T) {
+	for _, args := range [][]string{{"api", "bogus"}, {"api", "--port", "4444", "bogus"}, {"api", "start", "bogus"}} {
+		cmd, err := route(args)
+		var ue *commands.UsageError
+		if err == nil {
+			if _, ok := cmd.(*unknownCommand); !ok {
+				t.Fatalf("brain %v routed to %T; want a usage error", args, cmd)
+			}
+			err = cmd.Execute()
+		}
+		if !errors.As(err, &ue) || !strings.Contains(ue.Message, "bogus") || !strings.Contains(ue.Message, "brain help api") {
+			t.Errorf("brain %v: err = %v, want usage error naming the word and 'brain help api'", args, err)
 		}
 	}
 }

@@ -326,7 +326,7 @@ can use this.
 It has no caller, storage, route, schema or capability effect; approval allocates
 no DB1 table/profile, `script:execute` grant, S09 fence or launcher.
 
-- **U1:** `checkProtectedEnvelope` enforces result ≤64KiB, logs ≤16KiB and ≤32
+- **SDK-U1:** `checkProtectedEnvelope` enforces result ≤64KiB, logs ≤16KiB and ≤32
   records, and the whole envelope (result+logs+plan+hex digests) ≤256KiB, all valid
   JSON. Persistable types (`protectedEnvelope`, `contentFreeAudit`,
   `consumedKeyTombstone`) have reflection-guarded exact field allowlists with no
@@ -334,7 +334,7 @@ no DB1 table/profile, `script:execute` grant, S09 fence or launcher.
   deadline+24h; a terminal recorded after the deadline is also capped at
   deadline+24h (deadline-anchored, approved in SCRIPT-DECISIONS-20261006b). No access-time input, so no sliding.
   `auditExpiry` is admission+90d.
-- **U2:** `consumedKeyMAC` is HMAC-SHA256 (≥32-byte server key) over a
+- **SDK-U2:** `consumedKeyMAC` is HMAC-SHA256 (≥32-byte server key) over a
   domain-separated, length-prefixed tenant/principal/endpoint/epoch/key tuple.
   `decideReplay` never reruns a consumed key: expired, erased, tombstoned or
   unknown state → content-free 409 `idempotency_key_retired`. Before expiry, a
@@ -342,7 +342,7 @@ no DB1 table/profile, `script:execute` grant, S09 fence or launcher.
   separate authorization); a mismatch → 409. `idempotency_key_conflict` and `idempotency_key_in_progress` (both 409)
   are approved names (SCRIPT-DECISIONS-20261006b). `tombstonePurgeable` is true only for an exact irreversibly retired
   namespace.
-- **U3:** `checkSubmitEligibility` admits only auth-enabled, verified, human,
+- **SDK-U3:** `checkSubmitEligibility` admits only auth-enabled, verified, human,
   exact `owner`/`admin` role with explicit script opt-in. Auth-off/credential-free
   submission is refused (deferred); ordinary auth-off REST is untouched.
 

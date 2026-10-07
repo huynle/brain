@@ -30,7 +30,7 @@ the task stays blocked as a manual reservation.
 | Inactive worker/SDK range (facade, console, admission, plan/outcome, decoders) | `2228f1f1..b6f0c1ff` | `zgck7qp2` (sequencing, limits, admission, plans, decoders PASS; D1/D2 FAIL → below) |
 | A discovery, B stdio MCP via public SDK | `248f2fab`, `42802cfb` | `myyqriy7` PASS |
 | SDK error codes; stdio `insecure_transport` | `0accbaa8`, `3d6394d1` | `tno8zatm` PASS |
-| Approved U1–U3 policy; Linux-first attested launcher | `31c9d998..91c7b3e9` | `wdyetyqh` PASS |
+| Approved SDK-U1–U3 policy; Linux-first attested launcher | `31c9d998..91c7b3e9` | `wdyetyqh` PASS |
 | Release packaging, pinned build, pool concurrency, init reaping | `91c7b3e9..b30ce8cd` | `85280tcu` PASS |
 | PDEATHSIG isolation, `sourceWritten`, opt-in systemd test | `b30ce8cd..a098fa16` | `1ikgd5xs` PASS |
 | systemd cleanup and judgement fix, main merge, lint test | `a471883d..ac9a90a2` | `twxijkp7` FAIL → fixed `a31347ac`, `fy2tvhll` PASS |
@@ -38,7 +38,7 @@ the task stays blocked as a manual reservation.
 | D2: provider effects derived from a whole-module call graph | `50c3708c..529699d7` | `nwwa27yh`/`pcteuxwj`/`c969if7r` FAIL → **`qytghjxc` PASS (accepted)** |
 
 - **Not independently reviewed:** `ef83b9fc`, the docs-only C–F owner-request
-  packet. It contains no code and was only the diff base of `wdyetyqh`; its U1–U3
+  packet. It contains no code and was only the diff base of `wdyetyqh`; its SDK-U1–U3
   decisions were later approved by the user and implemented in `31c9d998`
   (reviewed).
 - **Docs-only follow-ups:** the comment fix and P3b record (this commit).
@@ -56,9 +56,9 @@ the task stays blocked as a manual reservation.
 
 | Owner / ID | State | Interface this SDK needs |
 |---|---|---|
-| DB.1 `hxcyvu0i` | rev 4 design, no DDL | **T1:** content-successor primitive allocation reusing DB1 methods/receipts/revision history; DB1 allocates extension ownership/profile. **T2:** one fixed transaction owning current auth/ACL/CAS + content + receipt + operation outcome + allocated outbox. **T4:** retention/erasure classes + irreversible admission-epoch retirement (backs U2 tombstones). **T5:** authoritative reservations for the single Linux coordinator. |
+| DB.1 `hxcyvu0i` | rev 6 design (`767dce41`); dormant Phase B in progress | **T1:** content-successor primitive allocation reusing DB1 methods/receipts/revision history; DB1 allocates extension ownership/profile. **T2:** one fixed transaction owning current auth/ACL/CAS + content + receipt + operation outcome + allocated outbox. **T4:** retention/erasure classes + irreversible admission-epoch retirement (backs SDK-U2 tombstones). **T5:** authoritative reservations for the single Linux coordinator. |
 | S09 `i8aurh42` | draft | **T2/T3:** same-writer check+commit fence, bounded read-frame/final-output release ordered with revoke, security-journal record. |
-| P6 `yp7llda1` | blocked (repair `21d2d1e7`) | **T6/U3:** explicit `script:execute` successor and issuance, bound to a verified owner/admin human principal and auth generation; credential33 unchanged. |
+| P6 `yp7llda1` | blocked (repair `21d2d1e7`) | **T6/SDK-U3:** explicit `script:execute` successor and issuance, bound to a verified owner/admin human principal and auth generation; credential33 unchanged. |
 | S10 `ap90gj4e` | open | Hosted MCP: per-call/session authorized in-process adapter, never loopback identity reconstruction. Stdio (B) is done. |
 | P8 `8gxc3qi1` | draft | **F/T3/T6:** delegation/reservation/outbox/result APIs plus reusable side-effect-free typed service preflight (needed for dry-run). |
 | S16/S17/S18 (E) | draft | Live current resource/source-set ACL and publication decision under the S09 fence. |
@@ -93,34 +93,53 @@ Main has advanced from the original recorded target SHA. Parent owns eventual
 whole-feature integration into `main` and fresh postmerge verification. No merge
 or completion is authorized for these partial A/B slices.
 
-**Current next gate — SDK-DB1-CF-20261006:** DB1 `hxcyvu0i` is active, sole
-writer on `codex/mt-db-authoritative-storage`; immutable Phase A design `d365a4aa`
-is proposed and Phase B DDL awaits independent design review/profile allocation.
+**Current next gate — SDK-DB1-CF-20261006 (refreshed 2026-10-07):**
+- DB.1 `hxcyvu0i` is active, sole writer on `codex/mt-db-authoritative-storage`.
+- Its design is **rev 6 at `767dce41`** (PROPOSED). The dormant Phase B slice is
+  being implemented, with literal DDL amendable until DB.5 cutover (D31).
+- The SDK packet was reviewed PASS against rev 1 (`kkpe2zs9`), and its references
+  are now refreshed to rev 6.
+- The next SDK-relevant gate is DB.1 allocating the script extensions requested
+  here: a receipt namespace beyond `sync`/`reminder`/`project_drift`, a private
+  `blob_refs` ref kind, and the T1/T2/T4/T5 contracts.
+- **Two retention conflicts are OPEN** pending a user decision (see below).
 The SDK-owned [C–F disposition packet](sdk-script-allocation-proposal.md) replaces
 the older broad table/filesystem proposal with precise DB1 reuse, transaction,
-retention and typed-method requests. **User decisions U1–U3 are APPROVED policy
+retention and typed-method requests. **User decisions SDK-U1–U3 are APPROVED policy
 (SCRIPT-DECISIONS-20261006, see below)**; technical T1–T6 remain **unapproved
 proposals**. DB1 D1/D2/D3/D5 decisions are already settled; not asked
 again. No further generic prototype work or new schema has been substituted for
 this actual owner handoff.
 
 **SCRIPT-DECISIONS-20261006 (user-approved policy, not allocation):**
-U1 no raw source persisted; protected result/log/plan/digest envelope 24h after
+SDK-U1 no raw source persisted; protected result/log/plan/digest envelope 24h after
 terminal (interrupted: 24h after admission deadline, no sliding extension);
 content-free audit 90 days; result ≤64KiB, logs ≤16KiB/32 records, envelope ≤256KiB.
-U2 detached consumed-key MAC tombstones until irreversible namespace retirement;
+SDK-U2 detached consumed-key MAC tombstones until irreversible namespace retirement;
 reuse returns content-free 409 `idempotency_key_retired`, never reruns.
-SCRIPT-DECISIONS-20261006b (approved): live-fingerprint mismatch 409
-`idempotency_key_conflict`, active claim 409 `idempotency_key_in_progress`;
-late-finish retention stays deadline-anchored (expiry ≤ admission deadline+24h). U3 only
-explicitly opted-in verified owner/admin human credentials; auth-off ordinary REST
-unchanged; credential-free submission deferred. These do NOT allocate DB1 schema/
-profile, grant `script:execute`, supply S09 fences, select a launcher or activate
-anything. Pure SDK-owned enforcement of these rules: `internal/scriptexec/policy.go`.
+SDK-U3 only explicitly opted-in verified owner/admin human credentials; auth-off
+ordinary REST unchanged; credential-free submission deferred. These do NOT
+allocate DB1 schema/profile, grant `script:execute`, supply S09 fences, select a
+launcher or activate anything. Pure SDK-owned enforcement of these rules:
+`internal/scriptexec/policy.go`.
+
+**SCRIPT-DECISIONS-20261006b (a separate, later approval; does not include
+SDK-U3):** live-fingerprint mismatch 409 `idempotency_key_conflict` and active
+claim 409 `idempotency_key_in_progress`; late-finish retention stays
+deadline-anchored (expiry ≤ admission deadline+24h).
 
 **G — Linux-first launcher (author evidence, disabled):** see final section
-"G Linux production launcher". Author-implemented and real-Linux tested; NOT
-independently reviewed, not wired to any route and not activation.
+"G Linux production launcher". Real-Linux tested and independently reviewed
+(`wdyetyqh`, `85280tcu`, `1ikgd5xs`, `fy2tvhll`); not wired to any route and not
+activation.
+
+**OPEN retention conflicts (pending user decision; not resolved here):**
+- **Backups vs SDK-U1:** DB.1 D26/D32 keep database backups 90 days (hourly 7
+  days, then daily), but SDK-U1 limits protected script results/logs/plans/
+  digests to 24 hours. Backups would retain those payloads up to 90 days.
+- **Event log vs SDK-U1 audit:** DB.1 D20 keeps `event_log` 1 year, but SDK-U1
+  allows only a 90-day content-free audit. Script events written there would
+  outlive that window.
 
 ## Classification
 
@@ -701,7 +720,7 @@ completion; manual reservation and `prompt_only` remain.
 
 ## DB1 coordination delta — design-only, 2026-10-06
 
-Read DB1 design `d365a4aac3c9b251a0c6095d3c17f0ec2371173a`, all620lines,
+(Historical, 2026-10-06; references refreshed to DB.1 rev 6 `767dce41` in the final status and proposal.) Read DB1 design `d365a4aac3c9b251a0c6095d3c17f0ec2371173a`, all620lines,
 current canonical plans `9fguh2pr`/`qfcda7ct`, current SDK proposal and existing
 DB1/S09/P6 request histories. Brain searches for script receipts, DB1+SDK and
 script:execute found existing broad requests; this packet narrows them, creates
@@ -717,9 +736,9 @@ Finite disposition register (U rows approved 2026-10-06; T rows still proposed):
 
 | ID | Required disposition, not implementation acceptance |
 |---|---|
-| U1 user — APPROVED | Script-specific24h protected envelope/digests, no raw source persistence,64KiB result/16KiB logs/256KiB total envelope,90day content-free audit. Not DB1 D1/D5 inheritance. |
-| U2 user — APPROVED | Detached consumed-key MAC tombstones until namespace retirement; after payload purge/erasure old key returns409 retired, never reruns. No source linkage/digest in residue. |
-| U3 user — APPROVED | Initially explicit owner/admin human credential opt-in only; ordinary auth-off REST unchanged, no-credential scripts deferred. Narrows the plan's optional trusted-local mapping (approved). |
+| SDK-U1 user — APPROVED | Script-specific24h protected envelope/digests, no raw source persistence,64KiB result/16KiB logs/256KiB total envelope,90day content-free audit. Not DB1 D1/D5 inheritance. |
+| SDK-U2 user — APPROVED | Detached consumed-key MAC tombstones until namespace retirement; after payload purge/erasure old key returns409 retired, never reruns. No source linkage/digest in residue. |
+| SDK-U3 user — APPROVED | Initially explicit owner/admin human credential opt-in only; ordinary auth-off REST unchanged, no-credential scripts deferred. Narrows the plan's optional trusted-local mapping (approved). |
 | T1 DB1/reviewer | Content successor first; reuse methods/receipts/history, exact later extension ownership/profile allocated by DB1, no guessed version. |
 | T2 DB1/S09/DB2/3 | Same fixed transaction owns current auth/ACL/CAS, content+receipt+operation outcome+allocated outbox; no pool recursion/callback. |
 | T3 S09/S17/P8 | Trusted complete source capture and bounded read-frame/final-output release ordered with revoke; no broader publication without separate authority. |
@@ -728,7 +747,7 @@ Finite disposition register (U rows approved 2026-10-06; T rows still proposed):
 | T6 P6/S04/DB3/P8 | Explicit script:execute successor/binding and typed side-effect-free preflight/effect contracts; immutable credential33 unchanged. |
 
 Next primitive gate is T1, not all-SDK or DB14 completion before DB1 can proceed.
-U1/U2 (approved) fix retention/replay policy, U3 (approved) first submit eligibility; T2–T6
+SDK-U1/U2 (approved) fix retention/replay policy, SDK-U3 (approved) first submit eligibility; T2–T6
 need their specified accepted owner contracts and actual integration tests.
 Linux-single still requires authoritative content runtime, live auth/fences,
 preflight/CAS/receipts, source restrictions, lifecycle and full real REST/stdio
@@ -744,7 +763,7 @@ at its own commits; C–F is not delivered by writing this proposal.
 ## G Linux production launcher — author evidence, 2026-10-07
 
 Sole writer `ses_eee03b0f7ffeQnbOPdx1BA4D9T`, from `ef83b9fc` (plus the inherited
-uncommitted U1–U3 doc edits, completed in `31c9d998` with `policy.go`). Details and
+uncommitted SDK-U1–U3 doc edits, completed in `31c9d998` with `policy.go`). Details and
 topology are in `internal/scriptexec/README.md` ("Linux-first production launcher").
 
 - `launcher.go`, `launcher_linux.go`, `launcher_other.go`, and the

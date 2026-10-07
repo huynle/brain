@@ -19,7 +19,7 @@ func readerOrigin(raw string) (*url.URL, error) {
 func registerReaderURL(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "reader_url",
-		Description: "Resolve an entry by path or short ID and return its standalone Markdown reader URL, title, and canonical path. The entry is verified through the connected Brain API with your credentials. The link grants no access and requires a deployment with reader support. Defaults to the MCP request origin for HTTP, or configured API origin for stdio. Optional base_url selects a hosted/local origin; no request is made to the override and its entry availability is not verified. Localhost links work only on the device running that instance.",
+		Description: "Resolve an entry by path or short ID and return its standalone Markdown reader URL, title, and canonical path. The entry is verified through the connected Brain API with your credentials. The link grants no access and requires a deployment with reader support. Defaults to the MCP request origin. Optional base_url selects a hosted/local origin; no request is made to the override and its entry availability is not verified. Localhost links work only on the device running that instance.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"path":     {Type: "string", Description: "Entry path or 8-character entry ID"},
 			"base_url": {Type: "string", Description: "Optional origin, e.g. https://brain.huynle.com or http://localhost:3333"},

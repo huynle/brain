@@ -1200,7 +1200,7 @@ func TestBrainAttachmentAttachDetachListGetExtractTextDownload_RequestShapes(t *
 	}))
 	defer server.Close()
 
-	s := NewServer(WithLocalFilesystem())
+	s := NewServer()
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
@@ -3283,7 +3283,7 @@ func TestAttachmentTools_RejectLocalPathsOnHostedServer(t *testing.T) {
 	}))
 	defer server.Close()
 
-	s := NewServer() // no WithLocalFilesystem: this is the hosted default
+	s := NewServer()
 	RegisterBrainTools(s, NewAPIClient(server.URL))
 
 	tests := []struct {

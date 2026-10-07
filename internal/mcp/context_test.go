@@ -165,26 +165,6 @@ func TestResolveProject(t *testing.T) {
 	}
 }
 
-func TestDefaultBaseURL(t *testing.T) {
-	// Default value
-	got := DefaultBaseURL()
-	// Can't test env var easily, but default should be localhost:3333
-	if got != "http://localhost:3333" {
-		// May have BRAIN_API_URL set in env, that's ok
-		t.Logf("DefaultBaseURL() = %q (may be from env)", got)
-	}
-}
-
-// TestMakeHomeRelative_RootHomeIsNotAPrefix reproduces the live container
-// exactly: HOME=/ and WORKDIR=/app, with no git repository present.
-//
-// A home of "/" is a prefix of every absolute path, so treating it as one made
-// "/app" look home-relative ("app"). resolveProjectName's guard then found no
-// leading slash, concluded the path WAS under home, and let the basename
-// fallback answer "app" — the same invented project name 25c02d5 removed,
-// reached by a different route. Confirmed against production: context_get
-// reported "Project: app" while sitting in a non-repository directory, and
-// seven Hindsight entries had already been misfiled to projects/app/.
 func TestMakeHomeRelative_RootHomeIsNotAPrefix(t *testing.T) {
 	if got := makeHomeRelative("/app", "/"); got != "/app" {
 		t.Errorf("makeHomeRelative(%q, %q) = %q, want it left absolute", "/app", "/", got)

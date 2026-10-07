@@ -33,17 +33,12 @@ func main() {
 //
 // Supports backward compatibility via symlinks:
 //   - brain-api [flags] → brain api [flags]
-//   - brain-mcp [flags] → brain mcp [flags]
 //   - brain [...] → brain [...] (no change)
 func redirectLegacyInvocation(invoked string, args []string) []string {
 	switch invoked {
 	case "brain-api":
 		// brain-api [flags] → brain api [flags]
 		return append([]string{"api"}, args...)
-
-	case "brain-mcp":
-		// brain-mcp [flags] → brain mcp [flags]
-		return append([]string{"mcp"}, args...)
 
 	case "brain":
 		// Normal invocation, no redirect

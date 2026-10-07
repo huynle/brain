@@ -477,7 +477,7 @@ can trigger off reminders like any other event.
 #### Context Tools
 | Tool | Description |
 |------|-------------|
-| `context_get` | Show the ambient project/identity context the MCP server resolved at startup |
+| `context_get` | Show the default project and caller identity this MCP call resolved from its `X-Brain-*` headers |
 | `context_resolve` | Resolve the Brain project for a client/workspace observation |
 
 #### Graph Traversal Tools
@@ -497,7 +497,7 @@ can trigger off reminders like any other event.
 | `plan_sections` | List section headers from a plan for orchestration |
 | `link` | Generate a markdown link to a brain entry |
 
-The embedded MCP server calls the service layer directly (no HTTP round-trip), making it faster than a standalone stdio-based MCP server.
+MCP is served only by the API at `/mcp` (e.g. https://brain.huynle.com/mcp), so tool changes ship with each API deploy. There is no stdio `brain mcp` server.
 
 ### OAuth 2.1 Authentication
 

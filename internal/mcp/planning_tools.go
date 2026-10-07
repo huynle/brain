@@ -13,8 +13,8 @@ import (
 // =============================================================================
 
 // PlanningState holds the in-memory state for the planning phase state machine.
-// Since the Go MCP server runs as a single-session stdio process, this is
-// package-level state shared across all planning tool calls.
+// It lives on the Server it was registered with. The HTTP transport builds a
+// Server per request, so this state does not persist between hosted calls.
 type PlanningState struct {
 	Phase            string
 	PhaseStartedAt   time.Time

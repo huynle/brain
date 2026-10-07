@@ -51,8 +51,7 @@ credentials, additional paths, queries, or fragments are accepted. The override
 is used solely for link generation: it is never contacted, and availability of
 the entry or reader build on that other deployment is not verified.
 
-By default, stdio MCP uses its configured API origin; HTTP MCP uses the incoming
-request's host and protocol, honoring `X-Forwarded-Proto: https` for TLS proxies.
+By default, MCP uses the incoming request's host and protocol, honoring `X-Forwarded-Proto: https` for TLS proxies.
 These request values are link-display hints only and never change authenticated
 API request destinations. A proxy that rewrites the public Host header should
 use an explicit `base_url`. The link grants no access or authentication token.

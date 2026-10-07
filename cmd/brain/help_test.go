@@ -32,7 +32,6 @@ func TestShowHelp_BasicTopics(t *testing.T) {
 		{name: "main", topic: "", wants: []string{"brain - Unified Brain CLI", "CORE COMMANDS:", "RUNNER COMMANDS:"}},
 		{name: "api", topic: "api", wants: []string{"brain api", "SUBCOMMANDS:", "brain help api logs"}},
 		{name: "run", topic: "run", wants: []string{"brain run", "SUBCOMMANDS:", "run start"}},
-		{name: "mcp", topic: "mcp", wants: []string{"brain mcp", "--api-url"}},
 		{name: "init", topic: "init", wants: []string{"brain init", "--dry-run"}},
 		{name: "doctor", topic: "doctor", wants: []string{"brain doctor", "--skip-version-check"}},
 		{name: "install", topic: "install", wants: []string{"brain install", "opencode", "--api-url"}},
@@ -155,6 +154,17 @@ func TestShowHelp_AutomationSurfacesMentionSupportedTriggersAndGuards(t *testing
 				}
 			}
 		})
+	}
+}
+
+func TestShowHelp_MCPHasNoHelpTopic(t *testing.T) {
+	output := captureOutput(func() { ShowHelp("mcp") })
+	if !strings.Contains(output, "No help available for command: mcp") {
+		t.Fatalf("brain help mcp should be an unknown topic, got:\n%s", output)
+	}
+	main := captureOutput(func() { ShowHelp("") })
+	if strings.Contains(main, "brain mcp") {
+		t.Errorf("main help still advertises brain mcp:\n%s", main)
 	}
 }
 

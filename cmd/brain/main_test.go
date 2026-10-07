@@ -25,16 +25,10 @@ func TestRedirectLegacyInvocation(t *testing.T) {
 			expected: []string{"api"},
 		},
 		{
-			name:     "brain-mcp redirect",
+			name:     "brain-mcp is no longer redirected",
 			argv0:    "brain-mcp",
-			args:     []string{},
-			expected: []string{"mcp"},
-		},
-		{
-			name:     "brain-mcp with flags",
-			argv0:    "brain-mcp",
-			args:     []string{"--port", "8080"},
-			expected: []string{"mcp", "--port", "8080"},
+			args:     []string{"--api-url", "x"},
+			expected: []string{"--api-url", "x"},
 		},
 		{
 			name:     "brain normal invocation",

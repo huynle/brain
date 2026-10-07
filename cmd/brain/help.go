@@ -7,7 +7,7 @@ import (
 
 const mainHelp = `brain - Unified Brain CLI
 
-Manage the Brain API server, runner, MCP mode, tokens, and plugin integration.
+Manage the Brain API server, runner, tokens, and plugin integration.
 
 USAGE:
   brain <command> [subcommand] [flags] [args]
@@ -32,7 +32,6 @@ SETUP & DIAGNOSTICS:
   config                         Print resolved runtime config
 
 INTEGRATION:
-  mcp                            Run MCP stdio server
   install <target>               Install plugin for target app
   uninstall <target>             Uninstall plugin from target app
   plugin-status                  Check plugin installation status
@@ -441,20 +440,6 @@ EXAMPLES:
   brain run start
   brain run start my-project --headless
   brain run start my-project --tmux
-`
-
-const mcpHelp = `brain mcp - Start MCP stdio server
-
-USAGE:
-  brain mcp [flags]
-
-FLAGS:
-  --api-url <url>                Brain API URL
-  -h, --help                     Show this help
-
-EXAMPLES:
-  brain mcp
-  brain mcp --api-url http://localhost:3333
 `
 
 const initHelp = `brain init - Initialize brain directory structure
@@ -1198,8 +1183,6 @@ func ShowHelp(command string) {
 		fmt.Print(runnerHelp)
 	case "run start":
 		fmt.Print(runStartHelp)
-	case "mcp":
-		fmt.Print(mcpHelp)
 	case "init":
 		fmt.Print(initHelp)
 	case "doctor":

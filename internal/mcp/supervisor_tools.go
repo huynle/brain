@@ -9,7 +9,7 @@ import (
 	"strconv"
 )
 
-// RegisterSupervisorTools is shared by stdio and Streamable HTTP discovery.
+// RegisterSupervisorTools registers the supervisor tools for MCP discovery.
 func RegisterSupervisorTools(s *Server, client *APIClient) {
 	registerSessionChildren(s, client)
 	registerResourceHealth(s, client)

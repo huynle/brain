@@ -36,7 +36,6 @@ go run ./cmd/brain-api  # Run API server without building
 - `brain-api/` - REST API server entry point
 
 - `brain/` - Main CLI with subcommands (server, runner, doctor, etc.)
-- `brain-mcp/` - MCP (Model Context Protocol) server
 
 ### Core API (`internal/api/`)
 - `entries.go` - CRUD for brain entries
@@ -280,7 +279,7 @@ shared by all of them, because affinity asks "which box?", not "which runner?".
 
 A task records where it was created, so it can be run back there. Three
 provenance fields (`origin_machine_id`, `origin_client_id`, `origin_path`) are
-stamped by the **stdio** MCP server from its `ExecutionContext`, plus a
+stamped by the hosted MCP server from the caller's `X-Brain-*` headers, plus a
 caller-chosen `machine_affinity` (`local` | `preferred` | `none`).
 
 - **`origin_path` is the caller's ACTUAL cwd** — the linked worktree, absolute.
@@ -348,29 +347,29 @@ the indexer marshals the struct into `notes.metadata`), `rawFrontmatter`,
 `emitPlain` is only safe for closed enums, since `SanitizeSimpleValue` strips
 NULs and newlines but not YAML metacharacters.
 
-### MCP transports + local paths
+### MCP transport, caller headers + local paths
 
-The MCP server ships in two transports, and only one of them shares a
-filesystem with its client:
+MCP is served only over Streamable HTTP (`internal/mcp/http_transport.go`,
+mounted in-process by `apiserver/server.go` at `/mcp` and `/`; deployed at
+https://brain.huynle.com/mcp). There is no stdio server (`brain mcp` was
+removed). Tools run inside brain-api, so they share no filesystem with the
+client:
 
-- **stdio** (`brain mcp`, `internal/mcpserver`) is a child process of the
-  client, so a path the client names is a path this process can open.
-- **HTTP** (`internal/mcp/http_transport.go`, mounted in-process by
-  `apiserver/server.go` at `/mcp` and `/`) runs inside brain-api. A path from
-  the client resolves on the API *host* — which fails outright, or silently
-  reads/writes a different file that happens to exist there. It is also a
-  remote file-read/write primitive for anyone who can reach the endpoint.
-
-`NewServer()` therefore defaults to **no local filesystem**; only the stdio
-path passes `WithLocalFilesystem()`. Any tool argument naming a caller-side
-path must be gated on `Server.requireLocalFilesystem`, as `attachment_upload`
-(`file_path`) and `attachment_download` (`output_path`) are. Both tools have a
-transport-independent form that carries bytes over the wire instead —
-`content`/`filename` base64 in, base64 out (capped at
-`maxInlineAttachmentBytes`, 5 MiB, with the REST content endpoint as the
-fallback for anything larger). Note this does *not* apply to arguments that
-intentionally name paths on the server/runner host, such as the control tools'
-`workdir`.
+- No tool argument may name a caller-side path. `rejectLocalPathArg`
+  refuses `attachment_upload.file_path`, `attachment_download.output_path` and
+  `plan_discover_docs.additional_dirs`; bytes travel as base64
+  (`content`/`filename` in, inline base64 out capped at
+  `maxInlineAttachmentBytes`, 5 MiB). Arguments that intentionally name
+  server/runner-host paths, such as the control tools' `workdir`, are exempt.
+- Caller identity comes from request headers parsed by `ParseCallerHeaders`
+  (`internal/mcp/caller.go`): `X-Brain-Host-Id`, `X-Brain-Client-Id`,
+  `X-Brain-Workdir`, `X-Brain-Home`. They are validated, bounded routing
+  hints — never auth. `save` stamps `origin_*` only from them, and
+  `machine_affinity: local` needs a valid host id. `handleToolsCall` defaults a
+  tool's `project` arg from the workdir header (main repo basename; `.worktrees`
+  and `.claude/worktrees` folded) when the caller omits it.
+- Without headers, `GetCachedContext` (the API process's own cwd) is still the
+  project fallback for `ResolveProject`, but it never supplies origin identity.
 
 ### Index freshness (who writes to the brain dir)
 

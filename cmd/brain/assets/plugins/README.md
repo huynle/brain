@@ -21,9 +21,9 @@ installs the same skills into `~/.claude/skills/<name>/SKILL.md` for Claude
 Code via `assets.ListSharedSkillFiles()`.
 
 > **Note:** The previous `brain.ts` API client plugin has been removed.
-> Brain tools are now exposed through the MCP stdio server (`brain mcp`)
-> configured directly in OpenCode's MCP settings. See the project README
-> for the OpenCode MCP config snippet.
+> Brain tools are now exposed through the hosted MCP endpoint (`/mcp`)
+> configured as a remote server in OpenCode's MCP settings. See the project
+> README for the OpenCode MCP config snippet.
 
 ## Plugin Format
 

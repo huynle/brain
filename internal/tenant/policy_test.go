@@ -56,7 +56,7 @@ func tenantPolicy(path, source string) ([]string, error) {
 	}
 	dir := filepath.ToSlash(filepath.Dir(path))
 	bindingAllowed := strings.HasSuffix(path, ".go") && (path == "internal/api/tenant_middleware.go" ||
-		dir == "internal/tenant" || dir == "internal/apiserver" || dir == "internal/mcpserver")
+		dir == "internal/tenant" || dir == "internal/apiserver")
 	restricted := func(name string) bool {
 		return name == "Parse" || name == "MustParse" || ((name == "Into" || name == "BindAuthorized") && !bindingAllowed)
 	}

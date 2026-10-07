@@ -37,7 +37,7 @@ go run ./cmd/brain-api  # Run API server without building
 - `brain-api/` - REST API server entry point
 
 - `brain/` - Main CLI with subcommands (server, runner, doctor, etc.)
-- `brain-mcp/` - MCP (Model Context Protocol) server
+- MCP is served only by brain-api at `/mcp` (Streamable HTTP, `internal/mcp/http_transport.go`); there is no stdio `brain mcp`. Clients send `X-Brain-Host-Id`/`X-Brain-Client-Id`/`X-Brain-Workdir` headers (`internal/mcp/caller.go`) for task origin and project detection; files travel as base64 only.
 
 ### Core API (`internal/api/`)
 - `entries.go` - CRUD for brain entries

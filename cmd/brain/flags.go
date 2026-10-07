@@ -59,11 +59,6 @@ type RunnerFlags struct {
 	Follow       bool
 }
 
-// MCPFlags for MCP command
-type MCPFlags struct {
-	APIURL string
-}
-
 // TokenFlags for token command
 type TokenFlags struct {
 	Name  string
@@ -197,20 +192,6 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 		flags.FeatureIDs = append(flags.FeatureIDs, s)
 		return nil
 	})
-
-	if err := fs.Parse(args); err != nil {
-		return nil, err
-	}
-
-	return flags, nil
-}
-
-// ParseMCPFlags parses MCP-specific flags
-func ParseMCPFlags(args []string) (*MCPFlags, error) {
-	flags := &MCPFlags{}
-	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
-
-	fs.StringVar(&flags.APIURL, "api-url", "", "Brain API URL")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err

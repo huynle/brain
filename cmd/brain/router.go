@@ -68,7 +68,6 @@ func (c *HelpCommand) Type() string {
 // These commands take precedence over project names.
 var builtinCommands = map[string]bool{
 	"api":           true,
-	"mcp":           true,
 	"run":           true,
 	"runner":        true, // alias for "run" (backwards compat with old Node.js CLI)
 	"stop":          true, // stop runner for a project
@@ -181,11 +180,6 @@ func parseBuiltinCommand(args []string) (Command, error) {
 			return &HelpCommand{command: "config"}, nil
 		}
 		return parseConfigCommand(cmdArgs)
-	case "mcp":
-		if wantsHelp(cmdArgs) {
-			return &HelpCommand{command: "mcp"}, nil
-		}
-		return parseMCPCommand(cmdArgs)
 	case "token":
 		return parseTokenCommand(cmdArgs)
 	case "auth":
@@ -327,20 +321,6 @@ func parseAPICommand(args []string) (Command, error) {
 	return &commands.APICommand{
 		Config: convertToCommandsConfig(cfg),
 		Flags:  convertToCommandsAPIFlags(flags),
-	}, nil
-}
-
-// parseMCPCommand creates an MCPCommand from args.
-func parseMCPCommand(args []string) (Command, error) {
-	cfg := defaultConfig()
-	flags, err := ParseMCPFlags(args)
-	if err != nil {
-		return nil, err
-	}
-
-	return &commands.MCPCommand{
-		Config: convertToCommandsConfig(cfg),
-		Flags:  convertToCommandsMCPFlags(flags),
 	}, nil
 }
 
@@ -777,13 +757,6 @@ func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 		Exclude:      flags.Exclude,
 		FeatureIDs:   flags.FeatureIDs,
 		Follow:       flags.Follow,
-	}
-}
-
-// convertToCommandsMCPFlags converts main.MCPFlags to commands.MCPFlags.
-func convertToCommandsMCPFlags(flags *MCPFlags) *commands.MCPFlags {
-	return &commands.MCPFlags{
-		APIURL: flags.APIURL,
 	}
 }
 

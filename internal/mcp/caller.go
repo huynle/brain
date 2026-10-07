@@ -98,16 +98,16 @@ func validCallerPath(v string) bool {
 }
 
 // worktreeContainers are the directory names under which this project's
-// tooling creates linked worktrees. The stdio server asked git for the main
-// worktree; a hosted server cannot run git on the client's disk, so it
+// tooling creates linked worktrees. The removed stdio server asked git for the
+// main worktree; the hosted server cannot run git on the client's disk, so it
 // recognizes the layouts instead.
 var worktreeContainers = []string{"/.worktrees/", "/.claude/worktrees/"}
 
 // ExecutionContext derives the per-call execution context from the caller's
-// headers, using the same rules the stdio server applied to its launch
+// headers, using the same rules the removed stdio server applied to its launch
 // directory: main repo path, home-relative workdir, project = last segment.
 func (c *CallerContext) ExecutionContext() ExecutionContext {
-	ec := ExecutionContext{HostID: c.HostID, ClientID: c.ClientID, AbsPath: c.Workdir, HomeDir: c.Home}
+	ec := ExecutionContext{HostID: c.HostID, ClientID: c.ClientID, AbsPath: c.Workdir}
 	if c.Workdir == "" {
 		return ec
 	}

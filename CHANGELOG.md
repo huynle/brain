@@ -53,28 +53,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `plan_discover_docs` no longer globs the server's disk: pass the docs you
   found as `doc_paths` (`additional_dirs` is rejected).
 
-- **Stdio MCP (`brain mcp`) now uses the public Go SDK's HTTP transport.**
-  Tool names, DTOs and normal results are unchanged. These differences are
-  intentional:
-  - **Plain-http token refusal:** with `BRAIN_API_TOKEN` set, a plain `http://`
-    `BRAIN_API_URL` to a non-loopback host is refused at startup
-    (`insecure_transport`), so the token is never sent unencrypted off-host.
-    Use `https://`, or a loopback URL (`localhost`, `127.0.0.0/8`, `::1`), e.g.
-    through an SSH tunnel. Without a token, plain http is unchanged.
-  - **Bad `BRAIN_API_URL`:** a malformed URL (bad scheme, userinfo, query or
-    fragment) fails at startup with `invalid_configuration` instead of on first
-    use.
-  - **Redirects:** HTTP redirects are refused (`redirect_refused`) rather than
-    followed, so a token can't be forwarded to another origin. Structural path
-    traversal in request paths is refused too.
-  - **Bodyless mutations:** these now send an explicit empty body.
-  - **Error text:** SDK errors now read `brain: <code> (HTTP <status>)`, or
-    `brain: <code>` for client-side failures (e.g. `create stdio SDK client:
-    brain: invalid_configuration`). Only the stable machine code is shown; the
-    server message, request ID and field details stay out of default
-    formatting. The TypeScript `BrainError.message` uses the same format.
-
-  Hosted MCP is unaffected.
+- **SDK error text:** public Go SDK errors read `brain: <code> (HTTP <status>)`,
+  or `brain: <code>` for client-side failures. Only the stable machine code is
+  shown; the server message, request ID and field details stay out of default
+  formatting. The TypeScript `BrainError.message` uses the same format.
 
 ### Fixed
 
@@ -90,11 +72,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Removed
 
+- **`brain mcp` (stdio MCP server).** MCP is served only from the API's
+  `/mcp` endpoint (e.g. https://brain.huynle.com/mcp), so tool changes ship
+  with each deploy. `brain mcp` and the `brain-mcp` argv0 alias are now
+  unknown commands; `internal/mcpserver`, the stdio SDK client, the NDJSON
+  stdio loop, `WithLocalFilesystem`, and the stdio-only machine/client id
+  resolution (`internal/identity`, `mcp_client_id`) are gone. Point OpenCode at
+  the remote endpoint with the `X-Brain-*` headers (README "Connecting
+  OpenCode"). The public SDK (`sdk/brain`) is unchanged.
+
 - **`brain.ts` OpenCode plugin.** The TypeScript API-client plugin previously
   shipped at `cmd/brain/assets/plugins/opencode/brain.ts` and installed to
   `~/.config/opencode/plugin/brain.ts` has been deleted. Its tools
   (`brain_save`, `brain_recall`, `brain_search`, `brain_tasks`, etc.) are now
-  exposed through the brain MCP stdio server (`brain mcp`) and registered in
+  exposed through the hosted brain MCP endpoint (`/mcp`) and registered in
   OpenCode's MCP configuration.
 
 ### Migration
@@ -106,33 +97,15 @@ on disk — no functionality is removed at runtime. To complete the migration:
    `~/.config/opencode/plugin/brain.ts`; the companion `brain-planning.ts`
    plugin and brain skills/agents/commands still install as before.
 2. Delete the old plugin: `rm ~/.config/opencode/plugin/brain.ts`.
-3. Add the brain MCP server to your OpenCode config (see the "Connecting
-   OpenCode" section in `README.md`):
-
-   ```json
-   {
-     "mcp": {
-       "brain": {
-         "type": "local",
-         "command": ["brain", "mcp"],
-         "enabled": true,
-         "environment": {
-           "BRAIN_API_URL": "http://localhost:3333"
-         }
-       }
-     }
-   }
-   ```
-
-The `brain mcp` subcommand reads `mcp.api_url` / `runner.api_token` from
-`~/.config/brain/config.yaml`; env vars (`BRAIN_API_URL`, `BRAIN_API_TOKEN`)
-override the file. Tool names and arguments are unchanged.
+3. Add the hosted brain MCP endpoint to your OpenCode config as a remote
+   server with the `X-Brain-*` caller headers (see "Connecting OpenCode" in
+   `README.md`). Tool names are unchanged.
 
 ### Compatibility notes
 
 - `brain_project_context` remains registered as a name-only alias for
   `brain_context_resolve`, so existing prompts/skills/agents that call
   `brain_project_context` keep working through the cutover.
-- The MCP stdio server uses a separate per-install client id stored at
-  `~/.config/brain/mcp_client_id`, distinct from any legacy
-  `opencode_client_id` left behind by the old plugin.
+- The client id stamped on tasks is whatever the client sends in
+  `X-Brain-Client-Id`; leftover `~/.config/brain/mcp_client_id` and
+  `opencode_client_id` files are no longer read.

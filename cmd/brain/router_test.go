@@ -116,7 +116,7 @@ func TestRoute_UnknownArg_RoutesToHelp(t *testing.T) {
 
 func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 	builtins := []string{
-		"api", "mcp", "run", "runner", "stop", "attachments",
+		"api", "run", "runner", "stop", "attachments",
 		"dev", "init", "doctor",
 		"config", "install", "uninstall", "plugin-status", "token", "dream", "help",
 	}
@@ -288,6 +288,19 @@ func TestRoute_UnknownCommand_RoutesToHelp(t *testing.T) {
 	}
 }
 
+// The stdio MCP server was removed: MCP is served only from the API's /mcp.
+func TestRoute_MCPIsUnknownCommand(t *testing.T) {
+	for _, args := range [][]string{{"mcp"}, {"mcp", "--api-url", "http://localhost:3333"}} {
+		cmd, err := route(args)
+		if err != nil {
+			t.Fatalf("route(%v) error: %v", args, err)
+		}
+		if cmd.Type() != "help" {
+			t.Errorf("route(%v) Type() = %q, want help (unknown command)", args, cmd.Type())
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Test: isBuiltinCommand helper
 // ---------------------------------------------------------------------------
@@ -399,7 +412,7 @@ func TestIsBuiltinCommand(t *testing.T) {
 		want bool
 	}{
 		{"api", true},
-		{"mcp", true},
+		{"mcp", false},
 		{"help", true},
 		{"run", true},
 		{"start", false},

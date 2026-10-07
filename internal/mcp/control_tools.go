@@ -64,11 +64,11 @@ func registerBrainRunnerPauseFeature(s *Server, client *APIClient) {
 			"Holds NEW dispatch only: a task a runner is already executing runs to completion, and an explicit run_task/run_feature still overrides. " +
 			"Unlike the two project dials, this applies to automation-generated tasks in the feature as well - it is scoped to the WORK, not to who authored it."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project":    {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
+			"project":    {Type: "string", Description: "Project ID. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 			"feature_id": {Type: "string", Description: "Feature to hold."},
 		}, Required: []string{"feature_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		if projectID == "" {
 			return "", fmt.Errorf("project is required")
 		}
@@ -90,11 +90,11 @@ func registerBrainRunnerResumeFeature(s *Server, client *APIClient) {
 		Name:        "runner_resume_feature",
 		Description: controlDescription("Resume task dispatch for ONE feature held by runner_pause_feature."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project":    {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
+			"project":    {Type: "string", Description: "Project ID. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 			"feature_id": {Type: "string", Description: "Feature to release."},
 		}, Required: []string{"feature_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		if projectID == "" {
 			return "", fmt.Errorf("project is required")
 		}
@@ -116,10 +116,10 @@ func registerBrainRunnerPauseProjectAutomations(s *Server, client *APIClient) {
 		Name:        "runner_pause_project_automations",
 		Description: controlDescription("Pause AUTOMATION-GENERATED task execution for one project. This is the dial that governs tasks created by automations; manual tasks follow runner_pause_project."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project": {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
+			"project": {Type: "string", Description: "Project ID. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		if projectID == "" {
 			return "", fmt.Errorf("project is required")
 		}
@@ -136,10 +136,10 @@ func registerBrainRunnerResumeProjectAutomations(s *Server, client *APIClient) {
 		Name:        "runner_resume_project_automations",
 		Description: controlDescription("Resume AUTOMATION-GENERATED task execution for one project."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project": {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
+			"project": {Type: "string", Description: "Project ID. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		if projectID == "" {
 			return "", fmt.Errorf("project is required")
 		}
@@ -156,10 +156,10 @@ func registerBrainRunnerPauseProject(s *Server, client *APIClient) {
 		Name:        "runner_pause_project",
 		Description: controlDescription(axisNote + "Pause MANUAL task execution for one project."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project": {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
+			"project": {Type: "string", Description: "Project ID. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		if projectID == "" {
 			return "", fmt.Errorf("project is required")
 		}
@@ -176,10 +176,10 @@ func registerBrainRunnerResumeProject(s *Server, client *APIClient) {
 		Name:        "runner_resume_project",
 		Description: controlDescription(axisNote + "Resume MANUAL task execution for one project."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project": {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
+			"project": {Type: "string", Description: "Project ID. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		if projectID == "" {
 			return "", fmt.Errorf("project is required")
 		}

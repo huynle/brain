@@ -42,17 +42,18 @@ resolved at startup:
 - **Workdir**, **git remote**, **git branch**.
 - The client/host identity stamped on tasks this server creates.
 
-If it reports `⚠ COULD NOT DETERMINE`, the process is not running inside a
-recognised git repository under your home directory. There is no safe
-default: pass `project` explicitly on every subsequent call. It will not
-guess from the directory name, deliberately — guessing is how unrelated
-entries end up filed under a project named after a folder.
+If it reports `⚠ COULD NOT DETERMINE`, your MCP client did not send a usable
+`X-Brain-Workdir` header naming a project folder. There is no safe default:
+pass `project` explicitly on every subsequent call. It will not guess,
+deliberately — guessing is how unrelated entries end up filed under a project
+named after a folder.
 
-Note the project is resolved **from the server's own working directory**,
-not from anything the client sends. Over the stdio transport (`brain mcp`)
-that is your checkout. Over the HTTP transport it is the API host, which
-is shared by every client — so on HTTP, treat the reported project as a
-default to override, not as an answer.
+The project is resolved from the `X-Brain-Workdir` header your MCP client
+config sends, only when that folder is under `X-Brain-Home` (the main repo's
+folder name; worktrees under `.worktrees/` map to their repo). Without any
+`X-Brain-*` header it falls back to the API server's own directory, which is
+shared by every client — treat that as a default to override, not as an
+answer.
 
 ### 2. Load the project dream
 

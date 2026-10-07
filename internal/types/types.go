@@ -437,7 +437,7 @@ type BrainEntry struct {
 	TargetWorkdir       string   `json:"target_workdir,omitempty"`
 
 	// Origin provenance — where this task was created from. Stamped by the
-	// MCP stdio server from its ExecutionContext at create time. Persisted
+	// hosted MCP server from the caller's X-Brain-* headers. Persisted
 	// in frontmatter (not runtime-only) because it is authored intent, not
 	// scheduler bookkeeping: it must survive a re-index.
 	//

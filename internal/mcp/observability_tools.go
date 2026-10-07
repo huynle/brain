@@ -37,7 +37,7 @@ func registerBrainTaskLogs(s *Server, client *APIClient) {
 			Required: []string{"task_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProject(args)
+		projectID := ResolveProject(ctx, args)
 		if projectID == "" {
 			return "", fmt.Errorf("project is required")
 		}
@@ -74,7 +74,7 @@ func registerBrainTaskDispatchLease(s *Server, client *APIClient) {
 			Required: []string{"task_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProject(args)
+		projectID := ResolveProject(ctx, args)
 		if projectID == "" {
 			return "", fmt.Errorf("project is required")
 		}
@@ -108,7 +108,7 @@ func registerBrainTaskPlacementReasons(s *Server, client *APIClient) {
 			Required: []string{"task_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProject(args)
+		projectID := ResolveProject(ctx, args)
 		if projectID == "" {
 			return "", fmt.Errorf("project is required")
 		}

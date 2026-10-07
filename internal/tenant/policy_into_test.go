@@ -6,7 +6,7 @@ import (
 )
 
 func TestIntoTrustedBoundaryAllowlist(t *testing.T) {
-	for _, path := range []string{"internal/api/tenant_middleware.go", "internal/tenant/authorized.go", "internal/apiserver/tenant.go", "internal/mcpserver/tenant.go"} {
+	for _, path := range []string{"internal/api/tenant_middleware.go", "internal/tenant/authorized.go", "internal/apiserver/tenant.go"} {
 		for _, name := range []string{"Into", "BindAuthorized", "Parse", "MustParse"} {
 			got, err := tenantPolicy(path, `package boundary; import scope "`+tenantImport+`"; var f = scope.`+name)
 			want := 1
@@ -18,7 +18,7 @@ func TestIntoTrustedBoundaryAllowlist(t *testing.T) {
 			}
 		}
 	}
-	for _, path := range []string{"internal/api/tenant_middleware_extra.go", "internal/apiserver/nested/tenant.go", "internal/mcpserver/nested/tenant.go", "internal/tenant/nested/tenant.go", "internal/apiserver_extra/tenant.go", "internal/mcpserver_extra/tenant.go", "internal/tenant_extra/tenant.go"} {
+	for _, path := range []string{"internal/api/tenant_middleware_extra.go", "internal/apiserver/nested/tenant.go", "internal/mcpserver/tenant.go", "internal/mcpserver/nested/tenant.go", "internal/tenant/nested/tenant.go", "internal/apiserver_extra/tenant.go", "internal/mcpserver_extra/tenant.go", "internal/tenant_extra/tenant.go"} {
 		for _, name := range []string{"Into", "BindAuthorized"} {
 			got, err := tenantPolicy(path, `package boundary; import scope "`+tenantImport+`"; var f = scope.`+name)
 			if err != nil || len(got) != 1 {

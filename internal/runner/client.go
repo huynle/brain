@@ -1494,21 +1494,20 @@ type TaskDefaultsResponse struct {
 }
 
 // GetTaskDefaults fetches the server's task_defaults configuration.
-// Returns nil (not an error) if the endpoint is unavailable (e.g., older server).
 func (c *APIClient) GetTaskDefaults(ctx context.Context) (*TaskDefaultsResponse, error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/config/task-defaults", nil)
 	if err != nil {
-		return nil, nil // graceful fallback
+		return nil, fmt.Errorf("get task defaults: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil // graceful fallback for older servers
+		return nil, c.readError(resp)
 	}
 
 	var defaults TaskDefaultsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&defaults); err != nil {
-		return nil, nil // graceful fallback
+		return nil, fmt.Errorf("decode task defaults: %w", err)
 	}
 	return &defaults, nil
 }

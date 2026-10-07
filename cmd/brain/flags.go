@@ -57,11 +57,8 @@ type RunnerFlags struct {
 	Exclude      []string
 	FeatureIDs   []string
 	Follow       bool
-}
-
-// MCPFlags for MCP command
-type MCPFlags struct {
-	APIURL string
+	Yes          bool
+	Limit        int
 }
 
 // TokenFlags for token command
@@ -139,6 +136,9 @@ func ParseAPIFlags(args []string) (*APIFlags, error) {
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
+	if fs.NArg() > 0 {
+		return nil, unexpectedAPIArg(fs.Arg(0))
+	}
 
 	return flags, nil
 }
@@ -171,6 +171,9 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 	fs.StringVar(&flags.PiModel, "pi-model", "", "Pi model")
 	fs.StringVar(&flags.PiThinking, "pi-thinking", "", "Pi thinking level (off, minimal, low, medium, high, xhigh)")
 	fs.BoolVar(&flags.Follow, "follow", false, "Follow logs")
+	fs.BoolVar(&flags.Yes, "yes", false, "Skip confirmation (pause-all/resume-all)")
+	fs.BoolVar(&flags.Yes, "y", false, "Skip confirmation (short)")
+	fs.IntVar(&flags.Limit, "limit", 0, "Maximum log lines (run logs)")
 
 	// Multi-value flags
 	fs.Func("include", "Include project pattern", func(s string) error {
@@ -197,20 +200,6 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 		flags.FeatureIDs = append(flags.FeatureIDs, s)
 		return nil
 	})
-
-	if err := fs.Parse(args); err != nil {
-		return nil, err
-	}
-
-	return flags, nil
-}
-
-// ParseMCPFlags parses MCP-specific flags
-func ParseMCPFlags(args []string) (*MCPFlags, error) {
-	flags := &MCPFlags{}
-	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
-
-	fs.StringVar(&flags.APIURL, "api-url", "", "Brain API URL")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -457,10 +446,20 @@ func ParseLifecycleFlags(args []string) (*LifecycleFlags, error) {
 				flags.Executor = args[i+1]
 				i++
 			}
+		default:
+			// Every value-taking flag is consumed above, so a bare word here
+			// is a stray argument, not a flag value.
+			if !isFlag(arg) {
+				return nil, unexpectedAPIArg(arg)
+			}
 		}
 	}
 
 	return flags, nil
+}
+
+func unexpectedAPIArg(arg string) error {
+	return &commands.UsageError{Message: fmt.Sprintf("brain api: unexpected argument %q\nRun 'brain help api' for usage.", arg)}
 }
 
 // convertToCommandsLifecycleFlags converts main.LifecycleFlags to commands.LifecycleFlags.

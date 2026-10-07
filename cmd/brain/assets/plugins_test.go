@@ -7,7 +7,7 @@ import (
 
 // Test GetPluginFile can read a top-level opencode plugin asset.
 // Brain tools were previously shipped as a brain.ts plugin; they are now
-// exposed through the brain MCP stdio server, so the only top-level asset
+// exposed through the hosted brain MCP endpoint, so the only top-level asset
 // in the opencode plugin tree is README.md.
 func TestGetPluginFile_OpenCodeReadme(t *testing.T) {
 	content, err := GetPluginFile("opencode", "README.md")

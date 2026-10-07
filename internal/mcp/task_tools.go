@@ -66,7 +66,7 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		proj := ResolveProject(args)
+		proj := ResolveProject(ctx, args)
 
 		// This struct must mirror types.TaskListResponse / ResolvedTask /
 		// TaskStats. It did not, in four places, and each mismatch failed
@@ -358,7 +358,7 @@ If no ready tasks, shows current queue state.`,
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		proj := ResolveProject(args)
+		proj := ResolveProject(ctx, args)
 
 		// GET /tasks/{project}/next writes a BARE ResolvedTask
 		// (internal/api/tasks.go:174) — there is no {"task": ...} envelope
@@ -579,7 +579,7 @@ Use this to get detailed information about a specific task including:
 			return "", fmt.Errorf("provide a 'task_id' (ID or title)")
 		}
 
-		proj := ResolveProject(args)
+		proj := ResolveProject(ctx, args)
 
 		// Get all tasks to find the specific task and calculate dependents
 		var tasksResp struct {
@@ -754,7 +754,7 @@ or to inspect its dependency graph details. Complements task_get which returns c
 			return "", fmt.Errorf("provide a 'task_id' (ID or title)")
 		}
 
-		proj := ResolveProject(args)
+		proj := ResolveProject(ctx, args)
 
 		var tasksResp struct {
 			Tasks []fullTask `json:"tasks"`
@@ -922,7 +922,7 @@ Example - wait for completion:
 			return "", fmt.Errorf("provide at least one task ID in 'task_ids'")
 		}
 
-		proj := ResolveProject(args)
+		proj := ResolveProject(ctx, args)
 		waitFor := StringArgAlias(args, "", "wait_for", "waitFor")
 		timeout := IntArg(args, "timeout", 60000)
 		if timeout > 300000 {
@@ -1072,7 +1072,7 @@ func registerBrainTaskTrigger(s *Server, client *APIClient) {
 			Required: []string{"task_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		proj := ResolveProject(args)
+		proj := ResolveProject(ctx, args)
 		taskID := StringArgAlias(args, "", "task_id", "taskId")
 
 		// types.TriggerResponse is {success, taskId, triggered, runId,
@@ -1886,7 +1886,7 @@ func registerBrainResumeTaskWithContext(s *Server, client *APIClient) {
 			"If the task's session is still live, the context is injected into the running session without a relaunch. " +
 			"Targets POST /tasks/{project}/{taskId}/resume-with-context.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project":             {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
+			"project":             {Type: "string", Description: "Project ID. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 			"task_id":             {Type: "string", Description: "Task ID (8-char alphanumeric) to resume."},
 			"injected_context":    {Type: "string", Description: "Supervisor-authored context to hand the agent on resume. Required."},
 			"prefer_same_session": {Type: "boolean", Description: "Prefer reattaching the prior OpenCode session when viable (default: true). When false, always rehydrate a fresh session."},
@@ -1894,7 +1894,7 @@ func registerBrainResumeTaskWithContext(s *Server, client *APIClient) {
 			"force":               {Type: "boolean", Description: "Resume even if the task is not detected as abandoned. Never overrides live-claim safety."},
 		}, Required: []string{"task_id", "injected_context"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		if projectID == "" {
 			return "", fmt.Errorf("project is required")
 		}

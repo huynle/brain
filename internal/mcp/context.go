@@ -1,55 +1,39 @@
 package mcp
 
 import (
+	"context"
 	"net/url"
 	"os"
 	"os/exec"
-	"os/user"
-	"path/filepath"
-	"runtime"
 	"strings"
-
-	"github.com/huynle/brain-api/internal/identity"
+	"sync"
 )
 
-// ExecutionContext holds the detected project context for MCP tool calls.
+// ExecutionContext holds the project and caller context MCP tool calls
+// default from.
 //
-// Project fields (ProjectID/Workdir/GitRemote/GitBranch) describe where the
-// MCP server was launched. Identity fields (ClientID/HostID/Hostname/OS/
-// Arch/Username/HomeDir) describe who/where is calling, and are used by
-// Phase 2 (task stamping) and Phase 3 (affinity routing) to align
-// MCP-created tasks with the runner that will execute them. HostID is
-// intentionally derived from the same machine-id file the runner uses, so
-// affinity matching across processes works.
+// For a hosted call with caller headers it is derived from those headers (see
+// CallerContext.ExecutionContext). Otherwise it is GetCachedContext: the
+// project of the directory the Brain API process runs in, with no caller
+// identity.
 type ExecutionContext struct {
-	// Project context (where the MCP server was launched).
 	ProjectID string // Short project name (last path segment)
 	Workdir   string // Home-relative path to main repo
 	GitRemote string // Git remote URL (origin)
 	GitBranch string // Current git branch
 
-	// AbsPath is the caller's ACTUAL working directory, absolute and
-	// un-normalized — the linked worktree, not the main repo. Workdir is
-	// home-relative and gets re-resolved against whatever host runs the
-	// task; AbsPath is only meaningful together with HostID, and is stamped
-	// on tasks as origin_path so a runner on the same machine can use the
-	// directory the author was really in.
+	// AbsPath is the caller's actual working directory, absolute and
+	// un-normalized — the linked worktree, not the main repo. It is only
+	// meaningful together with HostID, and is stamped on tasks as
+	// origin_path so a runner on the same machine can use the directory the
+	// author was really in.
 	AbsPath string
 
-	// Identity context (who/where is calling). Populated once per process.
-	ClientID string // MCP per-install client id (e.g. mcp-<uuid>)
-	HostID   string // Stable machine id shared with the runner
-	Hostname string // os.Hostname()
-	OS       string // runtime.GOOS
-	Arch     string // runtime.GOARCH
-	Username string // current user's username (best-effort)
-	HomeDir  string // current user's home directory (best-effort)
+	ClientID string // Caller's client install id
+	HostID   string // Caller's machine id, shared with its runner
 }
 
-// GetExecutionContext detects the project context from the given directory
-// and resolves the calling process's identity (client id, host id, host
-// metadata). Identity resolution is best-effort: any failure degrades to a
-// safe default rather than blocking startup.
+// GetExecutionContext detects the project context from the given directory.
 func GetExecutionContext(directory string) ExecutionContext {
 	home, _ := os.UserHomeDir()
 	mainRepoPath := directory
@@ -88,44 +72,11 @@ func GetExecutionContext(directory string) ExecutionContext {
 
 	workdir := makeHomeRelative(mainRepoPath, home)
 
-	hostname, _ := os.Hostname()
-
-	var username, homeDir string
-	if u, err := user.Current(); err == nil && u != nil {
-		username = u.Username
-		homeDir = u.HomeDir
-	}
-	if homeDir == "" {
-		// user.Current can fail in static builds / minimal containers; fall
-		// back to os.UserHomeDir which honors $HOME.
-		if h, err := os.UserHomeDir(); err == nil {
-			homeDir = h
-		}
-	}
-
-	// Only claim an absolute origin path when git vouched for the directory
-	// being a repository. Outside a repo there is nothing for a runner to do
-	// with the path, and stamping one would invite it to open an unrelated
-	// directory that happens to exist at the same location.
-	absPath := ""
-	if insideRepo && filepath.IsAbs(directory) {
-		absPath = directory
-	}
-
 	return ExecutionContext{
 		ProjectID: resolveProjectName(workdir, insideRepo),
 		Workdir:   workdir,
-		AbsPath:   absPath,
 		GitRemote: gitRemote,
 		GitBranch: gitBranch,
-
-		ClientID: LoadOrCreateMCPClientID(),
-		HostID:   identity.ResolveMachineID(),
-		Hostname: hostname,
-		OS:       runtime.GOOS,
-		Arch:     runtime.GOARCH,
-		Username: username,
-		HomeDir:  homeDir,
 	}
 }
 
@@ -204,16 +155,12 @@ func gitCommand(dir string, args ...string) (string, error) {
 	return string(out), nil
 }
 
-// DefaultBaseURL returns the Brain API base URL from environment or default.
-func DefaultBaseURL() string {
-	if u := os.Getenv("BRAIN_API_URL"); u != "" {
-		return u
-	}
-	return "http://localhost:3333"
-}
-
-// CachedContext holds the lazily-initialized execution context.
-var cachedContext *ExecutionContext
+// cachedContext holds the lazily-initialized context of the Brain API
+// process itself. Guarded by cachedContextMu: hosted calls run concurrently.
+var (
+	cachedContextMu sync.Mutex
+	cachedContext   *ExecutionContext
+)
 
 // ContextDir is the directory used for execution context detection.
 var ContextDir = func() string {
@@ -223,6 +170,8 @@ var ContextDir = func() string {
 
 // GetCachedContext returns the execution context, computing it once.
 func GetCachedContext() ExecutionContext {
+	cachedContextMu.Lock()
+	defer cachedContextMu.Unlock()
 	if cachedContext == nil {
 		ctx := GetExecutionContext(ContextDir())
 		cachedContext = &ctx
@@ -230,22 +179,44 @@ func GetCachedContext() ExecutionContext {
 	return *cachedContext
 }
 
-// ResolveProject returns the project ID from args or falls back to cached context.
-func ResolveProject(args map[string]any) string {
-	if p, ok := args["project"].(string); ok && p != "" {
-		return p
+type callerContextKey struct{}
+
+// withCaller records the hosted caller on the tool call's context so project
+// resolution can tell "no headers" from "headers that named no project".
+func withCaller(ctx context.Context, c *CallerContext) context.Context {
+	if c == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, callerContextKey{}, c)
+}
+
+// DefaultProject is the project a tool call targets when it names none — the
+// same answer context_get reports. A call carrying any caller header gets the
+// project its headers resolve to, possibly none; it never inherits the Brain
+// API process's own project. Only headerless calls fall back to that.
+func DefaultProject(ctx context.Context) string {
+	if c, ok := ctx.Value(callerContextKey{}).(*CallerContext); ok {
+		return c.ExecutionContext().ProjectID
 	}
 	return GetCachedContext().ProjectID
 }
 
+// ResolveProject returns the project ID from args or falls back to DefaultProject.
+func ResolveProject(ctx context.Context, args map[string]any) string {
+	if p, ok := args["project"].(string); ok && p != "" {
+		return p
+	}
+	return DefaultProject(ctx)
+}
+
 // ResolveProjectArg returns the project ID from args, preferring the canonical
 // "project" key, accepting legacy "project_id"/"projectId" spellings, and
-// falling back to the ambient launch-directory context.
-func ResolveProjectArg(args map[string]any) string {
+// falling back to DefaultProject.
+func ResolveProjectArg(ctx context.Context, args map[string]any) string {
 	if p := StringArgAlias(args, "", "project", "project_id", "projectId"); p != "" {
 		return p
 	}
-	return GetCachedContext().ProjectID
+	return DefaultProject(ctx)
 }
 
 // argAlias returns the first non-nil raw value among keys.

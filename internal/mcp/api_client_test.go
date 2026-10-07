@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -178,8 +177,6 @@ func TestAPIClient_Request_PATCH(t *testing.T) {
 }
 
 func TestAPIClient_UploadAttachmentMultipart(t *testing.T) {
-	filePath := writeTempFile(t, "report.txt", "attachment contents")
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %q, want POST", r.Method)
@@ -228,9 +225,9 @@ func TestAPIClient_UploadAttachmentMultipart(t *testing.T) {
 	defer server.Close()
 
 	client := NewAPIClient(server.URL).WithAuthToken("test-token")
-	resp, err := client.UploadAttachment(context.Background(), "test-project", filePath, map[string]string{"kind": "fixture"})
+	resp, err := client.UploadAttachmentContent(context.Background(), "test-project", "report.txt", strings.NewReader("attachment contents"), map[string]string{"kind": "fixture"})
 	if err != nil {
-		t.Fatalf("UploadAttachment failed: %v", err)
+		t.Fatalf("UploadAttachmentContent failed: %v", err)
 	}
 	if resp.Attachment.ID != "att_123" {
 		t.Errorf("attachment id = %q, want att_123", resp.Attachment.ID)
@@ -282,13 +279,4 @@ func TestAPIClient_AttachmentHelpersHTTPError(t *testing.T) {
 	if err.Error() != "attachment unavailable" {
 		t.Errorf("error = %q, want attachment unavailable", err.Error())
 	}
-}
-
-func writeTempFile(t *testing.T, name, content string) string {
-	t.Helper()
-	path := t.TempDir() + string(os.PathSeparator) + name
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
-	}
-	return path
 }

@@ -24,6 +24,7 @@ just dev             # Run brain-api server
 
 # Task Runner
 brain run list <project>                    # List tasks
+brain run pause <project> / pause-all --yes   # Pause dispatch (pause-all = every project, server-wide)
 
 # API Server
 ./bin/brain-api      # Start API server
@@ -36,7 +37,7 @@ go run ./cmd/brain-api  # Run API server without building
 - `brain-api/` - REST API server entry point
 
 - `brain/` - Main CLI with subcommands (server, runner, doctor, etc.)
-- `brain-mcp/` - MCP (Model Context Protocol) server
+  Unknown commands/subcommands return `commands.UsageError` → exit 2 via `runCLI` (`cmd/brain/main.go`). `brain run pause-all`/`resume-all` are server-wide and confirm (y/N, `--yes`, refuse without a TTY); `brain run stop` is a rename stub; `-all` commands reject positionals and take the pause scope from `pausedProjects` (the server's `paused` is true if ANY project is paused). `brain runner <run-sub>` aliases `brain run`. Pause/resume CLI tests use `startRealAPI` (in-process `apiserver.RunServer`) because mocks hid server semantics. CLI tests run under a hermetic `TestMain` (temp HOME, `BRAIN_API_URL=http://127.0.0.1:1`) — never point CLI tests at a real API.
 
 ### Core API (`internal/api/`)
 - `entries.go` - CRUD for brain entries
@@ -280,7 +281,7 @@ shared by all of them, because affinity asks "which box?", not "which runner?".
 
 A task records where it was created, so it can be run back there. Three
 provenance fields (`origin_machine_id`, `origin_client_id`, `origin_path`) are
-stamped by the **stdio** MCP server from its `ExecutionContext`, plus a
+stamped by the hosted MCP server from the caller's `X-Brain-*` headers, plus a
 caller-chosen `machine_affinity` (`local` | `preferred` | `none`).
 
 - **`origin_path` is the caller's ACTUAL cwd** — the linked worktree, absolute.
@@ -307,14 +308,14 @@ caller-chosen `machine_affinity` (`local` | `preferred` | `none`).
   from another host would otherwise open an unrelated directory. `MachineID` is
   derived in `NewExecutorRegistry`, the one chokepoint both runnercli entry
   points share; empty means "unknown machine", which never matches.
-- **Stamping is gated on the transport** (`Server.ambientContextDescribesCaller`,
-  sharing the `WithLocalFilesystem` flag). `GetCachedContext` is a
-  process-global from `os.Getwd()`; under the in-process HTTP transport that is
-  the API host, shared by every client, so stamping it would brand every task
-  with the API host's machine id and — at `local` — pin them all there. Over HTTP,
-  `machine_affinity=local` is refused at creation rather than queued unrunnable.
-  Note the pre-existing `workdir`/`git_remote`/`git_branch` stamping at the same
-  call site is NOT gated this way.
+- **Stamping comes only from caller headers**
+  (`Server.ambientContextDescribesCaller` is true only when the request sent
+  `X-Brain-*` headers). `GetCachedContext` is the Brain API process's own
+  context, shared by every client, so stamping it would brand every task with
+  the API host's identity and — at `local` — pin them all there. Without a valid
+  `X-Brain-Host-Id`, `machine_affinity=local` is refused at creation rather than
+  queued unrunnable. Note the `workdir`/`git_remote`/`git_branch` stamping at
+  the same call site still uses `GetCachedContext` for headerless calls.
 - **Generated tasks carry no origin** by design — automation and goal
   `createTask` deliberately omit it, since server-generated work has no human
   caller and stamping would pin it to the API box.
@@ -348,29 +349,33 @@ the indexer marshals the struct into `notes.metadata`), `rawFrontmatter`,
 `emitPlain` is only safe for closed enums, since `SanitizeSimpleValue` strips
 NULs and newlines but not YAML metacharacters.
 
-### MCP transports + local paths
+### MCP transport, caller headers + local paths
 
-The MCP server ships in two transports, and only one of them shares a
-filesystem with its client:
+MCP is served only over Streamable HTTP (`internal/mcp/http_transport.go`,
+mounted in-process by `apiserver/server.go` at `/mcp` and `/`; deployed at
+https://brain.huynle.com/mcp). There is no stdio server (`brain mcp` was
+removed). Tools run inside brain-api, so they share no filesystem with the
+client:
 
-- **stdio** (`brain mcp`, `internal/mcpserver`) is a child process of the
-  client, so a path the client names is a path this process can open.
-- **HTTP** (`internal/mcp/http_transport.go`, mounted in-process by
-  `apiserver/server.go` at `/mcp` and `/`) runs inside brain-api. A path from
-  the client resolves on the API *host* — which fails outright, or silently
-  reads/writes a different file that happens to exist there. It is also a
-  remote file-read/write primitive for anyone who can reach the endpoint.
-
-`NewServer()` therefore defaults to **no local filesystem**; only the stdio
-path passes `WithLocalFilesystem()`. Any tool argument naming a caller-side
-path must be gated on `Server.requireLocalFilesystem`, as `attachment_upload`
-(`file_path`) and `attachment_download` (`output_path`) are. Both tools have a
-transport-independent form that carries bytes over the wire instead —
-`content`/`filename` base64 in, base64 out (capped at
-`maxInlineAttachmentBytes`, 5 MiB, with the REST content endpoint as the
-fallback for anything larger). Note this does *not* apply to arguments that
-intentionally name paths on the server/runner host, such as the control tools'
-`workdir`.
+- No tool argument may name a caller-side path. `rejectLocalPathArg`
+  refuses `attachment_upload.file_path`, `attachment_download.output_path` and
+  `plan_discover_docs.additional_dirs`; bytes travel as base64
+  (`content`/`filename` in, inline base64 out capped at
+  `maxInlineAttachmentBytes`, 5 MiB). Arguments that intentionally name
+  server/runner-host paths, such as the control tools' `workdir`, are exempt.
+- Caller identity comes from request headers parsed by `ParseCallerHeaders`
+  (`internal/mcp/caller.go`): `X-Brain-Host-Id`, `X-Brain-Client-Id`,
+  `X-Brain-Workdir`, `X-Brain-Home`. They are validated, bounded routing
+  hints — never auth. `save` stamps `origin_*` only from them, and
+  `machine_affinity: local` needs a valid host id.
+- Default project: `DefaultProject(ctx)` is the single resolver behind
+  `ResolveProject`/`ResolveProjectArg` and matches `context_get`.
+  `handleToolsCall` puts the caller on the tool ctx (`withCaller`). With any
+  caller header, the project comes only from `CallerContext.ExecutionContext`:
+  workdir strictly under `X-Brain-Home`, worktrees folded to the main repo
+  basename, otherwise none — never the API process's own project. Only
+  headerless calls fall back to `GetCachedContext` (mutex-guarded; hosted calls
+  are concurrent).
 
 ### Index freshness (who writes to the brain dir)
 

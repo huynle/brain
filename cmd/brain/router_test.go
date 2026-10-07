@@ -1,8 +1,7 @@
 package main
 
 import (
-	"io"
-	"os"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -92,31 +91,12 @@ func TestRoute_ZeroArgs_RoutesToHelp(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: Unknown args route to help (not runner TUI)
-// ---------------------------------------------------------------------------
-
-func TestRoute_UnknownArg_RoutesToHelp(t *testing.T) {
-	// "all" without "start" prefix should be help, not runner TUI
-	for _, arg := range []string{"all", "my-project", "ft857"} {
-		t.Run(arg, func(t *testing.T) {
-			cmd, err := route([]string{arg})
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if cmd.Type() != "help" {
-				t.Errorf("route(%q) Type() = %q, want %q", arg, cmd.Type(), "help")
-			}
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Test: Built-in commands take precedence
 // ---------------------------------------------------------------------------
 
 func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 	builtins := []string{
-		"api", "mcp", "run", "runner", "stop", "attachments",
+		"api", "run", "runner", "stop", "attachments",
 		"dev", "init", "doctor",
 		"config", "install", "uninstall", "plugin-status", "token", "dream", "help",
 	}
@@ -124,6 +104,7 @@ func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 	// Commands that return a different Type() than their name
 	aliasExpected := map[string]string{
 		"runner": "help", // "brain runner" alone → help; "brain runner start" → runner daemon
+		"run":    "help", // "brain run" alone → run help
 	}
 
 	for _, builtin := range builtins {
@@ -274,21 +255,6 @@ func TestRoute_ConfigCommand_ParsesConfigSubcommands(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: Unknown command routes to help
-// ---------------------------------------------------------------------------
-
-func TestRoute_UnknownCommand_RoutesToHelp(t *testing.T) {
-	args := []string{"unknown-command-12345"}
-	cmd, err := route(args)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cmd.Type() != "help" {
-		t.Errorf("Type() = %q, want %q", cmd.Type(), "help")
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Test: isBuiltinCommand helper
 // ---------------------------------------------------------------------------
 
@@ -325,8 +291,8 @@ func TestRoute_APISubcommands(t *testing.T) {
 
 // Test: "brain start <project>" routes to runner TUI
 // `brain start` was the TUI dashboard entry point and is gone. It must now
-// behave like any other unrecognized word — help, not a silently different
-// runner mode — so a stale script or muscle-memory invocation fails loudly
+// behave like any other unrecognized word — an unknown-command error, not a
+// silently different runner mode — so a stale script or muscle-memory invocation fails loudly
 // instead of starting a headless runner nobody asked for.
 func TestRoute_StartNoLongerRoutesToARunner(t *testing.T) {
 	for _, args := range [][]string{
@@ -340,8 +306,8 @@ func TestRoute_StartNoLongerRoutesToARunner(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got := cmd.Type(); got != "help" {
-				t.Errorf("route(%v) Type() = %q, want help", args, got)
+			if got := cmd.Type(); got != "unknown" {
+				t.Errorf("route(%v) Type() = %q, want unknown", args, got)
 			}
 		})
 	}
@@ -399,7 +365,7 @@ func TestIsBuiltinCommand(t *testing.T) {
 		want bool
 	}{
 		{"api", true},
-		{"mcp", true},
+		{"mcp", false},
 		{"help", true},
 		{"run", true},
 		{"start", false},
@@ -626,149 +592,25 @@ func TestRoute_AutomationGoal_Help(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: deprecation alias "brain goal" -> "brain automation goal"
+// Test: the removed "brain goal" alias
 // ---------------------------------------------------------------------------
 
-func TestRoute_GoalAlias_DelegatesToAutomationGoal(t *testing.T) {
-	cmd, err := route([]string{"goal", "list"})
+// The deprecated `brain goal` alias is gone; `brain automation goal` remains.
+func TestRoute_GoalAliasRemoved(t *testing.T) {
+	for _, args := range [][]string{{"goal"}, {"goal", "list"}, {"goal", "set", "proj", "Ship it"}, {"goal", "help"}} {
+		ue := usageErrorOf(t, args...)
+		if !strings.Contains(ue.Message, `brain: unknown command "goal"`) || !strings.Contains(ue.Message, "brain automation goal") {
+			t.Errorf("brain %v message = %q, want unknown command plus an 'automation goal' hint", args, ue.Message)
+		}
+	}
+	cmd, err := route([]string{"automation", "goal", "list"})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
-
-	alias, ok := cmd.(*deprecatedAliasCommand)
-	if !ok {
-		t.Fatalf("expected *deprecatedAliasCommand, got %T", cmd)
-	}
-	if alias.notice == "" {
-		t.Error("expected a non-empty deprecation notice")
-	}
-
-	gc, ok := alias.inner.(*commands.AutomationGoalCommand)
-	if !ok {
-		t.Fatalf("expected inner *commands.AutomationGoalCommand, got %T", alias.inner)
-	}
-	if gc.Subcommand != "list" {
-		t.Errorf("Subcommand = %q, want %q", gc.Subcommand, "list")
-	}
-	// Type() delegates to the inner command for transparency.
-	if alias.Type() != "automation goal" {
-		t.Errorf("Type() = %q, want %q", alias.Type(), "automation goal")
+	if _, ok := cmd.(*commands.AutomationGoalCommand); !ok {
+		t.Errorf("brain automation goal list = %T, want *commands.AutomationGoalCommand", cmd)
 	}
 }
-
-func TestRoute_GoalAlias_PreservesPositionals(t *testing.T) {
-	cmd, err := route([]string{"goal", "show", "my-project", "goal-123"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	alias, ok := cmd.(*deprecatedAliasCommand)
-	if !ok {
-		t.Fatalf("expected *deprecatedAliasCommand, got %T", cmd)
-	}
-	gc, ok := alias.inner.(*commands.AutomationGoalCommand)
-	if !ok {
-		t.Fatalf("expected inner *commands.AutomationGoalCommand, got %T", alias.inner)
-	}
-	if gc.Subcommand != "show" {
-		t.Errorf("Subcommand = %q, want %q", gc.Subcommand, "show")
-	}
-	if gc.Project != "my-project" {
-		t.Errorf("Project = %q, want %q", gc.Project, "my-project")
-	}
-	if gc.GoalID != "goal-123" {
-		t.Errorf("GoalID = %q, want %q", gc.GoalID, "goal-123")
-	}
-}
-
-func TestRoute_GoalAlias_SetPassesFlags(t *testing.T) {
-	cmd, err := route([]string{"goal", "set", "proj", "Ship dark mode", "--agent", "tdd-dev"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	alias, ok := cmd.(*deprecatedAliasCommand)
-	if !ok {
-		t.Fatalf("expected *deprecatedAliasCommand, got %T", cmd)
-	}
-	gc, ok := alias.inner.(*commands.AutomationGoalCommand)
-	if !ok {
-		t.Fatalf("expected inner *commands.AutomationGoalCommand, got %T", alias.inner)
-	}
-	if gc.Subcommand != "set" {
-		t.Errorf("Subcommand = %q, want %q", gc.Subcommand, "set")
-	}
-	if gc.Project != "proj" {
-		t.Errorf("Project = %q, want %q", gc.Project, "proj")
-	}
-	if gc.GoalID != "Ship dark mode" {
-		t.Errorf("GoalID (objective) = %q, want %q", gc.GoalID, "Ship dark mode")
-	}
-	if gc.Flags.Agent != "tdd-dev" {
-		t.Errorf("Flags.Agent = %q, want %q", gc.Flags.Agent, "tdd-dev")
-	}
-}
-
-func TestRoute_GoalAlias_HelpPassesThrough(t *testing.T) {
-	cmd, err := route([]string{"goal", "help"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// Help should pass through directly (no alias wrapper) so help output
-	// stays clean.
-	if _, ok := cmd.(*deprecatedAliasCommand); ok {
-		t.Fatalf("expected help to pass through, got *deprecatedAliasCommand")
-	}
-	if cmd.Type() != "help" {
-		t.Errorf("Type() = %q, want %q", cmd.Type(), "help")
-	}
-}
-
-func TestDeprecatedAliasCommand_Execute_PrintsNotice(t *testing.T) {
-	// Capture stderr to verify the deprecation notice is printed.
-	oldStderr := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("failed to create pipe: %v", err)
-	}
-	os.Stderr = w
-
-	executed := false
-	alias := &deprecatedAliasCommand{
-		inner:  &stubExecCommand{onExec: func() { executed = true }},
-		notice: "Warning: deprecated",
-	}
-	execErr := alias.Execute()
-
-	w.Close()
-	os.Stderr = oldStderr
-
-	out, _ := io.ReadAll(r)
-
-	if execErr != nil {
-		t.Fatalf("unexpected error: %v", execErr)
-	}
-	if !executed {
-		t.Error("expected inner command to be executed")
-	}
-	if !strings.Contains(string(out), "deprecated") {
-		t.Errorf("expected deprecation notice on stderr, got %q", string(out))
-	}
-}
-
-// stubExecCommand is a minimal Command for testing the alias wrapper.
-type stubExecCommand struct {
-	onExec func()
-}
-
-func (c *stubExecCommand) Execute() error {
-	if c.onExec != nil {
-		c.onExec()
-	}
-	return nil
-}
-
-func (c *stubExecCommand) Type() string { return "stub-exec" }
 
 // TestDefaultConfig_IndexWatchEnvOverride covers the Docker path: the amos
 // deployment configures the server entirely through env vars, so the index
@@ -868,5 +710,101 @@ func TestParseRunCommand_NamedRunner(t *testing.T) {
 	}
 	if !rc.Flags.Headless {
 		t.Error("Flags.Headless = false, want true")
+	}
+}
+
+func TestRoute_RunPauseFamilyParsesArgs(t *testing.T) {
+	for _, tc := range []struct {
+		args    []string
+		sub     string
+		project string
+		yes     bool
+	}{
+		{[]string{"run", "pause-all", "--yes"}, "pause-all", "all", true},
+		{[]string{"run", "resume-all", "-y"}, "resume-all", "all", true},
+		{[]string{"run", "pause", "alpha"}, "pause", "alpha", false},
+		{[]string{"run", "resume", "alpha"}, "resume", "alpha", false},
+		{[]string{"run", "stop"}, "stop", "all", false},
+	} {
+		cmd, err := route(tc.args)
+		if err != nil {
+			t.Fatalf("route(%v): %v", tc.args, err)
+		}
+		rc, ok := cmd.(*commands.RunCommand)
+		if !ok {
+			t.Fatalf("route(%v) = %T, want *commands.RunCommand", tc.args, cmd)
+		}
+		if rc.Subcommand != tc.sub || rc.Project != tc.project || rc.Flags.Yes != tc.yes {
+			t.Errorf("route(%v) = sub %q project %q yes %v", tc.args, rc.Subcommand, rc.Project, rc.Flags.Yes)
+		}
+	}
+}
+
+func TestRoute_RunLogsParsesTwoPositionals(t *testing.T) {
+	cmd, err := route([]string{"run", "logs", "proj", "--limit", "5", "task1", "-f"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := cmd.(*commands.RunCommand)
+	if strings.Join(rc.Args, ",") != "proj,task1" || rc.Flags.Limit != 5 || !rc.Flags.Foreground {
+		t.Errorf("Args %v Limit %d Foreground %v", rc.Args, rc.Flags.Limit, rc.Flags.Foreground)
+	}
+}
+
+// `brain runner` keeps its daemon commands and accepts every other `brain run`
+// subcommand as a true alias.
+func TestRoute_RunnerIsAliasForRunSubcommands(t *testing.T) {
+	for _, args := range [][]string{{"runner", "start"}, {"runner", "stop"}, {"runner", "status"}} {
+		cmd, err := route(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := cmd.(*commands.RunnerDaemonCommand); !ok {
+			t.Errorf("brain %v = %T, want the runner daemon command", args, cmd)
+		}
+	}
+	for _, args := range [][]string{{"runner", "pause", "demo"}, {"runner", "list"}, {"runner", "features", "demo"}, {"runner", "pause-all", "--yes"}} {
+		cmd, err := route(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rc, ok := cmd.(*commands.RunCommand)
+		if !ok || rc.Subcommand != args[1] {
+			t.Errorf("brain %v = %T (%s), want RunCommand %s", args, cmd, cmd.Type(), args[1])
+		}
+	}
+}
+
+// `brain dev` (used by `just dev`) runs the API server in the foreground with
+// debug logging; it used to fall through to a silent no-op stub.
+func TestRoute_DevRunsDevCommand(t *testing.T) {
+	cmd, err := route([]string{"dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cmd.(*commands.DevCommand); !ok {
+		t.Fatalf("brain dev = %T, want *commands.DevCommand", cmd)
+	}
+	help, err := route([]string{"dev", "--help"})
+	if err != nil || help.Type() != "help" {
+		t.Fatalf("brain dev --help = %v, %v", help, err)
+	}
+}
+
+// Routing must not execute anything here: a correctly routed `api` starts a
+// server. Only the unknown/usage results are inspected.
+func TestRoute_APIUnknownWordIsUsageError(t *testing.T) {
+	for _, args := range [][]string{{"api", "bogus"}, {"api", "--port", "4444", "bogus"}, {"api", "start", "bogus"}} {
+		cmd, err := route(args)
+		var ue *commands.UsageError
+		if err == nil {
+			if _, ok := cmd.(*unknownCommand); !ok {
+				t.Fatalf("brain %v routed to %T; want a usage error", args, cmd)
+			}
+			err = cmd.Execute()
+		}
+		if !errors.As(err, &ue) || !strings.Contains(ue.Message, "bogus") || !strings.Contains(ue.Message, "brain help api") {
+			t.Errorf("brain %v: err = %v, want usage error naming the word and 'brain help api'", args, err)
+		}
 	}
 }

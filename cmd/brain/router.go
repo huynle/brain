@@ -49,11 +49,28 @@ func (c *stubCommand) Type() string {
 // HelpCommand displays help information.
 type HelpCommand struct {
 	command string // specific command to show help for (empty = main help)
+	// explicit marks `brain help <topic>`: an unknown topic is a usage error.
+	// Flag-style help (`brain x y --help`) instead falls back to the nearest
+	// parent topic that has a page.
+	explicit bool
 }
 
 func (c *HelpCommand) Execute() error {
-	ShowHelp(c.command)
-	return nil
+	topic := strings.TrimSpace(c.command)
+	for {
+		if ShowHelp(topic) {
+			return nil
+		}
+		if c.explicit {
+			return &commands.UsageError{Message: fmt.Sprintf("brain: unknown command %q\nRun 'brain help' for a list of commands.", topic)}
+		}
+		i := strings.LastIndex(topic, " ")
+		if i < 0 {
+			topic = ""
+		} else {
+			topic = topic[:i]
+		}
+	}
 }
 
 func (c *HelpCommand) Type() string {
@@ -68,7 +85,6 @@ func (c *HelpCommand) Type() string {
 // These commands take precedence over project names.
 var builtinCommands = map[string]bool{
 	"api":           true,
-	"mcp":           true,
 	"run":           true,
 	"runner":        true, // alias for "run" (backwards compat with old Node.js CLI)
 	"stop":          true, // stop runner for a project
@@ -90,7 +106,6 @@ var builtinCommands = map[string]bool{
 	"search":        true,
 	"list":          true,
 	"automation":    true,
-	"goal":          true, // deprecated alias for "automation goal"
 	"attachments":   true,
 	"migrate":       true,
 	"embeddings":    true,
@@ -104,9 +119,9 @@ var builtinCommands = map[string]bool{
 // route determines which command to execute based on CLI arguments.
 //
 // Routing priority:
-//  1. Zero args → help
-//  2. Built-in commands (api, run, mcp, etc.)
-//  3. Unknown/invalid input → help
+//  1. Zero args, -h/--help → help
+//  2. Built-in commands (api, run, automation, etc.)
+//  3. Anything else → unknown-command usage error (exit 2)
 //
 // Use "brain run start <project>" to launch a task runner.
 func route(args []string) (Command, error) {
@@ -122,14 +137,47 @@ func route(args []string) (Command, error) {
 		return parseBuiltinCommand(args)
 	}
 
-	// Flags without a command → help
-	if len(firstArg) > 0 && firstArg[0] == '-' {
+	if firstArg == "-h" || firstArg == "--help" {
 		return newHelpCommand(), nil
 	}
 
-	// Unknown → help
-	return newHelpCommand(), nil
+	msg := fmt.Sprintf("brain: unknown command %q\nRun 'brain help' for a list of commands.", firstArg)
+	if hint, ok := removedCommandHints[firstArg]; ok {
+		msg += "\n" + hint
+	}
+	return &unknownCommand{message: msg}, nil
 }
+
+// removedCommandHints point users of a removed command at its replacement.
+var removedCommandHints = map[string]string{
+	"goal": "'brain goal' was removed; use 'brain automation goal' instead.",
+	"mcp":  "'brain mcp' was removed; MCP is served by the Brain API at /mcp (see README \"Connecting OpenCode\").",
+}
+
+// unknownCommand reports a usage mistake. It prints nothing on stdout, so a
+// stale client that launches it (e.g. an old stdio MCP config running
+// `brain mcp`) sees a clean failure rather than help text.
+type unknownCommand struct {
+	message string
+}
+
+func (c *unknownCommand) Execute() error { return &commands.UsageError{Message: c.message} }
+
+func (c *unknownCommand) Type() string { return "unknown" }
+
+func unknownSubcommand(group, sub string) Command {
+	return &unknownCommand{message: fmt.Sprintf("brain %s: unknown subcommand %q\nRun 'brain help %s' for usage.", group, sub, group)}
+}
+
+// runSubcommands are the valid `brain run <subcommand>` names.
+var runSubcommands = map[string]bool{
+	"start": true, "stop": true, "status": true, "list": true, "ready": true,
+	"features": true, "logs": true, "config": true,
+	"pause": true, "resume": true, "pause-all": true, "resume-all": true,
+}
+
+// runnerSubcommands are the valid `brain runner <subcommand>` names.
+var runnerSubcommands = map[string]bool{"start": true, "stop": true, "status": true}
 
 // =============================================================================
 // Command Constructors
@@ -166,6 +214,14 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		}
 		// "brain stop <project>" → stop runner for project (stub for now)
 		return parseStopCommand(cmdArgs)
+	case "dev":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "dev"}, nil
+		}
+		if len(cmdArgs) > 0 {
+			return &unknownCommand{message: fmt.Sprintf("brain dev: unexpected argument %q\nRun 'brain help dev' for usage.", cmdArgs[0])}, nil
+		}
+		return &commands.DevCommand{Config: convertToCommandsConfig(defaultConfig())}, nil
 	case "init":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "init"}, nil
@@ -181,11 +237,6 @@ func parseBuiltinCommand(args []string) (Command, error) {
 			return &HelpCommand{command: "config"}, nil
 		}
 		return parseConfigCommand(cmdArgs)
-	case "mcp":
-		if wantsHelp(cmdArgs) {
-			return &HelpCommand{command: "mcp"}, nil
-		}
-		return parseMCPCommand(cmdArgs)
 	case "token":
 		return parseTokenCommand(cmdArgs)
 	case "auth":
@@ -242,10 +293,6 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		return parsePluginStatusCommand(cmdArgs)
 	case "automation":
 		return parseAutomationCommand(cmdArgs)
-	case "goal":
-		// Deprecated alias: "brain goal <sub>" delegates to
-		// "brain automation goal <sub>" and prints a deprecation notice.
-		return parseGoalCommand(cmdArgs)
 	case "attachments":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "attachments"}, nil
@@ -268,10 +315,7 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		}
 		return parseRunnerCommand(cmdArgs)
 	case "run":
-		if len(cmdArgs) == 0 {
-			return &stubCommand{cmdType: "run"}, nil
-		}
-		if isHelpArg(cmdArgs[0]) {
+		if len(cmdArgs) == 0 || isHelpArg(cmdArgs[0]) {
 			return &HelpCommand{command: "run"}, nil
 		}
 		// Granular "brain run <subcommand>" (start/stop/status/list/…).
@@ -279,7 +323,7 @@ func parseBuiltinCommand(args []string) (Command, error) {
 	case "help":
 		// "brain help server" / "brain help server start" → show contextual help
 		topic := strings.TrimSpace(strings.Join(cmdArgs, " "))
-		return &HelpCommand{command: topic}, nil
+		return &HelpCommand{command: topic, explicit: true}, nil
 	default:
 		// For other built-in commands, return stub for now
 		return &stubCommand{cmdType: cmdName}, nil
@@ -316,6 +360,9 @@ func parseAPICommand(args []string) (Command, error) {
 	if wantsHelp(args) {
 		return &HelpCommand{command: "api"}, nil
 	}
+	if len(args) > 0 && !isFlag(args[0]) {
+		return unknownSubcommand("api", args[0]), nil
+	}
 
 	// Default: start API server in foreground
 	cfg := defaultConfig()
@@ -327,20 +374,6 @@ func parseAPICommand(args []string) (Command, error) {
 	return &commands.APICommand{
 		Config: convertToCommandsConfig(cfg),
 		Flags:  convertToCommandsAPIFlags(flags),
-	}, nil
-}
-
-// parseMCPCommand creates an MCPCommand from args.
-func parseMCPCommand(args []string) (Command, error) {
-	cfg := defaultConfig()
-	flags, err := ParseMCPFlags(args)
-	if err != nil {
-		return nil, err
-	}
-
-	return &commands.MCPCommand{
-		Config: convertToCommandsConfig(cfg),
-		Flags:  convertToCommandsMCPFlags(flags),
 	}, nil
 }
 
@@ -403,7 +436,7 @@ var runnerValueFlags = map[string]bool{
 	"--workdir": true, "-w": true, "--agent": true, "--model": true, "-m": true,
 	"--executor": true, "--pi-bin": true, "--pi-model": true, "--pi-thinking": true,
 	"--include": true, "-i": true, "--exclude": true, "-e": true,
-	"--feature-id": true, "-F": true,
+	"--feature-id": true, "-F": true, "--limit": true,
 }
 
 // splitRunnerProjectArg pulls the positional project out of a runner arg list,
@@ -436,6 +469,25 @@ func splitRunnerProjectArg(args []string) (string, []string) {
 	return project, flagArgs
 }
 
+// splitRunPositionals returns every positional argument (in order) and the
+// flag arguments, honoring flags that consume a value.
+func splitRunPositionals(args []string) (positionals, flagArgs []string) {
+	skipNext := false
+	for _, a := range args {
+		switch {
+		case skipNext:
+			skipNext = false
+			flagArgs = append(flagArgs, a)
+		case isFlag(a):
+			skipNext = runnerValueFlags[a]
+			flagArgs = append(flagArgs, a)
+		default:
+			positionals = append(positionals, a)
+		}
+	}
+	return positionals, flagArgs
+}
+
 // parseRunCommand creates a RunCommand from args.
 func parseRunCommand(args []string) (Command, error) {
 	if len(args) == 0 {
@@ -445,6 +497,9 @@ func parseRunCommand(args []string) (Command, error) {
 	subcommand := args[0]
 	if isHelpArg(subcommand) {
 		return &HelpCommand{command: "run"}, nil
+	}
+	if !runSubcommands[subcommand] {
+		return unknownSubcommand("run", subcommand), nil
 	}
 	if len(args) > 1 && wantsHelp(args[1:]) {
 		return &HelpCommand{command: "run " + subcommand}, nil
@@ -456,7 +511,10 @@ func parseRunCommand(args []string) (Command, error) {
 	// Pre-scan args to find the positional project arg regardless of flag order,
 	// so "brain run start <project> --headless" works the same as
 	// "brain run start --headless <project>".
-	project, flagArgs := splitRunnerProjectArg(subArgs)
+	project, _ := splitRunnerProjectArg(subArgs)
+	// Parse flags from the positional-free list so a flag after a second
+	// positional (`run logs <project> <taskId> -f`) is not silently dropped.
+	positionals, flagArgs := splitRunPositionals(subArgs)
 
 	flags, err := ParseRunnerFlags(flagArgs)
 	if err != nil {
@@ -466,6 +524,7 @@ func parseRunCommand(args []string) (Command, error) {
 	return &commands.RunCommand{
 		Subcommand: subcommand,
 		Project:    project,
+		Args:       positionals,
 		Config:     convertToCommandsConfig(cfg),
 		Flags:      convertToCommandsRunnerFlags(flags),
 	}, nil
@@ -477,6 +536,13 @@ func parseRunnerCommand(args []string) (Command, error) {
 	subcommand := args[0]
 	if isHelpArg(subcommand) {
 		return &HelpCommand{command: "runner"}, nil
+	}
+	if !runnerSubcommands[subcommand] {
+		if runSubcommands[subcommand] {
+			// `brain runner <sub>` is an alias for `brain run <sub>`.
+			return parseRunCommand(args)
+		}
+		return unknownSubcommand("runner", subcommand), nil
 	}
 	subArgs := args[1:]
 	if wantsHelp(subArgs) {
@@ -777,13 +843,8 @@ func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 		Exclude:      flags.Exclude,
 		FeatureIDs:   flags.FeatureIDs,
 		Follow:       flags.Follow,
-	}
-}
-
-// convertToCommandsMCPFlags converts main.MCPFlags to commands.MCPFlags.
-func convertToCommandsMCPFlags(flags *MCPFlags) *commands.MCPFlags {
-	return &commands.MCPFlags{
-		APIURL: flags.APIURL,
+		Yes:          flags.Yes,
+		Limit:        flags.Limit,
 	}
 }
 
@@ -1334,50 +1395,6 @@ func parseAutomationGoalCommand(args []string) (Command, error) {
 		GoalID:     goalID,
 		Config:     convertToCommandsConfig(cfg),
 		Flags:      convertToCommandsGoalFlags(flags),
-	}, nil
-}
-
-// =============================================================================
-// Deprecation Alias: brain goal -> brain automation goal
-// =============================================================================
-
-// deprecatedAliasCommand wraps an underlying Command and prints a deprecation
-// notice (to stderr, so stdout/JSON output is unaffected) before delegating
-// Execute to the wrapped command.
-type deprecatedAliasCommand struct {
-	inner  Command
-	notice string
-}
-
-func (c *deprecatedAliasCommand) Execute() error {
-	if c.notice != "" {
-		fmt.Fprintln(os.Stderr, c.notice)
-	}
-	return c.inner.Execute()
-}
-
-func (c *deprecatedAliasCommand) Type() string {
-	return c.inner.Type()
-}
-
-// parseGoalCommand is a thin deprecation shim that delegates "brain goal <sub>"
-// to "brain automation goal <sub>". Help requests pass through to the
-// underlying automation-goal help so users see the canonical command.
-func parseGoalCommand(args []string) (Command, error) {
-	inner, err := parseAutomationGoalCommand(args)
-	if err != nil {
-		return nil, err
-	}
-
-	// Help commands should render directly without a deprecation notice so the
-	// help output stays clean.
-	if _, ok := inner.(*HelpCommand); ok {
-		return inner, nil
-	}
-
-	return &deprecatedAliasCommand{
-		inner:  inner,
-		notice: "Warning: 'brain goal' is deprecated; use 'brain automation goal' instead.",
 	}, nil
 }
 

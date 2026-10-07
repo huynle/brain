@@ -5,9 +5,9 @@ Resources installed by `brain install opencode` to make OpenCode work with Brain
 ## Brain Tools (MCP)
 
 The brain `save`, `recall`, `search`, `tasks`, etc. tools are no longer shipped
-as a plugin. Configure OpenCode to launch the brain MCP server over stdio
-instead — see the project README's "Connecting OpenCode" section for the
-`brain mcp` config snippet.
+as a plugin. Configure OpenCode to use the hosted MCP endpoint
+(`https://<your-brain>/mcp`) as a remote server — see the project README's
+"Connecting OpenCode" section for the config snippet with caller headers.
 
 ## Agent
 

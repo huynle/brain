@@ -22,15 +22,15 @@ func RegisterProjectTools(s *Server, client *APIClient) {
 func registerBrainContextGet(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name: "context_get",
-		Description: `Show the ambient execution context this MCP server resolved at startup.
+		Description: `Show the execution context this MCP call resolved: the default project and the caller identity sent in X-Brain-* request headers.
 
-Tools that take an optional 'project' parameter fall back to the project shown here when it is omitted. Use this to check which project a save/list/attachment call will target by default, and which identity (client/host) is stamped on MCP-created tasks.`,
+Tools that take an optional 'project' parameter fall back to the project shown here when it is omitted. Use this to check which project a save/list/attachment call will target by default, which identity (client/host) is stamped on MCP-created tasks, and whether any caller header was ignored.`,
 		InputSchema: InputSchema{
 			Type:       "object",
 			Properties: map[string]Property{},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		execCtx := GetCachedContext()
+		execCtx := s.executionContext()
 		lines := []string{
 			"## MCP Execution Context",
 			"",
@@ -43,9 +43,9 @@ Tools that take an optional 'project' parameter fall back to the project shown h
 		if execCtx.ProjectID == "" {
 			lines = append(lines,
 				"- Project: ⚠ COULD NOT DETERMINE",
-				"  This process is not running inside a recognised git repository under your",
-				"  home directory, so there is no safe default project. Pass 'project'",
-				"  explicitly on every tool call; omitting it will not fall back to a guess.")
+				fmt.Sprintf("  No project folder under %s was sent in %s, so there is no safe", HeaderBrainHome, HeaderBrainWorkdir),
+				"  default project. Pass 'project' explicitly on every tool call; omitting it",
+				"  will not fall back to a guess.")
 		} else {
 			lines = append(lines, fmt.Sprintf("- Project: %s", execCtx.ProjectID))
 		}
@@ -61,30 +61,26 @@ Tools that take an optional 'project' parameter fall back to the project shown h
 			"### Identity (stamped on MCP-created tasks)",
 			fmt.Sprintf("- Client ID: %s", execCtx.ClientID),
 			fmt.Sprintf("- Host ID: %s", execCtx.HostID),
-			fmt.Sprintf("- Hostname: %s", execCtx.Hostname),
-			fmt.Sprintf("- OS/Arch: %s/%s", execCtx.OS, execCtx.Arch),
 		)
-		// Say plainly whether stamping is actually happening. The identity
-		// above is this process's, and over the HTTP transport this process
-		// is the Brain API — not the caller — so nothing is stamped.
-		if s.ambientContextDescribesCaller() {
-			if execCtx.AbsPath != "" {
-				lines = append(lines, fmt.Sprintf("- Origin path: %s", execCtx.AbsPath))
-			}
+		if execCtx.AbsPath != "" {
+			lines = append(lines, fmt.Sprintf("- Origin path: %s", execCtx.AbsPath))
+		}
+		if s.ambientContextDescribesCaller() && execCtx.HostID != "" {
 			lines = append(lines,
 				"- Tasks created here are stamped origin_machine_id/origin_client_id/origin_path,",
-				"  and default to machine_affinity=preferred (a runner on this machine wins,",
+				"  and default to machine_affinity=preferred (a runner on your machine wins,",
 				"  but the task still runs elsewhere if none is available). Pass",
-				"  machine_affinity='local' to require this machine.")
+				"  machine_affinity='local' to require your machine.")
 		} else {
 			lines = append(lines,
-				"- ⚠ Origin stamping is DISABLED for this session: this MCP server runs inside",
-				"  the Brain API, so the identity above describes the API host rather than you.",
-				"  Tasks created here carry no origin, and machine_affinity has nothing to",
-				"  resolve against. Use the stdio MCP server for machine-affine tasks.")
+				fmt.Sprintf("- ⚠ No valid %s header: tasks created here carry no origin machine,", HeaderBrainHostID),
+				"  so machine_affinity has nothing to resolve against. Send the X-Brain-*",
+				"  headers from your MCP client config (see README \"Caller headers\").")
 		}
-		if execCtx.Username != "" {
-			lines = append(lines, fmt.Sprintf("- Username: %s", execCtx.Username))
+		if s.caller != nil {
+			for _, h := range s.caller.Rejected {
+				lines = append(lines, fmt.Sprintf("- ⚠ %s header ignored: malformed or too long", h))
+			}
 		}
 		lines = append(lines,
 			"",

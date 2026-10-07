@@ -80,7 +80,7 @@ Feature orchestration (tasks):
 - Use feature_depends_on to make one feature wait for another feature to complete.
 - Use trigger.event="feature.completed" with trigger.filter.feature_id to create post-feature tasks that activate after a feature completes.
 
-If project is omitted, the entry is saved to the project detected from the MCP server's launch directory (see the context_get tool).`,
+If project is omitted, the entry is saved to the project detected from your X-Brain-Workdir header (see the context_get tool).`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -91,7 +91,7 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 				"status":                {Type: "string", Enum: types.EntryStatuses, Description: "Initial status. Tasks default to 'draft' (user reviews before promoting to 'pending'). Other entry types default to 'active'."},
 				"priority":              {Type: "string", Enum: types.Priorities, Description: "Priority level"},
 				"global":                {Type: "boolean", Description: "Save to global brain (cross-project)"},
-				"project":               {Type: "string", Description: "Project ID (e.g., 'orion-ai'). Defaults to the project detected from the MCP server's launch directory."},
+				"project":               {Type: "string", Description: "Project ID (e.g., 'orion-ai'). Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 				"depends_on":            {Type: "array", Items: &Property{Type: "string"}, Description: "Task dependencies - list of task IDs or titles"},
 				"user_original_request": {Type: "string", Description: "Verbatim user request for this task. HIGHLY RECOMMENDED for tasks - enables validation during task completion. Supports multiline content, code blocks, and special characters. When creating multiple tasks from one user request, include this in EACH task."},
 				"target_workdir":        {Type: "string", Description: "Explicit working directory override for task execution (absolute path). When set, the task runner will try this directory first before falling back to workdir resolution. Use for tasks that should execute in a specific directory."},
@@ -136,7 +136,7 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 			Required: []string{"type", "title", "content"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		execCtx := GetCachedContext()
+		execCtx := s.executionContext()
 		isTask := StringArg(args, "type", "") == "task"
 		isAutomation := StringArg(args, "type", "") == "automation"
 
@@ -202,9 +202,9 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 				// refused by every runner forever with
 				// machine_affinity_unresolved. Fail here, where the caller
 				// can still see why, instead of stranding it in the queue.
-				if v == types.MachineAffinityLocal && !s.ambientContextDescribesCaller() {
-					return "", fmt.Errorf("machine_affinity=%q is unavailable on this MCP server: it runs inside the Brain API and cannot identify your machine, so the task would never become runnable — use the stdio MCP server, or pass %q/%q",
-						types.MachineAffinityLocal, types.MachineAffinityPreferred, types.MachineAffinityNone)
+				if v == types.MachineAffinityLocal && (!s.ambientContextDescribesCaller() || execCtx.HostID == "") {
+					return "", fmt.Errorf("machine_affinity=%q needs your machine id, and this request did not send a valid %s header, so the task would never become runnable — add the header to your MCP client config (see context_get), or pass %q/%q",
+						types.MachineAffinityLocal, HeaderBrainHostID, types.MachineAffinityPreferred, types.MachineAffinityNone)
 				}
 				body["machine_affinity"] = v
 			}
@@ -408,49 +408,35 @@ func registerBrainAttachmentUpload(s *Server, client *APIClient) {
 		Name: "attachment_upload",
 		Description: `Upload a file as a first-class Brain attachment.
 
-Supply the bytes one of two ways: 'content' (base64) plus 'filename', which works from anywhere, or 'file_path', which only works when this MCP server runs on your own machine. A hosted server resolves 'file_path' on the API host and will reject it.
+Supply the bytes as 'content' (base64) plus 'filename'. The MCP server cannot read files on your machine, so read the file yourself and encode it.
 
 Use this for pasted-image or local-PDF workflows: upload the file with this tool, then attach the returned attachment_id to an entry with attachment_attach.`,
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project":   {Type: "string", Description: "Project ID that owns the uploaded attachment. Defaults to the project detected from the MCP server's launch directory."},
-			"content":   {Type: "string", Description: "Base64-encoded file bytes. Requires 'filename'. Use this whenever the MCP server is not running on your own machine."},
-			"filename":  {Type: "string", Description: "Filename to store the bytes under. Required with 'content'; otherwise taken from 'file_path'."},
-			"file_path": {Type: "string", Description: "Path to the file to upload, resolved on the machine running the MCP server. Rejected by a hosted server — use 'content' there."},
-			"metadata":  {Type: "object", Description: "Optional string key/value metadata stored with the attachment"},
+			"project":  {Type: "string", Description: "Project ID that owns the uploaded attachment. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
+			"content":  {Type: "string", Description: "Base64-encoded file bytes. Requires 'filename'."},
+			"filename": {Type: "string", Description: "Filename to store the bytes under."},
+			"metadata": {Type: "object", Description: "Optional string key/value metadata stored with the attachment"},
 		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
-		filePath := StringArg(args, "file_path", "")
+		if err := rejectLocalPathArg(args, "file_path", "read the file yourself and pass its bytes as base64 'content' with 'filename'"); err != nil {
+			return "", err
+		}
+		projectID := ResolveProjectArg(ctx, args)
 		// Trim first so a whitespace-only 'content' reads as absent rather than
 		// as a payload that decodes to nothing.
 		encoded := strings.TrimSpace(StringArg(args, "content", ""))
 		filename := StringArg(args, "filename", "")
-		if projectID == "" || (filePath == "" && encoded == "") {
-			return "", fmt.Errorf("provide 'content' (base64) with 'filename', or 'file_path' for a server-local file (and 'project' if no ambient project is available)")
+		if projectID == "" || encoded == "" {
+			return "", fmt.Errorf("provide 'content' (base64) with 'filename' (and 'project' if no ambient project is available)")
 		}
-		if filePath != "" && encoded != "" {
-			return "", fmt.Errorf("provide either 'content' or 'file_path', not both")
+		if filename == "" {
+			return "", fmt.Errorf("'filename' is required when uploading with 'content'")
 		}
-
-		var (
-			resp *types.CreateAttachmentResponse
-			err  error
-		)
-		if encoded != "" {
-			if filename == "" {
-				return "", fmt.Errorf("'filename' is required when uploading with 'content'")
-			}
-			data, decodeErr := decodeBase64Content(encoded)
-			if decodeErr != nil {
-				return "", fmt.Errorf("decode 'content': %w", decodeErr)
-			}
-			resp, err = client.UploadAttachmentContent(ctx, projectID, filename, bytes.NewReader(data), stringMapArg(args, "metadata"))
-		} else {
-			if fsErr := s.requireLocalFilesystem("file_path", "read the file yourself and pass its bytes as base64 'content' with 'filename'"); fsErr != nil {
-				return "", fsErr
-			}
-			resp, err = client.UploadAttachment(ctx, projectID, filePath, stringMapArg(args, "metadata"))
+		data, decodeErr := decodeBase64Content(encoded)
+		if decodeErr != nil {
+			return "", fmt.Errorf("decode 'content': %w", decodeErr)
 		}
+		resp, err := client.UploadAttachmentContent(ctx, projectID, filename, bytes.NewReader(data), stringMapArg(args, "metadata"))
 		if err != nil {
 			return "", err
 		}
@@ -490,14 +476,14 @@ func registerBrainAttachmentAttach(s *Server, client *APIClient) {
 		Name:        "attachment_attach",
 		Description: "Attach an existing Brain attachment to an entry with optional role and caption metadata.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project":       {Type: "string", Description: "Project ID containing the entry and attachment. Defaults to the project detected from the MCP server's launch directory."},
+			"project":       {Type: "string", Description: "Project ID containing the entry and attachment. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 			"entry_id":      {Type: "string", Description: "Entry ID or path to attach to"},
 			"attachment_id": {Type: "string", Description: "Attachment ID returned by attachment_upload or attachment_list"},
 			"role":          {Type: "string", Description: "Optional attachment role, e.g. source, inline, image, pdf"},
 			"caption":       {Type: "string", Description: "Optional model-friendly caption describing the attachment"},
 		}, Required: []string{"entry_id", "attachment_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		entryID := StringArg(args, "entry_id", "")
 		attachmentID := StringArg(args, "attachment_id", "")
 		if projectID == "" || entryID == "" || attachmentID == "" {
@@ -526,13 +512,13 @@ func registerBrainAttachmentDetach(s *Server, client *APIClient) {
 		Name:        "attachment_detach",
 		Description: "Detach an attachment from an entry. Provide role when detaching a role-specific reference.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project":       {Type: "string", Description: "Project ID containing the entry and attachment. Defaults to the project detected from the MCP server's launch directory."},
+			"project":       {Type: "string", Description: "Project ID containing the entry and attachment. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 			"entry_id":      {Type: "string", Description: "Entry ID or path to detach from"},
 			"attachment_id": {Type: "string", Description: "Attachment ID to detach"},
 			"role":          {Type: "string", Description: "Optional role to detach"},
 		}, Required: []string{"entry_id", "attachment_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		entryID := StringArg(args, "entry_id", "")
 		attachmentID := StringArg(args, "attachment_id", "")
 		if projectID == "" || entryID == "" || attachmentID == "" {
@@ -556,11 +542,11 @@ func registerBrainAttachmentList(s *Server, client *APIClient) {
 		Name:        "attachment_list",
 		Description: "List attachments available in a project, or attachments linked to a specific entry when entry_id is provided.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project":  {Type: "string", Description: "Project ID whose attachments should be listed. Defaults to the project detected from the MCP server's launch directory."},
+			"project":  {Type: "string", Description: "Project ID whose attachments should be listed. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 			"entry_id": {Type: "string", Description: "Optional entry ID or path for entry-scoped attachment references"},
 		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		if projectID == "" {
 			return "", fmt.Errorf("provide 'project' (no ambient project is available)")
 		}
@@ -602,11 +588,11 @@ func registerBrainAttachmentGet(s *Server, client *APIClient) {
 		Name:        "attachment_get",
 		Description: "Get attachment metadata, download/text URLs, and derived artifact references.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from the MCP server's launch directory."},
+			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 			"attachment_id": {Type: "string", Description: "Attachment ID to retrieve"},
 		}, Required: []string{"attachment_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		attachmentID := StringArg(args, "attachment_id", "")
 		if projectID == "" || attachmentID == "" {
 			return "", fmt.Errorf("provide 'attachment_id' (and 'project' if no ambient project is available)")
@@ -624,11 +610,11 @@ func registerBrainAttachmentDelete(s *Server, client *APIClient) {
 		Name:        "attachment_delete",
 		Description: "Delete an attachment from a project when it is not referenced by entries.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from the MCP server's launch directory."},
+			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 			"attachment_id": {Type: "string", Description: "Attachment ID to delete"},
 		}, Required: []string{"attachment_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		attachmentID := StringArg(args, "attachment_id", "")
 		if projectID == "" || attachmentID == "" {
 			return "", fmt.Errorf("provide 'attachment_id' (and 'project' if no ambient project is available)")
@@ -649,14 +635,14 @@ func registerBrainAttachmentBackfill(s *Server, client *APIClient) {
 		Name:        "attachment_backfill",
 		Description: "Run project-level attachment text extraction backfill and return counts for considered attachments.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project":             {Type: "string", Description: "Project ID whose attachments should be backfilled. Defaults to the project detected from the MCP server's launch directory."},
+			"project":             {Type: "string", Description: "Project ID whose attachments should be backfilled. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 			"dry_run":             {Type: "boolean", Description: "Report candidates without extracting text"},
 			"force":               {Type: "boolean", Description: "Re-extract attachments that already have derived text"},
 			"batch_size":          {Type: "number", Description: "Maximum attachments to process in one run"},
 			"rate_limit_delay_ms": {Type: "number", Description: "Delay between extraction requests in milliseconds"},
 		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		if projectID == "" {
 			return "", fmt.Errorf("provide 'project' (no ambient project is available)")
 		}
@@ -679,11 +665,11 @@ func registerBrainAttachmentExtract(s *Server, client *APIClient) {
 		Name:        "attachment_extract",
 		Description: "Trigger server-side media-to-text extraction for an attachment and return extraction status, provider/model, reason, and derived text metadata.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from the MCP server's launch directory."},
+			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 			"attachment_id": {Type: "string", Description: "Attachment ID whose text extraction should be triggered"},
 		}, Required: []string{"attachment_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		attachmentID := StringArg(args, "attachment_id", "")
 		if projectID == "" || attachmentID == "" {
 			return "", fmt.Errorf("provide 'attachment_id' (and 'project' if no ambient project is available)")
@@ -702,11 +688,11 @@ func registerBrainAttachmentText(s *Server, client *APIClient) {
 		Name:        "attachment_text",
 		Description: "Retrieve extracted plain text for an attachment, useful for local PDF/image OCR workflows after upload.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from the MCP server's launch directory."},
+			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 			"attachment_id": {Type: "string", Description: "Attachment ID whose extracted text should be retrieved"},
 		}, Required: []string{"attachment_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		projectID := ResolveProjectArg(ctx, args)
 		attachmentID := StringArg(args, "attachment_id", "")
 		if projectID == "" || attachmentID == "" {
 			return "", fmt.Errorf("provide 'attachment_id' (and 'project' if no ambient project is available)")
@@ -732,28 +718,19 @@ func registerBrainAttachmentDownload(s *Server, client *APIClient) {
 		Name: "attachment_download",
 		Description: `Fetch raw attachment bytes. Use this when an agent needs the exact original image, PDF, or media file for later processing.
 
-Returns the bytes inline as base64 by default. 'output_path' writes them to a file instead, and only works when this MCP server runs on your own machine — a hosted server would write the file onto the API host.`,
+Returns the bytes inline as base64; decode and write them yourself if you need a file.`,
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from the MCP server's launch directory."},
+			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from your X-Brain-Workdir header (see context_get)."},
 			"attachment_id": {Type: "string", Description: "Attachment ID whose raw content should be downloaded"},
-			"output_path":   {Type: "string", Description: "Optional path to write the bytes to, resolved on the machine running the MCP server. Rejected by a hosted server; omit it to get base64 content inline."},
 		}, Required: []string{"attachment_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := ResolveProjectArg(args)
+		if err := rejectLocalPathArg(args, "output_path", "omit it to receive the bytes inline as base64"); err != nil {
+			return "", err
+		}
+		projectID := ResolveProjectArg(ctx, args)
 		attachmentID := StringArg(args, "attachment_id", "")
-		outputPath := StringArg(args, "output_path", "")
 		if projectID == "" || attachmentID == "" {
 			return "", fmt.Errorf("provide 'attachment_id' (and 'project' if no ambient project is available)")
-		}
-
-		if outputPath != "" {
-			if err := s.requireLocalFilesystem("output_path", "omit it to receive the bytes inline as base64"); err != nil {
-				return "", err
-			}
-			if err := client.DownloadAttachmentToFile(ctx, projectID, attachmentID, outputPath); err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("Downloaded attachment %s to %s", attachmentID, outputPath), nil
 		}
 
 		data, contentType, err := client.DownloadAttachmentBytes(ctx, projectID, attachmentID, maxInlineAttachmentBytes)

@@ -144,16 +144,15 @@ func TestPlanDiscoverDocs_Schema(t *testing.T) {
 	}
 
 	// Check properties exist
-	for _, prop := range []string{"prd_path", "arch_path", "additional_dirs", "plan_query", "plan_id"} {
+	for _, prop := range []string{"prd_path", "arch_path", "doc_paths", "plan_query", "plan_id"} {
 		if _, ok := tool.InputSchema.Properties[prop]; !ok {
 			t.Errorf("plan_discover_docs missing property %q", prop)
 		}
 	}
 
-	// Check additionalDirs is array
-	adProp := tool.InputSchema.Properties["additional_dirs"]
+	adProp := tool.InputSchema.Properties["doc_paths"]
 	if adProp.Type != "array" {
-		t.Errorf("additional_dirs type = %q, want array", adProp.Type)
+		t.Errorf("doc_paths type = %q, want array", adProp.Type)
 	}
 }
 

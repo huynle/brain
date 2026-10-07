@@ -62,7 +62,7 @@ Complete **every** item before proceeding to cutover. Each item includes the exa
 - [ ] **All 4 binaries build**
   ```bash
   make build
-  # Expected: bin/brain-api, bin/brain-runner, bin/brain, bin/brain-mcp
+  # Expected: bin/brain-api, bin/brain-runner, bin/brain
   ls -la bin/
   ```
 
@@ -121,8 +121,9 @@ Complete **every** item before proceeding to cutover. Each item includes the exa
 
 - [ ] **MCP tools work with AI agents**
   ```bash
-  # Test brain-mcp starts and responds to MCP protocol
-  echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | ./bin/brain-mcp
+  # Test the hosted MCP endpoint responds to the MCP protocol
+  curl -s -X POST http://localhost:3000/mcp -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
   # Expected: JSON-RPC response with server capabilities
   ```
 
@@ -139,7 +140,6 @@ make build
 # Build a specific binary
 make build-brain-api
 make build-brain-runner
-make build-brain-mcp
 make build-brain
 
 # Install to $GOPATH/bin
@@ -172,12 +172,12 @@ GoReleaser produces:
 - **GitHub Release**: with changelog grouped by feat/fix/perf
 
 Platforms built:
-| OS | Arch | brain-api | brain-runner | brain | brain-mcp |
-|----|------|-----------|-------------|-------|-----------|
-| Linux | amd64 | ✓ | ✓ | ✓ | ✓ |
-| Linux | arm64 | ✓ | ✓ | ✓ | ✓ |
-| macOS | amd64 | ✓ | ✓ | ✓ | ✓ |
-| macOS | arm64 | ✓ | ✓ | ✓ | ✓ |
+| OS | Arch | brain-api | brain-runner | brain |
+|----|------|-----------|-------------|-------|
+| Linux | amd64 | ✓ | ✓ | ✓ |
+| Linux | arm64 | ✓ | ✓ | ✓ |
+| macOS | amd64 | ✓ | ✓ | ✓ |
+| macOS | arm64 | ✓ | ✓ | ✓ |
 | Windows | amd64 | ✓ | ✓ | ✓ | ✓ |
 
 ### Docker Image
@@ -321,16 +321,14 @@ kill $SSE_PID
 
 ### Step 6: Verify MCP Tools Connect
 
-Update your MCP client configuration to point to the Go binary:
+Point your MCP client at the API's hosted endpoint:
 
 ```json
 {
   "mcpServers": {
     "brain": {
-      "command": "/path/to/bin/brain-mcp",
-      "env": {
-        "BRAIN_API_URL": "http://localhost:3000"
-      }
+      "type": "http",
+      "url": "http://localhost:3000/mcp"
     }
   }
 }
@@ -496,8 +494,7 @@ go vet ./...                    # Static analysis
 ./bin/brain-runner my-project   # Run the task runner
 ./bin/brain-runner list all     # List all projects
 
-# MCP Server
-./bin/brain-mcp                 # Start MCP server (stdin/stdout)
+# MCP Server: served by brain-api at /mcp (no separate process)
 
 # Benchmarks
 ./scripts/benchmark-compare.sh  # Run all benchmarks
@@ -508,7 +505,6 @@ go vet ./...                    # Static analysis
 ### Binaries (`cmd/`)
 - `brain-api` — HTTP REST server (port 3000 default)
 - `brain-runner` — Task queue processor
-- `brain-mcp` — MCP server for AI editors
 - `brain` — CLI tool (stub)
 
 ### Internal Packages (`internal/`)
@@ -616,7 +612,7 @@ git push origin ts-final
 | `ENABLE_AUTH` | `false` | Enable API key authentication |
 | `API_KEY` | — | API key for authentication |
 | `CORS_ORIGIN` | `*` | Allowed CORS origin |
-| `BRAIN_API_URL` | `http://localhost:3333` | Brain API URL (for `brain-mcp` and `brain-runner`). Note: if Go server runs on port 3000, set this to `http://localhost:3000`. |
+| `BRAIN_API_URL` | `http://localhost:3333` | Brain API URL (for `brain-runner`). Note: if Go server runs on port 3000, set this to `http://localhost:3000`. |
 | `BRAIN_API_TOKEN` | — | API token for client authentication |
 
 ---
@@ -625,31 +621,17 @@ git push origin ts-final
 
 ### Claude Code / OpenCode
 
-Add to your MCP configuration. The `brain-mcp` binary defaults to `BRAIN_API_URL=http://localhost:3333`. If your Go server runs on a different port, set the env var explicitly:
+MCP is served only by the API at `/mcp` (Streamable HTTP); there is no
+stdio `brain-mcp`/`brain mcp` server. Configure your client as a remote/HTTP
+server, and send the `X-Brain-*` caller headers for machine-tied tasks and
+project auto-detection — see README "Connecting OpenCode" and "Caller headers".
 
 ```json
 {
   "mcpServers": {
     "brain": {
-      "command": "brain-mcp",
-      "env": {
-        "BRAIN_API_URL": "http://localhost:3000"
-      }
-    }
-  }
-}
-```
-
-If `brain-mcp` is not in your `$PATH`, use the full path:
-
-```json
-{
-  "mcpServers": {
-    "brain": {
-      "command": "/path/to/bin/brain-mcp",
-      "env": {
-        "BRAIN_API_URL": "http://localhost:3000"
-      }
+      "type": "http",
+      "url": "https://brain.example.com/mcp"
     }
   }
 }
@@ -657,7 +639,7 @@ If `brain-mcp` is not in your `$PATH`, use the full path:
 
 ### Available MCP Tools
 
-The Go `brain-mcp` server exposes the same tool groups as the TypeScript version:
+The hosted MCP endpoint exposes the same tool groups as the TypeScript version:
 
 - **Brain tools**: `brain_save`, `brain_recall`, `brain_search`, `brain_inject`, `brain_list`, `brain_update`, `brain_delete`, `brain_stats`, `brain_link`, `brain_backlinks`, `brain_outlinks`, `brain_related`, `brain_orphans`, `brain_stale`, `brain_verify`, `brain_section`, `brain_plan_sections`
 - **Task tools**: `brain_tasks`, `brain_task_next`, `brain_task_get`, `brain_task_metadata`, `brain_tasks_status`, `brain_task_trigger`

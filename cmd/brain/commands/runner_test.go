@@ -304,57 +304,6 @@ func TestRunList_EmptyProject(t *testing.T) {
 }
 
 // =============================================================================
-// runStop tests
-// =============================================================================
-
-func TestRunStop_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/tasks/runner/pause" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST, got %s", r.Method)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	cmd := &RunCommand{
-		Subcommand: "stop",
-		Config: &UnifiedConfig{
-			Runner: runner.RunnerConfig{BrainAPIURL: srv.URL},
-		},
-		Flags: &RunnerFlags{},
-	}
-
-	err := cmd.runStop()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestRunStop_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("server error"))
-	}))
-	defer srv.Close()
-
-	cmd := &RunCommand{
-		Subcommand: "stop",
-		Config: &UnifiedConfig{
-			Runner: runner.RunnerConfig{BrainAPIURL: srv.URL},
-		},
-		Flags: &RunnerFlags{},
-	}
-
-	err := cmd.runStop()
-	if err == nil {
-		t.Fatal("expected error on API failure")
-	}
-}
-
-// =============================================================================
 // runStatus tests
 // =============================================================================
 
@@ -460,10 +409,11 @@ func TestRunReady_WithTasks(t *testing.T) {
 	}
 }
 
+// The router passes "all" when no project positional was given.
 func TestRunReady_NoProject(t *testing.T) {
 	cmd := &RunCommand{
 		Subcommand: "ready",
-		Project:    "",
+		Project:    "all",
 		Config: &UnifiedConfig{
 			Runner: runner.RunnerConfig{BrainAPIURL: "http://localhost:9999"},
 		},
@@ -498,46 +448,6 @@ func TestRunReady_Empty(t *testing.T) {
 
 	err := cmd.runReady()
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// =============================================================================
-// Stub message tests (features/logs/config)
-// =============================================================================
-
-func TestRunFeatures_StubMessage(t *testing.T) {
-	cmd := &RunCommand{Subcommand: "features"}
-	err := cmd.runFeatures()
-	if err == nil {
-		t.Fatal("expected error from stub")
-	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(err.Error(), "/api/v1/tasks") {
-		t.Fatalf("stub should mention API endpoint, got: %v", err)
-	}
-}
-
-func TestRunLogs_StubMessage(t *testing.T) {
-	cmd := &RunCommand{Subcommand: "logs"}
-	err := cmd.runLogs()
-	if err == nil {
-		t.Fatal("expected error from stub")
-	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestRunConfig_StubMessage(t *testing.T) {
-	cmd := &RunCommand{Subcommand: "config"}
-	err := cmd.runConfig()
-	if err == nil {
-		t.Fatal("expected error from stub")
-	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

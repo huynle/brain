@@ -66,7 +66,7 @@ type Config struct {
 //  3. Built-in defaults
 //
 // This ensures all brain clients (brain-api standalone, brain server start,
-// brain-mcp, OpenCode plugin) can share the same config file while still
+// OpenCode plugin) can share the same config file while still
 // allowing per-deployment env var overrides (e.g., Docker).
 // Call Err before using the result to start a server.
 func Load() Config {

@@ -1,11 +1,9 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"github.com/huynle/brain-api/internal/supervision"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -46,14 +44,14 @@ func TestSupervisorToolsReuseAuthorizedREST(t *testing.T) {
 func TestSupervisorDiscoveryParityOverWire(t *testing.T) {
 	s := NewServer()
 	RegisterSupervisorTools(s, NewAPIClient("http://127.0.0.1"))
-	var stdio bytes.Buffer
-	if err := s.Serve(context.Background(), strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`+"\n"), &stdio); err != nil && err != io.EOF {
+	direct, err := json.Marshal(s.HandleRequest(context.Background(), &JSONRPCRequest{JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "tools/list"}))
+	if err != nil {
 		t.Fatal(err)
 	}
 	h := NewHTTPHandler(NewAPIClient("http://127.0.0.1"))
 	response := postMCP(t, h, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, "")
 	for name := range supervision.ToolCapabilities() {
-		for transport, raw := range map[string][]byte{"stdio": stdio.Bytes(), "http": response.Body.Bytes()} {
+		for transport, raw := range map[string][]byte{"direct": direct, "http": response.Body.Bytes()} {
 			var result struct {
 				Result struct {
 					Tools []Tool `json:"tools"`

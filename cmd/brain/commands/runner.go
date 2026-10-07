@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -93,6 +94,8 @@ type RunnerFlags struct {
 	Exclude      []string
 	FeatureIDs   []string
 	Follow       bool
+	Yes          bool
+	Limit        int
 }
 
 // resolveProjectList fetches and filters the project list from the Brain API.
@@ -125,8 +128,17 @@ func resolveProjectList(project string, cfg runner.RunnerConfig) ([]string, erro
 type RunCommand struct {
 	Subcommand string
 	Project    string
-	Config     *UnifiedConfig
-	Flags      *RunnerFlags
+	// Args are all positional arguments after the subcommand; Project is
+	// Args[0], or "all" when there is none.
+	Args   []string
+	Config *UnifiedConfig
+	Flags  *RunnerFlags
+
+	// In, Out and StdinIsTerminal default to the process's stdin/stdout;
+	// tests replace them to drive confirmation prompts.
+	In              io.Reader
+	Out             io.Writer
+	StdinIsTerminal func() bool
 }
 
 // Type returns the command type identifier.
@@ -140,7 +152,15 @@ func (c *RunCommand) Execute() error {
 	case "start":
 		return c.runStart()
 	case "stop":
-		return c.runStop()
+		return &UsageError{Message: runStopRenamed}
+	case "pause-all":
+		return c.runPauseAll()
+	case "resume-all":
+		return c.runResumeAll()
+	case "pause":
+		return c.runPauseProject()
+	case "resume":
+		return c.runResumeProject()
 	case "status":
 		return c.runStatus()
 	case "list":
@@ -291,20 +311,6 @@ func (c *RunCommand) runList() error {
 	return nil
 }
 
-func (c *RunCommand) runStop() error {
-	client, err := c.makeAPIClient()
-	if err != nil {
-		return err
-	}
-	ctx := context.Background()
-
-	if err := client.PauseAll(ctx); err != nil {
-		return fmt.Errorf("failed to pause runners: %w", err)
-	}
-	fmt.Println("All runners paused.")
-	return nil
-}
-
 func (c *RunCommand) runStatus() error {
 	client, err := c.makeAPIClient()
 	if err != nil {
@@ -368,9 +374,9 @@ func (c *RunCommand) runReady() error {
 	}
 	ctx := context.Background()
 
-	project := c.Project
+	project := c.projectArg()
 	if project == "" {
-		return fmt.Errorf("project required: brain run ready <project>")
+		return &UsageError{Message: "brain run ready: project required: brain run ready <project>"}
 	}
 
 	tasks, err := client.GetReadyTasks(ctx, project, nil)
@@ -397,16 +403,4 @@ func (c *RunCommand) runReady() error {
 	}
 	w.Flush()
 	return nil
-}
-
-func (c *RunCommand) runFeatures() error {
-	return fmt.Errorf("run features: not yet implemented; use the API directly: GET /api/v1/tasks/<project>/features")
-}
-
-func (c *RunCommand) runLogs() error {
-	return fmt.Errorf("run logs: not yet implemented; use the API directly: GET /api/v1/tasks/<project>/<taskId>/logs")
-}
-
-func (c *RunCommand) runConfig() error {
-	return fmt.Errorf("run config: not yet implemented; use the API directly: GET /api/v1/config/task-defaults")
 }

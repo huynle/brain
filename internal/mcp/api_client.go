@@ -9,7 +9,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -120,22 +119,6 @@ func (c *APIClient) Request(ctx context.Context, method, path string, body any, 
 	}
 
 	return nil
-}
-
-// UploadAttachment uploads a file from the filesystem of the process running
-// this client as multipart/form-data to the Brain API.
-//
-// The path is opened locally, so this is only meaningful when the client shares
-// a filesystem with whoever supplied the path. Remote callers must use
-// UploadAttachmentContent.
-func (c *APIClient) UploadAttachment(ctx context.Context, projectID, filePath string, metadata map[string]string) (*types.CreateAttachmentResponse, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("open attachment file: %w", err)
-	}
-	defer file.Close()
-
-	return c.UploadAttachmentContent(ctx, projectID, filepath.Base(filePath), file, metadata)
 }
 
 // UploadAttachmentContent uploads raw bytes as multipart/form-data under the
@@ -303,33 +286,6 @@ func (c *APIClient) DownloadAttachmentBytes(ctx context.Context, projectID, atta
 			attachmentID, limit, attachmentID)
 	}
 	return data, resp.Header.Get("Content-Type"), nil
-}
-
-// DownloadAttachmentToFile streams raw attachment bytes to outputPath on the
-// filesystem of the process running this client. Remote callers must use
-// DownloadAttachmentBytes.
-func (c *APIClient) DownloadAttachmentToFile(ctx context.Context, projectID, attachmentID, outputPath string) error {
-	resp, err := c.attachmentContent(ctx, projectID, attachmentID)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if dir := filepath.Dir(outputPath); dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create output directory: %w", err)
-		}
-	}
-	out, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return fmt.Errorf("create output file: %w", err)
-	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, resp.Body); err != nil {
-		return fmt.Errorf("write output file: %w", err)
-	}
-	return nil
 }
 
 func checkAPIError(resp *http.Response, respBody []byte) error {

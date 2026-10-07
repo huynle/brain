@@ -1,31 +1,17 @@
-// Package mcp implements a Model Context Protocol (MCP) server
-// for exposing Brain API tools to Claude Code and other MCP clients.
+// Package mcp implements the Brain Model Context Protocol (MCP) tool server.
 //
-// Protocol: JSON-RPC 2.0 over stdin/stdout with newline-delimited JSON (NDJSON)
-// framing, per the MCP stdio transport specification:
-// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#stdio
-//
-// Each message is a single JSON object serialized on one line, terminated
-// by a '\n'. Messages MUST NOT contain embedded (literal) newlines; any
-// newlines inside JSON string values must be encoded as "\n".
+// Protocol: JSON-RPC 2.0, served over the Streamable HTTP transport at /mcp
+// by the Brain API (see http_transport.go). There is no stdio transport.
 //
 // Version: MCP 2024-11-05
 package mcp
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"sync"
 )
-
-// maxMessageBytes is the largest single JSON-RPC message the stdio transport
-// will accept. the save tool with a large content payload can be several MB, so
-// we allow up to 10 MiB. This matches the LimitReader cap in http_transport.go.
-const maxMessageBytes = 10 * 1024 * 1024
 
 // ToolHandler is the function signature for MCP tool implementations.
 type ToolHandler func(ctx context.Context, args map[string]any) (string, error)
@@ -58,70 +44,69 @@ type registeredTool struct {
 	handler ToolHandler
 }
 
-// Server is an MCP protocol server that handles JSON-RPC 2.0 messages
-// over Content-Length framed streams.
+// Server is an MCP protocol server that dispatches JSON-RPC 2.0 requests to
+// registered tools.
 type Server struct {
 	mu    sync.RWMutex
 	tools map[string]registeredTool
 
-	// localFilesystem reports whether this server runs on the same machine as
-	// the MCP client, i.e. whether a path the client names is a path this
-	// process can open. Set at construction; never mutated afterwards.
-	localFilesystem bool
-}
-
-// ServerOption configures optional Server behavior.
-type ServerOption func(*Server)
-
-// WithLocalFilesystem marks the server as sharing a filesystem with its client,
-// which enables tool arguments that name local paths.
-//
-// It is off by default because the Brain API serves MCP in-process over HTTP:
-// for those sessions the tool handler runs on the API host, so a path from the
-// client resolves against the API host's filesystem. That fails outright, or —
-// worse — silently reads or writes a different file that happens to exist at
-// the same path there. Only the stdio transport, where the server is a child
-// process of the client, gets this option.
-func WithLocalFilesystem() ServerOption {
-	return func(s *Server) { s.localFilesystem = true }
+	// caller is what a hosted client declared about itself in request
+	// headers (see ParseCallerHeaders). Nil for headerless calls.
+	caller *CallerContext
 }
 
 // NewServer creates a new MCP server.
-func NewServer(opts ...ServerOption) *Server {
-	s := &Server{
-		tools: make(map[string]registeredTool),
-	}
-	for _, opt := range opts {
-		opt(s)
-	}
-	return s
+func NewServer() *Server {
+	return &Server{tools: make(map[string]registeredTool)}
 }
 
-// requireLocalFilesystem rejects a tool argument naming a path on the caller's
-// machine when this server has no access to that machine. alternative names the
-// argument the caller should reach for instead.
-func (s *Server) requireLocalFilesystem(arg, alternative string) error {
-	if s.localFilesystem {
+// rejectLocalPathArg refuses a tool argument naming a path on the caller's
+// machine. Tools run inside the Brain API, so the path would resolve on the
+// API host's filesystem — failing, or silently touching a different file that
+// happens to exist there. alternative names what the caller should do instead.
+func rejectLocalPathArg(args map[string]any, arg, alternative string) error {
+	if _, ok := args[arg]; !ok {
 		return nil
 	}
-	return fmt.Errorf("%q is unavailable on this MCP server: it runs inside the Brain API, so the path would resolve on the API host's filesystem instead of yours — %s", arg, alternative)
+	return fmt.Errorf("%q is not supported: this MCP server runs inside the Brain API and cannot read or write files on your machine — %s", arg, alternative)
 }
 
-// ambientContextDescribesCaller reports whether GetCachedContext() describes
+// ambientContextDescribesCaller reports whether executionContext() describes
 // the client that made this call, rather than the process serving it.
 //
-// GetCachedContext is a process-global computed once from os.Getwd(). Under
-// stdio that is right: the server is a child of the client and inherits its
-// working directory. Under the in-process HTTP transport it is the Brain API
-// server's own directory and identity, shared by every client on it — so
-// stamping origin provenance from it would brand every task with the API
-// host's machine id and pin them all there.
-//
-// It shares the localFilesystem flag with requireLocalFilesystem because it
-// is the same underlying fact: only the stdio transport is co-located with
-// its caller.
+// The fallback GetCachedContext is computed from the Brain API server's own
+// working directory, shared by every client on it — so stamping origin
+// provenance from it would brand every task with the API host's identity. A
+// call describes its caller only through the caller headers.
 func (s *Server) ambientContextDescribesCaller() bool {
-	return s != nil && s.localFilesystem
+	return s != nil && s.caller != nil
+}
+
+// executionContext is the context tool calls default from: the hosted
+// caller's declared context when it sent one, else the process's own.
+func (s *Server) executionContext() ExecutionContext {
+	if s != nil && s.caller != nil {
+		return s.caller.ExecutionContext()
+	}
+	return GetCachedContext()
+}
+
+// applyCallerProject defaults the project argument from the caller's working
+// folder when the tool takes one and the caller did not name a project.
+func (s *Server) applyCallerProject(tool Tool, args map[string]any) {
+	if s.caller == nil || StringArgAlias(args, "", "project", "project_id", "projectId") != "" {
+		return
+	}
+	project := s.caller.ExecutionContext().ProjectID
+	if project == "" {
+		return
+	}
+	for _, key := range []string{"project", "project_id"} {
+		if _, ok := tool.InputSchema.Properties[key]; ok {
+			args[key] = project
+			return
+		}
+	}
 }
 
 // RegisterTool registers a tool with its handler.
@@ -186,89 +171,6 @@ type toolCallParams struct {
 	Arguments map[string]any `json:"arguments"`
 }
 
-// Serve reads JSON-RPC requests from r and writes responses to w.
-//
-// Framing is newline-delimited JSON (NDJSON): each request is one JSON
-// object on a line, terminated by '\n'. Each response is written the same
-// way. Individual messages may be up to maxMessageBytes.
-//
-// Serve blocks until r is closed (returns io.EOF), ctx is cancelled, or
-// a fatal write error occurs.
-func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
-	scanner := bufio.NewScanner(r)
-	// Give the scanner a buffer large enough for our biggest legitimate
-	// message. Starting size 64 KiB grows as needed up to maxMessageBytes.
-	scanner.Buffer(make([]byte, 0, 64*1024), maxMessageBytes)
-
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-
-		var req JSONRPCRequest
-		if err := json.Unmarshal(line, &req); err != nil {
-			// Reply with a JSON-RPC parse error so the client can see
-			// what happened instead of hanging on a missing response.
-			parseErr := &JSONRPCResponse{
-				JSONRPC: "2.0",
-				Error: &JSONRPCError{
-					Code:    -32700,
-					Message: fmt.Sprintf("Parse error: %v", err),
-				},
-			}
-			if werr := writeNDJSON(w, parseErr); werr != nil {
-				return fmt.Errorf("write parse-error response: %w", werr)
-			}
-			continue
-		}
-
-		// Notifications have no ID — don't send a response.
-		if req.IsNotification() {
-			continue
-		}
-
-		resp := s.HandleRequest(ctx, &req)
-		if err := writeNDJSON(w, resp); err != nil {
-			return fmt.Errorf("write response: %w", err)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		// bufio.ErrTooLong means the client sent a message larger than
-		// maxMessageBytes. That's a client bug, not a server crash — but
-		// we can't recover the stream, so return it and let the caller
-		// restart if desired.
-		return fmt.Errorf("stdio read: %w", err)
-	}
-	return io.EOF
-}
-
-// writeNDJSON writes a single JSON-RPC message followed by '\n'.
-//
-// Per the MCP stdio spec, the JSON encoding of the message must not contain
-// embedded (literal) newlines. json.Marshal already escapes any \n inside
-// string values as "\n", so a single json.Marshal output is guaranteed to
-// occupy exactly one line.
-func writeNDJSON(w io.Writer, msg any) error {
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-	if _, err := w.Write(data); err != nil {
-		return err
-	}
-	_, err = w.Write([]byte{'\n'})
-	return err
-}
-
-// handleRequest dispatches a JSON-RPC request to the appropriate handler.
 // HandleRequest dispatches a JSON-RPC request to the appropriate method handler.
 // Exported for use by HTTP transport.
 func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) *JSONRPCResponse {
@@ -361,8 +263,9 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 	if args == nil {
 		args = make(map[string]any)
 	}
+	s.applyCallerProject(rt.tool, args)
 
-	text, err := rt.handler(ctx, args)
+	text, err := rt.handler(withCaller(ctx, s.caller), args)
 	result := map[string]any{
 		"content": []map[string]string{
 			{"type": "text", "text": text},

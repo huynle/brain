@@ -49,9 +49,10 @@ This replaces the earlier filesystem-era/broad table request in this file.
   policy; persisted in `qfcda7ct`, `vggevclc`, `hxcyvu0i`, `i8aurh42`):**
   - **Backups vs SDK-U1 → crypto-shredding.** Protected script payloads are
     stored only encrypted, under a short-lived key held **outside** the
-    backed-up database. The key is destroyed at the 24h deadline, so no
-    plaintext payload reaches the DB, WAL or `VACUUM INTO` backups, and 90-day
-    backups (D26/D32) hold only undecryptable ciphertext once the key is gone.
+    backed-up database, so no plaintext payload reaches the DB, WAL or
+    `VACUUM INTO` backups. `Open` refuses at the exact deadline; the key is destroyed within at most 5 minutes after it
+    (key periods are assigned by deadline and capped at 5 minutes). After
+    that, 90-day backups (D26/D32) hold only undecryptable ciphertext.
   - **Event log vs SDK-U1 audit → separate audit records.** The content-free
     script audit lives in its own records, purged at 90 days. Nothing
     script-specific goes to the 1-year `event_log` (D20) beyond generic
@@ -60,14 +61,16 @@ This replaces the earlier filesystem-era/broad table request in this file.
     - a key-storage location **excluded from database backups and the WAL**
       (not a database table, not inside the `VACUUM INTO` copy);
     - a key rotation and **destruction step** (e.g. alongside `MaintenanceStep`
-      or DB.6 lifecycle) that irreversibly destroys a period key once every
-      payload deadline it covers has passed, and refuses to reissue it;
+      or DB.6 lifecycle) that irreversibly destroys each period key within at
+      most 5 minutes after the deadlines it covers (period length chosen by
+      DB.1/DB.6, at most 5 minutes) and refuses to reissue it;
     - a **90-day purge** for the script audit records, separate from the
       `event_log` 1-year prune.
   - **SDK-owned part implemented (inactive, pure):** `internal/scriptexec`
-    payload sealing helper (AES-256-GCM, per-period keys behind a key-store
-    interface, tenant/execution/purpose/deadline as associated data, refusal at
-    the deadline and after key destruction, content-free errors). No database,
+    payload sealing helper (AES-256-GCM, per-period keys of at most 5 minutes
+    behind a key-store interface, tenant/execution/purpose/key period/deadline
+    as associated data, refusal at the exact deadline and after key
+    destruction, content-free errors, best-effort key zeroing). No database,
     schema or key-file location is chosen.
 - SDK branch `sdk-script-execution-v1` stays exclusively owned here. A248f2fab and
   B42802cfb are author-verified only. No DB-writer edits, competing catalog,
@@ -80,7 +83,7 @@ These are **proposed design methods**, not claims of implementation or approval.
 | Need | Reuse at DB.1 rev 6 (`767dce41`) | Minimal additional contract for reviewer disposition |
 |---|---|---|
 | Entry identity/CAS/history | §§2.1/2.2/2.4: entry_uid nonreuse, monotonic revision, actor and operation_id; §3.1 ReadEntry/CreateEntry/UpdateEntry/PatchEntryMetadata/MoveEntry/DeleteEntry, plus TransitionTask (task status/completed_at/schedule + runtime set/clear + claim release), AppendEntryBody (note/append), CompareEntryRuntime (per-key runtime CAS) and RestoreEntryRevision as candidate script mutations, each only after its own preflight/authority contract (T6) | Resolve legacy locator once to tenant+entry_uid; require expected revision on script edits/move/delete/attach/detach. Reuse revision/view tokens, never create script revision/history tables. Runtime-only updates remain nonrevisioned. |
-| Domain mutation receipt | §2.3 optional Receipt{Namespace, ID, Hash}, reservation+mutation+completion in one transaction; receipts' `namespace` CHECK is the closed set (`sync`, `reminder`, `project_drift`); §3.1 methods return a `Commit` value | Request an **extension of that closed namespace set** with one script-operation namespace in a later reviewed successor; bind receipt to execution+operation+verified owner. Extend fixed writer participation below, not reserve→HTTP call→complete. |
+| Domain mutation receipt | §2.3: any fixed method may take a `Receipt` (and/or a `GeneratedKey`), with reservation, mutation and completion committed together; receipts' `namespace` CHECK is the closed set (`sync`, `reminder`, `project_drift`); §3.1 methods return a `Commit` value | Request an **extension of that closed namespace set** with one script-operation namespace in a later reviewed successor; bind receipt to execution+operation+verified owner. Extend fixed writer participation below, not reserve→HTTP call→complete. |
 | Generated work | §3.1 UpsertGeneratedEntry and §2.3 receipt | Reuse generated-key uniqueness; it does NOT supply work permission, delegation, outbox or dry-run validation. Deny runnable-type/field writes without those contracts. |
 | Attachment writes | §3.1 AttachToEntry/DetachFromEntry, §2.5 refs and §2.4 CAS | Same execution receipt/authority participation, atomic entry bytes+association+refs. No filesystem intent/quarantine scheme. |
 | BLOB bytes/reservations | §2.5; §3.1 ReserveBlobUpload/AppendBlobChunk/SealAttachmentUpload/AbortBlobUpload; reservation expiry runs inside MaintenanceStep | Reuse chunked bytes for any protected replay payload via an extension of §2.5's closed `blob_refs.ref_kind` set (`attachment`, `reservation`; rev 4's `revision` kind was dropped), allocated by DB.1. Do NOT create a public attachments row or reuse its visibility to store replay. |
@@ -321,7 +324,10 @@ independent-worker-review retry or rephrasing is authorized by this packet.
 Search/read existing `hxcyvu0i`, `i8aurh42`, `yp7llda1` coordination notes before
 appending this packet ID, immutable SDK doc commit and only the relevant T/U rows.
 No new task/container/catalog is needed. Parent routes P8/DB6/P10 dispositions
-through existing lanes. SDK-U1–U3 are answered (approved); DB1 D1/D2/D3/D5 are settled.
+through existing lanes. SDK-U1–U3 are answered (approved), as are
+SCRIPT-DECISIONS-20261006b and 20261007. DB.1's binding decisions are settled
+(rev 6 §0): D1, D2, D3, D5, DB.1 U1–U4, D20, D25–D28 and D32–D34, with D29–D31
+as §6 technical defaults.
 
 Next implementable gate is **accepted T1 primitive allocation**, not a demand that
 DB1 wait for all SDK/S09/P8 or final DB14 completion. T2–T6 can be specified against

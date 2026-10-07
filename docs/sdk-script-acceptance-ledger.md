@@ -137,30 +137,32 @@ activation.
 
 **SCRIPT-DECISIONS-20261007 (user-approved; resolves the two retention
 conflicts with DB.1):**
-- **Retention conflicts resolved — SCRIPT-DECISIONS-20261007 (user-approved
-  policy; persisted in `qfcda7ct`, `vggevclc`, `hxcyvu0i`, `i8aurh42`):**
-  - **Backups vs SDK-U1 → crypto-shredding.** Protected script payloads are
-    stored only encrypted, under a short-lived key held **outside** the
-    backed-up database. The key is destroyed at the 24h deadline, so no
-    plaintext payload reaches the DB, WAL or `VACUUM INTO` backups, and 90-day
-    backups (D26/D32) hold only undecryptable ciphertext once the key is gone.
-  - **Event log vs SDK-U1 audit → separate audit records.** The content-free
-    script audit lives in its own records, purged at 90 days. Nothing
-    script-specific goes to the 1-year `event_log` (D20) beyond generic
-    content-free event fan-out.
-  - **Technical requests to DB.1/DB.6** (allocation, not decided here):
-    - a key-storage location **excluded from database backups and the WAL**
-      (not a database table, not inside the `VACUUM INTO` copy);
-    - a key rotation and **destruction step** (e.g. alongside `MaintenanceStep`
-      or DB.6 lifecycle) that irreversibly destroys a period key once every
-      payload deadline it covers has passed, and refuses to reissue it;
-    - a **90-day purge** for the script audit records, separate from the
-      `event_log` 1-year prune.
-  - **SDK-owned part implemented (inactive, pure):** `internal/scriptexec`
-    payload sealing helper (AES-256-GCM, per-period keys behind a key-store
-    interface, tenant/execution/purpose/deadline as associated data, refusal at
-    the deadline and after key destruction, content-free errors). No database,
-    schema or key-file location is chosen.
+Persisted in `qfcda7ct`, `vggevclc`, `hxcyvu0i` and `i8aurh42`.
+- **Backups vs SDK-U1 → crypto-shredding.** Protected script payloads are
+  stored only encrypted, under a short-lived key held **outside** the
+  backed-up database, so no plaintext payload reaches the DB, WAL or
+  `VACUUM INTO` backups. `Open` refuses at the exact deadline; the key is destroyed within at most 5 minutes after it
+  (key periods are assigned by deadline and capped at 5 minutes). After
+  that, 90-day backups (D26/D32) hold only undecryptable ciphertext.
+- **Event log vs SDK-U1 audit → separate audit records.** The content-free
+  script audit lives in its own records, purged at 90 days. Nothing
+  script-specific goes to the 1-year `event_log` (D20) beyond generic
+  content-free event fan-out.
+- **Technical requests to DB.1/DB.6** (allocation, not decided here):
+  - a key-storage location **excluded from database backups and the WAL**
+    (not a database table, not inside the `VACUUM INTO` copy);
+  - a key rotation and **destruction step** (e.g. alongside `MaintenanceStep`
+    or DB.6 lifecycle) that irreversibly destroys each period key within at
+    most 5 minutes after the deadlines it covers (period length chosen by
+    DB.1/DB.6, at most 5 minutes) and refuses to reissue it;
+  - a **90-day purge** for the script audit records, separate from the
+    `event_log` 1-year prune.
+- **SDK-owned part implemented (inactive, pure):** `internal/scriptexec`
+  payload sealing helper (AES-256-GCM, per-period keys of at most 5 minutes
+  behind a key-store interface, tenant/execution/purpose/key period/deadline
+  as associated data, refusal at the exact deadline and after key
+  destruction, content-free errors, best-effort key zeroing). No database,
+  schema or key-file location is chosen.
 
 ## Classification
 

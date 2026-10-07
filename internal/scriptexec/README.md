@@ -353,20 +353,33 @@ Protected results, logs, plans and digests are only stored sealed under a
 short-lived **period key held outside the backed-up database**, so no
 plaintext reaches the database, its WAL or `VACUUM INTO` backups.
 
+- **Timing (SCRIPT-DECISIONS-20261007):** `Open` refuses at the exact deadline; the key is destroyed within at most 5 minutes after it.
 - **Encryption:** AES-256-GCM with a random 96-bit nonce per seal. The
-  associated data is domain-separated and length-prefixed: key ID, tenant,
-  execution, purpose and the payload deadline. Swapping any of them, or the
-  key ID, nonce or ciphertext, fails closed.
-- **Deadline:** must lie in (now, now+24h] (SDK-U1). The plaintext is bounded
-  by the 256 KiB envelope.
+  associated data (pinned by an independent layout test) is domain-separated
+  and length-prefixed: key ID, tenant, execution, purpose. It also binds the
+  key period (start seconds, length) and the deadline (seconds + nanoseconds,
+  fixed width, so it cannot wrap). Swapping any of these, or tampering with the
+  nonce or ciphertext, fails closed.
+- **Deadline:** must lie in (now, now+24h] (SDK-U1) and within 2000–2200. The
+  plaintext is bounded by the 256 KiB envelope.
 - **Key periods:** a payload is sealed under the key for the period containing
-  its deadline. `Open` refuses **at the deadline** even if that key still
-  exists (`errPayloadExpired`). The key is destroyed when its period ends, at
-  most one period (1 minute to 24 hours, configurable) after the deadline.
-  After that, every copy, including old backups, is undecryptable
+  its **deadline** (not its seal time). Periods are 1 to 5 minutes, enforced
+  by `newPayloadSealer`. The key is destroyed when its period ends; after
+  that, every copy, including old backups, is undecryptable
   (`errPayloadKeyDestroyed`), and a destroyed period is never reissued.
-- **Errors:** fixed and content-free. A sealed payload never formats its
-  bytes; key copies are zeroed after use.
+- **`Open` refusals:**
+  - before using any key, it refuses a deadline that is outside its key
+    period, a period start that doesn't match, or a deadline more than 24h
+    ahead of `now`;
+  - it refuses at or after the deadline even while the key still exists
+    (`errPayloadExpired`).
+- **Clock:** callers supply `now`, so a wrong clock defeats the software
+  refusal only until the key is destroyed.
+- **Errors:** fixed and content-free. A sealed payload never formats its bytes
+  (checked across verbs for value and pointer).
+- **Zeroing is best-effort:** the sealer overwrites its key copies after use,
+  but the AES key schedule inside cipher objects, garbage-collector copies and
+  the key store's own copy are not wiped.
 - **Key store:** an interface only. The in-memory store exists in tests. Key
   custody is requested from DB.1/DB.6 and not chosen here: a location excluded
   from database backups and the WAL, rotation, the destruction step, and the

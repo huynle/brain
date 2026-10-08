@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/sdk/brain"
 )
 
 // RegisterObservabilityTools registers read-only observability MCP tools for
@@ -46,18 +47,19 @@ func registerBrainTaskLogs(s *Server, client *APIClient) {
 			return "", fmt.Errorf("task_id is required")
 		}
 
-		path := fmt.Sprintf("/tasks/%s/%s/logs", url.PathEscape(projectID), url.PathEscape(taskID))
-		query := make(map[string]string)
+		query := url.Values{}
 		if limit := IntArg(args, "limit", 0); limit > 0 {
-			query["limit"] = fmt.Sprintf("%d", limit)
+			query.Set("limit", fmt.Sprintf("%d", limit))
 		}
 
-		var resp types.LogQueryResponse
-		if err := client.Request(ctx, http.MethodGet, path, nil, query, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.LogQueryResponse, error) {
+			return sc.Tasks().Logs(ctx, projectID, taskID, query)
+		})
+		if err != nil {
 			return "", err
 		}
 
-		return formatTaskLogs(projectID, taskID, resp), nil
+		return formatTaskLogs(projectID, taskID, logQueryFromSDK(resp)), nil
 	})
 }
 
@@ -143,9 +145,9 @@ func registerBrainEventsRecent(s *Server, client *APIClient) {
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		query := make(map[string]string)
+		query := url.Values{}
 		if limit := IntArg(args, "limit", 0); limit > 0 {
-			query["limit"] = fmt.Sprintf("%d", limit)
+			query.Set("limit", fmt.Sprintf("%d", limit))
 		}
 		if eventType := StringArg(args, "type", ""); eventType != "" {
 			// Reject a type nothing can ever emit. An unrecognised filter used
@@ -156,28 +158,27 @@ func registerBrainEventsRecent(s *Server, client *APIClient) {
 			if err := validateEventTypeFilter(eventType); err != nil {
 				return "", err
 			}
-			query["type"] = eventType
+			query.Set("type", eventType)
 		}
 		if projectID := StringArg(args, "project_id", ""); projectID != "" {
-			query["project_id"] = projectID
+			query.Set("project_id", projectID)
 		}
 		if featureID := StringArg(args, "feature_id", ""); featureID != "" {
-			query["feature_id"] = featureID
+			query.Set("feature_id", featureID)
 		}
 		if source := StringArg(args, "source", ""); source != "" {
-			query["source"] = source
+			query.Set("source", source)
 		}
 
-		var resp struct {
-			Events   []types.Event       `json:"events"`
-			Count    int                 `json:"count"`
-			Coverage types.EventCoverage `json:"coverage"`
-		}
-		if err := client.Request(ctx, http.MethodGet, "/events/recent", nil, query, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.RecentEventsResponse, error) {
+			return sc.Events().Recent(ctx, query)
+		})
+		if err != nil {
 			return "", err
 		}
 
-		return formatRecentEvents(resp.Events, IntArg(args, "limit", 0), resp.Coverage), nil
+		events, coverage := recentEventsFromSDK(resp)
+		return formatRecentEvents(events, IntArg(args, "limit", 0), coverage), nil
 	})
 }
 
@@ -211,26 +212,23 @@ func registerBrainAutomationRuns(s *Server, client *APIClient) {
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		query := make(map[string]string)
-		if project := StringArg(args, "project", ""); project != "" {
-			query["project"] = project
-		}
-		if automationID := StringArg(args, "automation_id", ""); automationID != "" {
-			query["automation_id"] = automationID
-		}
-		if status := StringArg(args, "status", ""); status != "" {
-			query["status"] = status
+		params := &brain.AutomationsRunsParams{
+			Project:      optString(StringArg(args, "project", "")),
+			AutomationId: optString(StringArg(args, "automation_id", "")),
+			Status:       optString(StringArg(args, "status", "")),
 		}
 		if limit := IntArg(args, "limit", 0); limit > 0 {
-			query["limit"] = fmt.Sprintf("%d", limit)
+			params.Limit = &limit
 		}
 
-		var resp types.ListEntriesResponse
-		if err := client.Request(ctx, http.MethodGet, "/automation-runs", nil, query, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.ListEntriesResponse, error) {
+			return sc.Automations().Runs(ctx, params)
+		})
+		if err != nil {
 			return "", err
 		}
 
-		return formatAutomationRuns(resp, IntArg(args, "limit", 0)), nil
+		return formatAutomationRuns(listEntriesFromSDK(resp), IntArg(args, "limit", 0)), nil
 	})
 }
 
@@ -251,12 +249,14 @@ func registerBrainAutomationRunGet(s *Server, client *APIClient) {
 			return "", fmt.Errorf("run_id is required")
 		}
 
-		var resp types.BrainEntry
-		if err := client.Request(ctx, http.MethodGet, "/automation-runs/"+url.PathEscape(runID), nil, nil, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.BrainEntry, error) {
+			return sc.Automations().GetRun(ctx, runID)
+		})
+		if err != nil {
 			return "", err
 		}
 
-		return formatAutomationRun(resp), nil
+		return formatAutomationRun(brainEntryFromSDK(*resp)), nil
 	})
 }
 
@@ -276,6 +276,64 @@ func registerBrainSchedulerStatus(s *Server, client *APIClient) {
 
 		return formatSchedulerStatus(resp), nil
 	})
+}
+
+// =============================================================================
+// SDK DTO adapters
+//
+// The formatters below predate the SDK and read internal/types shapes; these
+// adapters copy exactly the fields they render, so the agent-facing text is
+// unchanged by the transport move.
+// =============================================================================
+
+func logQueryFromSDK(r *brain.LogQueryResponse) types.LogQueryResponse {
+	out := types.LogQueryResponse{Total: r.Total, Offset: r.Offset, Limit: r.Limit}
+	if r.Lines != nil {
+		for _, l := range *r.Lines {
+			out.Lines = append(out.Lines, types.LogLine{Timestamp: l.Timestamp, Level: l.Level, Content: l.Content})
+		}
+	}
+	return out
+}
+
+func recentEventsFromSDK(r *brain.RecentEventsResponse) ([]types.Event, types.EventCoverage) {
+	cov := types.EventCoverage{Buffered: r.Coverage.Buffered, Capacity: r.Coverage.Capacity, Oldest: derefString(r.Coverage.Oldest)}
+	if r.Events == nil {
+		return nil, cov
+	}
+	events := make([]types.Event, 0, len(*r.Events))
+	for _, e := range *r.Events {
+		evt := types.Event{
+			ID: e.Id, Type: e.Type, Source: e.Source, Timestamp: e.Timestamp,
+			RunnerID: derefString(e.RunnerId), ProjectID: derefString(e.ProjectId),
+			TaskID: derefString(e.TaskId), TaskPath: derefString(e.TaskPath), TaskTitle: derefString(e.TaskTitle),
+			FeatureID: derefString(e.FeatureId), FromStatus: derefString(e.FromStatus), ToStatus: derefString(e.ToStatus),
+			Reason: derefString(e.Reason),
+		}
+		if e.Metadata != nil {
+			evt.Metadata = *e.Metadata
+		}
+		events = append(events, evt)
+	}
+	return events, cov
+}
+
+func listEntriesFromSDK(r *brain.ListEntriesResponse) types.ListEntriesResponse {
+	out := types.ListEntriesResponse{Total: r.Total, Limit: r.Limit, Offset: r.Offset, Truncated: r.Truncated != nil && *r.Truncated}
+	if r.Entries != nil {
+		for _, e := range *r.Entries {
+			out.Entries = append(out.Entries, brainEntryFromSDK(e))
+		}
+	}
+	return out
+}
+
+func brainEntryFromSDK(e brain.BrainEntry) types.BrainEntry {
+	return types.BrainEntry{
+		ID: e.Id, Path: e.Path, Title: e.Title, Type: e.Type, Status: e.Status,
+		Created: derefString(e.Created), Modified: derefString(e.Modified),
+		Tags: derefStrings(e.Tags), Content: e.Content,
+	}
 }
 
 // =============================================================================

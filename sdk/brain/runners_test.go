@@ -91,24 +91,24 @@ func TestControlRoutesBodiesAndProxiedResponses(t *testing.T) {
 	})
 	ctx, o := context.Background(), brain.RequestOptions{}
 	text, agent := "hi", "build"
-	raw, err := c.Control().SendPrompt(ctx, "r", "i", "s/1", brain.ControlPromptRequest{Text: &text, Agent: &agent, Model: &brain.ControlPromptModel{ProviderID: "p", ModelID: "m"}}, o)
+	raw, err := c.RemoteControl().SendPrompt(ctx, "r", "i", "s/1", brain.ControlPromptRequest{Text: &text, Agent: &agent, Model: &brain.ControlPromptModel{ProviderID: "p", ModelID: "m"}}, o)
 	if err != nil || len(raw) != 0 {
 		t.Fatalf("prompt: %q %v", raw, err)
 	}
-	raw, err = c.Control().AbortSession(ctx, "r", "i", "s", o)
+	raw, err = c.RemoteControl().AbortSession(ctx, "r", "i", "s", o)
 	if err != nil || string(raw) != "true" {
 		t.Fatalf("abort: %q %v", raw, err)
 	}
-	raw, err = c.Control().RespondPermission(ctx, "r", "i", "s", "per 1", brain.ControlPermissionRequest{Response: brain.PermissionReject}, o)
+	raw, err = c.RemoteControl().RespondPermission(ctx, "r", "i", "s", "per 1", brain.ControlPermissionRequest{Response: brain.PermissionReject}, o)
 	if err != nil || string(raw) != "true" {
 		t.Fatalf("permission: %q %v", raw, err)
 	}
 	title := "t"
-	spawned, err := c.Control().SpawnInstance(ctx, "r", brain.SpawnInstanceSpec{Workdir: "/w", Title: &title}, o)
+	spawned, err := c.RemoteControl().SpawnInstance(ctx, "r", brain.SpawnInstanceSpec{Workdir: "/w", Title: &title}, o)
 	if err != nil || !spawned.Success || spawned.Instance.InstanceId != "i9" {
 		t.Fatalf("spawn: %+v %v", spawned, err)
 	}
-	killed, err := c.Control().KillInstance(ctx, "r", "i9", o)
+	killed, err := c.RemoteControl().KillInstance(ctx, "r", "i9", o)
 	if err != nil || !killed.Success {
 		t.Fatalf("kill: %+v %v", killed, err)
 	}
@@ -132,19 +132,19 @@ func TestControlProxiedResponseFailures(t *testing.T) {
 	})
 	ctx := context.Background()
 	var e *brain.Error
-	if _, err := c.Control().AbortSession(ctx, "r", "i", "s", brain.RequestOptions{}); !errors.As(err, &e) || e.Code != "invalid_response" {
+	if _, err := c.RemoteControl().AbortSession(ctx, "r", "i", "s", brain.RequestOptions{}); !errors.As(err, &e) || e.Code != "invalid_response" {
 		t.Fatalf("non-JSON proxied body: %v", err)
 	}
 	status, body = 502, `{"error":"Bad Gateway","message":"runner bridge not connected"}`
-	if _, err := c.Control().SendPrompt(ctx, "r", "i", "s", brain.ControlPromptRequest{}, brain.RequestOptions{}); !errors.As(err, &e) || e.Message != "runner bridge not connected" || e.Status != 502 {
+	if _, err := c.RemoteControl().SendPrompt(ctx, "r", "i", "s", brain.ControlPromptRequest{}, brain.RequestOptions{}); !errors.As(err, &e) || e.Message != "runner bridge not connected" || e.Status != 502 {
 		t.Fatalf("bridge error: %v", err)
 	}
 	status, body = 409, `{"error":"Conflict","message":"task instances are owned by the task lifecycle"}`
-	if _, err := c.Control().KillInstance(ctx, "r", "t", brain.RequestOptions{}); !errors.As(err, &e) || e.Code != "conflict" {
+	if _, err := c.RemoteControl().KillInstance(ctx, "r", "t", brain.RequestOptions{}); !errors.As(err, &e) || e.Code != "conflict" {
 		t.Fatalf("kill conflict: %v", err)
 	}
 	for _, id := range []string{"..", "%2e%2e"} {
-		if _, err := c.Control().KillInstance(ctx, "r", id, brain.RequestOptions{}); !errors.As(err, &e) || e.Code != "invalid_request" {
+		if _, err := c.RemoteControl().KillInstance(ctx, "r", id, brain.RequestOptions{}); !errors.As(err, &e) || e.Code != "invalid_request" {
 			t.Fatalf("dot segment %q: %v", id, err)
 		}
 	}

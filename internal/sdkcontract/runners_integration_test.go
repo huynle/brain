@@ -114,17 +114,17 @@ func exerciseRunnerControlSDK(t *testing.T, c *brain.Client) {
 			t.Fatalf("control.%s without a connected runner: %v", name, err)
 		}
 	}
-	_, err = c.Control().SendPrompt(ctx, "sdk-fixture-runner", "i", "s", brain.ControlPromptRequest{Text: &text}, o)
+	_, err = c.RemoteControl().SendPrompt(ctx, "sdk-fixture-runner", "i", "s", brain.ControlPromptRequest{Text: &text}, o)
 	bridgeDown("sendPrompt", err)
-	_, err = c.Control().AbortSession(ctx, "sdk-fixture-runner", "i", "s", o)
+	_, err = c.RemoteControl().AbortSession(ctx, "sdk-fixture-runner", "i", "s", o)
 	bridgeDown("abortSession", err)
-	_, err = c.Control().RespondPermission(ctx, "sdk-fixture-runner", "i", "s", "p", brain.ControlPermissionRequest{Response: brain.PermissionReject}, o)
+	_, err = c.RemoteControl().RespondPermission(ctx, "sdk-fixture-runner", "i", "s", "p", brain.ControlPermissionRequest{Response: brain.PermissionReject}, o)
 	bridgeDown("respondPermission", err)
-	_, err = c.Control().SpawnInstance(ctx, "sdk-fixture-runner", brain.SpawnInstanceSpec{Workdir: "/nonexistent/sdk"}, o)
+	_, err = c.RemoteControl().SpawnInstance(ctx, "sdk-fixture-runner", brain.SpawnInstanceSpec{Workdir: "/nonexistent/sdk"}, o)
 	bridgeDown("spawnInstance", err)
-	_, err = c.Control().KillInstance(ctx, "sdk-fixture-runner", "i", o)
+	_, err = c.RemoteControl().KillInstance(ctx, "sdk-fixture-runner", "i", o)
 	bridgeDown("killInstance", err)
-	if _, err := c.Control().SpawnInstance(ctx, "sdk-fixture-runner", brain.SpawnInstanceSpec{Workdir: "relative"}, o); !isCode(err, "invalid_request") {
+	if _, err := c.RemoteControl().SpawnInstance(ctx, "sdk-fixture-runner", brain.SpawnInstanceSpec{Workdir: "relative"}, o); !isCode(err, "invalid_request") {
 		t.Fatalf("control.spawnInstance relative workdir: %v", err)
 	}
 }

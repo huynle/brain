@@ -103,7 +103,7 @@ verification is separate from implementation status and can return a provider
 error inside a successful response; configuration uses `expected_revision`.
 
 Dispatch dials (`Dispatch()` / `dispatch`) write server-wide state and notify
-runners; resuming releases queued work. `Control()` / `control` is code execution
+runners; resuming releases queued work. `RemoteControl()` / `control` is code execution
 on runner hosts (control:* scope): prompts and granted permissions drive a remote
 agent, spawn/kill start and stop processes. Proxied session calls return the
 instance's own JSON (`json.RawMessage`; TS `null` for an empty 204 body). None of

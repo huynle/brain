@@ -68,13 +68,13 @@ func (s DispatchService) ResumeProjectAutomations(ctx context.Context, project s
 	return s.dial(ctx, "/tasks/runner/automations/resume/"+url.PathEscape(project), o)
 }
 
-// ControlService is remote control of runner hosts (control:* scope):
+// RemoteControlService is remote control of runner hosts (control:* scope):
 // prompting, aborting and answering permissions in OpenCode sessions, and
 // spawning/killing ad-hoc instances. These are real side effects on another
 // machine; nothing here is retried.
-type ControlService struct{ c *Client }
+type RemoteControlService struct{ c *Client }
 
-func (c *Client) Control() ControlService { return ControlService{c} }
+func (c *Client) RemoteControl() RemoteControlService { return RemoteControlService{c} }
 
 func controlSessionPath(runnerID, instanceID, sessionID string) string {
 	return "/control/runners/" + url.PathEscape(runnerID) + "/instances/" + url.PathEscape(instanceID) + "/sessions/" + url.PathEscape(sessionID)
@@ -82,7 +82,7 @@ func controlSessionPath(runnerID, instanceID, sessionID string) string {
 
 // proxied returns the instance's own response body: opaque JSON (OpenCode
 // answers abort/permission with a bare true) or empty (prompt_async is 204).
-func (s ControlService) proxied(ctx context.Context, path string, body any, o RequestOptions) (json.RawMessage, error) {
+func (s RemoteControlService) proxied(ctx context.Context, path string, body any, o RequestOptions) (json.RawMessage, error) {
 	var raw []byte
 	if err := s.c.request(ctx, "POST", path, body, nil, o, &raw); err != nil {
 		return nil, err
@@ -95,26 +95,26 @@ func (s ControlService) proxied(ctx context.Context, path string, body any, o Re
 
 // SendPrompt starts agent work in a remote session; the agent may run tools
 // and call model providers. Output streams separately.
-func (s ControlService) SendPrompt(ctx context.Context, runnerID, instanceID, sessionID string, r ControlPromptRequest, o RequestOptions) (json.RawMessage, error) {
+func (s RemoteControlService) SendPrompt(ctx context.Context, runnerID, instanceID, sessionID string, r ControlPromptRequest, o RequestOptions) (json.RawMessage, error) {
 	return s.proxied(ctx, controlSessionPath(runnerID, instanceID, sessionID)+"/prompt", r, o)
 }
-func (s ControlService) AbortSession(ctx context.Context, runnerID, instanceID, sessionID string, o RequestOptions) (json.RawMessage, error) {
+func (s RemoteControlService) AbortSession(ctx context.Context, runnerID, instanceID, sessionID string, o RequestOptions) (json.RawMessage, error) {
 	return s.proxied(ctx, controlSessionPath(runnerID, instanceID, sessionID)+"/abort", nil, o)
 }
 
 // RespondPermission forwards OpenCode's permission vocabulary untouched;
 // once/always let the agent proceed with the requested tool call.
-func (s ControlService) RespondPermission(ctx context.Context, runnerID, instanceID, sessionID, permissionID string, r ControlPermissionRequest, o RequestOptions) (json.RawMessage, error) {
+func (s RemoteControlService) RespondPermission(ctx context.Context, runnerID, instanceID, sessionID, permissionID string, r ControlPermissionRequest, o RequestOptions) (json.RawMessage, error) {
 	return s.proxied(ctx, controlSessionPath(runnerID, instanceID, sessionID)+"/permissions/"+url.PathEscape(permissionID), r, o)
 }
 
 // SpawnInstance starts an ad-hoc OpenCode process on the runner host.
-func (s ControlService) SpawnInstance(ctx context.Context, runnerID string, r SpawnInstanceSpec, o RequestOptions) (*ControlSpawnResponse, error) {
+func (s RemoteControlService) SpawnInstance(ctx context.Context, runnerID string, r SpawnInstanceSpec, o RequestOptions) (*ControlSpawnResponse, error) {
 	return result[ControlSpawnResponse](s.c, ctx, "POST", "/control/runners/"+url.PathEscape(runnerID)+"/instances", r, nil, o)
 }
 
 // KillInstance terminates an ad-hoc instance; task-owned instances are refused (409).
-func (s ControlService) KillInstance(ctx context.Context, runnerID, instanceID string, o RequestOptions) (*SuccessResponse, error) {
+func (s RemoteControlService) KillInstance(ctx context.Context, runnerID, instanceID string, o RequestOptions) (*SuccessResponse, error) {
 	return result[SuccessResponse](s.c, ctx, "DELETE", "/control/runners/"+url.PathEscape(runnerID)+"/instances/"+url.PathEscape(instanceID), nil, nil, o)
 }
 

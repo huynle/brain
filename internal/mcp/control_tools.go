@@ -271,7 +271,7 @@ func registerBrainControlSendPrompt(s *Server, client *APIClient) {
 			body.Model = &brain.ControlPromptModel{ProviderID: providerID, ModelID: modelID}
 		}
 		raw, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*json.RawMessage, error) {
-			r, err := sc.Control().SendPrompt(ctx, ids.runnerID, ids.instanceID, ids.sessionID, body, brain.RequestOptions{})
+			r, err := sc.RemoteControl().SendPrompt(ctx, ids.runnerID, ids.instanceID, ids.sessionID, body, brain.RequestOptions{})
 			return &r, err
 		})
 		if err != nil {
@@ -300,7 +300,7 @@ func registerBrainControlAbortSession(s *Server, client *APIClient) {
 			return "", fmt.Errorf("%s", ok.message)
 		}
 		raw, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*json.RawMessage, error) {
-			r, err := sc.Control().AbortSession(ctx, ids.runnerID, ids.instanceID, ids.sessionID, brain.RequestOptions{})
+			r, err := sc.RemoteControl().AbortSession(ctx, ids.runnerID, ids.instanceID, ids.sessionID, brain.RequestOptions{})
 			return &r, err
 		})
 		if err != nil {
@@ -352,7 +352,7 @@ func registerBrainControlPermission(s *Server, client *APIClient) {
 		}
 		body := brain.ControlPermissionRequest{Response: brain.ControlPermissionRequestResponse(response)}
 		raw, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*json.RawMessage, error) {
-			r, err := sc.Control().RespondPermission(ctx, ids.runnerID, ids.instanceID, ids.sessionID, permissionID, body, brain.RequestOptions{})
+			r, err := sc.RemoteControl().RespondPermission(ctx, ids.runnerID, ids.instanceID, ids.sessionID, permissionID, body, brain.RequestOptions{})
 			return &r, err
 		})
 		if err != nil {
@@ -396,7 +396,7 @@ func registerBrainControlSpawnInstance(s *Server, client *APIClient) {
 			Workdir: workdir,
 		}
 		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.ControlSpawnResponse, error) {
-			return sc.Control().SpawnInstance(ctx, runnerID, body, brain.RequestOptions{})
+			return sc.RemoteControl().SpawnInstance(ctx, runnerID, body, brain.RequestOptions{})
 		})
 		if err != nil {
 			return "", err
@@ -427,7 +427,7 @@ func registerBrainControlKillInstance(s *Server, client *APIClient) {
 			return "", fmt.Errorf("confirm=true is required to kill a control instance")
 		}
 		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.SuccessResponse, error) {
-			return sc.Control().KillInstance(ctx, runnerID, instanceID, brain.RequestOptions{})
+			return sc.RemoteControl().KillInstance(ctx, runnerID, instanceID, brain.RequestOptions{})
 		})
 		if err != nil {
 			return "", err

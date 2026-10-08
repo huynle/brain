@@ -83,6 +83,19 @@ Severity: info
 State: snoozed
 Project: <golden-attention>
 
+=== snooze without time (attention_snooze)
+OK
+Attention snoozed: Minimal
+ID: <ATTN2>
+Recipient: local
+Kind: custom
+Severity: info
+State: snoozed
+Project: <golden-attention>
+
+=== snooze missing id (attention_snooze)
+ERROR
+Error: provide an 'id'
 === snooze unknown (attention_snooze)
 ERROR
 Error: attention "nonexistent" not found
@@ -113,3 +126,6 @@ Error: request failed: Get "http://<LOOPBACK>/api/v1/attention?kind=k&project=p"
 === dead api resolve (attention_resolve)
 ERROR
 Error: request failed: Post "http://<LOOPBACK>/api/v1/attention/a1/resolve": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api snooze (attention_snooze)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/attention/a%201/snooze": dial tcp <LOOPBACK>: connect: connection refused

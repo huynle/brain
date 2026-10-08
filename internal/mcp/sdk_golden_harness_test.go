@@ -78,65 +78,81 @@ var (
 func realAPI(t *testing.T) string {
 	t.Helper()
 	realAPIOnce.Do(func() {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			realAPIErr = err
-			return
-		}
-		port := ln.Addr().(*net.TCPAddr).Port
-		_ = ln.Close()
-		brainDir, err := os.MkdirTemp("", "brain-mcp-golden-")
-		if err != nil {
-			realAPIErr = err
-			return
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan error, 1)
-		go func() {
-			done <- apiserver.RunServer(ctx, apiserver.ServerOptions{
-				Host:      "127.0.0.1",
-				Port:      port,
-				BrainDir:  filepath.Join(brainDir, "brain"),
-				LogLevel:  "error",
-				LogWriter: io.Discard,
-			})
-		}()
-		realAPIStop = func() {
-			cancel()
-			select {
-			case <-done:
-			case <-time.After(15 * time.Second):
-			}
-			_ = os.RemoveAll(brainDir)
-		}
-		url := fmt.Sprintf("http://127.0.0.1:%d", port)
-		deadline := time.Now().Add(30 * time.Second)
-		for {
-			resp, err := http.Get(url + "/api/v1/health")
-			if err == nil {
-				resp.Body.Close()
-				if resp.StatusCode == http.StatusOK {
-					break
-				}
-			}
-			select {
-			case err := <-done:
-				realAPIErr = fmt.Errorf("api server exited during startup: %v", err)
-				return
-			default:
-			}
-			if time.Now().After(deadline) {
-				realAPIErr = fmt.Errorf("api server not healthy at %s: %v", url, err)
-				return
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-		realAPIURL = url
+		realAPIURL, realAPIStop, realAPIErr = launchAPI()
 	})
 	if realAPIErr != nil {
 		t.Fatalf("real api: %v", realAPIErr)
 	}
 	return realAPIURL
+}
+
+// dedicatedAPI starts a private in-process Brain API for one test. Tools with
+// server-wide effects (pause-all, runner registry, scheduler state) use it so
+// their transcripts cannot see, or leak into, any other test's state.
+func dedicatedAPI(t *testing.T) string {
+	t.Helper()
+	url, stop, err := launchAPI()
+	if err != nil {
+		t.Fatalf("dedicated api: %v", err)
+	}
+	t.Cleanup(stop)
+	return url
+}
+
+// launchAPI runs the actual Brain API server on a free loopback port with a
+// throwaway brain dir and waits for it to report healthy.
+func launchAPI() (string, func(), error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", nil, err
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	brainDir, err := os.MkdirTemp("", "brain-mcp-golden-")
+	if err != nil {
+		return "", nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- apiserver.RunServer(ctx, apiserver.ServerOptions{
+			Host:      "127.0.0.1",
+			Port:      port,
+			BrainDir:  filepath.Join(brainDir, "brain"),
+			LogLevel:  "error",
+			LogWriter: io.Discard,
+		})
+	}()
+	stop := func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+		}
+		_ = os.RemoveAll(brainDir)
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		resp, err := http.Get(url + "/api/v1/health")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return url, stop, nil
+			}
+		}
+		select {
+		case err := <-done:
+			stop()
+			return "", nil, fmt.Errorf("api server exited during startup: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			stop()
+			return "", nil, fmt.Errorf("api server not healthy at %s: %v", url, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func stopRealAPI() {
@@ -214,7 +230,19 @@ type golden struct {
 
 func newGolden(t *testing.T, name string) *golden {
 	t.Helper()
-	return &golden{t: t, name: name, mcpURL: realAPI(t) + "/mcp", vars: map[string]string{}}
+	return newGoldenAt(t, name, realAPI(t))
+}
+
+// newGoldenAt records a transcript against a specific API (e.g. dedicatedAPI).
+func newGoldenAt(t *testing.T, name, apiURL string) *golden {
+	t.Helper()
+	return &golden{t: t, name: name, mcpURL: apiURL + "/mcp", vars: map[string]string{}}
+}
+
+// note appends a free-form line to the transcript (e.g. what a fake runner
+// received), normalized like tool output.
+func (g *golden) note(format string, args ...any) {
+	fmt.Fprintf(&g.out, format+"\n", args...)
 }
 
 var projectSeq struct {

@@ -1,0 +1,685 @@
+=== status empty (runner_status)
+OK
+## Runner Status
+
+- Server running: true
+- Projects with task execution paused: 0
+- Projects with automation execution paused: 0
+
+These are per-project dials. A project absent from both lists dispatches normally;
+there is no single global switch reported here.
+
+Pass project=<id> for a direct answer about one project.
+
+=== runners empty (runners)
+OK
+## Runners
+
+Total: 0
+
+No runners found.
+
+=== instances all empty (runner_instances_all)
+OK
+## Runner Instances
+
+All runners
+Total: 0
+
+No instances found.
+
+=== runners (runners)
+OK
+## Runners
+
+Total: 2
+
+### golden-runner-2
+- Hostname: host-b
+- State: online
+- Projects: none
+- Capabilities: none
+- Executors: pi
+- Max parallel: 1
+- Active tasks: 0
+- Draining: false
+- Dispatch push: false
+- Registered: <TIME>
+- Last heartbeat: <TIME>
+- Instances: use runner_instances with this runner_id
+
+### golden-runner-1
+- Hostname: host-a
+- State: online
+- Projects: alpha
+- Capabilities: gpu
+- Executors: opencode
+- Max parallel: 3
+- Active tasks: 0
+- Draining: false
+- Dispatch push: false
+- Registered: <TIME>
+- Last heartbeat: <TIME>
+- Instances: use runner_instances with this runner_id
+
+
+=== runners online executor pi (runners)
+OK
+## Runners
+
+Total: 1
+
+### golden-runner-2
+- Hostname: host-b
+- State: online
+- Projects: none
+- Capabilities: none
+- Executors: pi
+- Max parallel: 1
+- Active tasks: 0
+- Draining: false
+- Dispatch push: false
+- Registered: <TIME>
+- Last heartbeat: <TIME>
+- Instances: use runner_instances with this runner_id
+
+
+=== runners project alpha limit 1 (runners)
+OK
+## Runners
+
+Total: 1
+
+### golden-runner-2
+- Hostname: host-b
+- State: online
+- Projects: none
+- Capabilities: none
+- Executors: pi
+- Max parallel: 1
+- Active tasks: 0
+- Draining: false
+- Dispatch push: false
+- Registered: <TIME>
+- Last heartbeat: <TIME>
+- Instances: use runner_instances with this runner_id
+
+
+=== runners offline (runners)
+OK
+## Runners
+
+Total: 0
+
+No runners found.
+
+=== runner get (runner_get)
+OK
+## Runner golden-runner-1
+
+### golden-runner-1
+- Hostname: host-a
+- State: online
+- Projects: alpha
+- Capabilities: gpu
+- Executors: opencode
+- Max parallel: 3
+- Active tasks: 0
+- Draining: false
+- Dispatch push: false
+- Registered: <TIME>
+- Last heartbeat: <TIME>
+
+=== runner get alias (runner_get)
+OK
+## Runner golden-runner-2
+
+### golden-runner-2
+- Hostname: host-b
+- State: online
+- Projects: none
+- Capabilities: none
+- Executors: pi
+- Max parallel: 1
+- Active tasks: 0
+- Draining: false
+- Dispatch push: false
+- Registered: <TIME>
+- Last heartbeat: <TIME>
+
+=== runner get missing (runner_get)
+ERROR
+Error: runner_id is required
+=== runner get unknown (runner_get)
+ERROR
+Error: runner "nope" not found
+=== instances (runner_instances)
+OK
+## Runner Instances
+
+Runner: golden-runner-1
+Total: 2
+
+### ins-adhoc
+- Runner: golden-runner-1
+- Kind: adhoc
+- Status: idle
+- Project: none
+- Task: none
+- Feature: none
+- Title: Scratch
+- Executor: opencode
+- Agent: none
+- Model: none
+- Port: 4100
+- PID: 4242
+- Started: 1700000000000
+- Last seen: 1700000005000
+- Pending permissions: 0
+- Bridge connected: false
+
+### ins-task
+- Runner: golden-runner-1
+- Kind: task
+- Status: busy
+- Project: alpha
+- Task: t1
+- Feature: f1
+- Title: none
+- Executor: opencode
+- Agent: tdd-dev
+- Model: m1
+- Started: 1600000000000
+- Last seen: 1600000005000
+- Pending permissions: 0
+- Bridge connected: false
+
+
+=== instances kind task (runner_instances)
+OK
+## Runner Instances
+
+Runner: golden-runner-1
+Total: 1
+
+### ins-task
+- Runner: golden-runner-1
+- Kind: task
+- Status: busy
+- Project: alpha
+- Task: t1
+- Feature: f1
+- Title: none
+- Executor: opencode
+- Agent: tdd-dev
+- Model: m1
+- Started: 1600000000000
+- Last seen: 1600000005000
+- Pending permissions: 0
+- Bridge connected: false
+
+
+=== instances missing (runner_instances)
+ERROR
+Error: runner_id is required
+=== instances unknown runner (runner_instances)
+ERROR
+Error: Runner not found: nope
+=== instances all (runner_instances_all)
+OK
+## Runner Instances
+
+All runners
+Total: 3
+
+### ins-adhoc
+- Runner: golden-runner-1
+- Kind: adhoc
+- Status: idle
+- Project: none
+- Task: none
+- Feature: none
+- Title: Scratch
+- Executor: opencode
+- Agent: none
+- Model: none
+- Port: 4100
+- PID: 4242
+- Started: 1700000000000
+- Last seen: 1700000005000
+- Pending permissions: 0
+- Bridge connected: false
+
+### ins-task
+- Runner: golden-runner-1
+- Kind: task
+- Status: busy
+- Project: alpha
+- Task: t1
+- Feature: f1
+- Title: none
+- Executor: opencode
+- Agent: tdd-dev
+- Model: m1
+- Started: 1600000000000
+- Last seen: 1600000005000
+- Pending permissions: 0
+- Bridge connected: false
+
+### ins-pi
+- Runner: golden-runner-2
+- Kind: task
+- Status: starting
+- Project: beta
+- Task: none
+- Feature: none
+- Title: none
+- Executor: opencode
+- Agent: none
+- Model: none
+- Started: 1500000000000
+- Last seen: 1500000005000
+- Pending permissions: 0
+- Bridge connected: false
+
+
+=== instances all filtered (runner_instances_all)
+OK
+## Runner Instances
+
+All runners
+Total: 1
+
+### ins-pi
+- Runner: golden-runner-2
+- Kind: task
+- Status: starting
+- Project: beta
+- Task: none
+- Feature: none
+- Title: none
+- Executor: opencode
+- Agent: none
+- Model: none
+- Started: 1500000000000
+- Last seen: 1500000005000
+- Pending permissions: 0
+- Bridge connected: false
+
+
+=== pause project (runner_pause_project)
+OK
+Paused MANUAL task execution for project alpha. Success: true
+
+Automation-generated tasks are NOT paused by this call - they follow a separate dial. To stop those too: runner_pause_project_automations(project: "alpha"). Check the resulting state with runner_status(project: "alpha").
+=== pause automations (runner_pause_project_automations)
+OK
+Paused AUTOMATION-GENERATED task execution for project beta. Success: true
+
+Manual tasks are NOT paused by this call - they follow a separate dial (runner_pause_project).
+=== status asymmetric (runner_status)
+OK
+## Runner Status
+
+- Server running: true
+- Projects with task execution paused: 1
+- Projects with automation execution paused: 1
+
+These are per-project dials. A project absent from both lists dispatches normally;
+there is no single global switch reported here.
+
+### Paused on one axis only
+- Tasks paused, automations still running: alpha
+- Automations paused, tasks still running: beta
+
+Pass project=<id> for a direct answer about one project.
+
+=== status alpha (runner_status)
+OK
+## Runner Status
+
+- Server running: true
+- Projects with task execution paused: 1
+- Projects with automation execution paused: 1
+
+These are per-project dials. A project absent from both lists dispatches normally;
+there is no single global switch reported here.
+
+### alpha
+- Manual/user tasks: PAUSED
+- Automation-generated tasks: running
+- Effect: automation-generated tasks still dispatch; manual ones do not.
+- To resume: runner_resume_project.
+
+=== status beta (runner_status)
+OK
+## Runner Status
+
+- Server running: true
+- Projects with task execution paused: 1
+- Projects with automation execution paused: 1
+
+These are per-project dials. A project absent from both lists dispatches normally;
+there is no single global switch reported here.
+
+### beta
+- Manual/user tasks: running
+- Automation-generated tasks: PAUSED
+- Effect: manual tasks still dispatch; automation-generated ones do not.
+
+=== pause automations alpha (runner_pause_project_automations)
+OK
+Paused AUTOMATION-GENERATED task execution for project alpha. Success: true
+
+Manual tasks are NOT paused by this call - they follow a separate dial (runner_pause_project).
+=== status alpha both (runner_status)
+OK
+## Runner Status
+
+- Server running: true
+- Projects with task execution paused: 1
+- Projects with automation execution paused: 2
+
+These are per-project dials. A project absent from both lists dispatches normally;
+there is no single global switch reported here.
+
+### alpha
+- Manual/user tasks: PAUSED
+- Automation-generated tasks: PAUSED
+- Effect: nothing dispatches for this project.
+- To resume: runner_resume_project, then re-enable automations.
+
+=== pause feature missing feature (runner_pause_feature)
+ERROR
+Error: feature_id is required
+=== pause feature (runner_pause_feature)
+OK
+Paused dispatch for feature f1 in project alpha. Success: true
+
+Work already running finishes; nothing new starts. The rest of alpha is unaffected. Resume with runner_resume_feature.
+=== resume feature (runner_resume_feature)
+OK
+Resumed dispatch for feature f1 in project alpha. Success: true
+=== resume automations (runner_resume_project_automations)
+OK
+Resumed AUTOMATION-GENERATED task execution for project beta. Success: true
+
+Manual tasks follow a separate dial; if they are still paused, use runner_resume_project.
+=== resume automations alpha (runner_resume_project_automations)
+OK
+Resumed AUTOMATION-GENERATED task execution for project alpha. Success: true
+
+Manual tasks follow a separate dial; if they are still paused, use runner_resume_project.
+=== resume project (runner_resume_project)
+OK
+Resumed MANUAL task execution for project alpha. Success: true
+
+The automation dial is separate and is unchanged by this call; use runner_resume_project_automations if automation-generated tasks are also paused.
+=== status none (runner_status)
+OK
+## Runner Status
+
+- Server running: true
+- Projects with task execution paused: 0
+- Projects with automation execution paused: 0
+
+These are per-project dials. A project absent from both lists dispatches normally;
+there is no single global switch reported here.
+
+### alpha
+- Manual/user tasks: running
+- Automation-generated tasks: running
+- Effect: not paused on either axis; ready tasks dispatch.
+- If work is still not running, the cause is elsewhere — check scheduler_status
+  for the skip reason, and runners for an eligible online runner.
+
+=== pause all unconfirmed (runner_pause_all)
+ERROR
+Error: confirm=true is required to pause runner execution for all projects
+=== pause all (runner_pause_all)
+OK
+Paused MANUAL task execution for all projects. Success: true
+
+Automation-generated tasks are NOT affected - they follow the separate automations dial.
+=== status after pause all (runner_status)
+OK
+## Runner Status
+
+- Server running: true
+- Projects with task execution paused: 2
+- Projects with automation execution paused: 0
+
+These are per-project dials. A project absent from both lists dispatches normally;
+there is no single global switch reported here.
+
+### Paused on one axis only
+- Tasks paused, automations still running: alpha, beta
+
+Pass project=<id> for a direct answer about one project.
+
+=== resume all unconfirmed (runner_resume_all)
+ERROR
+Error: confirm=true is required to resume runner execution for all projects
+=== resume all (runner_resume_all)
+OK
+Resumed MANUAL task execution for all projects. Success: true
+
+The automations dial is separate and is unchanged by this call.
+=== status after resume all (runner_status)
+OK
+## Runner Status
+
+- Server running: true
+- Projects with task execution paused: 0
+- Projects with automation execution paused: 0
+
+These are per-project dials. A project absent from both lists dispatches normally;
+there is no single global switch reported here.
+
+Pass project=<id> for a direct answer about one project.
+
+=== prompt missing ids (control_send_prompt)
+ERROR
+Error: instance_id is required
+=== prompt missing session (control_send_prompt)
+ERROR
+Error: session_id is required
+=== prompt blank text (control_send_prompt)
+ERROR
+Error: text is required
+=== prompt not connected (control_send_prompt)
+ERROR
+Error: runner bridge not connected
+=== abort not connected (control_abort_session)
+ERROR
+Error: runner bridge not connected
+=== permission bad response (control_permission)
+ERROR
+Error: response must be once, always, or reject
+=== permission missing id (control_permission)
+ERROR
+Error: permission_id is required
+=== spawn missing workdir (control_spawn_instance)
+ERROR
+Error: workdir is required
+=== spawn relative workdir (control_spawn_instance)
+ERROR
+Error: workdir must be an absolute path
+=== spawn missing runner (control_spawn_instance)
+ERROR
+Error: runner_id is required
+=== kill unconfirmed (control_kill_instance)
+ERROR
+Error: confirm=true is required to kill a control instance
+=== kill missing instance (control_kill_instance)
+ERROR
+Error: instance_id is required
+=== kill not connected (control_kill_instance)
+ERROR
+Error: runner bridge not connected
+=== runner get connected (runner_get)
+OK
+## Runner golden-runner-1
+
+### golden-runner-1
+- Hostname: host-a
+- State: online
+- Projects: alpha
+- Capabilities: gpu
+- Executors: opencode
+- Max parallel: 3
+- Active tasks: 0
+- Draining: false
+- Dispatch push: false
+- Registered: <TIME>
+- Last heartbeat: <TIME>
+
+=== instances connected (runner_instances)
+OK
+## Runner Instances
+
+Runner: golden-runner-1
+Total: 1
+
+### ins-adhoc
+- Runner: golden-runner-1
+- Kind: adhoc
+- Status: idle
+- Project: none
+- Task: none
+- Feature: none
+- Title: Scratch
+- Executor: opencode
+- Agent: none
+- Model: none
+- Port: 4100
+- PID: 4242
+- Started: 1700000000000
+- Last seen: 1700000005000
+- Pending permissions: 0
+- Bridge connected: true
+
+
+=== prompt (control_send_prompt)
+OK
+Sent prompt to session ses-1 on runner golden-runner-1 instance ins-adhoc.
+--- runner received: req POST /session/ses-1/prompt_async instance=ins-adhoc body={"parts":[{"text":"hello there","type":"text"}]}
+=== prompt with model (control_send_prompt)
+OK
+Sent prompt to session ses-1 on runner golden-runner-1 instance ins-adhoc.
+--- runner received: req POST /session/ses-1/prompt_async instance=ins-adhoc body={"agent":"build","model":{"modelID":"claude","providerID":"anthropic"},"parts":[{"text":"go","type":"text"}]}
+=== prompt model half (control_send_prompt)
+OK
+Sent prompt to session ses-1 on runner golden-runner-1 instance ins-adhoc.
+--- runner received: req POST /session/ses-1/prompt_async instance=ins-adhoc body={"parts":[{"text":"go","type":"text"}]}
+=== prompt unknown session (control_send_prompt)
+ERROR
+Error: unknown instance ins-adhoc
+--- runner received: req POST /session/ses-missing/prompt_async instance=ins-adhoc body={"parts":[{"text":"x","type":"text"}]}
+=== abort (control_abort_session)
+ERROR
+Error: decode response: json: cannot unmarshal bool into Go value of type mcp.controlSuccessResponse
+--- runner received: req POST /session/ses-1/abort instance=ins-adhoc body=
+=== permission (control_permission)
+ERROR
+Error: decode response: json: cannot unmarshal bool into Go value of type mcp.controlSuccessResponse
+--- runner received: req POST /session/ses-1/permissions/per-1 instance=ins-adhoc body={"response":"always"}
+=== spawn (control_spawn_instance)
+OK
+Spawned control instance on runner golden-runner-1. Instance: ins-spawned. Workdir: /srv/new. Success: true
+--- runner received: spawn spec={"workdir":"/srv/new","agent":"build","model":"m2","title":"Fresh"}
+=== spawn forbidden (control_spawn_instance)
+ERROR
+Error: workdir is outside the allowlist
+--- runner received: spawn spec={"workdir":"/forbidden/x"}
+=== kill task instance (control_kill_instance)
+ERROR
+Error: task instances are owned by the task lifecycle; cancel the task instead
+=== kill (control_kill_instance)
+OK
+Killed control instance ins-spawned on runner golden-runner-1. Success: true
+--- runner received: kill instance=ins-spawned
+=== kill unknown (control_kill_instance)
+ERROR
+Error: unknown instance ins-gone
+--- runner received: kill instance=ins-gone
+=== instances after kill (runner_instances_all)
+OK
+## Runner Instances
+
+All runners
+Total: 1
+
+### ins-adhoc
+- Runner: golden-runner-1
+- Kind: adhoc
+- Status: idle
+- Project: none
+- Task: none
+- Feature: none
+- Title: Scratch
+- Executor: opencode
+- Agent: none
+- Model: none
+- Port: 4100
+- PID: 4242
+- Started: 1700000000000
+- Last seen: 1700000005000
+- Pending permissions: 0
+- Bridge connected: true
+
+
+=== dead status (runner_status)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/runner/status": dial tcp <LOOPBACK>: connect: connection refused
+=== dead runners (runners)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/runners": dial tcp <LOOPBACK>: connect: connection refused
+=== dead runner get (runner_get)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/runners/r%2F1": dial tcp <LOOPBACK>: connect: connection refused
+=== dead instances (runner_instances)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/runners/r%201/instances": dial tcp <LOOPBACK>: connect: connection refused
+=== dead instances all (runner_instances_all)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/instances": dial tcp <LOOPBACK>: connect: connection refused
+=== dead pause project (runner_pause_project)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/runner/pause/p": dial tcp <LOOPBACK>: connect: connection refused
+=== dead resume project (runner_resume_project)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/runner/resume/p": dial tcp <LOOPBACK>: connect: connection refused
+=== dead pause feature (runner_pause_feature)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/runner/features/pause/p/f%2F1": dial tcp <LOOPBACK>: connect: connection refused
+=== dead resume feature (runner_resume_feature)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/runner/features/resume/p/f1": dial tcp <LOOPBACK>: connect: connection refused
+=== dead pause automations (runner_pause_project_automations)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/runner/automations/pause/p": dial tcp <LOOPBACK>: connect: connection refused
+=== dead resume automations (runner_resume_project_automations)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/runner/automations/resume/p": dial tcp <LOOPBACK>: connect: connection refused
+=== dead pause all (runner_pause_all)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/runner/pause": dial tcp <LOOPBACK>: connect: connection refused
+=== dead resume all (runner_resume_all)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/runner/resume": dial tcp <LOOPBACK>: connect: connection refused
+=== dead prompt (control_send_prompt)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/control/runners/r/instances/i/sessions/s/prompt": dial tcp <LOOPBACK>: connect: connection refused
+=== dead abort (control_abort_session)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/control/runners/r/instances/i/sessions/s/abort": dial tcp <LOOPBACK>: connect: connection refused
+=== dead permission (control_permission)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/control/runners/r/instances/i/sessions/s/permissions/p": dial tcp <LOOPBACK>: connect: connection refused
+=== dead spawn (control_spawn_instance)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/control/runners/r/instances": dial tcp <LOOPBACK>: connect: connection refused
+=== dead kill (control_kill_instance)
+ERROR
+Error: request failed: Delete "http://<LOOPBACK>/api/v1/control/runners/r/instances/i": dial tcp <LOOPBACK>: connect: connection refused

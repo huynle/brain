@@ -2,9 +2,9 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/url"
+
+	"github.com/huynle/brain-api/sdk/brain"
 )
 
 // RegisterSyncTools exposes last-reported browser state and guarded reconciliation.
@@ -28,32 +28,37 @@ func RegisterSyncTools(s *Server, client *APIClient) {
 		}
 		toolName := name
 		s.RegisterTool(Tool{Name: name, Description: desc, InputSchema: InputSchema{Type: "object", Properties: props, Required: required}}, func(ctx context.Context, args map[string]any) (string, error) {
-			path := "/sync/devices"
-			method := "GET"
-			var body any
+			call := func(ctx context.Context, sc *brain.Client) error {
+				_, err := sc.Sync().Devices(ctx)
+				return err
+			}
 			if toolName != "sync_status" {
 				device := StringArg(args, "device_id", "")
 				op := StringArg(args, "operation_id", "")
 				if device == "" || op == "" {
 					return "", fmt.Errorf("device_id and operation_id required")
 				}
-				path += "/" + url.PathEscape(device) + "/operations/" + url.PathEscape(op)
-				if toolName == "sync_diff" {
-					path += "/diff"
-				} else {
-					path += "/reconcile"
-					method = "POST"
+				call = func(ctx context.Context, sc *brain.Client) error {
+					_, err := sc.Sync().Diff(ctx, device, op)
+					return err
+				}
+				if toolName == "sync_reconcile" {
 					snapshot := StringArg(args, "snapshot", "")
 					action := StringArg(args, "action", "")
 					raw := StringArg(args, "raw", "")
 					if snapshot == "" || (action != "discard" && action != "rebase" && action != "merge") || (action == "merge" && raw == "") {
 						return "", fmt.Errorf("snapshot, valid action, and raw for merge required")
 					}
-					body = map[string]string{"snapshot": snapshot, "action": action, "raw": raw}
+					// raw is always sent (empty unless merging), as before.
+					req := brain.SyncReconcileRequest{Snapshot: snapshot, Action: brain.SyncReconcileRequestAction(action), Raw: &raw}
+					call = func(ctx context.Context, sc *brain.Client) error {
+						_, err := sc.Sync().Reconcile(ctx, device, op, req, brain.RequestOptions{})
+						return err
+					}
 				}
 			}
-			var out json.RawMessage
-			if err := client.Request(ctx, method, path, body, nil, &out); err != nil {
+			out, err := sdkRaw(ctx, client, call)
+			if err != nil {
 				return "", err
 			}
 			return string(out), nil

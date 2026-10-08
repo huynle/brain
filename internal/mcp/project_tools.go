@@ -3,12 +3,11 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/sdk/brain"
 )
 
 // RegisterProjectTools registers project context and placement MCP tools on the server.
@@ -149,7 +148,10 @@ func registerBrainContextResolve(s *Server, client *APIClient) {
 			},
 		}
 		var resp types.ResolveClientContextResponse
-		if err := client.Request(ctx, http.MethodPost, "/context/resolve", req, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.ClientContext().Resolve(ctx, clientContextRequest(req), brain.RequestOptions{})
+			return err
+		}); err != nil {
 			return "", err
 		}
 		return formatContextResolution(req, resp), nil
@@ -167,7 +169,10 @@ func registerBrainProjectPlacementGet(s *Server, client *APIClient) {
 			return "", fmt.Errorf("provide a 'project'")
 		}
 		var resp types.ProjectPlacement
-		if err := client.Request(ctx, http.MethodGet, "/projects/"+url.PathEscape(project)+"/placement", nil, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Projects().GetPlacement(ctx, project)
+			return err
+		}); err != nil {
 			return "", err
 		}
 		return formatProjectPlacement("Project placement", resp), nil
@@ -185,21 +190,53 @@ func registerBrainProjectPlacementPut(s *Server, client *APIClient) {
 		if project == "" {
 			return "", fmt.Errorf("provide a 'project'")
 		}
-		req := types.ProjectPlacement{
+		// project_id stays empty in the body (the path names the project) and
+		// unset fields stay absent, as the legacy omitempty body had them.
+		req := brain.ProjectPlacement{
 			Affinity:             StringArg(args, "affinity", ""),
-			PreferredMachines:    StringSliceArg(args, "preferred_machines"),
-			AllowedMachines:      StringSliceArg(args, "allowed_machines"),
-			WorkspacePolicy:      StringArg(args, "workspace_policy", ""),
-			RequiredLabels:       projectStringMapArg(args, "required_labels"),
-			RequiredCapabilities: StringSliceArg(args, "required_capabilities"),
-			Resources:            anyMapArg(args, "resources"),
+			PreferredMachines:    optStrings(StringSliceArg(args, "preferred_machines")),
+			AllowedMachines:      optStrings(StringSliceArg(args, "allowed_machines")),
+			WorkspacePolicy:      optString(StringArg(args, "workspace_policy", "")),
+			RequiredLabels:       optStringMap(projectStringMapArg(args, "required_labels")),
+			RequiredCapabilities: optStrings(StringSliceArg(args, "required_capabilities")),
+		}
+		if resources := anyMapArg(args, "resources"); len(resources) > 0 {
+			req.Resources = &resources
 		}
 		var resp types.ProjectPlacement
-		if err := client.Request(ctx, http.MethodPut, "/projects/"+url.PathEscape(project)+"/placement", req, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Projects().SetPlacement(ctx, project, req, brain.RequestOptions{})
+			return err
+		}); err != nil {
 			return "", err
 		}
 		return formatProjectPlacement("Project placement updated", resp), nil
 	})
+}
+
+// clientContextRequest is the typed form of the request context_resolve
+// builds: optional fields the legacy omitempty body left out stay absent;
+// workspace.path is always sent.
+func clientContextRequest(req types.ResolveClientContextRequest) brain.ResolveClientContextRequest {
+	c, w := req.Client, req.Workspace
+	return brain.ResolveClientContextRequest{
+		Client: brain.BrainClientInfo{
+			ClientId: c.ClientID, HostId: c.HostID, Kind: optString(c.Kind), Hostname: optString(c.Hostname),
+			Os: optString(c.OS), Arch: optString(c.Arch), Username: optString(c.Username), HomeDir: optString(c.HomeDir),
+			Labels: optStringMap(c.Labels), Capabilities: optStrings(c.Capabilities),
+		},
+		Workspace: brain.WorkspaceObservation{
+			Path: w.Path, GitRoot: optString(w.GitRoot), GitCommonDir: optString(w.GitCommonDir), GitWorktreeMain: optString(w.GitWorktreeMain),
+			GitBranch: optString(w.GitBranch), GitRemote: optString(w.GitRemote), FolderName: optString(w.FolderName),
+		},
+	}
+}
+
+func optStringMap(m map[string]string) *map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	return &m
 }
 
 func projectPlacementProperties() map[string]Property {

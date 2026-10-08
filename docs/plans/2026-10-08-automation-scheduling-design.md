@@ -317,3 +317,80 @@ Each phase ships independently.
 Market early closes, declined-meeting detection, Google OAuth/push, per-tenant
 calendar secrets, full prompt replacement in bindings, multi-level inheritance,
 and replaying more than one missed slot.
+
+## Addendum: implementation decisions (2026-10-08)
+
+Codebase validation before tasking found gaps the design left open. These
+defaults are chosen so implementation tasks do not have to guess.
+
+### Corrections
+
+- **Lifecycle fields already exist** on entries (`starts_at`, `expires_at`,
+  `max_runs`, `timezone`; `internal/types/types.go`). Phase 1 is enforcement plus
+  three round-trip fixes: raw-file edits drop them
+  (`mapFrontmatterToUpdateRequest`, `internal/api/entries.go`), MCP `save`
+  forwards them only for tasks, and lifecycle edits must go through
+  `PATCH /entries`, not `/metadata`.
+- **Expiry is not "the same as scheduled tasks".** The runner sets
+  `schedule_enabled: false` on a task. An expired automation's status becomes
+  `completed` with an "Expired: expires_at passed" note. The write is
+  revision-guarded (recall, then update with `expected_revision`).
+
+### Decisions
+
+1. **System attention recipients.** `server.attention.system_recipients` lists
+   token names. If empty, system notices fan out to recipients that have a push
+   device or an existing attention item; if there are none, they are only logged.
+   The notifier is injected through a nil-safe setter, because the attention
+   service is built after background workers start.
+2. **Run audits.** `automation_run` entries get a typed `scheduled_for` field and
+   tags `automation:<parent-id>` (plus `binding:<id>` when a binding applied).
+   Body lines stay for existing readers. `/automation-runs` uses the tag as a fast
+   path with the body scan as fallback.
+3. **Slot floor.** A slot fires only if it is newer than all of: `last_handled`,
+   the parent's `modified` time, the binding's `modified` time (if any), and
+   `starts_at`. Editing a schedule or creating a binding never fires a past slot.
+4. **Catch-up cap.** At most one catch-up run per automation per tick. On-time
+   runs (slot within the current minute) are not capped.
+5. **`max_runs` counting.** Counts audits that created work (queued, success,
+   failed). Skipped runs and manual runs do not count. Manual runs ignore
+   lifecycle and schedule, as they already ignore pause.
+6. **Day-of-month/day-of-week.** Vixie rule: OR only when neither field starts
+   with `*`. Remote runners on older versions keep AND until upgraded (accepted).
+7. **DST.** For `every` + `at`: a nonexistent local time fires at the first valid
+   instant after it (02:30 → 03:00); a repeated local time fires at its first
+   occurrence only. For cron: the existing gap behavior stays (a nonexistent hour
+   does not fire); a repeated local time fires once, at its first occurrence.
+8. **Stagger and day filters.** Day eligibility uses the base slot's local date,
+   before the stagger offset. The offset hash is FNV-1a 64 over
+   `automationID + "\x00" + project`.
+9. **`every` grammar.** `<positive integer><unit>`, unit `m`, `h`, `d`, or `w`.
+   `at: "HH:MM"` (24-hour) is valid only with `d` or `w`. Sub-day intervals
+   anchor at `starts_at`, else the entry's created instant.
+10. **Binding lookup.** Bindings are auto-tagged `extends:<parent-id>`. The
+    scheduler reads bindings of every status, so it sees opt-outs. If concurrent
+    saves create two bindings for one (parent, project), the oldest (created, then
+    ID) wins and the others are flagged broken.
+11. **Overlay presence.** A binding field overrides only when present. Explicit
+    zero values: durations accept `0s`, `catch_up` accepts `none`, and `max_runs`
+    uses `-1` for unlimited (`0` or absent inherits).
+12. **`re:` safety.** Patterns up to 512 characters; matched input truncated at
+    4 KiB; bounded compile cache (256); an invalid pattern at runtime matches
+    nothing and logs a warning.
+13. **Startup scheduling report.** One report, raised as an attention item
+    (deduplicated by content hash), lists: expressions whose day-of-month/day-of-week
+    meaning changes (automations, tasks, `feature_schedule`), automations whose
+    existing lifecycle fields become enforced, and filter values that already start
+    with `re:`.
+14. **Prompt-injection fencing** covers every event-derived value, including
+    `Title` and `{{.Match.*}}`. The fence terminator is neutralized inside data.
+15. **ICS fetch hardening.** HTTPS only, at most 5 redirects, 10 MiB cap, 30 s
+    timeout, no credentials sent. URLs are stripped from every error (`*url.Error`
+    → its inner error) before logging, `GET /calendars`, or attention bodies.
+16. **Bindings and tenancy.** Bindings are single-mode only until a tenant
+    authorization rule exists, because a project writer can override agent,
+    executor, and workdir on a global prompt.
+17. **Integration.** SDK-contract changes start after hosted-MCP-on-SDK step 3
+    lands. Multi-tenant source-freeze deltas (`internal/p8inventory`,
+    `internal/tenantfs`) are applied when the integration branch next merges main,
+    not per task on main.

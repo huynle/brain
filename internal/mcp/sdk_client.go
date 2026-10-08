@@ -224,6 +224,18 @@ func optString(s string) *string {
 	return &s
 }
 
+// legacyQuery builds a query the way the legacy client did: empty values are
+// left out.
+func legacyQuery(params map[string]string) url.Values {
+	q := url.Values{}
+	for k, v := range params {
+		if v != "" {
+			q.Set(k, v)
+		}
+	}
+	return q
+}
+
 // optStrings sends a list only when it is non-empty, as an omitempty legacy
 // body did.
 func optStrings(items []string) *[]string {

@@ -1,68 +1,68 @@
 === tasks {"limit":3,"project":"parity3","status":"pending"} -> OK
   GET /api/v1/tasks/parity3
-    auth="Bearer probe3-00" content-type="application/json" accept="" x-brain="" body=<none>
+    auth="Bearer probe3-00" content-type="" accept="application/json" x-brain="" body=<none>
 === tasks {"project":"par ity/x"} -> OK
   GET /api/v1/tasks/par%20ity%2Fx
-    auth="Bearer probe3-01" content-type="application/json" accept="" x-brain="" body=<none>
+    auth="Bearer probe3-01" content-type="" accept="application/json" x-brain="" body=<none>
 === task_next {"project":"parity3"} -> OK
   GET /api/v1/tasks/parity3/next
-    auth="Bearer probe3-02" content-type="application/json" accept="" x-brain="" body=<none>
+    auth="Bearer probe3-02" content-type="" accept="application/json" x-brain="" body=<none>
   GET /api/v1/entries/projects/parity3/task/<ALPHA>.md
     auth="Bearer probe3-02" content-type="application/json" accept="" x-brain="" body=<none>
 === task_next {"project":"parity-empty"} -> OK
   GET /api/v1/tasks/parity-empty/next
-    auth="Bearer probe3-03" content-type="application/json" accept="" x-brain="" body=<none>
+    auth="Bearer probe3-03" content-type="" accept="application/json" x-brain="" body=<none>
   GET /api/v1/tasks/parity-empty
-    auth="Bearer probe3-03" content-type="application/json" accept="" x-brain="" body=<none>
+    auth="Bearer probe3-03" content-type="" accept="application/json" x-brain="" body=<none>
 === task_get {"project":"parity3","task_id":"<ALPHA>"} -> OK
   GET /api/v1/tasks/parity3
-    auth="Bearer probe3-04" content-type="application/json" accept="" x-brain="" body=<none>
+    auth="Bearer probe3-04" content-type="" accept="application/json" x-brain="" body=<none>
   GET /api/v1/entries/projects/parity3/task/<ALPHA>.md
     auth="Bearer probe3-04" content-type="application/json" accept="" x-brain="" body=<none>
 === task_metadata {"project":"parity3","taskId":"parity solo"} -> OK
   GET /api/v1/tasks/parity3
-    auth="Bearer probe3-05" content-type="application/json" accept="" x-brain="" body=<none>
+    auth="Bearer probe3-05" content-type="" accept="application/json" x-brain="" body=<none>
 === tasks_status {"project":"parity3","task_ids":["<ALPHA>","x/y"]} -> OK
   POST /api/v1/tasks/parity3/status
-    auth="Bearer probe3-06" content-type="application/json" accept="" x-brain="" body={"taskIds":["<ALPHA>","x/y"]}
+    auth="Bearer probe3-06" content-type="application/json" accept="application/json" x-brain="" body={"taskIds":["<ALPHA>","x/y"]}
 === tasks_status {"project":"parity3","task_ids":["<ALPHA>"],"timeout":1,"wait_for":"any"} -> OK
   POST /api/v1/tasks/parity3/status
-    auth="Bearer probe3-07" content-type="application/json" accept="" x-brain="" body={"taskIds":["<ALPHA>"]}
+    auth="Bearer probe3-07" content-type="application/json" accept="application/json" x-brain="" body={"taskIds":["<ALPHA>"]}
   POST /api/v1/tasks/parity3/status
-    auth="Bearer probe3-07" content-type="application/json" accept="" x-brain="" body={"taskIds":["<ALPHA>"]}
+    auth="Bearer probe3-07" content-type="application/json" accept="application/json" x-brain="" body={"taskIds":["<ALPHA>"]}
 === task_trigger {"project":"parity3","task_id":"a b/c"} -> ERROR: Error: task not found: parity3/a%20b%2Fc
   POST /api/v1/tasks/parity3/a%20b%2Fc/trigger
-    auth="Bearer probe3-08" content-type="application/json" accept="" x-brain="" body=<none>
+    auth="Bearer probe3-08" content-type="" accept="application/json" x-brain="" body=<none>
 === monitor_enable {"feature_id":"f 1/x","project":"parity3","schedule":"*/30 * * * *","template_id":"blocked-inspector"} -> OK
   POST /api/v1/monitors
-    auth="Bearer probe3-09" content-type="application/json" accept="" x-brain="" body={"feature_id":"f 1/x","project":"parity3","schedule":"*/30 * * * *","scope_type":"feature","template_id":"blocked-inspector"}
+    auth="Bearer probe3-09" content-type="application/json" accept="application/json" x-brain="" body={"feature_id":"f 1/x","project":"parity3","schedule":"*/30 * * * *","scope_type":"feature","template_id":"blocked-inspector"}
 === monitor_disable {"feature_id":"f 1/x","project":"parity3","template_id":"blocked-inspector"} -> OK
   DELETE /api/v1/monitors/by-scope
-    auth="Bearer probe3-10" content-type="application/json" accept="" x-brain="" body={"scope":{"feature_id":"f 1/x","project":"parity3","type":"feature"},"templateId":"blocked-inspector"}
+    auth="Bearer probe3-10" content-type="application/json" accept="application/json" x-brain="" body={"scope":{"feature_id":"f 1/x","project":"parity3","type":"feature"},"templateId":"blocked-inspector"}
 === feature_review_enable {"feature_id":"rev","project":"parity3"} -> OK
   POST /api/v1/monitors
-    auth="Bearer probe3-11" content-type="application/json" accept="" x-brain="" body={"feature_id":"rev","project":"parity3","scope_type":"feature","template_id":"feature-review"}
+    auth="Bearer probe3-11" content-type="application/json" accept="application/json" x-brain="" body={"feature_id":"rev","project":"parity3","scope_type":"feature","template_id":"feature-review"}
 === feature_review_disable {"feature_id":"rev","project":"parity3"} -> OK
   DELETE /api/v1/monitors/by-scope
-    auth="Bearer probe3-12" content-type="application/json" accept="" x-brain="" body={"scope":{"feature_id":"rev","project":"parity3","type":"feature"},"templateId":"feature-review"}
+    auth="Bearer probe3-12" content-type="application/json" accept="application/json" x-brain="" body={"scope":{"feature_id":"rev","project":"parity3","type":"feature"},"templateId":"feature-review"}
 === blocked_inspector_enable {"feature_id":"blk","project":"parity3","schedule":"0 * * * *"} -> OK
   POST /api/v1/monitors
-    auth="Bearer probe3-13" content-type="application/json" accept="" x-brain="" body={"feature_id":"blk","project":"parity3","schedule":"0 * * * *","scope_type":"feature","template_id":"blocked-inspector"}
+    auth="Bearer probe3-13" content-type="application/json" accept="application/json" x-brain="" body={"feature_id":"blk","project":"parity3","schedule":"0 * * * *","scope_type":"feature","template_id":"blocked-inspector"}
 === blocked_inspector_disable {"feature_id":"blk","project":"parity3"} -> OK
   DELETE /api/v1/monitors/by-scope
-    auth="Bearer probe3-14" content-type="application/json" accept="" x-brain="" body={"scope":{"feature_id":"blk","project":"parity3","type":"feature"},"templateId":"blocked-inspector"}
+    auth="Bearer probe3-14" content-type="application/json" accept="application/json" x-brain="" body={"scope":{"feature_id":"blk","project":"parity3","type":"feature"},"templateId":"blocked-inspector"}
 === dream_enable {"project":"parity3"} -> OK
   POST /api/v1/monitors
-    auth="Bearer probe3-15" content-type="application/json" accept="" x-brain="" body={"feature_id":"","project":"parity3","scope_type":"project","template_id":"dream"}
+    auth="Bearer probe3-15" content-type="application/json" accept="application/json" x-brain="" body={"feature_id":"","project":"parity3","scope_type":"project","template_id":"dream"}
 === dream_disable {"project":"parity3"} -> OK
   DELETE /api/v1/monitors/by-scope
-    auth="Bearer probe3-16" content-type="application/json" accept="" x-brain="" body={"scope":{"project":"parity3","type":"project"},"templateId":"dream"}
+    auth="Bearer probe3-16" content-type="application/json" accept="application/json" x-brain="" body={"scope":{"project":"parity3","type":"project"},"templateId":"dream"}
 === resume_task_with_context {"executor_override":"pi","force":true,"injected_context":"ctx","prefer_same_session":false,"project":"parity3","task_id":"<SOLO>"} -> OK
   POST /api/v1/tasks/parity3/<SOLO>/resume-with-context
-    auth="Bearer probe3-17" content-type="application/json" accept="" x-brain="" body={"executor_override":"pi","force":true,"injected_context":"ctx","prefer_same_session":false}
+    auth="Bearer probe3-17" content-type="application/json" accept="application/json" x-brain="" body={"executor_override":"pi","force":true,"injected_context":"ctx","prefer_same_session":false}
 === resume_task_with_context {"injected_context":"ctx","project":"parity3","task_id":"t/1"} -> ERROR: Error: invalid taskId: must match [a-zA-Z0-9._-]{1,128}
   POST /api/v1/tasks/parity3/t%2F1/resume-with-context
-    auth="Bearer probe3-18" content-type="application/json" accept="" x-brain="" body={"force":false,"injected_context":"ctx","prefer_same_session":true}
+    auth="Bearer probe3-18" content-type="application/json" accept="application/json" x-brain="" body={"force":false,"injected_context":"ctx","prefer_same_session":true}
 === features {"limit":2,"project":"parity3"} -> OK
   GET /api/v1/tasks/parity3/features
     auth="Bearer probe3-19" content-type="application/json" accept="" x-brain="" body=<none>

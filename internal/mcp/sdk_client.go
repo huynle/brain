@@ -69,6 +69,17 @@ func sdkRaw(ctx context.Context, c *APIClient, fn func(context.Context, *brain.C
 	return raw, nil
 }
 
+// sdkInto runs an SDK call and decodes the response body into out exactly as
+// the legacy client did (nothing for an empty body), so a tool keeps
+// rendering from the same Go type it always decoded.
+func sdkInto(ctx context.Context, c *APIClient, out any, fn func(context.Context, *brain.Client) error) error {
+	raw, err := sdkRaw(ctx, c, fn)
+	if err != nil {
+		return err
+	}
+	return decodeLegacyBody(raw, out)
+}
+
 // sdkDo is sdkCall for operations whose response body the tool ignores.
 func sdkDo(ctx context.Context, c *APIClient, fn func(context.Context, *brain.Client) error) error {
 	_, err := sdkCall(ctx, c, func(ctx context.Context, sc *brain.Client) (*struct{}, error) {

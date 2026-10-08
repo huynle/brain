@@ -62,6 +62,15 @@ func exerciseNotificationSDK(t *testing.T, c *brain.Client) {
 	if _, err := c.Attention().Snooze(ctx, item.Id, brain.SnoozeAttentionRequest{SnoozedUntil: time.Now().Add(time.Hour).Format(time.RFC3339)}, brain.RequestOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	// The wire contract is a plain string: the server stores snoozed_until
+	// verbatim, empty and non-timestamp values included (see
+	// TestSnoozeAttentionRequestDescribesTheWireContract).
+	for _, until := range []string{"", "after lunch"} {
+		snoozed, err := c.Attention().Snooze(ctx, item.Id, brain.SnoozeAttentionRequest{SnoozedUntil: until}, brain.RequestOptions{})
+		if err != nil || snoozed.State != "snoozed" || derefOr(snoozed.SnoozedUntil) != until {
+			t.Fatalf("snoozed_until %q: %+v %v", until, snoozed, err)
+		}
+	}
 	if _, err := c.Attention().Resolve(ctx, item.Id, brain.RequestOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -69,4 +78,11 @@ func exerciseNotificationSDK(t *testing.T, c *brain.Client) {
 		t.Fatal(err)
 	}
 	t.Log("real SDK notification parity: eight reminder and nine recipient-bound attention operations; notify fire creates no task")
+}
+
+func derefOr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

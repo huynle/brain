@@ -2987,10 +2987,7 @@ export interface components {
             remind_at: string;
         };
         SnoozeAttentionRequest: {
-            /**
-             * Format: date-time
-             * @description Informational; stored as sent (an empty value snoozes without a time).
-             */
+            /** @description Informational and not validated: the server stores the string exactly as sent and returns it in the item's snoozed_until. An RFC 3339 date-time is conventional; an empty value (or an absent body) snoozes without a time, and any other text is kept verbatim. */
             snoozed_until: string;
         };
         AttentionListResponse: {

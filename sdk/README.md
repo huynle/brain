@@ -109,8 +109,9 @@ runners; resuming releases queued work. `RemoteControl()` / `control` is code ex
 on runner hosts (control:* scope): prompts and granted permissions drive a remote
 agent, spawn/kill start and stop processes. Proxied session calls return the
 instance's own JSON (`json.RawMessage`; TS `null` for an empty 204 body). None of
-these are script-exposed. Snooze timestamps (`remind_at`, `snoozed_until`) are
-plain strings in both SDKs: the server validates them and owns the error text.
+these are script-exposed. Snooze times (`remind_at`, `snoozed_until`) are plain
+strings in both SDKs: the server validates `remind_at` as RFC 3339 (its 400
+message is returned) and stores `snoozed_until` verbatim without validation.
 
 Monitors (`Monitors()` / `monitors`) create tasks that run agents when they fire.
 `Supervision()` / `supervision` reads bounded supervisor views and submits

@@ -1,0 +1,46 @@
+=== placement reasons (task_placement_reasons)
+OK
+## Placement Reasons
+
+Project: sched
+Task: <TASK_ID>
+Rejections recorded: <N>
+
+### Decision
+- Runner: none
+- Machine: none
+- Decision: no_candidate
+- Reason: no runners available
+- Missing labels: []
+- Created at: <UNIX>
+
+
+=== placement reasons unknown task (task_placement_reasons)
+ERROR
+Error: Task not found: zzzzzzzz in project sched
+=== placement reasons missing task (task_placement_reasons)
+ERROR
+Error: task_id is required
+=== dispatch lease none (task_dispatch_lease)
+ERROR
+Error: dispatch lease not found
+=== scheduler status (scheduler_status)
+OK
+## Scheduler Status
+
+- Started: true
+- Running: true
+- Interval: 5s
+- Last tick: <TIME>
+- Last success: <TIME>
+- Total ticks: <N>
+- Last expired leases: 0
+
+### Project Results
+
+**sched:**
+- Considered: 1
+- Dispatched: 0
+- Skipped: 1 (1 no eligible runner (see task_placement_reasons))
+
+

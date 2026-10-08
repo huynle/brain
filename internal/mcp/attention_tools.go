@@ -3,11 +3,8 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/url"
 	"strings"
 
-	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/sdk/brain"
 )
 
@@ -181,26 +178,16 @@ func registerAttentionSnooze(s *Server, client *APIClient) {
 		if id == "" {
 			return "", fmt.Errorf("provide an 'id'")
 		}
-		// Stays on the legacy request client: the SDK's SnoozeAttentionRequest
-		// types snoozed_until as time.Time, but this tool forwards the caller's
-		// string verbatim (including empty/unparseable values, which today's
-		// server accepts), so the SDK call could not reproduce its behavior.
-		body := map[string]string{"snoozed_until": StringArg(args, "snoozed_until", "")}
-		var out types.Attention
-		if err := client.Request(ctx, http.MethodPost, "/attention/"+url.PathEscape(id)+"/snooze", body, nil, &out); err != nil {
+		// snoozed_until is forwarded verbatim, empty included (the SDK carries
+		// it as a string); today's server stores it as sent.
+		out, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.Attention, error) {
+			return sc.Attention().Snooze(ctx, id, brain.SnoozeAttentionRequest{SnoozedUntil: StringArg(args, "snoozed_until", "")}, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatAttention("Attention snoozed", attentionFromLegacy(&out)), nil
+		return formatAttention("Attention snoozed", out), nil
 	})
-}
-
-// attentionFromLegacy adapts the legacy-decoded item used by attention_snooze
-// to the SDK shape the shared formatter renders.
-func attentionFromLegacy(a *types.Attention) *brain.Attention {
-	return &brain.Attention{
-		Title: a.Title, Id: a.ID, Recipient: a.Recipient, Kind: a.Kind, Severity: a.Severity, State: a.State,
-		Project: optString(a.Project), TaskId: optString(a.TaskID), Body: optString(a.Body),
-	}
 }
 
 func formatAttention(prefix string, a *brain.Attention) string {

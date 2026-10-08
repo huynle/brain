@@ -502,8 +502,9 @@ two `brain.entries.get` calls over framed stdout/stdin, then returning async JSO
 result 42. The parent supplies fixture objects only: no Brain service, HTTP,
 credentials, authorization adapter, audit or publication path is connected.
 The source may use explicit `return` or a JavaScript completion expression.
-The inactive facade now declares all105 public TypeScript method names (104 wire
-operations plus the entries iterator). Namespace objects are frozen with null
+The inactive facade now declares 105 public TypeScript method names (104 wire
+operations plus the entries iterator). The 21 runner/dispatch/control/scheduler
+SDK methods added for the hosted MCP are deliberately not declared at all. Namespace objects are frozen with null
 prototypes. Only `entries.get(id[, undefined])` retains its fixture-only framed
 exchange; other methods fail with a fixed `unsupported_operation` before inspecting
 arguments. Nonempty string IDs are required without coercion; transport options

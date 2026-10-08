@@ -55,6 +55,13 @@ func sdkOperations(h *Handler) []string {
 	add(h.attention != nil, `attention.list attention.create attention.get attention.counts attention.read attention.unread attention.snooze attention.resolve attention.dismiss`)
 	add(h.webhooks != nil, `webhooks.list webhooks.create webhooks.get webhooks.update webhooks.delete webhooks.deliveries webhooks.test`)
 	add(h.automationRun != nil, `automations.run automations.runs automations.getRun`)
+	add(h.runner != nil, `runners.status dispatch.pauseAll dispatch.resumeAll dispatch.pauseProject dispatch.resumeProject dispatch.pauseFeature dispatch.resumeFeature dispatch.pauseProjectAutomations dispatch.resumeProjectAutomations`)
+	add(h.runnerRegistry != nil, `runners.list runners.get runners.instances runners.allInstances`)
+	add(h.schedulerViews != nil, `tasks.dispatchLease tasks.placementReasons`)
+	add(h.scheduler != nil, `scheduler.status`)
+	// Remote control is advertised when the bridge is wired; it still requires
+	// control:* per request and never implies script execution.
+	add(h.bridge != nil, `control.sendPrompt control.abortSession control.respondPermission control.spawnInstance control.killInstance`)
 	slices.Sort(ops)
 	return ops
 }

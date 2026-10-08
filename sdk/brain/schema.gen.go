@@ -7,6 +7,27 @@ import (
 	"time"
 )
 
+// Defines values for ControlPermissionRequestResponse.
+const (
+	PermissionAlways ControlPermissionRequestResponse = "always"
+	PermissionOnce   ControlPermissionRequestResponse = "once"
+	PermissionReject ControlPermissionRequestResponse = "reject"
+)
+
+// Valid indicates whether the value is a known member of the ControlPermissionRequestResponse enum.
+func (e ControlPermissionRequestResponse) Valid() bool {
+	switch e {
+	case PermissionAlways:
+		return true
+	case PermissionOnce:
+		return true
+	case PermissionReject:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DeliveryCommandAction.
 const (
 	Configure   DeliveryCommandAction = "configure"
@@ -419,6 +440,50 @@ type ClaimStatusResponse struct {
 // ClearFeatureAssignmentRequest defines model for ClearFeatureAssignmentRequest.
 type ClearFeatureAssignmentRequest struct {
 	Intent string `json:"intent"`
+}
+
+// ControlFilePart Parts with an empty mime or url are skipped by the server.
+type ControlFilePart struct {
+	Filename *string `json:"filename,omitempty"`
+	Mime     string  `json:"mime"`
+
+	// Url Typically a data URL.
+	Url string `json:"url"`
+}
+
+// ControlPermissionRequest OpenCode permission vocabulary, forwarded to the instance untouched.
+type ControlPermissionRequest struct {
+	Response ControlPermissionRequestResponse `json:"response"`
+}
+
+// ControlPermissionRequestResponse defines model for ControlPermissionRequest.Response.
+type ControlPermissionRequestResponse string
+
+// ControlPromptModel Applied only when both ids are non-empty.
+type ControlPromptModel struct {
+	ModelID    string `json:"modelID"`
+	ProviderID string `json:"providerID"`
+}
+
+// ControlPromptRequest Browser/agent-facing prompt body; the API translates it to OpenCode prompt_async parts.
+type ControlPromptRequest struct {
+	Agent *string            `json:"agent,omitempty"`
+	Files *[]ControlFilePart `json:"files,omitempty"`
+
+	// Model Applied only when both ids are non-empty.
+	Model *ControlPromptModel `json:"model,omitempty"`
+
+	// Text Prompt text; text or at least one file is required.
+	Text *string `json:"text,omitempty"`
+}
+
+// ControlProxyResponse Opaque JSON returned by the OpenCode instance (e.g. a bare true); may be absent on 204.
+type ControlProxyResponse = interface{}
+
+// ControlSpawnResponse defines model for ControlSpawnResponse.
+type ControlSpawnResponse struct {
+	Instance OpencodeInstance `json:"instance"`
+	Success  bool             `json:"success"`
 }
 
 // CreateAttachmentResponse defines model for CreateAttachmentResponse.
@@ -889,6 +954,12 @@ type InjectResponse struct {
 	Truncated *bool          `json:"truncated,omitempty"`
 }
 
+// InstanceListResponse defines model for InstanceListResponse.
+type InstanceListResponse struct {
+	Instances *[]OpencodeInstance `json:"instances"`
+	Total     int                 `json:"total"`
+}
+
 // LegacyErrorResponse Existing REST error envelope; SDKs adapt HTTP status to a machine code and preserve field details without changing the server wire format.
 type LegacyErrorResponse struct {
 	// Code Optional future-compatible machine code; legacy endpoints usually omit it.
@@ -1030,6 +1101,31 @@ type MultiTaskStatusResponse struct {
 	Tasks        *[]ResolvedTask `json:"tasks"`
 }
 
+// OpencodeInstance defines model for OpencodeInstance.
+type OpencodeInstance struct {
+	Agent              *string   `json:"agent,omitempty"`
+	BridgeConnected    *bool     `json:"bridge_connected,omitempty"`
+	Executor           *string   `json:"executor,omitempty"`
+	FeatureId          *string   `json:"feature_id,omitempty"`
+	Hostname           *string   `json:"hostname,omitempty"`
+	InstanceId         string    `json:"instance_id"`
+	Kind               string    `json:"kind"`
+	LastSeen           *int64    `json:"last_seen,omitempty"`
+	Model              *string   `json:"model,omitempty"`
+	PendingPermissions *int      `json:"pending_permissions,omitempty"`
+	Pid                *int      `json:"pid,omitempty"`
+	Port               *int      `json:"port,omitempty"`
+	Priority           *string   `json:"priority,omitempty"`
+	ProjectId          *string   `json:"project_id,omitempty"`
+	RunnerId           string    `json:"runner_id"`
+	SessionIds         *[]string `json:"session_ids,omitempty"`
+	StartedAt          *int64    `json:"started_at,omitempty"`
+	Status             string    `json:"status"`
+	TaskId             *string   `json:"task_id,omitempty"`
+	Title              *string   `json:"title,omitempty"`
+	Workdir            *string   `json:"workdir,omitempty"`
+}
+
 // PlacementReason defines model for PlacementReason.
 type PlacementReason struct {
 	CreatedAt      int64   `json:"created_at"`
@@ -1043,6 +1139,12 @@ type PlacementReason struct {
 	RunnerId       *string `json:"runner_id,omitempty"`
 	RunnerLabels   *string `json:"runner_labels,omitempty"`
 	TaskId         string  `json:"task_id"`
+}
+
+// PlacementReasonListResponse defines model for PlacementReasonListResponse.
+type PlacementReasonListResponse struct {
+	Reasons *[]PlacementReason `json:"reasons"`
+	Total   int                `json:"total"`
 }
 
 // ProjectListResponse defines model for ProjectListResponse.
@@ -1380,12 +1482,81 @@ type RunTaskResponse struct {
 	TaskId     string  `json:"taskId"`
 }
 
+// RunnerInfo defines model for RunnerInfo.
+type RunnerInfo struct {
+	ActiveTasks        *int                         `json:"active_tasks,omitempty"`
+	BridgeConnected    *bool                        `json:"bridge_connected,omitempty"`
+	Capabilities       *[]string                    `json:"capabilities,omitempty"`
+	Capacity           *map[string]interface{}      `json:"capacity,omitempty"`
+	DispatchPush       *bool                        `json:"dispatch_push,omitempty"`
+	Draining           *bool                        `json:"draining,omitempty"`
+	Executors          *[]string                    `json:"executors,omitempty"`
+	FeatureAssignments *[]FeatureAssignmentResponse `json:"feature_assignments,omitempty"`
+	FeatureIds         *string                      `json:"feature_ids,omitempty"`
+	Hostname           string                       `json:"hostname"`
+	Labels             *map[string]string           `json:"labels,omitempty"`
+	LastHeartbeat      string                       `json:"last_heartbeat"`
+	MachineId          *string                      `json:"machine_id,omitempty"`
+	MaxParallel        int                          `json:"max_parallel"`
+	Paused             *bool                        `json:"paused,omitempty"`
+	Projects           *[]string                    `json:"projects,omitempty"`
+	RegisteredAt       string                       `json:"registered_at"`
+	Resources          *map[string]interface{}      `json:"resources,omitempty"`
+	RunnerId           string                       `json:"runner_id"`
+	Status             string                       `json:"status"`
+	Version            *string                      `json:"version,omitempty"`
+	WorkspaceRoots     *[]string                    `json:"workspace_roots,omitempty"`
+}
+
+// RunnerListResponse defines model for RunnerListResponse.
+type RunnerListResponse struct {
+	Runners *[]RunnerInfo `json:"runners"`
+	Total   int           `json:"total"`
+}
+
+// RunnerStatusResponse defines model for RunnerStatusResponse.
+type RunnerStatusResponse struct {
+	AutomationPausedProjects *[]string `json:"automationPausedProjects"`
+	AutomationsPaused        bool      `json:"automationsPaused"`
+	Paused                   bool      `json:"paused"`
+	PausedFeatures           *[]string `json:"pausedFeatures,omitempty"`
+	PausedProjects           *[]string `json:"pausedProjects"`
+	Running                  bool      `json:"running"`
+}
+
 // SDKDispatchResponse defines model for SDKDispatchResponse.
 type SDKDispatchResponse struct {
 	ExpiresAt string `json:"expiresAt"`
 	LeaseId   string `json:"leaseId"`
 	RunnerId  string `json:"runnerId"`
 	Success   bool   `json:"success"`
+}
+
+// SchedulerResult defines model for SchedulerResult.
+type SchedulerResult struct {
+	Considered               int    `json:"considered"`
+	Dispatched               int    `json:"dispatched"`
+	ProjectId                string `json:"project_id"`
+	Skipped                  int    `json:"skipped"`
+	SkippedAlreadyLeased     *int   `json:"skipped_already_leased,omitempty"`
+	SkippedAutomationsPaused *int   `json:"skipped_automations_paused,omitempty"`
+	SkippedFeaturePaused     *int   `json:"skipped_feature_paused,omitempty"`
+	SkippedNoCandidate       *int   `json:"skipped_no_candidate,omitempty"`
+	SkippedRunnerUnreachable *int   `json:"skipped_runner_unreachable,omitempty"`
+	SkippedTasksPaused       *int   `json:"skipped_tasks_paused,omitempty"`
+}
+
+// SchedulerStatus defines model for SchedulerStatus.
+type SchedulerStatus struct {
+	Interval           string                      `json:"interval"`
+	LastError          *string                     `json:"last_error,omitempty"`
+	LastExpiredLeases  int64                       `json:"last_expired_leases"`
+	LastProjectResults *map[string]SchedulerResult `json:"last_project_results,omitempty"`
+	LastSuccessAt      *string                     `json:"last_success_at,omitempty"`
+	LastTickAt         *string                     `json:"last_tick_at,omitempty"`
+	Running            bool                        `json:"running"`
+	Started            bool                        `json:"started"`
+	TotalTicks         int64                       `json:"total_ticks"`
 }
 
 // ScriptAvailability Independent support dimensions, not permission grants. available equals their conjunction. Every dimension is false until production script composition is implemented and accepted.
@@ -1465,12 +1636,22 @@ type SessionInfo struct {
 
 // SnoozeAttentionRequest defines model for SnoozeAttentionRequest.
 type SnoozeAttentionRequest struct {
-	SnoozedUntil time.Time `json:"snoozed_until"`
+	// SnoozedUntil Informational; stored as sent (an empty value snoozes without a time).
+	SnoozedUntil string `json:"snoozed_until"`
 }
 
 // SnoozeReminderRequest defines model for SnoozeReminderRequest.
 type SnoozeReminderRequest struct {
-	RemindAt time.Time `json:"remind_at"`
+	// RemindAt RFC3339 with an offset, validated by the server (its message is returned on 400).
+	RemindAt string `json:"remind_at"`
+}
+
+// SpawnInstanceSpec defines model for SpawnInstanceSpec.
+type SpawnInstanceSpec struct {
+	Agent   *string `json:"agent,omitempty"`
+	Model   *string `json:"model,omitempty"`
+	Title   *string `json:"title,omitempty"`
+	Workdir string  `json:"workdir"`
 }
 
 // StatsResponse defines model for StatsResponse.
@@ -2054,6 +2235,15 @@ type AttentionSnoozeJSONRequestBody = SnoozeAttentionRequest
 
 // AutomationsRunJSONRequestBody defines body for AutomationsRun for application/json ContentType.
 type AutomationsRunJSONRequestBody = RunAutomationRequest
+
+// ControlSpawnInstanceJSONRequestBody defines body for ControlSpawnInstance for application/json ContentType.
+type ControlSpawnInstanceJSONRequestBody = SpawnInstanceSpec
+
+// ControlRespondPermissionJSONRequestBody defines body for ControlRespondPermission for application/json ContentType.
+type ControlRespondPermissionJSONRequestBody = ControlPermissionRequest
+
+// ControlSendPromptJSONRequestBody defines body for ControlSendPrompt for application/json ContentType.
+type ControlSendPromptJSONRequestBody = ControlPromptRequest
 
 // EntriesCreateJSONRequestBody defines body for EntriesCreate for application/json ContentType.
 type EntriesCreateJSONRequestBody = CreateEntryRequest

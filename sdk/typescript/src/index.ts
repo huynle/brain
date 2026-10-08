@@ -314,6 +314,8 @@ export class BrainClient {
     status: (project: string, request: Schema["MultiTaskStatusRequest"], options?: RequestOptions): Promise<Schema["MultiTaskStatusResponse"]> => this.#request("POST", `/tasks/${encodeURIComponent(project)}/status`, request, undefined, options),
     metadata: (project: string, id: string, options?: RequestOptions): Promise<Schema["TaskMetadataResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/metadata`, undefined, undefined, options),
     claimStatus: (project: string, id: string, options?: RequestOptions): Promise<Schema["ClaimStatusResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/claim-status`, undefined, undefined, options),
+    dispatchLease: (project: string,id: string,options?: RequestOptions): Promise<Schema["DispatchLease"]> => this.#request("GET",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/dispatch-lease`,undefined,undefined,options),
+    placementReasons: (project: string,id: string,options?: RequestOptions): Promise<Schema["PlacementReasonListResponse"]> => this.#request("GET",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/placement-reasons`,undefined,undefined,options),
     ready: (project: string, query?: NonNullable<operations["tasks.ready"]["parameters"]["query"]>, options?: RequestOptions): Promise<Schema["TaskSelectionResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/ready`, undefined, query, options),
     next: (project: string, query?: NonNullable<operations["tasks.next"]["parameters"]["query"]>, options?: RequestOptions): Promise<Schema["ResolvedTask"] | null> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/next`, undefined, query, options),
     waiting: (project: string, options?: RequestOptions): Promise<Schema["TaskSelectionResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/waiting`, undefined, undefined, options),
@@ -396,6 +398,45 @@ export class BrainClient {
     resolve: (id: string,options?: RequestOptions): Promise<Schema["Attention"]> => this.#request("POST",`/attention/${encodeURIComponent(id)}/resolve`,undefined,undefined,options),
     dismiss: (id: string,options?: RequestOptions): Promise<Schema["Attention"]> => this.#request("POST",`/attention/${encodeURIComponent(id)}/dismiss`,undefined,undefined,options),
   });
+  readonly runners = Object.freeze({
+    status: (options?: RequestOptions): Promise<Schema["RunnerStatusResponse"]> => this.#request("GET","/tasks/runner/status",undefined,undefined,options),
+    list: (options?: RequestOptions): Promise<Schema["RunnerListResponse"]> => this.#request("GET","/runners",undefined,undefined,options),
+    get: (id: string,options?: RequestOptions): Promise<Schema["RunnerInfo"]> => this.#request("GET",`/runners/${encodeURIComponent(id)}`,undefined,undefined,options),
+    instances: (id: string,options?: RequestOptions): Promise<Schema["InstanceListResponse"]> => this.#request("GET",`/runners/${encodeURIComponent(id)}/instances`,undefined,undefined,options),
+    allInstances: (options?: RequestOptions): Promise<Schema["InstanceListResponse"]> => this.#request("GET","/instances",undefined,undefined,options),
+  });
+  // Server-wide dispatch dials: shared state, runners are notified. No body is sent.
+  readonly dispatch = Object.freeze({
+    pauseAll: (options?: RequestOptions): Promise<Schema["SuccessResponse"]> => this.#request("POST","/tasks/runner/pause",undefined,undefined,options),
+    resumeAll: (options?: RequestOptions): Promise<Schema["SuccessResponse"]> => this.#request("POST","/tasks/runner/resume",undefined,undefined,options),
+    pauseProject: (project: string,options?: RequestOptions): Promise<Schema["SuccessResponse"]> => this.#request("POST",`/tasks/runner/pause/${encodeURIComponent(project)}`,undefined,undefined,options),
+    resumeProject: (project: string,options?: RequestOptions): Promise<Schema["SuccessResponse"]> => this.#request("POST",`/tasks/runner/resume/${encodeURIComponent(project)}`,undefined,undefined,options),
+    pauseFeature: (project: string,id: string,options?: RequestOptions): Promise<Schema["SuccessResponse"]> => this.#request("POST",`/tasks/runner/features/pause/${encodeURIComponent(project)}/${encodeURIComponent(id)}`,undefined,undefined,options),
+    resumeFeature: (project: string,id: string,options?: RequestOptions): Promise<Schema["SuccessResponse"]> => this.#request("POST",`/tasks/runner/features/resume/${encodeURIComponent(project)}/${encodeURIComponent(id)}`,undefined,undefined,options),
+    pauseProjectAutomations: (project: string,options?: RequestOptions): Promise<Schema["SuccessResponse"]> => this.#request("POST",`/tasks/runner/automations/pause/${encodeURIComponent(project)}`,undefined,undefined,options),
+    resumeProjectAutomations: (project: string,options?: RequestOptions): Promise<Schema["SuccessResponse"]> => this.#request("POST",`/tasks/runner/automations/resume/${encodeURIComponent(project)}`,undefined,undefined,options),
+  });
+  // Remote control of runner hosts (control:* scope). Proxied session calls
+  // resolve to the instance's own JSON, or null for an empty (204) body.
+  readonly control = Object.freeze({
+    sendPrompt: (runner: string,instance: string,session: string,request: Schema["ControlPromptRequest"],options?: RequestOptions): Promise<Schema["ControlProxyResponse"] | null> => this.#proxied(`${this.#sessionPath(runner,instance,session)}/prompt`,request,options),
+    abortSession: (runner: string,instance: string,session: string,options?: RequestOptions): Promise<Schema["ControlProxyResponse"] | null> => this.#proxied(`${this.#sessionPath(runner,instance,session)}/abort`,undefined,options),
+    respondPermission: (runner: string,instance: string,session: string,id: string,request: Schema["ControlPermissionRequest"],options?: RequestOptions): Promise<Schema["ControlProxyResponse"] | null> => this.#proxied(`${this.#sessionPath(runner,instance,session)}/permissions/${encodeURIComponent(id)}`,request,options),
+    spawnInstance: (runner: string,request: Schema["SpawnInstanceSpec"],options?: RequestOptions): Promise<Schema["ControlSpawnResponse"]> => this.#request("POST",`/control/runners/${encodeURIComponent(runner)}/instances`,request,undefined,options),
+    killInstance: (runner: string,instance: string,options?: RequestOptions): Promise<Schema["SuccessResponse"]> => this.#request("DELETE",`/control/runners/${encodeURIComponent(runner)}/instances/${encodeURIComponent(instance)}`,undefined,undefined,options),
+  });
+  readonly scheduler = Object.freeze({
+    status: (options?: RequestOptions): Promise<Schema["SchedulerStatus"]> => this.#request("GET","/scheduler/status",undefined,undefined,options),
+  });
+  #sessionPath(runner: string,instance: string,session: string): string {
+    return `/control/runners/${encodeURIComponent(runner)}/instances/${encodeURIComponent(instance)}/sessions/${encodeURIComponent(session)}`;
+  }
+  async #proxied(path: string,body: unknown,options?: RequestOptions): Promise<unknown> {
+    const data = await this.#request<Uint8Array>("POST",path,body,undefined,options,true,true);
+    if (data.byteLength === 0) return null;
+    try { return JSON.parse(new TextDecoder().decode(data)); }
+    catch { throw new BrainError("invalid_response"); }
+  }
   readonly sections = Object.freeze({
     list: (id: string, options?: RequestOptions): Promise<Schema["SectionsResponse"]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/sections`, undefined, undefined, options),
     get: (id: string, title: string, includeSubsections = false, options?: RequestOptions): Promise<Schema["SectionContentResponse"]> => this.#request("GET", `/entries/${encodeURIComponent(id)}/sections/${encodeURIComponent(title)}`, undefined, {includeSubsections}, options),

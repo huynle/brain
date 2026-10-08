@@ -119,6 +119,31 @@ var reviewedProviderEffects = map[string]string{
 	"observability.stats":        "none",
 	"observability.timeline":     "none",
 	"observability.stale":        "none",
+	// Runner/dispatch/control/scheduler (hosted MCP step 2). Resuming a dial
+	// releases queued work to executors; prompting or granting a permission
+	// drives a remote agent (tools + model spend). Pausing, aborting, spawning
+	// an idle instance and killing one reach no provider themselves.
+	"runners.status":                    "none",
+	"runners.list":                      "none",
+	"runners.get":                       "none",
+	"runners.instances":                 "none",
+	"runners.allInstances":              "none",
+	"dispatch.pauseAll":                 "none",
+	"dispatch.resumeAll":                "downstream_executor",
+	"dispatch.pauseProject":             "none",
+	"dispatch.resumeProject":            "downstream_executor",
+	"dispatch.pauseFeature":             "none",
+	"dispatch.resumeFeature":            "downstream_executor",
+	"dispatch.pauseProjectAutomations":  "none",
+	"dispatch.resumeProjectAutomations": "downstream_executor",
+	"tasks.dispatchLease":               "none",
+	"tasks.placementReasons":            "none",
+	"scheduler.status":                  "none",
+	"control.sendPrompt":                "downstream_executor",
+	"control.abortSession":              "none",
+	"control.respondPermission":         "downstream_executor",
+	"control.spawnInstance":             "none",
+	"control.killInstance":              "none",
 }
 
 var providerTokens = map[string]bool{
@@ -144,8 +169,8 @@ func TestOperationPolicyProviderEffectsArePinned(t *testing.T) {
 	if strings.Join(policy.EventFanout, ",") != "webhook_http_for_subscribed_events,event_triggered_automations" {
 		t.Errorf("event_fanout must declare webhook and automation fan-out, got %v", policy.EventFanout)
 	}
-	if len(reviewedProviderEffects) != 105 || len(policy.Operations) != 105 {
-		t.Fatalf("pinned=%d policy=%d, want 105", len(reviewedProviderEffects), len(policy.Operations))
+	if len(reviewedProviderEffects) != 126 || len(policy.Operations) != 126 {
+		t.Fatalf("pinned=%d policy=%d, want 126", len(reviewedProviderEffects), len(policy.Operations))
 	}
 	for op, want := range reviewedProviderEffects {
 		row := policy.Operations[op]

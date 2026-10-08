@@ -106,6 +106,24 @@ Reminder snoozed: **Renamed**
 === snooze invalid time (reminder_snooze)
 ERROR
 Error: remind_at "later" is not RFC3339 with an offset: parsing time "later" as "<TIME>07:00": cannot parse "later" as "2006"
+=== snooze offset fraction (reminder_snooze)
+OK
+Reminder snoozed: **Renamed**
+- reminder_id: `<UNDATED_ID>`
+- state: armed
+- remind_at: <TIME>
+- action: notify
+- project: <golden-reminders>
+
+=== snooze no offset (reminder_snooze)
+ERROR
+Error: remind_at "<TIME>" is not RFC3339 with an offset: parsing time "<TIME>" as "<TIME>07:00": cannot parse "" as "Z07:00"
+=== snooze unknown bad time (reminder_snooze)
+ERROR
+Error: reminder not found
+=== snooze unknown (reminder_snooze)
+ERROR
+Error: reminder not found
 === ack (reminder_ack)
 OK
 Reminder acknowledged: **Renamed**
@@ -136,3 +154,6 @@ Error: request failed: Get "http://<LOOPBACK>/api/v1/reminders?project=<golden-r
 === dead api delete (reminder_delete)
 ERROR
 Error: request failed: Delete "http://<LOOPBACK>/api/v1/reminders/abc": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api snooze (reminder_snooze)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/reminders/a%2Fb/snooze": dial tcp <LOOPBACK>: connect: connection refused

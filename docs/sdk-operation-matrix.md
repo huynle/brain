@@ -2,7 +2,7 @@
 
 Source: `internal/api/router.go` at base `7bea47d1`. This is an explicit
 per-operation inventory, not a claim of complete SDK delivery or script availability.
-Paths below are relative to `/api/v1`. All 104 IDs are now checked-in contract IDs
+Paths below are relative to `/api/v1`. All 125 IDs (104 original + 21 runner/dispatch/control/scheduler) are now checked-in contract IDs
 with Go/TypeScript adapters; evidence and specific exclusions are stated below.
 This is not a claim that every effect/provider success path has been exercised.
 All have profile **single**,
@@ -36,7 +36,7 @@ The installed Node fixture now also submits a task, checks provenance, lists its
 actual run audit and fetches each audit entry. These assertions are checked in,
 not only held in an independent verifier overlay.
 `TestDeliveredContractMatchesRouterAndInventory` checks every delivered operation
-against the real Chi route inventory and its table row below (104 currently).
+against the real Chi route inventory and its table row below (126 including capability discovery).
 Task `status/metadata/claimStatus` and feature `list/ready/get` are implemented
 in both SDKs. External Go and installed Node consumers prove mixed found/missing
 status IDs, empty-ID validation, metadata, no claim acquisition, pending-to-completed
@@ -65,11 +65,11 @@ external-provider path is route/decoding-tested, not a live provider verificatio
 The metadata key contract has an exact server allowlist guard; embedded resume and
 nullable timestamp DTOs have real JSON round-trip parity tests.
 
-`api/operation-policy.yaml` now records all104 operations' legacy scope, required
+`api/operation-policy.yaml` now records all 126 operations' legacy scope, required
 future resource checks, preconditions, conservative effects and provider class.
 `TestOperationPolicyInventoryIsCompleteAndUnavailable` checks contract/matrix
 coverage and scope agreement, including read-scoped attention writes.
-`TestOperationPolicyProviderEffectsArePinned` pins all 105 provider values
+`TestOperationPolicyProviderEffectsArePinned` pins all 126 provider values
 (closed `+`-joined token set). `TestOperationProviderEffectsDerivedFromCallGraph`
 derives embedding (synchronous or background) and Web Push effects from code.
 It is a policy-accuracy check, not a full verifier.
@@ -83,13 +83,15 @@ It is a policy-accuracy check, not a full verifier.
   `Embed(context.Context, []string)`, `scheduleEmbeddingRefresh`, phonepush
   `Enqueue`.
 - **Exact reviewed lists:**
-  - the 105 operation rows;
+  - the 126 operation rows;
   - non-SDK routes (chi routes plus everything referenced from `router.go`);
   - background goroutine roots, with per-function root counts;
   - callback roots;
   - startup entry points.
 - **Fail-closed rules:** `reminders.ack` is excepted by one reviewed call edge,
-  not by token. `TestNoUnreviewedReflectiveCalls` forbids reflective calls
+  not by token. `scheduler.status` cuts one interface over-approximation edge
+  (to `AssistantService.Status`, which cannot implement `api.SchedulerService`;
+  `TestSchedulerStatusCutIsSound` pins that). `TestNoUnreviewedReflectiveCalls` forbids reflective calls
   outside an allowlist.
 - **Over-approximation rules** (review `c969if7r`):
   - a helper's calls through a function parameter are signature-matched
@@ -126,7 +128,7 @@ it does not prove zero domain effects. Resource checks name required composition
 not legacy rights already enforced. Per-handler positive/negative preflight proofs
 remain mandatory before any row can become script-supported.
 
-All 104 operation declarations now name the legacy default JSON error response.
+All 126 operation declarations now name the legacy default JSON error response.
 `TestEveryOperationDeclaresLegacyErrorBehavior` guards coverage. The shared error
 schema requires `error`, but **not** `message`: the real task-dispatch conflict
 handler returns `{error, success:false}` without it, reproduced by
@@ -177,6 +179,7 @@ plus unauthenticated refusal. It does not prove hosted ACL composition,
 search-provider behavior, real bulk partial outcomes, or script dry-run guarantees.
 
 Legacy scope abbreviations: R = admin/runner/read; A = admin; W = admin/runner;
+C = control:* only (admin:* passes; the legacy OAuth "mcp" grant does not);
 Auth = router authentication only (handler checks still apply); Public = no auth.
 Auth-disabled single mode follows existing middleware, not new SDK grants.
 Future resource rights in the last column are required composition, not a claim
@@ -295,6 +298,27 @@ are conservative and need per-handler proof before any script allowlisting.
 | observability.stats | GET /stats | R | visible aggregates, not hidden totals |
 | observability.timeline | GET /timeline | R | visible source events |
 | observability.stale | GET /stale | R | visible entries/counts |
+| runners.status | GET /tasks/runner/status | R | read; server-wide pause dials (paused flags mean ANY project) |
+| runners.list | GET /runners | R | read; runner registry incl. host names, labels, workspace roots |
+| runners.get | GET /runners/{runnerId} | R | read; one runner incl. host metadata |
+| runners.instances | GET /runners/{runnerId}/instances | R | read; one runner's instances incl. workdirs/pids |
+| runners.allInstances | GET /instances | R | read; every runner's instances incl. workdirs/pids |
+| dispatch.pauseAll | POST /tasks/runner/pause | A | server-wide dispatch state for every project + runner notice; no body |
+| dispatch.resumeAll | POST /tasks/runner/resume | A | server-wide dispatch state + runner notice; releases queued work |
+| dispatch.pauseProject | POST /tasks/runner/pause/{projectId} | A | project dispatch state + runner notice |
+| dispatch.resumeProject | POST /tasks/runner/resume/{projectId} | A | project dispatch state + runner notice; releases queued work |
+| dispatch.pauseFeature | POST /tasks/runner/features/pause/{projectId}/{featureId} | A | feature dispatch state (all task authors) |
+| dispatch.resumeFeature | POST /tasks/runner/features/resume/{projectId}/{featureId} | A | feature dispatch state; releases queued work |
+| dispatch.pauseProjectAutomations | POST /tasks/runner/automations/pause/{projectId} | A | automation-task dispatch state for one project |
+| dispatch.resumeProjectAutomations | POST /tasks/runner/automations/resume/{projectId} | A | automation-task dispatch state; releases queued work |
+| tasks.dispatchLease | GET /tasks/{projectId}/{taskId}/dispatch-lease | R | read; push-dispatch lease (404 when none) |
+| tasks.placementReasons | GET /tasks/{projectId}/{taskId}/placement-reasons | R | read; rejection rows incl. runner labels; 404 for unknown task when empty |
+| scheduler.status | GET /scheduler/status | R | read; loop state and every project's last results |
+| control.sendPrompt | POST /control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/prompt | C | code execution on a runner host: agent work, tools and model spend; rate limited; audit event |
+| control.abortSession | POST /control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/abort | C | remote session state on a runner host |
+| control.respondPermission | POST /control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/permissions/{permissionId} | C | once/always lets a remote agent run the requested tool; audit event |
+| control.spawnInstance | POST /control/runners/{runnerId}/instances | C | starts a process on a runner host; workdir allowlist; rate limited; audit event |
+| control.killInstance | DELETE /control/runners/{runnerId}/instances/{instanceId} | C | terminates a process on a runner host; task instances refused (409); audit event |
 
 Task creation/update/dependency changes and automation CRUD are typed aliases of
 entry operations with type-specific validation, not invented REST routes.
@@ -308,8 +332,15 @@ see [the current acceptance ledger](sdk-script-acceptance-ledger.md).
 Explicitly outside the script facade: `/control/**`, `/tokens/**`, `/auth/**`,
 `/runners/**`, `/instances`, `/config/**`, `/push/**`, `/assistant/**`,
 `/embeddings/backfill`, `/attachments/backfill/extraction`, `/sync/**`,
-`/tasks/runner/**`, runner claim/release/renew/log ingestion, dispatch protocol,
+`/tasks/runner/**`, `/scheduler/**`, task dispatch-lease/placement-reasons,
+runner claim/release/renew/log ingestion, dispatch protocol,
 `/supervision/**`, and event ingestion. Operator surfaces, bulk-job execution,
 monitors, link-generation and client-context resolution require separate SDK
-support decisions; no generic fallback exposes them. Capability discovery and
+support decisions; no generic fallback exposes them. The 21 runner/dispatch/control/scheduler
+operations added for the hosted MCP (`runners.*`, `dispatch.*`, `control.*`,
+`tasks.dispatchLease`, `tasks.placementReasons`, `scheduler.status`) are typed
+Go/TS adapters only: `x-brain-script: false`, absent from the inactive facade
+fixture (its TS test asserts each is denied), and only the listed routes are
+covered — runner self-registration, heartbeats, bridge, exec, runner pause and
+the other `/control/**` routes stay outside the SDK. Capability discovery and
 script execution routes are not registered at this checkpoint.

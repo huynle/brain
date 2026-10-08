@@ -12,10 +12,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/bridge"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/logbuffer"
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/service"
+	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/tenant"
 	"gopkg.in/yaml.v3"
 )
@@ -98,6 +100,8 @@ func operationHandlers(t *testing.T, g *egressGraph) (map[string]string, []strin
 		api.WithBulkJobService(&service.BulkJobService{}),
 		api.WithSchedulerService(&service.SchedulerService{}),
 		api.WithLogBuffer(logbuffer.New(1)),
+		api.WithSchedulerVisibilityService(&storage.TenantStore{}),
+		api.WithBridgeService(&bridge.Hub{}),
 	)))
 	routes := map[string]string{}
 	if err := chi.Walk(router, func(method, route string, h http.Handler, _ ...func(http.Handler) http.Handler) error {
@@ -302,9 +306,23 @@ var reviewedCuts = map[string][]cutEdge{
 	// unchanged (metadata sync, no provider) and feature-schedule gate fields are
 	// never set (reviews 1ikgd5xs, nwwa27yh).
 	"reminders.ack": {{"(*" + pkgService + ".ReminderService).AckReminder", "(*" + pkgService + ".ReminderService).UpdateReminder"}},
+	// HandleSchedulerStatus calls h.scheduler.Status() on api.SchedulerService
+	// (Status() types.SchedulerStatus). The graph resolves interface calls by
+	// method name, so it also follows AssistantService.Status, whose result type
+	// (AssistantStatusResponse) cannot satisfy that interface; the assistant's
+	// tool table is what reaches embedding. TestSchedulerStatusCutIsSound pins
+	// the non-implementation so this cut cannot hide a real implementation.
+	"scheduler.status": {{"(*" + pkgAPI + ".Handler).HandleSchedulerStatus", "(*" + pkgAPI + ".AssistantService).Status"}},
 }
 
-// reviewedNonSDKRoutes: every router handler outside the 105-operation
+func TestSchedulerStatusCutIsSound(t *testing.T) {
+	iface := reflect.TypeOf((*api.SchedulerService)(nil)).Elem()
+	if reflect.TypeOf(&api.AssistantService{}).Implements(iface) {
+		t.Fatal("AssistantService now implements api.SchedulerService: the scheduler.status cut is no longer an over-approximation; review its provider effects")
+	}
+}
+
+// reviewedNonSDKRoutes: every router handler outside the 126-operation
 // contract that reaches a provider sink, with its exact derived tokens.
 var reviewedNonSDKRoutes = map[string]string{
 	"(*" + pkgAPI + ".Handler).HandleAssistantChat":                "embedding_background+embedding_sync",
@@ -314,7 +332,6 @@ var reviewedNonSDKRoutes = map[string]string{
 	"(*" + pkgAPI + ".Handler).HandleCreateMonitor":                "embedding_background+embedding_sync",
 	"(*" + pkgAPI + ".Handler).HandleEmbeddingBackfill":            "embedding_sync",
 	"(*" + pkgAPI + ".Handler).HandleEntrySyncMutation":            "embedding_background+embedding_sync",
-	"(*" + pkgAPI + ".Handler).HandleSchedulerStatus":              "embedding_background+embedding_sync",
 	"(*" + pkgAPI + ".Handler).HandleToggleMonitor":                "embedding_background+embedding_sync",
 }
 
@@ -367,8 +384,8 @@ func TestOperationProviderEffectsDerivedFromCallGraph(t *testing.T) {
 	}
 	g := sharedEgressGraph(t)
 	handlers, chi := operationHandlers(t, g)
-	if len(handlers) != 105 {
-		t.Fatalf("resolved %d operation handlers, want 105", len(handlers))
+	if len(handlers) != 126 {
+		t.Fatalf("resolved %d operation handlers, want 126", len(handlers))
 	}
 	d := deriveEgress(g, handlers, chi, reviewedCuts)
 	justified := map[string]map[string]bool{}

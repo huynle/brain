@@ -35,6 +35,8 @@ func TestGolden_AttentionTools(t *testing.T) {
 
 	g.call("snooze", "attention_snooze", map[string]any{"id": secondID, "snoozed_until": "2031-01-01T00:00:00Z"})
 	g.call("snooze invalid", "attention_snooze", map[string]any{"id": secondID, "snoozed_until": "later"})
+	g.call("snooze without time", "attention_snooze", map[string]any{"id": secondID})
+	g.call("snooze missing id", "attention_snooze", map[string]any{"snoozed_until": "2031-01-01T00:00:00Z"})
 	g.call("snooze unknown", "attention_snooze", map[string]any{"id": "nonexistent", "snoozed_until": "2031-01-01T00:00:00Z"})
 	g.call("resolve", "attention_resolve", map[string]any{"id": firstID})
 	g.call("resolve unknown", "attention_resolve", map[string]any{"id": "nonexistent"})
@@ -43,5 +45,6 @@ func TestGolden_AttentionTools(t *testing.T) {
 	dead := deadAPIMCP(t)
 	g.callAt(dead, "dead api list", "attention_list", map[string]any{"project": "p", "kind": "k"})
 	g.callAt(dead, "dead api resolve", "attention_resolve", map[string]any{"id": "a1"})
+	g.callAt(dead, "dead api snooze", "attention_snooze", map[string]any{"id": "a 1", "snoozed_until": "soon"})
 	g.check()
 }

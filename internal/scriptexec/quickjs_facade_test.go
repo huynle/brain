@@ -35,6 +35,20 @@ func publicFacadeNames(t *testing.T) []string {
 			names = append(names, namespace+"."+m[1])
 		}
 	}
+	// The hosted-MCP runner/dispatch/control/scheduler methods are public SDK
+	// methods but are never declared in the script facade (server-wide dial
+	// writes and code execution on runner hosts); the worker's inventory, and
+	// this closed-inventory check, exclude them by name.
+	kept := names[:0]
+	for _, name := range names {
+		group, _, _ := strings.Cut(name, ".")
+		if group == "runners" || group == "dispatch" || group == "control" || group == "scheduler" ||
+			name == "tasks.dispatchLease" || name == "tasks.placementReasons" {
+			continue
+		}
+		kept = append(kept, name)
+	}
+	names = kept
 	sort.Strings(names)
 	if len(names) != 105 {
 		t.Fatalf("SDK inventory changed: %d methods", len(names))

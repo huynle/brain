@@ -1,9 +1,16 @@
 package mcp_test
 
-import "testing"
+import (
+	"sort"
+	"strings"
+	"testing"
+)
 
 func TestGolden_ReminderTools(t *testing.T) {
 	g := newGolden(t, "reminder_tools")
+	// reminder_list follows entry order, which ties at second resolution when
+	// reminders are created in the same second; compare the listed set.
+	g.postProcess(sortListedReminders)
 	project := g.project("golden-reminders")
 
 	g.call("create refuses without project", "reminder_create", map[string]any{"title": "nowhere"})
@@ -42,6 +49,10 @@ func TestGolden_ReminderTools(t *testing.T) {
 	g.call("snooze missing args", "reminder_snooze", map[string]any{"reminder_id": undatedID})
 	g.call("snooze", "reminder_snooze", map[string]any{"reminder_id": undatedID, "remind_at": "2031-03-04T05:06:07Z"})
 	g.call("snooze invalid time", "reminder_snooze", map[string]any{"reminder_id": undatedID, "remind_at": "later"})
+	g.call("snooze offset fraction", "reminder_snooze", map[string]any{"reminder_id": undatedID, "remind_at": " 2031-03-04T07:06:07.250+02:00 "})
+	g.call("snooze no offset", "reminder_snooze", map[string]any{"reminder_id": undatedID, "remind_at": "2031-03-04T05:06:07"})
+	g.call("snooze unknown bad time", "reminder_snooze", map[string]any{"reminder_id": "zzzzzzzz", "remind_at": "later"})
+	g.call("snooze unknown", "reminder_snooze", map[string]any{"reminder_id": "zzzzzzzz", "remind_at": "2031-03-04T05:06:07Z"})
 	g.call("ack", "reminder_ack", map[string]any{"reminder_id": undatedID})
 	g.call("ack unknown", "reminder_ack", map[string]any{"reminder_id": "zzzzzzzz"})
 
@@ -53,5 +64,22 @@ func TestGolden_ReminderTools(t *testing.T) {
 	g.callAt(dead, "dead api get", "reminder_get", map[string]any{"reminder_id": "abc"})
 	g.callAt(dead, "dead api list", "reminder_list", map[string]any{"project": project, "state": "fired"})
 	g.callAt(dead, "dead api delete", "reminder_delete", map[string]any{"reminder_id": "abc"})
+	g.callAt(dead, "dead api snooze", "reminder_snooze", map[string]any{"reminder_id": "a/b", "remind_at": "later"})
 	g.check()
+}
+
+func sortListedReminders(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := 0; i < len(lines); i++ {
+		if !strings.HasPrefix(lines[i], "- **") {
+			continue
+		}
+		j := i
+		for j < len(lines) && strings.HasPrefix(lines[j], "- **") {
+			j++
+		}
+		sort.Strings(lines[i:j])
+		i = j
+	}
+	return strings.Join(lines, "\n")
 }

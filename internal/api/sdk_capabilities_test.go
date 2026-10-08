@@ -61,7 +61,7 @@ func TestSDKCapabilitiesAdmission(t *testing.T) {
 
 func TestSDKCapabilitiesInventory(t *testing.T) {
 	// Discovery may inspect service presence, never call it or enumerate resources.
-	h := &Handler{brain: struct{ BrainService }{}, tasks: struct{ TaskService }{}, attachments: struct{ AttachmentService }{}, goalService: struct{ GoalService }{}, reminders: struct{ ReminderService }{}, attention: struct{ AttentionService }{}, webhooks: struct{ WebhookService }{}, automationRun: struct{ AutomationRunService }{}, placement: struct{ ProjectPlacementService }{}, runTask: struct{ RunTaskService }{}, runFeature: struct{ RunFeatureService }{}, runProject: struct{ RunProjectService }{}, depChains: struct{ DependentChainService }{}, events: struct{ EventService }{}, timeline: struct{ TimelineService }{}}
+	h := &Handler{brain: struct{ BrainService }{}, tasks: struct{ TaskService }{}, attachments: struct{ AttachmentService }{}, goalService: struct{ GoalService }{}, reminders: struct{ ReminderService }{}, attention: struct{ AttentionService }{}, webhooks: struct{ WebhookService }{}, automationRun: struct{ AutomationRunService }{}, placement: struct{ ProjectPlacementService }{}, runTask: struct{ RunTaskService }{}, runFeature: struct{ RunFeatureService }{}, runProject: struct{ RunProjectService }{}, depChains: struct{ DependentChainService }{}, events: struct{ EventService }{}, timeline: struct{ TimelineService }{}, runner: struct{ RunnerService }{}, runnerRegistry: struct{ RunnerRegistryService }{}, schedulerViews: struct{ SchedulerVisibilityService }{}, scheduler: struct{ SchedulerService }{}, bridge: struct{ BridgeService }{}}
 	read := func(h *Handler) []string {
 		t.Helper()
 		w := httptest.NewRecorder()
@@ -112,6 +112,16 @@ func TestSDKCapabilitiesInventory(t *testing.T) {
 		if slices.Contains(got, id) {
 			t.Errorf("unwired operation advertised: %s", id)
 		}
+	}
+	h.bridge, h.runner = nil, nil
+	got = read(h)
+	for _, id := range []string{"control.sendPrompt", "control.spawnInstance", "control.killInstance", "dispatch.pauseAll", "runners.status"} {
+		if slices.Contains(got, id) {
+			t.Errorf("unwired runner/control operation advertised: %s", id)
+		}
+	}
+	if !slices.Contains(got, "runners.list") || !slices.Contains(got, "scheduler.status") {
+		t.Fatal("independent registry/scheduler services disappeared")
 	}
 	if !slices.Contains(got, "entries.get") {
 		t.Fatal("independent entry service disappeared")

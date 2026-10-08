@@ -1,0 +1,93 @@
+=== runner_status {"project":"parity"} -> OK: ## Runner Status
+  GET /api/v1/tasks/runner/status
+    auth="Bearer probe-00" content-type="" accept="application/json" x-brain="" body=<none>
+=== runners {"limit":5,"status":"online"} -> OK: ## Runners
+  GET /api/v1/runners
+    auth="Bearer probe-01" content-type="" accept="application/json" x-brain="" body=<none>
+=== runner_get {"runner_id":"parity-runner"} -> OK: ## Runner parity-runner
+  GET /api/v1/runners/parity-runner
+    auth="Bearer probe-02" content-type="" accept="application/json" x-brain="" body=<none>
+=== runner_get {"runner_id":"a b/c"} -> ERROR: Error: runner "a%20b%2Fc" not found
+  GET /api/v1/runners/a%20b%2Fc
+    auth="Bearer probe-03" content-type="" accept="application/json" x-brain="" body=<none>
+=== runner_instances {"kind":"adhoc","runner_id":"parity-runner"} -> OK: ## Runner Instances
+  GET /api/v1/runners/parity-runner/instances
+    auth="Bearer probe-04" content-type="" accept="application/json" x-brain="" body=<none>
+=== runner_instances_all {"status":"idle"} -> OK: ## Runner Instances
+  GET /api/v1/instances
+    auth="Bearer probe-05" content-type="" accept="application/json" x-brain="" body=<none>
+=== runner_pause_project {"project":"parity"} -> OK: Paused MANUAL task execution for project parity. Success: true
+  POST /api/v1/tasks/runner/pause/parity
+    auth="Bearer probe-06" content-type="" accept="application/json" x-brain="" body=<none>
+=== runner_resume_project {"project":"parity"} -> OK: Resumed MANUAL task execution for project parity. Success: true
+  POST /api/v1/tasks/runner/resume/parity
+    auth="Bearer probe-07" content-type="" accept="application/json" x-brain="" body=<none>
+=== runner_pause_feature {"feature_id":"f 1/x","project":"parity"} -> OK: Paused dispatch for feature f 1/x in project parity. Success: true
+  POST /api/v1/tasks/runner/features/pause/parity/f%201%2Fx
+    auth="Bearer probe-08" content-type="" accept="application/json" x-brain="" body=<none>
+=== runner_resume_feature {"feature_id":"f 1/x","project":"parity"} -> OK: Resumed dispatch for feature f 1/x in project parity. Success: true
+  POST /api/v1/tasks/runner/features/resume/parity/f%201%2Fx
+    auth="Bearer probe-09" content-type="" accept="application/json" x-brain="" body=<none>
+=== runner_pause_project_automations {"project":"parity"} -> OK: Paused AUTOMATION-GENERATED task execution for project parity. Success: true
+  POST /api/v1/tasks/runner/automations/pause/parity
+    auth="Bearer probe-10" content-type="" accept="application/json" x-brain="" body=<none>
+=== runner_resume_project_automations {"project":"parity"} -> OK: Resumed AUTOMATION-GENERATED task execution for project parity. Success: true
+  POST /api/v1/tasks/runner/automations/resume/parity
+    auth="Bearer probe-11" content-type="" accept="application/json" x-brain="" body=<none>
+=== runner_pause_all {"confirm":true} -> OK: Paused MANUAL task execution for all projects. Success: true
+  POST /api/v1/tasks/runner/pause
+    auth="Bearer probe-12" content-type="" accept="application/json" x-brain="" body=<none>
+=== runner_resume_all {"confirm":true} -> OK: Resumed MANUAL task execution for all projects. Success: true
+  POST /api/v1/tasks/runner/resume
+    auth="Bearer probe-13" content-type="" accept="application/json" x-brain="" body=<none>
+=== control_send_prompt {"agent":"build","instance_id":"ins-1","model_id":"m","provider_id":"p","runner_id":"parity-runner","session_id":"ses/1","text":" hi "} -> OK: Sent prompt to session ses/1 on runner parity-runner instance ins-1.
+  POST /api/v1/control/runners/parity-runner/instances/ins-1/sessions/ses%2F1/prompt
+    auth="Bearer probe-14" content-type="application/json" accept="application/json" x-brain="" body={"agent":"build","model":{"modelID":"m","providerID":"p"},"text":"hi"}
+=== control_send_prompt {"instance_id":"ins-1","runner_id":"parity-runner","session_id":"ses/1","text":"plain"} -> OK: Sent prompt to session ses/1 on runner parity-runner instance ins-1.
+  POST /api/v1/control/runners/parity-runner/instances/ins-1/sessions/ses%2F1/prompt
+    auth="Bearer probe-15" content-type="application/json" accept="application/json" x-brain="" body={"text":"plain"}
+=== control_abort_session {"instance_id":"ins-1","runner_id":"parity-runner","session_id":"ses/1"} -> OK: Abort requested for session ses/1 on runner parity-runner instance ins-1. Success: true
+  POST /api/v1/control/runners/parity-runner/instances/ins-1/sessions/ses%2F1/abort
+    auth="Bearer probe-16" content-type="" accept="application/json" x-brain="" body=<none>
+=== control_permission {"instance_id":"ins-1","permission_id":"per 1","response":"reject","runner_id":"parity-runner","session_id":"ses/1"} -> OK: Responded reject to permission per 1 for session ses/1 on runner parity-runner instance ins-1. Success: true
+  POST /api/v1/control/runners/parity-runner/instances/ins-1/sessions/ses%2F1/permissions/per%201
+    auth="Bearer probe-17" content-type="application/json" accept="application/json" x-brain="" body={"response":"reject"}
+=== control_spawn_instance {"agent":"a","model":"m","runner_id":"parity-runner","title":"t","workdir":"/srv/q"} -> OK: Spawned control instance on runner parity-runner. Instance: ins-spawned. Workdir: /srv/q. Success: true
+  POST /api/v1/control/runners/parity-runner/instances
+    auth="Bearer probe-18" content-type="application/json" accept="application/json" x-brain="" body={"agent":"a","model":"m","title":"t","workdir":"/srv/q"}
+=== control_kill_instance {"confirm":true,"instance_id":"ins-spawned","runner_id":"parity-runner"} -> OK: Killed control instance ins-spawned on runner parity-runner. Success: true
+  DELETE /api/v1/control/runners/parity-runner/instances/ins-spawned
+    auth="Bearer probe-19" content-type="" accept="application/json" x-brain="" body=<none>
+=== control_kill_instance {"confirm":true,"instance_id":"ins-task","runner_id":"parity-runner"} -> ERROR: Error: task instances are owned by the task lifecycle; cancel the task instead
+  DELETE /api/v1/control/runners/parity-runner/instances/ins-task
+    auth="Bearer probe-20" content-type="" accept="application/json" x-brain="" body=<none>
+=== task_dispatch_lease {"project":"parity","task_id":"<TASK_ID>"} -> ERROR: Error: dispatch lease not found
+  GET /api/v1/tasks/parity/<TASK_ID>/dispatch-lease
+    auth="Bearer probe-21" content-type="" accept="application/json" x-brain="" body=<none>
+=== task_placement_reasons {"project":"parity","task_id":"<TASK_ID>"} -> OK: ## Placement Reasons
+  GET /api/v1/tasks/parity/<TASK_ID>/placement-reasons
+    auth="Bearer probe-22" content-type="" accept="application/json" x-brain="" body=<none>
+=== task_placement_reasons {"project":"pa rity","task_id":"x/y"} -> ERROR: Error: Task not found: x%2Fy in project pa%20rity
+  GET /api/v1/tasks/pa%20rity/x%2Fy/placement-reasons
+    auth="Bearer probe-23" content-type="" accept="application/json" x-brain="" body=<none>
+=== scheduler_status null -> OK: ## Scheduler Status
+  GET /api/v1/scheduler/status
+    auth="Bearer probe-24" content-type="" accept="application/json" x-brain="" body=<none>
+=== reminder_snooze {"remind_at":" 2031-03-04T07:06:07.250+02:00 ","reminder_id":"<REMINDER_ID>"} -> OK: Reminder snoozed: **Parity reminder**
+  POST /api/v1/reminders/<REMINDER_ID>/snooze
+    auth="Bearer probe-25" content-type="application/json" accept="application/json" x-brain="" body={"remind_at":"2031-03-04T07:06:07.250+02:00"}
+=== reminder_snooze {"remind_at":"later","reminder_id":"<REMINDER_ID>"} -> ERROR: Error: remind_at "later" is not RFC3339 with an offset: parsing time "later" as "2006-01-02T15:04:05Z07:00": cannot parse "later" as "2006"
+  POST /api/v1/reminders/<REMINDER_ID>/snooze
+    auth="Bearer probe-26" content-type="application/json" accept="application/json" x-brain="" body={"remind_at":"later"}
+=== reminder_snooze {"remind_at":"2031-03-04T05:06:07Z","reminder_id":"a/b"} -> ERROR: Error: reminder not found
+  POST /api/v1/reminders/a%2Fb/snooze
+    auth="Bearer probe-27" content-type="application/json" accept="application/json" x-brain="" body={"remind_at":"2031-03-04T05:06:07Z"}
+=== attention_snooze {"id":"<ATTENTION_ID>","snoozed_until":"2031-01-01T00:00:00.500-05:00"} -> OK: Attention snoozed: Parity item
+  POST /api/v1/attention/<ATTENTION_ID>/snooze
+    auth="Bearer probe-28" content-type="application/json" accept="application/json" x-brain="" body={"snoozed_until":"2031-01-01T00:00:00.500-05:00"}
+=== attention_snooze {"id":"<ATTENTION_ID>","snoozed_until":"later"} -> OK: Attention snoozed: Parity item
+  POST /api/v1/attention/<ATTENTION_ID>/snooze
+    auth="Bearer probe-29" content-type="application/json" accept="application/json" x-brain="" body={"snoozed_until":"later"}
+=== attention_snooze {"id":"<ATTENTION_ID>"} -> OK: Attention snoozed: Parity item
+  POST /api/v1/attention/<ATTENTION_ID>/snooze
+    auth="Bearer probe-30" content-type="application/json" accept="application/json" x-brain="" body={"snoozed_until":""}

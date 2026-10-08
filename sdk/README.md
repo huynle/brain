@@ -3,7 +3,10 @@
 **Partial implementation, not V1 completion. Scripts are unavailable.**
 
 The reviewed public protocol lives in `api/openapi.yaml` (OpenAPI 3.1).
-All 104 original inventoried operations plus capability discovery have typed Go/TypeScript adapters, including
+All 104 original inventoried operations, 21 runner/dispatch/control/scheduler
+operations (`runners.*`, `dispatch.*`, `control.*`, `tasks.dispatchLease`,
+`tasks.placementReasons`, `scheduler.status`) and capability discovery have typed
+Go/TypeScript adapters, including
 task/feature actions, metadata, project placement/deletion, delivery state,
 finite events, timeline and SSE. Exact evidence and remaining integration gates are in
 `docs/sdk-operation-matrix.md`. Task creation and dependency updates use typed
@@ -98,6 +101,14 @@ creates an indexed task; pass `merge_policy: "prompt_only"` and `delivery_mode:
 exact project name as confirmation and deletes entries of every type. Delivery
 verification is separate from implementation status and can return a provider
 error inside a successful response; configuration uses `expected_revision`.
+
+Dispatch dials (`Dispatch()` / `dispatch`) write server-wide state and notify
+runners; resuming releases queued work. `RemoteControl()` / `control` is code execution
+on runner hosts (control:* scope): prompts and granted permissions drive a remote
+agent, spawn/kill start and stop processes. Proxied session calls return the
+instance's own JSON (`json.RawMessage`; TS `null` for an empty 204 body). None of
+these are script-exposed. Snooze timestamps (`remind_at`, `snoozed_until`) are
+plain strings in both SDKs: the server validates them and owns the error text.
 
 Attachment upload takes bytes, never a filesystem path. Filenames cannot contain
 path separators or CR/LF/NUL. Uploads (including multipart overhead) and downloads

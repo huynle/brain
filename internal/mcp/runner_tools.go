@@ -3,12 +3,11 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/sdk/brain"
 )
 
 // RegisterRunnerTools registers read-only runner visibility MCP tools.
@@ -31,8 +30,10 @@ func registerBrainRunnerStatus(s *Server, client *APIClient) {
 			"project": {Type: "string", Description: "Report the pause state of this project specifically (e.g. 'brain-api')"},
 		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		var resp types.RunnerStatusResponse
-		if err := client.Request(ctx, http.MethodGet, "/tasks/runner/status", nil, nil, &resp); err != nil {
+		resp, err := sdkRead[types.RunnerStatusResponse](ctx, client, func(ctx context.Context, sc *brain.Client) (any, error) {
+			return sc.Runners().Status(ctx)
+		})
+		if err != nil {
 			return "", err
 		}
 		return formatRunnerStatus(resp, StringArg(args, "project", "")), nil
@@ -50,8 +51,10 @@ func registerBrainRunners(s *Server, client *APIClient) {
 			"limit":    {Type: "number", Description: "Maximum runners to show"},
 		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		var resp types.RunnerListResponse
-		if err := client.Request(ctx, http.MethodGet, "/runners", nil, nil, &resp); err != nil {
+		resp, err := sdkRead[types.RunnerListResponse](ctx, client, func(ctx context.Context, sc *brain.Client) (any, error) {
+			return sc.Runners().List(ctx)
+		})
+		if err != nil {
 			return "", err
 		}
 		resp.Runners = filterRunners(resp.Runners, args)
@@ -75,8 +78,10 @@ func registerBrainRunnerGet(s *Server, client *APIClient) {
 		if runnerID == "" {
 			return "", fmt.Errorf("runner_id is required")
 		}
-		var resp types.RunnerInfo
-		if err := client.Request(ctx, http.MethodGet, "/runners/"+url.PathEscape(runnerID), nil, nil, &resp); err != nil {
+		resp, err := sdkRead[types.RunnerInfo](ctx, client, func(ctx context.Context, sc *brain.Client) (any, error) {
+			return sc.Runners().Get(ctx, runnerID)
+		})
+		if err != nil {
 			return "", err
 		}
 		return formatRunner(resp), nil
@@ -98,8 +103,10 @@ func registerBrainRunnerInstances(s *Server, client *APIClient) {
 		if runnerID == "" {
 			return "", fmt.Errorf("runner_id is required")
 		}
-		var resp types.InstanceListResponse
-		if err := client.Request(ctx, http.MethodGet, "/runners/"+url.PathEscape(runnerID)+"/instances", nil, nil, &resp); err != nil {
+		resp, err := sdkRead[types.InstanceListResponse](ctx, client, func(ctx context.Context, sc *brain.Client) (any, error) {
+			return sc.Runners().Instances(ctx, runnerID)
+		})
+		if err != nil {
 			return "", err
 		}
 		resp.Instances = filterInstances(resp.Instances, args)
@@ -119,8 +126,10 @@ func registerBrainRunnerInstancesAll(s *Server, client *APIClient) {
 			"project":   {Type: "string", Description: "Optional client-side project_id filter"},
 		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		var resp types.InstanceListResponse
-		if err := client.Request(ctx, http.MethodGet, "/instances", nil, nil, &resp); err != nil {
+		resp, err := sdkRead[types.InstanceListResponse](ctx, client, func(ctx context.Context, sc *brain.Client) (any, error) {
+			return sc.Runners().AllInstances(ctx)
+		})
+		if err != nil {
 			return "", err
 		}
 		resp.Instances = filterInstances(resp.Instances, args)

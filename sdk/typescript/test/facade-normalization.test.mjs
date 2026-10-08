@@ -16,13 +16,21 @@ for (const member of client.members) {
     for (const method of member.initializer.arguments[0].properties) signatures.set(`${member.name.getText(source)}.${method.name.getText(source)}`,method.initializer.parameters);
   }
 }
-const unsupported = new Set(['entries.iterate','events.stream','attachments.upload','attachments.download']);
+// Runner/control/dispatch operations are deliberately absent from the facade:
+// dispatch dials are server-wide writes and control.* is code execution on a
+// runner host, so no script mapping exists for any of them (reads included).
+const runnerControl = ['runners.status','runners.list','runners.get','runners.instances','runners.allInstances',
+  'dispatch.pauseAll','dispatch.resumeAll','dispatch.pauseProject','dispatch.resumeProject','dispatch.pauseFeature','dispatch.resumeFeature','dispatch.pauseProjectAutomations','dispatch.resumeProjectAutomations',
+  'control.sendPrompt','control.abortSession','control.respondPermission','control.spawnInstance','control.killInstance',
+  'tasks.dispatchLease','tasks.placementReasons','scheduler.status'];
+const unsupported = new Set(['entries.iterate','events.stream','attachments.upload','attachments.download',...runnerControl]);
 const operation = name => ({health:'health.get',search:'search.query',inject:'search.inject'})[name] ?? name;
 const plain = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 const fixedError = code => e => e.code===code && e.message===code && Object.getPrototypeOf(e)===null;
 
 test('pure facade maps each actual SDK positional argument and default without dispatch', () => {
-  assert.equal(signatures.size,105);
+  assert.equal(signatures.size,126);
+  for (const name of runnerControl) assert.ok(signatures.has(name),`public SDK lacks ${name}`);
   for (const [name,parameters] of signatures) {
     if (unsupported.has(name)) {
       assert.throws(()=>normalize(name,[]),fixedError('unsupported_operation'),name);

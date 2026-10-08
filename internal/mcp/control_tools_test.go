@@ -185,14 +185,16 @@ func TestControlTools_RequestMethodsPathsBodiesAndFormatting(t *testing.T) {
 	}
 
 	want := []recordedRequest{
-		{Method: "POST", Path: "/api/v1/tasks/runner/pause/brain", Body: "{}"},
-		{Method: "POST", Path: "/api/v1/tasks/runner/resume/brain", Body: "{}"},
-		{Method: "POST", Path: "/api/v1/tasks/runner/automations/pause/brain", Body: "{}"},
-		{Method: "POST", Path: "/api/v1/tasks/runner/automations/resume/brain", Body: "{}"},
-		{Method: "POST", Path: "/api/v1/tasks/runner/pause", Body: "{}"},
-		{Method: "POST", Path: "/api/v1/tasks/runner/resume", Body: "{}"},
+		// Dial and abort POSTs carry no body: the handlers read none (OpenAPI
+		// declares no requestBody); the legacy client sent an ignored {}.
+		{Method: "POST", Path: "/api/v1/tasks/runner/pause/brain", Body: ""},
+		{Method: "POST", Path: "/api/v1/tasks/runner/resume/brain", Body: ""},
+		{Method: "POST", Path: "/api/v1/tasks/runner/automations/pause/brain", Body: ""},
+		{Method: "POST", Path: "/api/v1/tasks/runner/automations/resume/brain", Body: ""},
+		{Method: "POST", Path: "/api/v1/tasks/runner/pause", Body: ""},
+		{Method: "POST", Path: "/api/v1/tasks/runner/resume", Body: ""},
 		{Method: "POST", Path: "/api/v1/control/runners/runner-1/instances/inst-1/sessions/ses-1/prompt", Body: `{"agent":"dev","model":{"modelID":"claude","providerID":"anthropic"},"text":"continue"}`},
-		{Method: "POST", Path: "/api/v1/control/runners/runner-1/instances/inst-1/sessions/ses-1/abort", Body: "{}"},
+		{Method: "POST", Path: "/api/v1/control/runners/runner-1/instances/inst-1/sessions/ses-1/abort", Body: ""},
 		{Method: "POST", Path: "/api/v1/control/runners/runner-1/instances/inst-1/sessions/ses-1/permissions/perm-1", Body: `{"response":"always"}`},
 		{Method: "POST", Path: "/api/v1/control/runners/runner-1/instances", Body: `{"agent":"dev","model":"anthropic/claude","title":"Scratch","workdir":"/tmp/brain"}`},
 		{Method: "DELETE", Path: "/api/v1/control/runners/runner-1/instances/inst-new", Body: ""},
@@ -251,5 +253,25 @@ func TestControlTools_ValidationAndConfirmation(t *testing.T) {
 	}
 	if hitServer {
 		t.Fatal("invalid validation cases made a network call")
+	}
+}
+
+func TestProxiedSuccessReadsOpenCodeReplies(t *testing.T) {
+	for _, tc := range []struct {
+		raw     string
+		want    bool
+		wantErr string
+	}{
+		{"true", true, ""},
+		{"false", false, ""},
+		{"", false, ""},
+		{`{"success":true}`, true, ""},
+		{`{}`, false, ""},
+		{`"ok"`, false, "decode response: json: cannot unmarshal string into Go value of type mcp.controlSuccessResponse"},
+	} {
+		got, err := proxiedSuccess([]byte(tc.raw))
+		if got != tc.want || (err == nil) != (tc.wantErr == "") || (err != nil && err.Error() != tc.wantErr) {
+			t.Errorf("proxiedSuccess(%q) = %t, %v; want %t, %q", tc.raw, got, err, tc.want, tc.wantErr)
+		}
 	}
 }

@@ -1,0 +1,319 @@
+# Automation Scheduling Design
+
+## Goal
+
+Make automations the primary way to run recurring and calendar-driven work, so
+that one shared definition (for example Dream Consolidation) can:
+
+- run on a real interval ("every 4 days"), not only cron approximations;
+- spread its per-project runs instead of firing every project in the same tick;
+- be customized per project (schedule, agent, model) without copying the prompt;
+- follow a trading-market calendar or a personal calendar (Google, via iCal);
+- start, expire, or stop after a number of runs.
+
+## Background
+
+Brain has three schedulers today:
+
+| Scheduler | Evaluated by | Model | Code |
+|---|---|---|---|
+| Scheduled task | Runner, for watched projects | One task re-armed to `pending`; history in `runs[]` | `internal/runner/schedule.go` |
+| Automation (cron) | API server, every minute | Rule that creates a new task per firing | `internal/service/automation_service.go` |
+| Reminder | API server | `repeat: daily/weekly/monthly/yearly` | `internal/types/reminder.go` |
+
+Problems this design addresses:
+
+1. A global cron automation (the built-in Dream Consolidation) fans out to every
+   matching project **in the same tick**, with one schedule and one agent for all
+   of them. The only per-project alternatives are separate entries that duplicate
+   the prompt, or the deprecated `dream_enable` monitor tasks — which can run in
+   addition to the global entry and dream a project twice.
+2. Automation cron is stateless: `schedule.Matches(now)` once a minute. A missed
+   minute (restart, outage) loses the run with no record.
+3. "Every N days" is not expressible: `*/N` in day-of-month resets at month end.
+4. No calendar awareness (market holidays, personal calendars).
+5. Automations have no `starts_at`, `expires_at`, or `max_runs` (scheduled tasks do).
+6. `pkg/cron` ANDs day-of-month and day-of-week when both are restricted; standard
+   cron ORs them.
+
+Related Brain records: cron design decision `owyrguh4` (scheduled tasks: one task,
+many runs — unchanged by this design), readiness report `m3uilnd5`.
+
+## Approaches considered
+
+- **A. Automations become the primary scheduler (chosen).** Extend automation
+  triggers with a shared schedule spec, lifecycle, per-project inheritance, and
+  calendars. Scheduled tasks later reuse the evaluator.
+- **B. Per-project scheduled tasks from a template.** Revive the monitor model.
+  Rejected: runner-only evaluation (fires only while a runner watches the project),
+  no event triggers, copies drift, and it reverses the monitors → automations
+  migration.
+- **C. Minimal patches** (lifecycle fields, `cooldown` as an interval, a jitter
+  field, webhooks for market days). Rejected: leaves no per-project override, so
+  the dream problems (duplicated prompts, double runs) remain.
+
+## Decisions
+
+1. Automations are the primary scheduler. Scheduled tasks remain (decision
+   `owyrguh4` stands) and adopt the shared evaluator in a later phase.
+2. Scheduling is **slot-based**: each schedule yields scheduled instants (slots);
+   an automation fires once per slot per target project.
+3. "Last handled slot" is derived from automation run audits (a new structured
+   `scheduled_for` field), cached in memory. No new state table, no writes to the
+   automation entry, and it survives reindex and database-authoritative storage.
+4. Missed slots: the latest missed slot fires once on recovery by default; older
+   slots are never replayed. Paused/skipped slots count as handled.
+5. Per-project customization uses **bindings**: a project-owned automation with
+   `extends: <global id>` that overrides selected fields. One level only.
+6. Calendar sources are configured **only in server config**, referenced by name.
+   Secret iCal URLs never enter Brain entries.
+7. Google Calendar (and other providers) are read via the **secret iCal URL**,
+   polled. Google OAuth/push is out of scope.
+8. A new `re:` filter form (RE2) is added to the shared filter matcher.
+9. Day-of-month + day-of-week switches to standard cron OR semantics, with a
+   startup report of affected entries.
+
+## Model
+
+Each automation answers three questions:
+
+| Question | Fields |
+|---|---|
+| **When** does it fire? | Clock: `schedule` (cron) or `every` + `at`, with `timezone`, `stagger`, `catch_up`. Calendar event: `type: calendar` + `match` + `at` + `offset` |
+| **Which days count?** | `calendar` (built-in day calendar), `skip_if_event`, `only_if_event` |
+| **For how long?** | Top-level `starts_at`, `expires_at`, `max_runs` (all trigger types) |
+| **For which projects, and how?** | `filter.project` selects the default set; project bindings (`extends`) override or opt out |
+
+All new fields are siblings of existing ones; current entries need no change.
+
+```yaml
+# global/automation/dream-consolidation.md
+type: automation
+trigger:
+  type: cron
+  schedule: "0 3 * * *"          # or: every: 4d, at: "03:00"
+  timezone: America/New_York
+  stagger: 2h
+  filter: { project: "*" }
+expires_at: 2027-06-30T00:00:00-04:00   # optional
+action: { type: prompt, agent: general, direct_prompt: ... }
+```
+
+```yaml
+# projects/hindsight/automation/dream.md
+type: automation
+extends: <dream-consolidation id>
+trigger: { every: 2d, at: "01:00" }
+action:
+  agent: explore
+  prompt_append: "Weight decisions about the ingestion pipeline more heavily."
+```
+
+## Schedule evaluation
+
+Every minute, for each automation and target project:
+
+```
+slot = latest slot <= now          (stagger applied, closed days skipped)
+due  = slot > last_handled(automation, project)
+       and now - slot <= catch_up
+```
+
+- **Cron:** latest slot via a new `pkg/cron` `PrevAtOrBefore`.
+- **Intervals:** `every: Nd` + `at: "HH:MM"` steps calendar days in the
+  automation's timezone from the anchor (`starts_at`, else the entry's created
+  date), so DST never shifts the time of day. Sub-day intervals (`every: 90m`) add
+  absolute durations. "Every other Monday" is `every: 14d` with a Monday `starts_at`.
+- **Stagger:** `offset = hash(automation ID + project) mod stagger`. Stable per
+  project; unaffected by other projects being added or removed.
+- **Catch-up:** default fires the latest missed slot once, any lateness.
+  `catch_up: <duration>` caps lateness; `catch_up: none` disables it. Slots
+  skipped for pause, `max_concurrent`, or `cooldown` are recorded as handled.
+- **State:** run audits gain `scheduled_for`. `last_handled` is the newest
+  `scheduled_for` per (automation, project), loaded at startup and cached.
+- **Dedup:** generated tasks get `generated_key: sched:<automation>:<project>:<slot>`,
+  so a slot can never produce two tasks.
+- **Upgrade safety:** an automation with no audit history starts its baseline at
+  the upgrade, so deploying this does not trigger catch-up runs.
+- **Day filters** run in the slot step: a slot on a closed day is skipped, not
+  shifted.
+
+## Per-project inheritance (`extends`)
+
+Bindings are field-level overlays: unset fields inherit from the parent.
+
+| Overridable | Not overridable |
+|---|---|
+| Timing: `schedule`, `every`, `at`, `timezone`, `stagger`, `calendar`, `skip_if_event`, `only_if_event`, `catch_up` | `trigger.type`, `action.type` (create a separate automation instead) |
+| Execution: `agent`, `model`, `executor`, `target_workdir`, `execution_mode`, `timeout` | `direct_prompt` (use `prompt_append`) |
+| Lifecycle: `starts_at`, `expires_at`, `max_runs`, `status` | `filter.project` (a binding is scoped to its own project) |
+
+Target set for a global parent:
+
+```
+targets = projects matching parent filter.project
+        + projects with an active binding      (opt in)
+        - projects with a non-active binding   (opt out: inactive, expired, completed)
+```
+
+Rules:
+
+- The parent is the master switch: a disabled or paused parent stops all projects.
+- At most one binding per (parent, project); a second is rejected on save.
+- One level: a binding cannot extend a binding.
+- A deleted parent leaves its bindings inert; the PWA flags them as broken.
+- Scheduler and event loops skip entries with `extends`; bindings are read only
+  while resolving a parent's effective config for a project.
+- History, dedup keys, `cooldown`, `max_concurrent`, and the stagger offset stay
+  keyed to (parent, project). Generated tasks keep `generated_by: automation:<parent>`
+  and add `binding: <id>`.
+- Bindings work for event-triggered globals too (resolved per project at match time).
+- `GET /automations/{id}/effective?project=P` returns the merged config. The PWA
+  offers "Customize for this project" and "Turn off here", and labels each field
+  inherited or overridden.
+
+## Calendars
+
+### Sources
+
+Configured in server config only; automations reference them by name. This keeps
+secret URLs out of Brain and prevents entry authors from making the server fetch
+arbitrary URLs.
+
+```yaml
+calendars:
+  work:
+    type: ics
+    url_env: BRAIN_CAL_WORK_ICS      # or url_file: /run/secrets/cal_work
+    poll: 5m                         # minimum 1m
+  xnys:
+    type: builtin
+    market: XNYS
+    extra_closed: ["2025-01-09"]
+```
+
+### ICS poller (`internal/calendar`)
+
+- Conditional GET (ETag / If-Modified-Since), timeout, and size cap.
+- Parses VEVENTs and expands RRULE/RDATE/EXDATE and RECURRENCE-ID overrides over
+  [now − 1d, now + 14d]. Drops cancelled events; recognizes all-day events; maps
+  TZIDs to IANA zones.
+- Keeps the last good snapshot in memory and in the data directory (not as entries).
+- On repeated failure it serves the last good snapshot for 24h, then marks the
+  source stale and raises an attention notification.
+- `GET /calendars` reports name, type, last fetch, event count, and last error.
+  It never returns the URL.
+
+### Built-in XNYS (NYSE/NASDAQ)
+
+Weekends closed. Holidays: New Year's Day, Martin Luther King Jr. Day, Washington's
+Birthday, Good Friday (Gregorian Easter computus), Memorial Day, Juneteenth (from
+2022), Independence Day, Labor Day, Thanksgiving, Christmas. Saturday holidays are
+observed Friday and Sunday holidays Monday, except New Year's Day on a Saturday,
+which is not observed. Known historic one-off closures ship in code; `extra_closed`
+and `extra_open` cover new ones without a release. Early closes are out of scope.
+
+### Day filters
+
+Evaluated on the slot's local date in the automation's timezone.
+
+- `calendar: xnys`: slot allowed only on days the built-in calendar is open.
+  Only built-in day calendars are valid here.
+- `skip_if_event` / `only_if_event`: `{ calendar: work, title: "re:..." }`. A
+  multi-day event counts on every day it covers.
+
+### Calendar event trigger
+
+```yaml
+trigger:
+  type: calendar
+  calendar: work
+  match:
+    title: "re:(?i)^1:1 (?P<person>.+)$"
+  at: start          # start | end
+  offset: -15m       # within ±7d
+```
+
+- `match` keys: `title`, `description`, `location`, `all_day`, using the shared
+  filter forms (`*`, `in:`, `has:`, `re:`).
+- Named capture groups become `{{.Match.<name>}}`. Event fields are available as
+  `{{.Event.Title}}`, `.Start`, `.End`, `.Location`, `.Description`, `.Calendar`,
+  `.AllDay`.
+- Slot = occurrence start or end + `offset`. Default `catch_up: 1h`.
+- Dedup key `cal:<automation>:<uid>:<occurrence-start>`: each occurrence fires
+  once; a moved meeting fires at its new time; a cancelled one does not fire.
+- Runs in the automation's own project; never fans out; `extends` is invalid.
+- Validation on save: unknown calendar name, regex that fails to compile, or
+  `offset` outside ±7d are rejected.
+- **Prompt injection:** invite senders control event text. `Description` and
+  `Location` render inside a block labelled as untrusted calendar data, and the
+  docs tell prompt authors to treat it as data.
+- Known limitation: ICS does not reliably expose your own RSVP, so declined
+  meetings still match.
+
+## Lifecycle
+
+Applies to every trigger type.
+
+| Field | Behavior |
+|---|---|
+| `starts_at` | Nothing evaluated before it; also the `every` anchor |
+| `expires_at` | After it, status becomes `completed` with an "Expired" note (same as scheduled tasks) |
+| `max_runs` | Counted per (automation, project); only runs that produced work count. A project-owned automation becomes `completed`; for a global parent, only that project stops |
+
+## Migration and compatibility
+
+1. New fields are optional. Behavior changes only for catch-up (baseline at
+   upgrade) and day-of-month + day-of-week (OR semantics). At startup, automations
+   and scheduled tasks whose meaning changes are logged and raised as an attention
+   notification.
+2. `brain migrate automations` (dry run first) converts enabled
+   `monitor:dream:project:P` tasks into bindings that keep their schedule, agent,
+   and model, then disables the monitor schedules.
+3. The shipped dream template gains `stagger: 2h`; the migrate command offers to
+   apply it to an installed copy.
+4. New fields and endpoints (`/automations/{id}/effective`, `/calendars`) are
+   added to `api/openapi.yaml` and `api/operation-policy.yaml` with explicit
+   deltas to `internal/sdkcontract` and source-freeze guards (no rebaselines).
+   MCP save/update accept the new fields.
+5. Run audits gain a structured `scheduled_for` field (not parsed from the body).
+
+## Shared evaluator
+
+`pkg/schedule` owns "when": cron, `every`/`at`, timezone, stagger, day filters,
+and catch-up, exposing `LatestSlot` and `NextSlot`. It depends on `pkg/cron`
+(plus `PrevAtOrBefore`) and a calendar interface. Automations use it from phase 2;
+scheduled tasks adopt it in phase 6. Reminders keep their simple repeat.
+
+## Testing
+
+- `pkg/schedule`: table tests with fixed clocks across DST transitions (both
+  directions), month ends, and leap years; property tests that `NextSlot` and
+  `LatestSlot` agree; stagger stability.
+- XNYS: golden comparison with NYSE's published holiday tables for 2024–2027.
+- ICS: fixture feeds (RRULE, EXDATE, RECURRENCE-ID, all-day, cancelled, TZID);
+  `httptest` server for conditional GET, failures, staleness, and the notification.
+- Automation service with a fake clock: catch-up after downtime, no burst after
+  unpause, upgrade baseline, binding precedence and opt-in/out, dedup, expiry.
+- Verification: `just check`, plus one end-to-end run against a real Google
+  secret iCal feed.
+
+## Phases
+
+Each phase ships independently.
+
+1. Automation lifecycle (`starts_at`, `expires_at`, `max_runs`) and the `re:` filter form.
+2. `pkg/schedule`: slots, `every`/`at`, stagger, catch-up, `scheduled_for`, and
+   the day-of-month/day-of-week fix. Dreams stop firing all at once.
+3. `extends` bindings, effective-config API, PWA customization, and dream-monitor
+   migration. Each project gets its own dream schedule and agent.
+4. Built-in XNYS day filter.
+5. ICS sources: poller, `skip_if_event` / `only_if_event`, `type: calendar`
+   trigger, attention notifications.
+6. Later: scheduled tasks adopt `pkg/schedule`.
+
+## Out of scope
+
+Market early closes, declined-meeting detection, Google OAuth/push, per-tenant
+calendar secrets, full prompt replacement in bindings, multi-level inheritance,
+and replaying more than one missed slot.

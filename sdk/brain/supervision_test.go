@@ -103,11 +103,17 @@ func TestCommandDocumentsAreRequiredAndValidJSON(t *testing.T) {
 	c, seen := recordingClient(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{}`)) })
 	ctx, o := context.Background(), brain.RequestOptions{}
 	for name, call := range map[string]func() error{
-		"operation nil":   func() error { _, err := c.Supervision().SubmitOperation(ctx, nil, o); return err },
-		"checkpoint nil":  func() error { _, err := c.Supervision().UpdateCheckpoint(ctx, nil, o); return err },
-		"budget invalid":  func() error { _, err := c.Supervision().UpdateBudget(ctx, brain.ExecutionBudgetCommand(`{"action":`), o); return err },
-		"delivery empty":  func() error { _, err := c.Tasks().SendDeliveryCommand(ctx, "p", "t", json.RawMessage{}, o); return err },
-		"delivery broken": func() error { _, err := c.Tasks().SendDeliveryCommand(ctx, "p", "t", json.RawMessage(`nope`), o); return err },
+		"operation nil":  func() error { _, err := c.Supervision().SubmitOperation(ctx, nil, o); return err },
+		"checkpoint nil": func() error { _, err := c.Supervision().UpdateCheckpoint(ctx, nil, o); return err },
+		"budget invalid": func() error {
+			_, err := c.Supervision().UpdateBudget(ctx, brain.ExecutionBudgetCommand(`{"action":`), o)
+			return err
+		},
+		"delivery empty": func() error { _, err := c.Tasks().SendDeliveryCommand(ctx, "p", "t", json.RawMessage{}, o); return err },
+		"delivery broken": func() error {
+			_, err := c.Tasks().SendDeliveryCommand(ctx, "p", "t", json.RawMessage(`nope`), o)
+			return err
+		},
 	} {
 		var be *brain.Error
 		if err := call(); !errors.As(err, &be) || be.Code != "invalid_request" {

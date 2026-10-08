@@ -48,7 +48,7 @@ import (
 type egressGraph struct {
 	edges     map[string]map[string]bool
 	direct    map[string]map[string]bool // static calls to a concrete function or method (no interface dispatch)
-	sigs      map[string]string // node -> signature (without receiver)
+	sigs      map[string]string          // node -> signature (without receiver)
 	callers   map[string]map[string]bool
 	declared  map[string]bool            // module FuncDecls and literals
 	enclosing map[string]string          // literal node -> enclosing declaration (stable review name)

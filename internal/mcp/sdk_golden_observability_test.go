@@ -2,10 +2,10 @@ package mcp_test
 
 import (
 	"bytes"
-	"sort"
-	"strings"
 	"encoding/json"
 	"net/http"
+	"sort"
+	"strings"
 	"testing"
 )
 

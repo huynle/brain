@@ -19,8 +19,8 @@ import (
 //     ("... for 2024, 2025, and 2026"; its 2026 column matches the live page).
 //
 // The 2024-12-24 snapshot predates the 2025-01-09 National Day of Mourning
-// closure, which is a one-off closure (see oneOffClosures) and not part of
-// the rule-based table.
+// closure; that row is a shipped one-off closure, sourced in
+// oneOffClosureSources below.
 var nyseGolden = map[int][]struct{ date, name string }{
 	2024: {
 		{"2024-01-01", "New Year's Day"},
@@ -36,6 +36,7 @@ var nyseGolden = map[int][]struct{ date, name string }{
 	},
 	2025: {
 		{"2025-01-01", "New Year's Day"},
+		{"2025-01-09", "National Day of Mourning for President Jimmy Carter"},
 		{"2025-01-20", "Martin Luther King, Jr. Day"},
 		{"2025-02-17", "Washington's Birthday"},
 		{"2025-04-18", "Good Friday"},
@@ -244,5 +245,90 @@ func TestXNYS_Holidays_SortedWeekdaysWithinYear(t *testing.T) {
 				t.Errorf("IsOpen(%v) = true for listed holiday %q", h.Date, h.Name)
 			}
 		}
+	}
+}
+
+// oneOffClosureSources lists every shipped unscheduled full-day closure since
+// 2000 with the source that confirms it (accessed 2026-10-09):
+//
+//   - 2001-09-11..14: NYSE did not open after the September 11 attacks and
+//     reopened Monday 2001-09-17 ("The History of NYSE",
+//     https://www.nyse.com/history-of-nyse).
+//   - 2004-06-11: Nasdaq IR, "NASDAQ Will Be Closed Friday, June 11, 2004 In
+//     Remembrance of President Reagan" (NYSE closed the same day; Executive
+//     Order 13343 closed federal offices),
+//     https://ir.nasdaq.com/news-releases/news-release-details/nasdaq-will-be-closed-friday-june-11-2004-remembrance-president
+//   - 2007-01-02: Reuters, "Exchanges mark Ford's death with January 2 close",
+//     https://www.reuters.com/article/business/exchanges-mark-fords-death-with-january-2-close-idUSN29240994
+//   - 2012-10-29..30: NASDAQ OMX Equity Trader Alert 2012-44,
+//     https://www.nasdaqtrader.com/TraderNews.aspx?id=ETA2012-44, and BBC,
+//     "Hurricane Sandy to close US markets for second day",
+//     https://www.bbc.com/news/business-20120344 (reopened 2012-10-31).
+//   - 2018-12-05: ICE press release, "New York Stock Exchange to Honor
+//     President George H. W. Bush",
+//     https://ir.theice.com/press/news-details/2018/New-York-Stock-Exchange-to-Honor-President-George-H-W-Bush/default.aspx
+//   - 2025-01-09: ICE press release, "The New York Stock Exchange Will Close
+//     Markets on January 9 to Honor the Passing of Former President Jimmy
+//     Carter on National Day of Mourning",
+//     https://ir.theice.com/press/news-details/2024/The-New-York-Stock-Exchange-Will-Close-Markets-on-January-9-to-Honor-the-Passing-of-Former-President-Jimmy-Carter-on-National-Day-of-Mourning/default.aspx
+var oneOffClosureSources = []struct{ date, name string }{
+	{"2001-09-11", "September 11 attacks"},
+	{"2001-09-12", "September 11 attacks"},
+	{"2001-09-13", "September 11 attacks"},
+	{"2001-09-14", "September 11 attacks"},
+	{"2004-06-11", "National Day of Mourning for President Ronald Reagan"},
+	{"2007-01-02", "National Day of Mourning for President Gerald R. Ford"},
+	{"2012-10-29", "Hurricane Sandy"},
+	{"2012-10-30", "Hurricane Sandy"},
+	{"2018-12-05", "National Day of Mourning for President George H. W. Bush"},
+	{"2025-01-09", "National Day of Mourning for President Jimmy Carter"},
+}
+
+// TestOneOffClosures_ExactlyTheSourcedList keeps the shipped list and the
+// sourced list in lockstep, so no closure ships without a citation.
+func TestOneOffClosures_ExactlyTheSourcedList(t *testing.T) {
+	var want []Holiday
+	for _, oc := range oneOffClosureSources {
+		want = append(want, Holiday{Date: mustDate(t, oc.date), Name: oc.name})
+	}
+	if !slices.Equal(oneOffClosures, want) {
+		t.Errorf("oneOffClosures = %v\nwant %v", oneOffClosures, want)
+	}
+}
+
+func TestXNYS_OneOffClosures(t *testing.T) {
+	c := mustXNYS(t, XNYSOptions{})
+	for _, oc := range oneOffClosureSources {
+		t.Run(oc.date, func(t *testing.T) {
+			d := mustDate(t, oc.date)
+			if c.IsOpen(d) {
+				t.Errorf("IsOpen(%v) = true, want false (%s)", d, oc.name)
+			}
+			want := Holiday{Date: d, Name: oc.name}
+			if !slices.Contains(c.Holidays(d.Year), want) {
+				t.Errorf("Holidays(%d) = %v, want it to contain %v", d.Year, c.Holidays(d.Year), want)
+			}
+		})
+	}
+}
+
+func TestXNYS_OneOffClosures_NeighboursOpen(t *testing.T) {
+	c := mustXNYS(t, XNYSOptions{})
+	for _, s := range []string{
+		"2001-09-10", "2001-09-17", // reopened Monday after 9/11
+		"2004-06-10", "2004-06-14",
+		"2007-01-03", // Jan 1 New Year's, Jan 2 Ford, Jan 3 open
+		"2012-10-26", "2012-10-31",
+		"2018-12-04", "2018-12-06",
+		"2025-01-08", "2025-01-10",
+	} {
+		if d := mustDate(t, s); !c.IsOpen(d) {
+			t.Errorf("IsOpen(%v) = false, want true", d)
+		}
+	}
+	// 2007 has New Year's Day and the Ford closure back to back, in order.
+	got := c.Holidays(2007)
+	if len(got) < 2 || got[0].Date != (Date{2007, time.January, 1}) || got[1].Date != (Date{2007, time.January, 2}) {
+		t.Errorf("Holidays(2007) starts %v, want 2007-01-01 then 2007-01-02", got[:min(2, len(got))])
 	}
 }

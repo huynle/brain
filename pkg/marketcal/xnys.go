@@ -1,6 +1,9 @@
 package marketcal
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // Holiday is a weekday on which the exchange is closed for the full day.
 type Holiday struct {
@@ -29,7 +32,7 @@ func (c *XNYS) IsOpen(d Date) bool {
 	if wd := d.Weekday(); wd == time.Saturday || wd == time.Sunday {
 		return false
 	}
-	for _, h := range ruleHolidays(d.Year) {
+	for _, h := range c.Holidays(d.Year) {
 		if h.Date == d {
 			return false
 		}
@@ -38,7 +41,33 @@ func (c *XNYS) IsOpen(d Date) bool {
 }
 
 // Holidays lists the full-day weekday closures in year, in date order.
-func (c *XNYS) Holidays(year int) []Holiday { return ruleHolidays(year) }
+func (c *XNYS) Holidays(year int) []Holiday {
+	hs := ruleHolidays(year)
+	for _, h := range oneOffClosures {
+		if h.Date.Year == year {
+			hs = append(hs, h)
+		}
+	}
+	slices.SortFunc(hs, func(a, b Holiday) int {
+		return a.Date.midnightUTC().Compare(b.Date.midnightUTC())
+	})
+	return hs
+}
+
+// oneOffClosures are the unscheduled full-day NYSE closures since 2000.
+// Sources for each date are cited in xnys_test.go (oneOffClosureSources).
+var oneOffClosures = []Holiday{
+	{Date{2001, time.September, 11}, "September 11 attacks"},
+	{Date{2001, time.September, 12}, "September 11 attacks"},
+	{Date{2001, time.September, 13}, "September 11 attacks"},
+	{Date{2001, time.September, 14}, "September 11 attacks"},
+	{Date{2004, time.June, 11}, "National Day of Mourning for President Ronald Reagan"},
+	{Date{2007, time.January, 2}, "National Day of Mourning for President Gerald R. Ford"},
+	{Date{2012, time.October, 29}, "Hurricane Sandy"},
+	{Date{2012, time.October, 30}, "Hurricane Sandy"},
+	{Date{2018, time.December, 5}, "National Day of Mourning for President George H. W. Bush"},
+	{Date{2025, time.January, 9}, "National Day of Mourning for President Jimmy Carter"},
+}
 
 // ruleHolidays returns the rule-based NYSE holidays of year at their
 // observed dates, in date order.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strconv"
 
 	"github.com/huynle/brain-api/sdk/brain"
@@ -146,18 +145,16 @@ func registerSupervisorReads(s *Server, client *APIClient) {
 			if manual, ok := args["manual"].(bool); ok && manual {
 				query["manual"] = "true"
 			}
-			if path == "capabilities" {
-				var out json.RawMessage
-				if err := client.Request(ctx, http.MethodGet, "/supervision/"+path, nil, query, &out); err != nil {
-					return "", err
-				}
-				return string(out), nil
-			}
 			out, err := sdkRaw(ctx, client, func(ctx context.Context, sc *brain.Client) error {
 				var err error
-				if path == "snapshot" {
+				switch path {
+				case "capabilities":
+					// The registry read takes no parameters; the shared
+					// project/limit arguments are not sent.
+					_, err = sc.Supervision().Capabilities(ctx)
+				case "snapshot":
 					_, err = sc.Supervision().Snapshot(ctx, legacyQuery(query))
-				} else {
+				default:
 					_, err = sc.Supervision().DispatchPreview(ctx, legacyQuery(query))
 				}
 				return err

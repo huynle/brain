@@ -319,7 +319,7 @@ ERROR
 Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/p/t/delivery": dial tcp <LOOPBACK>: connect: connection refused
 === dead capabilities (supervisor_capabilities)
 ERROR
-Error: request failed: Get "http://<LOOPBACK>/api/v1/supervision/capabilities?limit=5&manual=true&project_id=p": dial tcp <LOOPBACK>: connect: connection refused
+Error: request failed: Get "http://<LOOPBACK>/api/v1/supervision/capabilities": dial tcp <LOOPBACK>: connect: connection refused
 === dead snapshot (supervisor_snapshot)
 ERROR
 Error: request failed: Get "http://<LOOPBACK>/api/v1/supervision/snapshot?limit=50&project_id=p": dial tcp <LOOPBACK>: connect: connection refused

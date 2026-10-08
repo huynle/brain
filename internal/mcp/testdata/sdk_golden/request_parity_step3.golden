@@ -178,8 +178,8 @@
   POST /api/v1/tasks/parity3/<SOLO>/delivery
     auth="Bearer probe3-56" content-type="application/json" accept="application/json" x-brain="" body={"action":"integration","artifact":"abc","evidence_reference":"r","expected_revision":1,"passed":false}
 === supervisor_capabilities {"project":"parity3"} -> OK
-  GET /api/v1/supervision/capabilities?limit=50&project_id=parity3
-    auth="Bearer probe3-57" content-type="application/json" accept="" x-brain="" body=<none>
+  GET /api/v1/supervision/capabilities
+    auth="Bearer probe3-57" content-type="" accept="application/json" x-brain="" body=<none>
 === supervisor_snapshot {"project":"parity3"} -> OK
   GET /api/v1/supervision/snapshot?limit=50&project_id=parity3
     auth="Bearer probe3-58" content-type="" accept="application/json" x-brain="" body=<none>

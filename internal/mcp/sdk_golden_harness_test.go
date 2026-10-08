@@ -208,6 +208,7 @@ type golden struct {
 	mcpURL string
 	vars   map[string]string // value -> placeholder
 	scrubs []scrub
+	post   []func(string) string
 	out    strings.Builder
 }
 
@@ -241,6 +242,9 @@ type scrub struct {
 func (g *golden) scrubRe(re, repl string) {
 	g.scrubs = append(g.scrubs, scrub{regexp.MustCompile(re), repl})
 }
+
+// postProcess applies a whole-transcript normalisation after scrubs.
+func (g *golden) postProcess(fn func(string) string) { g.post = append(g.post, fn) }
 
 // bind registers a dynamic value so it renders as <placeholder>.
 func (g *golden) bind(placeholder, value string) {
@@ -286,6 +290,9 @@ func (g *golden) normalize(s string) string {
 	s = loopbackRe.ReplaceAllString(s, "<LOOPBACK>")
 	for _, sc := range g.scrubs {
 		s = sc.re.ReplaceAllString(s, sc.repl)
+	}
+	for _, fn := range g.post {
+		s = fn(s)
 	}
 	return s
 }

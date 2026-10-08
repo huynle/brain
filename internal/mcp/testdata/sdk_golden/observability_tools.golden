@@ -48,6 +48,28 @@ No events matched.
 Searched <N> buffered event(s) (ring capacity 1000); oldest retained: <TIME>.
 This buffer is in-memory and starts empty after a restart; it is not a durable event log.
 
+=== events for seeded project (events_recent)
+OK
+## Recent Events
+
+Found 1 events:
+
+### entry.created
+- ID: <EVENT_ID>
+- Source: api
+- Timestamp: <TIME>
+- Project: <golden-obs>
+- Task: <TASK_ID>
+- Task path: projects/<golden-obs>/task/<TASK_ID>.md
+- Metadata:
+  - attachment_media_types: 
+  - entry_id: <TASK_ID>
+  - entry_type: task
+  - has_attachment: false
+  - tags: task
+  - title: Observed task
+
+
 === automation runs none (automation_runs)
 OK
 ## Automation Runs

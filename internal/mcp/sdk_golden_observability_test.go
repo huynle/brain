@@ -2,6 +2,8 @@ package mcp_test
 
 import (
 	"bytes"
+	"sort"
+	"strings"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -25,6 +27,22 @@ func seedTask(t *testing.T, apiURL, project, title string) string {
 	return out.ID
 }
 
+func sortMetadataBlocks(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := 0; i < len(lines); i++ {
+		if lines[i] != "- Metadata:" {
+			continue
+		}
+		j := i + 1
+		for j < len(lines) && strings.HasPrefix(lines[j], "  - ") {
+			j++
+		}
+		sort.Strings(lines[i+1 : j])
+		i = j - 1
+	}
+	return strings.Join(lines, "\n")
+}
+
 func TestGolden_ObservabilityTools(t *testing.T) {
 	g := newGolden(t, "observability_tools")
 	project := g.project("golden-obs")
@@ -40,6 +58,11 @@ func TestGolden_ObservabilityTools(t *testing.T) {
 	g.scrubRe(`Searched \d+ buffered`, "Searched <N> buffered")
 	g.call("events invalid type", "events_recent", map[string]any{"type": "automation.run"})
 	g.call("events invalid source", "events_recent", map[string]any{"project_id": project, "source": "martians", "limit": 5})
+	g.scrubRe(`evt_[0-9a-f]+`, "<EVENT_ID>")
+	// formatRecentEvents ranges over the metadata map (random order, before
+	// and after the SDK move); compare the set, not the order.
+	g.postProcess(sortMetadataBlocks)
+	g.call("events for seeded project", "events_recent", map[string]any{"project_id": project, "type": "*", "limit": 5})
 	g.call("automation runs none", "automation_runs", map[string]any{"project": project, "status": "queued", "limit": 5})
 	g.call("automation run unknown", "automation_run_get", map[string]any{"run_id": "nonexistent"})
 	g.call("automation run missing arg", "automation_run_get", map[string]any{})

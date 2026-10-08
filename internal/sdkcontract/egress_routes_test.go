@@ -318,10 +318,23 @@ var reviewedCuts = map[string][]cutEdge{
 	"scheduler.status": {{"(*" + pkgAPI + ".Handler).HandleSchedulerStatus", "(*" + pkgAPI + ".AssistantService).Status"}},
 }
 
+// The cut is sound only while the edge it removes exists solely because the
+// graph expands h.scheduler.Status() to every method named Status: the
+// assistant must not implement the interface, and the handler must not call
+// the assistant's Status itself (that would be the same edge, hidden).
 func TestSchedulerStatusCutIsSound(t *testing.T) {
 	iface := reflect.TypeOf((*api.SchedulerService)(nil)).Elem()
 	if reflect.TypeOf(&api.AssistantService{}).Implements(iface) {
 		t.Fatal("AssistantService now implements api.SchedulerService: the scheduler.status cut is no longer an over-approximation; review its provider effects")
+	}
+	g := sharedEgressGraph(t)
+	for _, c := range reviewedCuts["scheduler.status"] {
+		if g.direct[c.from][c.to] {
+			t.Fatalf("%s calls %s directly: the scheduler.status cut would hide a real call, not an interface over-approximation; review its provider effects", c.from, c.to)
+		}
+		if !g.edges[c.from][c.to] {
+			t.Fatalf("stale scheduler.status cut: no edge %s -> %s", c.from, c.to)
+		}
 	}
 }
 

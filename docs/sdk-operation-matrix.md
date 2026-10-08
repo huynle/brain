@@ -91,7 +91,8 @@ It is a policy-accuracy check, not a full verifier.
 - **Fail-closed rules:** `reminders.ack` is excepted by one reviewed call edge,
   not by token. `scheduler.status` cuts one interface over-approximation edge
   (to `AssistantService.Status`, which cannot implement `api.SchedulerService`;
-  `TestSchedulerStatusCutIsSound` pins that). `TestNoUnreviewedReflectiveCalls` forbids reflective calls
+  `TestSchedulerStatusCutIsSound` pins that, and that the handler has no direct
+  static call to it, which the cut would otherwise hide). `TestNoUnreviewedReflectiveCalls` forbids reflective calls
   outside an allowlist.
 - **Over-approximation rules** (review `c969if7r`):
   - a helper's calls through a function parameter are signature-matched

@@ -3,12 +3,11 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/sdk/brain"
 )
 
 // RegisterFeatureTools registers feature orchestration MCP tools on the server.
@@ -36,8 +35,10 @@ func registerBrainFeatureRunnerCandidates(s *Server, client *APIClient) {
 			return "", fmt.Errorf("provide a 'feature_id'")
 		}
 		var resp types.RunnerCandidatesResponse
-		path := "/tasks/" + url.PathEscape(project) + "/features/" + url.PathEscape(featureID) + "/runner-candidates"
-		if err := client.Request(ctx, http.MethodGet, path, nil, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Features().RunnerCandidates(ctx, project, featureID)
+			return err
+		}); err != nil {
 			return "", err
 		}
 		return formatRunnerCandidates(resp, BoolArg(args, "include_rejected", false)), nil
@@ -86,17 +87,23 @@ func registerBrainFeatures(s *Server, client *APIClient) {
 		InputSchema: InputSchema{Type: "object", Properties: props},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		project := ResolveProject(ctx, args)
-		path := "/tasks/" + url.PathEscape(project) + "/features"
+		readyOnly := BoolArg(args, "ready_only", false)
 		title := fmt.Sprintf("Features for project: %s", project)
 		empty := "No features found"
-		if BoolArg(args, "ready_only", false) {
-			path += "/ready"
+		if readyOnly {
 			title = fmt.Sprintf("Ready features for project: %s", project)
 			empty = "No ready features found"
 		}
 
 		var resp types.FeatureListResponse
-		if err := client.Request(ctx, http.MethodGet, path, nil, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, func(ctx context.Context, sc *brain.Client) error {
+			if readyOnly {
+				_, err := sc.Features().Ready(ctx, project)
+				return err
+			}
+			_, err := sc.Features().List(ctx, project)
+			return err
+		}); err != nil {
 			return "", err
 		}
 		return formatFeatureList(title, empty, resp.Features, IntArg(args, "limit", 50)), nil
@@ -111,7 +118,10 @@ func registerBrainFeatureReady(s *Server, client *APIClient) {
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		project := ResolveProject(ctx, args)
 		var resp types.FeatureListResponse
-		if err := client.Request(ctx, http.MethodGet, "/tasks/"+url.PathEscape(project)+"/features/ready", nil, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Features().Ready(ctx, project)
+			return err
+		}); err != nil {
 			return "", err
 		}
 		return formatFeatureList(fmt.Sprintf("Ready features for project: %s", project), "No ready features found", resp.Features, IntArg(args, "limit", 50)), nil
@@ -132,8 +142,10 @@ func registerBrainFeatureGet(s *Server, client *APIClient) {
 		}
 
 		var resp types.FeatureResponse
-		path := "/tasks/" + url.PathEscape(project) + "/features/" + url.PathEscape(featureID)
-		if err := client.Request(ctx, http.MethodGet, path, nil, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Features().Get(ctx, project, featureID)
+			return err
+		}); err != nil {
 			return "", err
 		}
 		return formatFeatureDetail(project, resp.Feature), nil
@@ -161,19 +173,22 @@ func registerBrainFeatureCheckout(s *Server, client *APIClient) {
 			return "", fmt.Errorf("provide a 'feature_id'")
 		}
 
-		req := types.FeatureCheckoutOptions{
-			ExecutionBranch:    StringArg(args, "execution_branch", ""),
-			MergeTargetBranch:  StringArg(args, "merge_target_branch", ""),
-			MergePolicy:        StringArg(args, "merge_policy", ""),
-			MergeStrategy:      StringArg(args, "merge_strategy", ""),
-			RemoteBranchPolicy: StringArg(args, "remote_branch_policy", ""),
-			OpenPRBeforeMerge:  BoolArg(args, "open_pr_before_merge", false),
-			ExecutionMode:      StringArg(args, "execution_mode", ""),
-			CheckoutMode:       StringArg(args, "checkout_mode", ""),
+		// Unset options stay absent, as the omitempty legacy body had them.
+		req := brain.FeatureCheckoutOptions{
+			ExecutionBranch:    optString(StringArg(args, "execution_branch", "")),
+			MergeTargetBranch:  optString(StringArg(args, "merge_target_branch", "")),
+			MergePolicy:        optString(StringArg(args, "merge_policy", "")),
+			MergeStrategy:      optString(StringArg(args, "merge_strategy", "")),
+			RemoteBranchPolicy: optString(StringArg(args, "remote_branch_policy", "")),
+			OpenPrBeforeMerge:  optTrue(BoolArg(args, "open_pr_before_merge", false)),
+			ExecutionMode:      optString(StringArg(args, "execution_mode", "")),
+			CheckoutMode:       optString(StringArg(args, "checkout_mode", "")),
 		}
 		var resp types.CheckoutFeatureResult
-		path := "/tasks/" + url.PathEscape(project) + "/features/" + url.PathEscape(featureID) + "/checkout"
-		if err := client.Request(ctx, http.MethodPost, path, req, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Features().Checkout(ctx, project, featureID, req, brain.RequestOptions{})
+			return err
+		}); err != nil {
 			return "", err
 		}
 		return formatFeatureCheckout(project, featureID, resp), nil
@@ -200,10 +215,12 @@ func registerBrainFeatureAssign(s *Server, client *APIClient) {
 			return "", fmt.Errorf("provide a 'runner_id'")
 		}
 
-		req := types.FeatureAssignmentRequest{RunnerID: runnerID, Intent: StringArg(args, "intent", ""), Force: BoolArg(args, "force", false)}
+		req := brain.FeatureAssignmentRequest{RunnerId: runnerID, Intent: optString(StringArg(args, "intent", "")), Force: optTrue(BoolArg(args, "force", false))}
 		var resp types.FeatureAssignmentResponse
-		path := "/tasks/" + url.PathEscape(project) + "/features/" + url.PathEscape(featureID) + "/assignment"
-		if err := client.Request(ctx, http.MethodPut, path, req, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Features().Assign(ctx, project, featureID, req, brain.RequestOptions{})
+			return err
+		}); err != nil {
 			return "", err
 		}
 		return formatFeatureAssignment(resp), nil
@@ -224,11 +241,12 @@ func registerBrainFeatureClearAssignment(s *Server, client *APIClient) {
 			return "", fmt.Errorf("provide a 'feature_id'")
 		}
 
-		intent := StringArg(args, "intent", "clear")
-		req := types.ClearFeatureAssignmentRequest{Intent: intent}
+		req := brain.ClearFeatureAssignmentRequest{Intent: StringArg(args, "intent", "clear")}
 		var resp types.FeatureAssignmentResponse
-		path := "/tasks/" + url.PathEscape(project) + "/features/" + url.PathEscape(featureID) + "/assignment/clear"
-		if err := client.Request(ctx, http.MethodPost, path, req, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Features().ClearAssignment(ctx, project, featureID, req, brain.RequestOptions{})
+			return err
+		}); err != nil {
 			return "", err
 		}
 		return formatFeatureAssignment(resp), nil

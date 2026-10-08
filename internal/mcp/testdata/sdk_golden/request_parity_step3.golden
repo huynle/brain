@@ -65,55 +65,55 @@
     auth="Bearer probe3-18" content-type="application/json" accept="application/json" x-brain="" body={"force":false,"injected_context":"ctx","prefer_same_session":true}
 === features {"limit":2,"project":"parity3"} -> OK
   GET /api/v1/tasks/parity3/features
-    auth="Bearer probe3-19" content-type="application/json" accept="" x-brain="" body=<none>
+    auth="Bearer probe3-19" content-type="" accept="application/json" x-brain="" body=<none>
 === features {"project":"parity3","ready_only":true} -> OK
   GET /api/v1/tasks/parity3/features/ready
-    auth="Bearer probe3-20" content-type="application/json" accept="" x-brain="" body=<none>
+    auth="Bearer probe3-20" content-type="" accept="application/json" x-brain="" body=<none>
 === feature_ready {"project":"par ity"} -> OK
   GET /api/v1/tasks/par%20ity/features/ready
-    auth="Bearer probe3-21" content-type="application/json" accept="" x-brain="" body=<none>
+    auth="Bearer probe3-21" content-type="" accept="application/json" x-brain="" body=<none>
 === feature_get {"feature_id":"f 1/x","project":"parity3"} -> ERROR: Error: feature not found
   GET /api/v1/tasks/parity3/features/f%201%2Fx
-    auth="Bearer probe3-22" content-type="application/json" accept="" x-brain="" body=<none>
+    auth="Bearer probe3-22" content-type="" accept="application/json" x-brain="" body=<none>
 === feature_checkout {"feature_id":"f 1/x","project":"parity3"} -> OK
   POST /api/v1/tasks/parity3/features/f%201%2Fx/checkout
-    auth="Bearer probe3-23" content-type="application/json" accept="" x-brain="" body={}
+    auth="Bearer probe3-23" content-type="application/json" accept="application/json" x-brain="" body={}
 === feature_checkout {"checkout_mode":"ai","execution_branch":"b","execution_mode":"current_branch","feature_id":"f 1/x","merge_policy":"prompt_only","merge_strategy":"rebase","merge_target_branch":"main","open_pr_before_merge":true,"project":"parity3","remote_branch_policy":"delete"} -> OK
   POST /api/v1/tasks/parity3/features/f%201%2Fx/checkout
-    auth="Bearer probe3-24" content-type="application/json" accept="" x-brain="" body={"checkout_mode":"ai","execution_branch":"b","execution_mode":"current_branch","merge_policy":"prompt_only","merge_strategy":"rebase","merge_target_branch":"main","open_pr_before_merge":true,"remote_branch_policy":"delete"}
+    auth="Bearer probe3-24" content-type="application/json" accept="application/json" x-brain="" body={"checkout_mode":"ai","execution_branch":"b","execution_mode":"current_branch","merge_policy":"prompt_only","merge_strategy":"rebase","merge_target_branch":"main","open_pr_before_merge":true,"remote_branch_policy":"delete"}
 === feature_assign {"feature_id":"f 1/x","project":"parity3","runner_id":"parity-runner"} -> OK
   PUT /api/v1/tasks/parity3/features/f%201%2Fx/assignment
-    auth="Bearer probe3-25" content-type="application/json" accept="" x-brain="" body={"runner_id":"parity-runner"}
+    auth="Bearer probe3-25" content-type="application/json" accept="application/json" x-brain="" body={"runner_id":"parity-runner"}
 === feature_assign {"feature_id":"f 1/x","force":true,"intent":"reassign","project":"parity3","runner_id":"parity-runner"} -> OK
   PUT /api/v1/tasks/parity3/features/f%201%2Fx/assignment
-    auth="Bearer probe3-26" content-type="application/json" accept="" x-brain="" body={"force":true,"intent":"reassign","runner_id":"parity-runner"}
+    auth="Bearer probe3-26" content-type="application/json" accept="application/json" x-brain="" body={"force":true,"intent":"reassign","runner_id":"parity-runner"}
 === feature_clear_assignment {"feature_id":"f 1/x","project":"parity3"} -> OK
   POST /api/v1/tasks/parity3/features/f%201%2Fx/assignment/clear
-    auth="Bearer probe3-27" content-type="application/json" accept="" x-brain="" body={"intent":"clear"}
+    auth="Bearer probe3-27" content-type="application/json" accept="application/json" x-brain="" body={"intent":"clear"}
 === feature_clear_assignment {"feature_id":"f 1/x","intent":"clear","project":"parity3"} -> ERROR: Error: feature assignment not found
   POST /api/v1/tasks/parity3/features/f%201%2Fx/assignment/clear
-    auth="Bearer probe3-28" content-type="application/json" accept="" x-brain="" body={"intent":"clear"}
+    auth="Bearer probe3-28" content-type="application/json" accept="application/json" x-brain="" body={"intent":"clear"}
 === feature_runner_candidates {"feature_id":"f 1/x","include_rejected":true,"project":"parity3"} -> OK
   GET /api/v1/tasks/parity3/features/f%201%2Fx/runner-candidates
-    auth="Bearer probe3-29" content-type="application/json" accept="" x-brain="" body=<none>
+    auth="Bearer probe3-29" content-type="" accept="application/json" x-brain="" body=<none>
 === runner_candidates {"project":"parity3","task_id":"<SOLO>"} -> OK
   GET /api/v1/tasks/parity3/<SOLO>/runner-candidates
-    auth="Bearer probe3-30" content-type="application/json" accept="" x-brain="" body=<none>
+    auth="Bearer probe3-30" content-type="" accept="application/json" x-brain="" body=<none>
 === runner_candidates {"project":"parity3"} -> OK
   POST /api/v1/tasks/parity3/runner-candidates
-    auth="Bearer probe3-31" content-type="application/json" accept="" x-brain="" body={}
+    auth="Bearer probe3-31" content-type="application/json" accept="application/json" x-brain="" body={}
 === runner_candidates {"execution_mode":"worktree","executor":"pi","feature_id":"f","git_remote":"https://example.test/r.git","machine_affinity":"local","origin_machine_id":"m","project":"parity3","requires_capability":["gpu","x y"],"target_workdir":"/w"} -> OK
   POST /api/v1/tasks/parity3/runner-candidates
-    auth="Bearer probe3-32" content-type="application/json" accept="" x-brain="" body={"execution_mode":"worktree","executor":"pi","feature_id":"f","git_remote":"https://example.test/r.git","machine_affinity":"local","origin_machine_id":"m","requires_capability":["gpu","x y"],"target_workdir":"/w"}
+    auth="Bearer probe3-32" content-type="application/json" accept="application/json" x-brain="" body={"execution_mode":"worktree","executor":"pi","feature_id":"f","git_remote":"https://example.test/r.git","machine_affinity":"local","origin_machine_id":"m","requires_capability":["gpu","x y"],"target_workdir":"/w"}
 === task_assign {"project":"parity3","runner_id":"parity-runner","task_id":"<SOLO>"} -> OK
   PUT /api/v1/tasks/parity3/<SOLO>/assignment
-    auth="Bearer probe3-33" content-type="application/json" accept="" x-brain="" body={"intent":"assign","runner_id":"parity-runner"}
+    auth="Bearer probe3-33" content-type="application/json" accept="application/json" x-brain="" body={"intent":"assign","runner_id":"parity-runner"}
 === task_assign {"force":true,"intent":"reassign","project":"parity3","runner_id":"parity-runner","task_id":"<SOLO>"} -> OK
   PUT /api/v1/tasks/parity3/<SOLO>/assignment
-    auth="Bearer probe3-34" content-type="application/json" accept="" x-brain="" body={"force":true,"intent":"reassign","runner_id":"parity-runner"}
+    auth="Bearer probe3-34" content-type="application/json" accept="application/json" x-brain="" body={"force":true,"intent":"reassign","runner_id":"parity-runner"}
 === task_clear_assignment {"project":"parity3","task_id":"<SOLO>"} -> OK
   POST /api/v1/tasks/parity3/<SOLO>/assignment/clear
-    auth="Bearer probe3-35" content-type="application/json" accept="" x-brain="" body={"intent":"clear"}
+    auth="Bearer probe3-35" content-type="application/json" accept="application/json" x-brain="" body={"intent":"clear"}
 === context_resolve {"client_id":"c","host_id":"h"} -> OK
   POST /api/v1/context/resolve
     auth="Bearer probe3-36" content-type="application/json" accept="" x-brain="" body={"client":{"client_id":"c","host_id":"h"},"workspace":{"path":""}}

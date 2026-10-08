@@ -224,6 +224,23 @@ func optString(s string) *string {
 	return &s
 }
 
+// optStrings sends a list only when it is non-empty, as an omitempty legacy
+// body did.
+func optStrings(items []string) *[]string {
+	if len(items) == 0 {
+		return nil
+	}
+	return &items
+}
+
+// optTrue sends a boolean only when it is true, as an omitempty legacy body did.
+func optTrue(b bool) *bool {
+	if !b {
+		return nil
+	}
+	return &b
+}
+
 func derefString(s *string) string {
 	if s == nil {
 		return ""

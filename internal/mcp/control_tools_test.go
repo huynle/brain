@@ -253,3 +253,23 @@ func TestControlTools_ValidationAndConfirmation(t *testing.T) {
 		t.Fatal("invalid validation cases made a network call")
 	}
 }
+
+func TestProxiedSuccessReadsOpenCodeReplies(t *testing.T) {
+	for _, tc := range []struct {
+		raw     string
+		want    bool
+		wantErr string
+	}{
+		{"true", true, ""},
+		{"false", false, ""},
+		{"", false, ""},
+		{`{"success":true}`, true, ""},
+		{`{}`, false, ""},
+		{`"ok"`, false, "decode response: json: cannot unmarshal string into Go value of type mcp.controlSuccessResponse"},
+	} {
+		got, err := proxiedSuccess([]byte(tc.raw))
+		if got != tc.want || (err == nil) != (tc.wantErr == "") || (err != nil && err.Error() != tc.wantErr) {
+			t.Errorf("proxiedSuccess(%q) = %t, %v; want %t, %q", tc.raw, got, err, tc.want, tc.wantErr)
+		}
+	}
+}

@@ -306,11 +306,11 @@ func registerBrainControlAbortSession(s *Server, client *APIClient) {
 		if err != nil {
 			return "", err
 		}
-		var resp controlSuccessResponse
-		if err := decodeLegacyBody(*raw, &resp); err != nil {
+		success, err := proxiedSuccess(*raw)
+		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Abort requested for session %s on runner %s instance %s. Success: %t", ids.sessionID, ids.runnerID, ids.instanceID, resp.Success), nil
+		return fmt.Sprintf("Abort requested for session %s on runner %s instance %s. Success: %t", ids.sessionID, ids.runnerID, ids.instanceID, success), nil
 	})
 }
 
@@ -358,11 +358,11 @@ func registerBrainControlPermission(s *Server, client *APIClient) {
 		if err != nil {
 			return "", err
 		}
-		var resp controlSuccessResponse
-		if err := decodeLegacyBody(*raw, &resp); err != nil {
+		success, err := proxiedSuccess(*raw)
+		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Responded %s to permission %s for session %s on runner %s instance %s. Success: %t", response, permissionID, ids.sessionID, ids.runnerID, ids.instanceID, resp.Success), nil
+		return fmt.Sprintf("Responded %s to permission %s for session %s on runner %s instance %s. Success: %t", response, permissionID, ids.sessionID, ids.runnerID, ids.instanceID, success), nil
 	})
 }
 
@@ -438,6 +438,23 @@ func registerBrainControlKillInstance(s *Server, client *APIClient) {
 
 type controlSuccessResponse struct {
 	Success bool `json:"success"`
+}
+
+// proxiedSuccess reads the OpenCode instance's own reply to abort and
+// permission requests, which the API proxies untouched: a bare JSON boolean
+// (what OpenCode returns) or an object carrying "success". Decoding the
+// boolean into a struct used to report a failed tool call after the action
+// had already happened, inviting a retry of a side effect.
+func proxiedSuccess(raw []byte) (bool, error) {
+	var b bool
+	if json.Unmarshal(raw, &b) == nil {
+		return b, nil
+	}
+	var resp controlSuccessResponse
+	if err := decodeLegacyBody(raw, &resp); err != nil {
+		return false, err
+	}
+	return resp.Success, nil
 }
 
 type controlIDs struct {

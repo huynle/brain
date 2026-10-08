@@ -577,12 +577,12 @@ ERROR
 Error: unknown instance ins-adhoc
 --- runner received: req POST /session/ses-missing/prompt_async instance=ins-adhoc body={"parts":[{"text":"x","type":"text"}]}
 === abort (control_abort_session)
-ERROR
-Error: decode response: json: cannot unmarshal bool into Go value of type mcp.controlSuccessResponse
+OK
+Abort requested for session ses-1 on runner golden-runner-1 instance ins-adhoc. Success: true
 --- runner received: req POST /session/ses-1/abort instance=ins-adhoc body=
 === permission (control_permission)
-ERROR
-Error: decode response: json: cannot unmarshal bool into Go value of type mcp.controlSuccessResponse
+OK
+Responded always to permission per-1 for session ses-1 on runner golden-runner-1 instance ins-adhoc. Success: true
 --- runner received: req POST /session/ses-1/permissions/per-1 instance=ins-adhoc body={"response":"always"}
 === spawn (control_spawn_instance)
 OK

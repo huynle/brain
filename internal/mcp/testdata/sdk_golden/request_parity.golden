@@ -46,10 +46,10 @@
 === control_send_prompt {"instance_id":"ins-1","runner_id":"parity-runner","session_id":"ses/1","text":"plain"} -> OK: Sent prompt to session ses/1 on runner parity-runner instance ins-1.
   POST /api/v1/control/runners/parity-runner/instances/ins-1/sessions/ses%2F1/prompt
     auth="Bearer probe-15" content-type="application/json" accept="application/json" x-brain="" body={"text":"plain"}
-=== control_abort_session {"instance_id":"ins-1","runner_id":"parity-runner","session_id":"ses/1"} -> ERROR: Error: decode response: json: cannot unmarshal bool into Go value of type mcp.controlSuccessResponse
+=== control_abort_session {"instance_id":"ins-1","runner_id":"parity-runner","session_id":"ses/1"} -> OK: Abort requested for session ses/1 on runner parity-runner instance ins-1. Success: true
   POST /api/v1/control/runners/parity-runner/instances/ins-1/sessions/ses%2F1/abort
     auth="Bearer probe-16" content-type="" accept="application/json" x-brain="" body=<none>
-=== control_permission {"instance_id":"ins-1","permission_id":"per 1","response":"reject","runner_id":"parity-runner","session_id":"ses/1"} -> ERROR: Error: decode response: json: cannot unmarshal bool into Go value of type mcp.controlSuccessResponse
+=== control_permission {"instance_id":"ins-1","permission_id":"per 1","response":"reject","runner_id":"parity-runner","session_id":"ses/1"} -> OK: Responded reject to permission per 1 for session ses/1 on runner parity-runner instance ins-1. Success: true
   POST /api/v1/control/runners/parity-runner/instances/ins-1/sessions/ses%2F1/permissions/per%201
     auth="Bearer probe-17" content-type="application/json" accept="application/json" x-brain="" body={"response":"reject"}
 === control_spawn_instance {"agent":"a","model":"m","runner_id":"parity-runner","title":"t","workdir":"/srv/q"} -> OK: Spawned control instance on runner parity-runner. Instance: ins-spawned. Workdir: /srv/q. Success: true

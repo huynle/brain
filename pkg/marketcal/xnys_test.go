@@ -2,6 +2,8 @@ package marketcal
 
 import (
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -238,7 +240,7 @@ func TestXNYS_Holidays_SortedWeekdaysWithinYear(t *testing.T) {
 			if h.Name == "" {
 				t.Errorf("Holidays(%d)[%d] has no name", year, i)
 			}
-			if i > 0 && !hs[i-1].Date.midnightUTC().Before(h.Date.midnightUTC()) {
+			if i > 0 && hs[i-1].Date.compare(h.Date) >= 0 {
 				t.Errorf("Holidays(%d) not strictly ascending at %d: %v then %v", year, i, hs[i-1], h)
 			}
 			if c.IsOpen(h.Date) {
@@ -331,4 +333,147 @@ func TestXNYS_OneOffClosures_NeighboursOpen(t *testing.T) {
 	if len(got) < 2 || got[0].Date != (Date{2007, time.January, 1}) || got[1].Date != (Date{2007, time.January, 2}) {
 		t.Errorf("Holidays(2007) starts %v, want 2007-01-01 then 2007-01-02", got[:min(2, len(got))])
 	}
+}
+
+func TestNewXNYS_RejectsInvalidDates(t *testing.T) {
+	tests := []struct {
+		name     string
+		opts     XNYSOptions
+		wantErrs []string // substrings the error must contain
+	}{
+		{"bad month in extra_closed", XNYSOptions{ExtraClosed: []string{"2025-13-01"}}, []string{"extra_closed[0]", `"2025-13-01"`}},
+		{"bad day in extra_closed", XNYSOptions{ExtraClosed: []string{"2025-01-09", "2025-02-29"}}, []string{"extra_closed[1]", `"2025-02-29"`}},
+		{"empty extra_closed entry", XNYSOptions{ExtraClosed: []string{""}}, []string{"extra_closed[0]"}},
+		{"word in extra_open", XNYSOptions{ExtraOpen: []string{"tomorrow"}}, []string{"extra_open[0]", `"tomorrow"`}},
+		{"timestamp in extra_open", XNYSOptions{ExtraOpen: []string{"2026-07-03T09:30:00-04:00"}}, []string{"extra_open[0]"}},
+		{"unpadded extra_open", XNYSOptions{ExtraOpen: []string{"2026-7-3"}}, []string{"extra_open[0]", `"2026-7-3"`}},
+		{"date both closed and open", XNYSOptions{ExtraClosed: []string{"2026-11-27"}, ExtraOpen: []string{"2026-07-03", "2026-11-27"}}, []string{"2026-11-27", "extra_closed", "extra_open"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := NewXNYS(tt.opts)
+			if err == nil {
+				t.Fatalf("NewXNYS(%+v) = %v, nil; want error", tt.opts, c)
+			}
+			if c != nil {
+				t.Errorf("NewXNYS(%+v) returned a calendar alongside error %v", tt.opts, err)
+			}
+			for _, sub := range tt.wantErrs {
+				if !strings.Contains(err.Error(), sub) {
+					t.Errorf("error %q does not mention %q", err, sub)
+				}
+			}
+		})
+	}
+}
+
+func TestXNYS_ExtraClosed(t *testing.T) {
+	c := mustXNYS(t, XNYSOptions{ExtraClosed: []string{
+		"2026-11-27", // ordinary trading day (early close) -> closed
+		"2026-10-10", // Saturday: already closed, not listed
+		"2026-07-03", // already a holiday: listed once, built-in name kept
+		"2026-11-27", // duplicate entries are harmless
+		"2025-01-09", // already a shipped one-off closure
+	}})
+	if c.IsOpen(mustDate(t, "2026-11-27")) {
+		t.Error("IsOpen(2026-11-27) = true, want false (extra_closed)")
+	}
+	if c.IsOpen(mustDate(t, "2026-10-10")) {
+		t.Error("IsOpen(2026-10-10) = true, want false (Saturday)")
+	}
+
+	want := goldenHolidays(t, 2026)
+	want = append(want, Holiday{Date: mustDate(t, "2026-11-27"), Name: "Extra closure"})
+	slices.SortFunc(want, func(a, b Holiday) int { return a.Date.compare(b.Date) })
+	if got := c.Holidays(2026); !slices.Equal(got, want) {
+		t.Errorf("Holidays(2026)\n got: %v\nwant: %v", got, want)
+	}
+	if got, want := c.Holidays(2025), goldenHolidays(t, 2025); !slices.Equal(got, want) {
+		t.Errorf("Holidays(2025)\n got: %v\nwant: %v", got, want)
+	}
+
+	// Options are per instance: the default calendar is unaffected.
+	if !mustXNYS(t, XNYSOptions{}).IsOpen(mustDate(t, "2026-11-27")) {
+		t.Error("default calendar: IsOpen(2026-11-27) = false, want true")
+	}
+}
+
+func TestXNYS_ExtraOpen_OverridesEveryClosureRule(t *testing.T) {
+	c := mustXNYS(t, XNYSOptions{ExtraOpen: []string{
+		"2026-07-03", // observed rule holiday
+		"2025-01-09", // shipped one-off closure
+		"2026-10-10", // Saturday
+	}})
+	for _, s := range []string{"2026-07-03", "2025-01-09", "2026-10-10"} {
+		if !c.IsOpen(mustDate(t, s)) {
+			t.Errorf("IsOpen(%s) = false, want true (extra_open)", s)
+		}
+	}
+	for _, year := range []int{2025, 2026} {
+		for _, h := range c.Holidays(year) {
+			if h.Date == mustDate(t, "2026-07-03") || h.Date == mustDate(t, "2025-01-09") {
+				t.Errorf("Holidays(%d) lists %v, which extra_open reopened", year, h)
+			}
+		}
+	}
+	if got, want := len(c.Holidays(2026)), len(nyseGolden[2026])-1; got != want {
+		t.Errorf("len(Holidays(2026)) = %d, want %d", got, want)
+	}
+	// Neighbouring closures are untouched.
+	if c.IsOpen(mustDate(t, "2026-12-25")) || c.IsOpen(mustDate(t, "2026-10-11")) {
+		t.Error("extra_open leaked onto other dates")
+	}
+}
+
+func TestNewXNYS_DoesNotRetainCallerSlices(t *testing.T) {
+	closed := []string{"2026-11-27"}
+	opened := []string{"2026-07-03"}
+	c := mustXNYS(t, XNYSOptions{ExtraClosed: closed, ExtraOpen: opened})
+	closed[0], opened[0] = "2026-11-30", "2026-12-25"
+	if c.IsOpen(mustDate(t, "2026-11-27")) || !c.IsOpen(mustDate(t, "2026-11-30")) {
+		t.Error("calendar followed a later edit to the ExtraClosed slice")
+	}
+	if !c.IsOpen(mustDate(t, "2026-07-03")) || c.IsOpen(mustDate(t, "2026-12-25")) {
+		t.Error("calendar followed a later edit to the ExtraOpen slice")
+	}
+}
+
+func TestXNYS_HolidaysReturnsAFreshSlice(t *testing.T) {
+	c := mustXNYS(t, XNYSOptions{})
+	hs := c.Holidays(2025)
+	for i := range hs {
+		hs[i] = Holiday{}
+	}
+	if got, want := c.Holidays(2025), goldenHolidays(t, 2025); !slices.Equal(got, want) {
+		t.Errorf("Holidays(2025) after caller mutation\n got: %v\nwant: %v", got, want)
+	}
+}
+
+func TestXNYS_IsOpen_NormalisesOutOfRangeFields(t *testing.T) {
+	c := mustXNYS(t, XNYSOptions{})
+	// June 31 normalises to July 1 (a Wednesday trading day in 2026), and
+	// July 0 to June 30; neither is mistaken for a holiday or weekend.
+	if !c.IsOpen(Date{2026, time.June, 31}) {
+		t.Error("IsOpen(2026-06-31 => 2026-07-01) = false, want true")
+	}
+	// December 32, 2026 normalises to January 1, 2027: New Year's Day.
+	if c.IsOpen(Date{2026, time.December, 32}) {
+		t.Error("IsOpen(2026-12-32 => 2027-01-01) = true, want false")
+	}
+}
+
+func TestXNYS_ConcurrentUse(t *testing.T) {
+	c := mustXNYS(t, XNYSOptions{ExtraClosed: []string{"2026-11-27"}, ExtraOpen: []string{"2026-07-03"}})
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for d := (Date{2026, time.January, 1}); d.Year == 2026; d = d.AddDays(1) {
+				_ = c.IsOpen(d)
+			}
+			_ = c.Holidays(2026)
+		}()
+	}
+	wg.Wait()
 }

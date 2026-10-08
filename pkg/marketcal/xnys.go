@@ -1,46 +1,91 @@
 package marketcal
 
 import (
+	"fmt"
 	"slices"
 	"time"
 )
 
+// extraClosureName names extra_closed dates that no built-in rule covers.
+const extraClosureName = "Extra closure"
+
 // Holiday is a weekday on which the exchange is closed for the full day.
 type Holiday struct {
 	Date Date
+	// Name is a display label, e.g. "Good Friday" or "Independence Day
+	// (observed)"; extra_closed dates not covered by a built-in rule are
+	// named "Extra closure".
 	Name string
 }
 
-// XNYSOptions adjusts the built-in XNYS calendar.
+// XNYSOptions adjusts the built-in XNYS calendar without a release. Dates
+// are strict "YYYY-MM-DD" strings.
 type XNYSOptions struct {
+	// ExtraClosed marks additional full-day closures (for example a new
+	// national day of mourning).
 	ExtraClosed []string
-	ExtraOpen   []string
+	// ExtraOpen marks dates as trading days, overriding every built-in rule
+	// (weekends, holidays and shipped one-off closures). A date may not be
+	// listed in both ExtraClosed and ExtraOpen.
+	ExtraOpen []string
 }
 
-// XNYS is the NYSE/NASDAQ trading-day calendar.
-type XNYS struct{}
+// XNYS is the full-day trading calendar of the US equity markets (NYSE and
+// NASDAQ). It is immutable after NewXNYS and safe for concurrent use.
+type XNYS struct {
+	extraClosed map[Date]bool
+	extraOpen   map[Date]bool
+}
 
-// NewXNYS builds an XNYS calendar.
-func NewXNYS(opts XNYSOptions) (*XNYS, error) { return &XNYS{}, nil }
+// NewXNYS builds an XNYS calendar. It returns an error naming the offending
+// entry if any option date is not a valid "YYYY-MM-DD" date, or if a date is
+// listed as both extra closed and extra open.
+func NewXNYS(opts XNYSOptions) (*XNYS, error) {
+	c := &XNYS{
+		extraClosed: make(map[Date]bool, len(opts.ExtraClosed)),
+		extraOpen:   make(map[Date]bool, len(opts.ExtraOpen)),
+	}
+	for i, s := range opts.ExtraClosed {
+		d, err := ParseDate(s)
+		if err != nil {
+			return nil, fmt.Errorf("marketcal: xnys extra_closed[%d]: %w", i, err)
+		}
+		c.extraClosed[d] = true
+	}
+	for i, s := range opts.ExtraOpen {
+		d, err := ParseDate(s)
+		if err != nil {
+			return nil, fmt.Errorf("marketcal: xnys extra_open[%d]: %w", i, err)
+		}
+		if c.extraClosed[d] {
+			return nil, fmt.Errorf("marketcal: xnys extra_open[%d]: %s is also listed in extra_closed", i, d)
+		}
+		c.extraOpen[d] = true
+	}
+	return c, nil
+}
 
 // Name returns the calendar's identifier, "xnys".
 func (c *XNYS) Name() string { return "xnys" }
 
-// IsOpen reports whether d is a full trading day.
+// IsOpen reports whether d is a trading day. Early-close (half) days count
+// as open. Out-of-range fields in d are normalised as by time.Date.
 func (c *XNYS) IsOpen(d Date) bool {
 	d = DateOf(d.midnightUTC())
-	if wd := d.Weekday(); wd == time.Saturday || wd == time.Sunday {
+	if c.extraOpen[d] {
+		return true
+	}
+	if isWeekend(d) {
 		return false
 	}
-	for _, h := range c.Holidays(d.Year) {
-		if h.Date == d {
-			return false
-		}
-	}
-	return true
+	return !slices.ContainsFunc(c.Holidays(d.Year), func(h Holiday) bool { return h.Date == d })
 }
 
-// Holidays lists the full-day weekday closures in year, in date order.
+// Holidays lists the weekday full-day closures in year, in date order:
+// rule-based holidays at their observed dates, shipped one-off closures and
+// ExtraClosed dates, minus ExtraOpen dates. For every weekday d,
+// IsOpen(d) reports whether d is absent from Holidays(d.Year). The returned
+// slice is newly allocated on each call.
 func (c *XNYS) Holidays(year int) []Holiday {
 	hs := ruleHolidays(year)
 	for _, h := range oneOffClosures {
@@ -48,10 +93,19 @@ func (c *XNYS) Holidays(year int) []Holiday {
 			hs = append(hs, h)
 		}
 	}
-	slices.SortFunc(hs, func(a, b Holiday) int {
-		return a.Date.midnightUTC().Compare(b.Date.midnightUTC())
-	})
+	for d := range c.extraClosed {
+		if d.Year == year && !isWeekend(d) && !slices.ContainsFunc(hs, func(h Holiday) bool { return h.Date == d }) {
+			hs = append(hs, Holiday{Date: d, Name: extraClosureName})
+		}
+	}
+	hs = slices.DeleteFunc(hs, func(h Holiday) bool { return c.extraOpen[h.Date] })
+	slices.SortFunc(hs, func(a, b Holiday) int { return a.Date.compare(b.Date) })
 	return hs
+}
+
+func isWeekend(d Date) bool {
+	wd := d.Weekday()
+	return wd == time.Saturday || wd == time.Sunday
 }
 
 // oneOffClosures are the unscheduled full-day NYSE closures since 2000.

@@ -52,6 +52,11 @@ func (d Date) AddDays(n int) Date {
 	return DateOf(d.midnightUTC().AddDate(0, 0, n))
 }
 
+// compare returns -1, 0 or +1 as d is before, equal to or after o.
+func (d Date) compare(o Date) int {
+	return d.midnightUTC().Compare(o.midnightUTC())
+}
+
 // midnightUTC anchors d at 00:00 UTC. UTC has no DST, so calendar-day
 // arithmetic on the result never drifts across a day boundary.
 func (d Date) midnightUTC() time.Time {

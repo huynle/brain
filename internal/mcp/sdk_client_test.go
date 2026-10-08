@@ -26,6 +26,10 @@ func TestSDKCall_ErrorTextMatchesLegacyClient(t *testing.T) {
 		{"empty envelope", 400, "application/json", `{}`},
 		{"non-json body", 500, "text/plain", "boom"},
 		{"machine code ignored", 403, "application/json", `{"code":"forbidden","error":"Forbidden","message":"nope"}`},
+		// A success status with a body that is not JSON is a decode failure,
+		// reported with the JSON syntax error as the legacy client did.
+		{"non-json success", 200, "text/html", "<html>ok</html>"},
+		{"truncated json success", 200, "application/json", `{"reminder_id":`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,6 +90,36 @@ func TestSDKCall_UsesClientBaseAndToken(t *testing.T) {
 		}
 		if gotAuth != tc.want || gotPath != "/api/v1/reminders/x" {
 			t.Fatalf("auth=%q path=%q, want auth=%q", gotAuth, gotPath, tc.want)
+		}
+	}
+}
+
+// The proxied remote-control calls (prompt, abort, permission) decode the
+// instance's own body: a non-JSON 200 keeps the legacy decode text rather
+// than the SDK's bare invalid_response (step-2 review follow-up).
+func TestControlProxyNonJSONSuccessKeepsDecodeText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "not json")
+	}))
+	defer srv.Close()
+	s := NewServer()
+	RegisterControlTools(s, NewAPIClient(srv.URL))
+	ids := map[string]any{"runner_id": "r", "instance_id": "i", "session_id": "s"}
+	for name, extra := range map[string]map[string]any{
+		"control_send_prompt":   {"text": "hi"},
+		"control_abort_session": {},
+		"control_permission":    {"permission_id": "p", "response": "once"},
+	} {
+		args := map[string]any{}
+		for k, v := range ids {
+			args[k] = v
+		}
+		for k, v := range extra {
+			args[k] = v
+		}
+		_, err := s.tools[name].handler(context.Background(), args)
+		if err == nil || err.Error() != "decode response: invalid character 'o' in literal null (expecting 'u')" {
+			t.Errorf("%s: %v", name, err)
 		}
 	}
 }

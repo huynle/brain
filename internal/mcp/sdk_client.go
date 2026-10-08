@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,17 +25,48 @@ import (
 // legacy client's exact text (see checkAPIError) from the raw HTTP outcome,
 // observed by a transport hook scoped to this call's context.
 func sdkCall[T any](ctx context.Context, c *APIClient, fn func(context.Context, *brain.Client) (*T, error)) (*T, error) {
+	var out *T
+	_, err := sdkObserved(ctx, c, func(ctx context.Context, sc *brain.Client) error {
+		var err error
+		out, err = fn(ctx, sc)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// sdkObserved runs fn against a per-call binding and returns the outcome the
+// transport observed, with fn's error rendered as legacy text.
+func sdkObserved(ctx context.Context, c *APIClient, fn func(context.Context, *brain.Client) error) (*legacyOutcome, error) {
 	sc, err := c.sdkBinding()
 	if err != nil {
 		return nil, err
 	}
 	defer sc.Close()
 	obs := &legacyOutcome{}
-	out, err := fn(context.WithValue(ctx, legacyOutcomeKey{}, obs), sc)
-	if err != nil {
+	if err := fn(context.WithValue(ctx, legacyOutcomeKey{}, obs), sc); err != nil {
 		return nil, obs.legacyError(err)
 	}
-	return out, nil
+	return obs, nil
+}
+
+// sdkRaw runs an SDK call for a tool that passes the API's JSON through
+// verbatim, as its hand-built request did. The SDK still binds the caller's
+// credential, refuses unsafe paths, maps errors and checks that the body is
+// the operation's declared response; the tool then renders the body exactly
+// as the legacy client decoded it (json.RawMessage, nil for an empty body).
+func sdkRaw(ctx context.Context, c *APIClient, fn func(context.Context, *brain.Client) error) (json.RawMessage, error) {
+	obs, err := sdkObserved(ctx, c, fn)
+	if err != nil {
+		return nil, err
+	}
+	var raw json.RawMessage
+	if err := decodeLegacyBody(obs.successBody(), &raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 // sdkDo is sdkCall for operations whose response body the tool ignores.
@@ -66,12 +98,15 @@ func (c *APIClient) sdkBinding() (*brain.Client, error) {
 type legacyOutcomeKey struct{}
 
 // legacyOutcome is the raw result of the last HTTP exchange made with a
-// context carrying it: a transport failure, or an error status and body.
+// context carrying it: a transport failure, an error status and body, or the
+// body of a success as far as the SDK read it.
 type legacyOutcome struct {
 	mu           sync.Mutex
 	transportErr error
 	resp         *http.Response
 	body         []byte
+	okBody       []byte
+	ok           bool
 }
 
 func (o *legacyOutcome) legacyError(sdkErr error) error {
@@ -84,13 +119,46 @@ func (o *legacyOutcome) legacyError(sdkErr error) error {
 		if err := checkAPIError(o.resp, o.body); err != nil {
 			return err
 		}
+	case o.ok:
+		// A success body that is not JSON: the legacy client reported the
+		// JSON syntax error where the SDK reports invalid_response.
+		var be *brain.Error
+		if errors.As(sdkErr, &be) && be.Code == "invalid_response" && len(o.okBody) > 0 {
+			if err := json.Unmarshal(o.okBody, new(any)); err != nil {
+				return fmt.Errorf("decode response: %w", err)
+			}
+		}
 	}
 	return sdkErr
 }
 
+func (o *legacyOutcome) successBody() []byte {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.okBody
+}
+
+// capturedBody copies what the SDK reads of a success body, bounded like the
+// error body; reads are otherwise untouched.
+type capturedBody struct {
+	io.ReadCloser
+	obs *legacyOutcome
+}
+
+func (b capturedBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	b.obs.mu.Lock()
+	if room := maxLegacyErrorBody + 1 - len(b.obs.okBody); room > 0 {
+		b.obs.okBody = append(b.obs.okBody, p[:min(n, room)]...)
+	}
+	b.obs.mu.Unlock()
+	return n, err
+}
+
 // legacyOutcomeRecorder sits beneath the SDK's own transport policy. It never
-// changes what is sent; it only records failures for legacyOutcome and
-// re-buffers error bodies so the SDK still decodes them.
+// changes what is sent; it records failures for legacyOutcome, re-buffers
+// error bodies so the SDK still decodes them, and copies success bodies as
+// the SDK reads them.
 type legacyOutcomeRecorder struct{ next http.RoundTripper }
 
 // maxLegacyErrorBody bounds the buffered error body (the SDK's own default
@@ -109,6 +177,12 @@ func (t legacyOutcomeRecorder) RoundTrip(r *http.Request) (*http.Response, error
 		obs.transportErr = &url.Error{Op: urlErrorOp(r.Method), URL: r.URL.String(), Err: err}
 		obs.mu.Unlock()
 		return nil, err
+	}
+	if resp.StatusCode < 300 {
+		obs.mu.Lock()
+		obs.ok, obs.okBody = true, nil
+		obs.mu.Unlock()
+		resp.Body = capturedBody{ReadCloser: resp.Body, obs: obs}
 	}
 	if resp.StatusCode >= 400 {
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxLegacyErrorBody+1))

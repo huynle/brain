@@ -43,11 +43,7 @@ func registerReaderURL(s *Server, client *APIClient) {
 			Path  string `json:"path"`
 			Title string `json:"title"`
 		}
-		parts := strings.Split(path, "/")
-		for i := range parts {
-			parts[i] = url.PathEscape(parts[i])
-		}
-		if err = client.Request(ctx, "GET", "/entries/"+strings.Join(parts, "/"), nil, nil, &entry); err != nil {
+		if err = sdkInto(ctx, client, &entry, getEntry(path)); err != nil {
 			return "", err
 		}
 		if entry.Path == "" {

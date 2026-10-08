@@ -513,7 +513,7 @@ Use tasks to see the full task list and dependency status.`, waiting, depBlocked
 			Tags                []string `json:"tags"`
 			UserOriginalRequest string   `json:"user_original_request"`
 		}
-		if err := client.Request(ctx, "GET", "/entries/"+task.Path, nil, nil, &entry); err != nil {
+		if err := sdkInto(ctx, client, &entry, getEntry(task.Path)); err != nil {
 			return "", err
 		}
 
@@ -656,7 +656,7 @@ Use this to get detailed information about a specific task including:
 			Tags                []string `json:"tags"`
 			UserOriginalRequest string   `json:"user_original_request"`
 		}
-		if err := client.Request(ctx, "GET", "/entries/"+task.Path, nil, nil, &entry); err != nil {
+		if err := sdkInto(ctx, client, &entry, getEntry(task.Path)); err != nil {
 			return "", err
 		}
 
@@ -1546,6 +1546,15 @@ func registerBrainDreamDisable(s *Server, client *APIClient) {
 
 		return fmt.Sprintf("Dream Mode disabled for project %q (task %s deleted). Existing dream entries are preserved.", project, resp.TaskID), nil
 	})
+}
+
+// getEntry reads an entry by ID or path for sdkInto. The SDK sends a path as
+// one escaped segment, which the entries handler decodes.
+func getEntry(pathOrID string) func(context.Context, *brain.Client) error {
+	return func(ctx context.Context, sc *brain.Client) error {
+		_, err := sc.Entries().Get(ctx, pathOrID)
+		return err
+	}
 }
 
 // listTasks reads GET /tasks/{project} for sdkInto.

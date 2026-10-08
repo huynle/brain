@@ -172,7 +172,7 @@ ERROR
 Error: request failed: Put "http://<LOOPBACK>/api/v1/projects/p%2Fq/placement": dial tcp <LOOPBACK>: connect: connection refused
 === dead reader (reader_url)
 ERROR
-Error: request failed: Get "http://<LOOPBACK>/api/v1/entries/projects/p%20q/note/a.md": dial tcp <LOOPBACK>: connect: connection refused
+Error: request failed: Get "http://<LOOPBACK>/api/v1/entries/projects%2Fp%20q%2Fnote%2Fa.md": dial tcp <LOOPBACK>: connect: connection refused
 === dead sync status (sync_status)
 ERROR
 Error: request failed: Get "http://<LOOPBACK>/api/v1/sync/devices": dial tcp <LOOPBACK>: connect: connection refused

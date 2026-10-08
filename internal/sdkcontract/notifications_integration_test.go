@@ -25,7 +25,7 @@ func exerciseNotificationSDK(t *testing.T, c *brain.Client) {
 	if _, err := c.Reminders().Get(ctx, reminder.ReminderId); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Reminders().Snooze(ctx, reminder.ReminderId, brain.SnoozeReminderRequest{RemindAt: time.Now().Add(24 * time.Hour)}, brain.RequestOptions{}); err != nil {
+	if _, err := c.Reminders().Snooze(ctx, reminder.ReminderId, brain.SnoozeReminderRequest{RemindAt: time.Now().Add(24 * time.Hour).Format(time.RFC3339)}, brain.RequestOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if fired, err := c.Reminders().Fire(ctx, reminder.ReminderId, brain.RequestOptions{}); err != nil || fired.FiredAt == nil || fired.FireCount == nil || *fired.FireCount != 1 || fired.GeneratedTaskId != nil {
@@ -59,7 +59,7 @@ func exerciseNotificationSDK(t *testing.T, c *brain.Client) {
 	if _, err := c.Attention().Unread(ctx, item.Id, brain.RequestOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Attention().Snooze(ctx, item.Id, brain.SnoozeAttentionRequest{SnoozedUntil: time.Now().Add(time.Hour)}, brain.RequestOptions{}); err != nil {
+	if _, err := c.Attention().Snooze(ctx, item.Id, brain.SnoozeAttentionRequest{SnoozedUntil: time.Now().Add(time.Hour).Format(time.RFC3339)}, brain.RequestOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.Attention().Resolve(ctx, item.Id, brain.RequestOptions{}); err != nil {

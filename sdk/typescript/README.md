@@ -1,7 +1,8 @@
 # @huynle/brain-sdk (checkpoint)
 
 Node 22+ ESM package with generated OpenAPI 3.1 DTOs and a bound HTTP client.
-This checkpoint covers all 104 operations in `docs/sdk-operation-matrix.md`,
+This checkpoint covers all 125 operations in `docs/sdk-operation-matrix.md`
+(104 original plus runners/dispatch/control/scheduler, none script-exposed),
 including metadata, task/feature actions, project placement/deletion, delivery
 state, finite event reads, timeline and bounded SSE. That inventory coverage
 does not imply full SDK/V1 or isolation acceptance.

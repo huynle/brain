@@ -1652,6 +1652,405 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/runner/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Report per-project task and automation pause dials
+         * @description paused/automationsPaused are true when ANY project is paused on that axis; they are not a global switch.
+         */
+        get: operations["runners.status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/runner/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause MANUAL task dispatch for every known project
+         * @description Writes a server-wide dispatch dial and notifies connected runners. Holds or releases NEW dispatch only; running work is unaffected. No request body is read. Server-wide: affects every project. Automation-generated tasks follow a separate dial.
+         */
+        post: operations["dispatch.pauseAll"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/runner/pause/{projectId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause MANUAL task dispatch for one project
+         * @description Writes a server-wide dispatch dial and notifies connected runners. Holds or releases NEW dispatch only; running work is unaffected. No request body is read.
+         */
+        post: operations["dispatch.pauseProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/runner/features/pause/{projectId}/{featureId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause task dispatch for one feature (all task authors)
+         * @description Writes a server-wide dispatch dial and notifies connected runners. Holds or releases NEW dispatch only; running work is unaffected. No request body is read.
+         */
+        post: operations["dispatch.pauseFeature"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/runner/automations/pause/{projectId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause AUTOMATION-GENERATED task dispatch for one project
+         * @description Writes a server-wide dispatch dial and notifies connected runners. Holds or releases NEW dispatch only; running work is unaffected. No request body is read.
+         */
+        post: operations["dispatch.pauseProjectAutomations"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/runner/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume MANUAL task dispatch for every known project
+         * @description Writes a server-wide dispatch dial and notifies connected runners. Holds or releases NEW dispatch only; running work is unaffected. No request body is read. Server-wide: affects every project. Automation-generated tasks follow a separate dial.
+         */
+        post: operations["dispatch.resumeAll"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/runner/resume/{projectId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume MANUAL task dispatch for one project
+         * @description Writes a server-wide dispatch dial and notifies connected runners. Holds or releases NEW dispatch only; running work is unaffected. No request body is read.
+         */
+        post: operations["dispatch.resumeProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/runner/features/resume/{projectId}/{featureId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume task dispatch for one feature (all task authors)
+         * @description Writes a server-wide dispatch dial and notifies connected runners. Holds or releases NEW dispatch only; running work is unaffected. No request body is read.
+         */
+        post: operations["dispatch.resumeFeature"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/runner/automations/resume/{projectId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume AUTOMATION-GENERATED task dispatch for one project
+         * @description Writes a server-wide dispatch dial and notifies connected runners. Holds or releases NEW dispatch only; running work is unaffected. No request body is read.
+         */
+        post: operations["dispatch.resumeProjectAutomations"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/{taskId}/dispatch-lease": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the push-dispatch lease for a task */
+        get: operations["tasks.dispatchLease"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/{taskId}/placement-reasons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List scheduler placement rejections for a task */
+        get: operations["tasks.placementReasons"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scheduler/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read scheduler loop state and last per-project results */
+        get: operations["scheduler.status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List registered runners */
+        get: operations["runners.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runners/{runnerId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one registered runner */
+        get: operations["runners.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runners/{runnerId}/instances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List executor instances reported by one runner */
+        get: operations["runners.instances"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/instances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List executor instances across all runners */
+        get: operations["runners.allInstances"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/runners/{runnerId}/instances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Spawn an ad-hoc OpenCode instance on a runner
+         * @description Starts a process on the runner host (control:* scope, rate limited). The runner enforces its allowed workdir roots.
+         */
+        post: operations["control.spawnInstance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/runners/{runnerId}/instances/{instanceId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Terminate an ad-hoc OpenCode instance
+         * @description Terminates a process on the runner host (control:* scope). Task-owned instances are refused with 409.
+         */
+        delete: operations["control.killInstance"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/prompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a prompt to a remote OpenCode session
+         * @description Remote control of a runner host (control:* scope). The request is tunneled over the runner bridge to the OpenCode instance; the response body is the instance's own (opaque) JSON, which may be empty (204). The prompt drives an agent that may run tools and call model providers.
+         */
+        post: operations["control.sendPrompt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/abort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Abort a remote OpenCode session
+         * @description Remote control of a runner host (control:* scope). The request is tunneled over the runner bridge to the OpenCode instance; the response body is the instance's own (opaque) JSON, which may be empty (204). No request body is read.
+         */
+        post: operations["control.abortSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/permissions/{permissionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer a remote session permission prompt
+         * @description Remote control of a runner host (control:* scope). The request is tunneled over the runner bridge to the OpenCode instance; the response body is the instance's own (opaque) JSON, which may be empty (204). The body is forwarded untouched; once/always let the agent proceed with the requested tool call.
+         */
+        post: operations["control.respondPermission"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2213,11 +2612,17 @@ export interface components {
             deleted: boolean;
         };
         SnoozeReminderRequest: {
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description RFC3339 with an offset, validated by the server (its message is returned on 400).
+             */
             remind_at: string;
         };
         SnoozeAttentionRequest: {
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Informational; stored as sent (an empty value snoozes without a time).
+             */
             snoozed_until: string;
         };
         AttentionListResponse: {
@@ -3195,6 +3600,145 @@ export interface components {
             name: string;
             updated_at: string;
             url: string;
+        };
+        InstanceListResponse: {
+            instances: components["schemas"]["OpencodeInstance"][] | null;
+            total: number;
+        };
+        OpencodeInstance: {
+            agent?: string;
+            bridge_connected?: boolean;
+            executor?: string;
+            feature_id?: string;
+            hostname?: string;
+            instance_id: string;
+            kind: string;
+            /** Format: int64 */
+            last_seen?: number;
+            model?: string;
+            pending_permissions?: number;
+            pid?: number;
+            port?: number;
+            priority?: string;
+            project_id?: string;
+            runner_id: string;
+            session_ids?: string[] | null;
+            /** Format: int64 */
+            started_at?: number;
+            status: string;
+            task_id?: string;
+            title?: string;
+            workdir?: string;
+        };
+        PlacementReasonListResponse: {
+            reasons: components["schemas"]["PlacementReason"][] | null;
+            total: number;
+        };
+        RunnerInfo: {
+            active_tasks?: number;
+            bridge_connected?: boolean;
+            capabilities?: string[] | null;
+            capacity?: {
+                [key: string]: unknown;
+            } | null;
+            dispatch_push?: boolean;
+            draining?: boolean;
+            executors?: string[] | null;
+            feature_assignments?: components["schemas"]["FeatureAssignmentResponse"][] | null;
+            feature_ids?: string;
+            hostname: string;
+            labels?: {
+                [key: string]: string;
+            } | null;
+            last_heartbeat: string;
+            machine_id?: string;
+            max_parallel: number;
+            paused?: boolean;
+            projects?: string[] | null;
+            registered_at: string;
+            resources?: {
+                [key: string]: unknown;
+            } | null;
+            runner_id: string;
+            status: string;
+            version?: string;
+            workspace_roots?: string[] | null;
+        };
+        RunnerListResponse: {
+            runners: components["schemas"]["RunnerInfo"][] | null;
+            total: number;
+        };
+        RunnerStatusResponse: {
+            automationPausedProjects: string[] | null;
+            automationsPaused: boolean;
+            paused: boolean;
+            pausedFeatures?: string[] | null;
+            pausedProjects: string[] | null;
+            running: boolean;
+        };
+        SchedulerResult: {
+            considered: number;
+            dispatched: number;
+            project_id: string;
+            skipped: number;
+            skipped_already_leased?: number;
+            skipped_automations_paused?: number;
+            skipped_feature_paused?: number;
+            skipped_no_candidate?: number;
+            skipped_runner_unreachable?: number;
+            skipped_tasks_paused?: number;
+        };
+        SchedulerStatus: {
+            interval: string;
+            last_error?: string;
+            /** Format: int64 */
+            last_expired_leases: number;
+            last_project_results?: {
+                [key: string]: components["schemas"]["SchedulerResult"];
+            } | null;
+            last_success_at?: string;
+            last_tick_at?: string;
+            running: boolean;
+            started: boolean;
+            /** Format: int64 */
+            total_ticks: number;
+        };
+        SpawnInstanceSpec: {
+            agent?: string;
+            model?: string;
+            title?: string;
+            workdir: string;
+        };
+        /** @description Browser/agent-facing prompt body; the API translates it to OpenCode prompt_async parts. */
+        ControlPromptRequest: {
+            /** @description Prompt text; text or at least one file is required. */
+            text?: string;
+            agent?: string;
+            model?: components["schemas"]["ControlPromptModel"];
+            files?: components["schemas"]["ControlFilePart"][];
+        };
+        /** @description Applied only when both ids are non-empty. */
+        ControlPromptModel: {
+            providerID: string;
+            modelID: string;
+        };
+        /** @description Parts with an empty mime or url are skipped by the server. */
+        ControlFilePart: {
+            mime: string;
+            /** @description Typically a data URL. */
+            url: string;
+            filename?: string;
+        };
+        /** @description OpenCode permission vocabulary, forwarded to the instance untouched. */
+        ControlPermissionRequest: {
+            /** @enum {string} */
+            response: "once" | "always" | "reject";
+        };
+        /** @description Opaque JSON returned by the OpenCode instance (e.g. a bare true); may be absent on 204. */
+        ControlProxyResponse: unknown;
+        ControlSpawnResponse: {
+            success: boolean;
+            instance: components["schemas"]["OpencodeInstance"];
         };
     };
     responses: never;
@@ -6715,6 +7259,669 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BrainEntry"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "runners.status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pause dials */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerStatusResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "dispatch.pauseAll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dial updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "dispatch.pauseProject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dial updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "dispatch.pauseFeature": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                featureId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dial updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "dispatch.pauseProjectAutomations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dial updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "dispatch.resumeAll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dial updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "dispatch.resumeProject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dial updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "dispatch.resumeFeature": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                featureId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dial updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "dispatch.resumeProjectAutomations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dial updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.dispatchLease": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dispatch lease (404 when none exists) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DispatchLease"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.placementReasons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rejections only; an empty list is not an acceptance record */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlacementReasonListResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "scheduler.status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scheduler state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerStatus"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "runners.list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Runners, newest registration first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerListResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "runners.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runnerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Runner */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerInfo"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "runners.instances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runnerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Instances */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceListResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "runners.allInstances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Instances */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceListResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "control.spawnInstance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runnerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpawnInstanceSpec"];
+            };
+        };
+        responses: {
+            /** @description Spawned instance */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlSpawnResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "control.killInstance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runnerId: string;
+                instanceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Instance terminated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "control.sendPrompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runnerId: string;
+                instanceId: string;
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControlPromptRequest"];
+            };
+        };
+        responses: {
+            /** @description Proxied instance response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlProxyResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "control.abortSession": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runnerId: string;
+                instanceId: string;
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Proxied instance response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlProxyResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "control.respondPermission": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runnerId: string;
+                instanceId: string;
+                sessionId: string;
+                permissionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControlPermissionRequest"];
+            };
+        };
+        responses: {
+            /** @description Proxied instance response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlProxyResponse"];
                 };
             };
             /** @description Legacy error */

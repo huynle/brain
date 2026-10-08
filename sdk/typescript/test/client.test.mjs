@@ -249,3 +249,37 @@ test("query arrays preserve repeated parameter values without comma coercion",as
   await c.entries.list({feature_id:["a,b","c & d"],unused:undefined,empty:[],limit:2,global:false});
   assert.equal(seen[0],"/api/v1/entries?feature_id=a%2Cb&feature_id=c+%26+d&limit=2&global=false");
 });
+
+test("runner, dispatch, scheduler and placement routes send no bodies",async t=>{
+ const seen=[];const baseUrl=await server(t,async(req,res)=>{let body="";for await(const c of req)body+=c;seen.push(`${req.method} ${req.url} ${req.headers["content-type"]??""}${body}`);res.end("{}");});
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());
+ await c.runners.status();await c.runners.list();await c.runners.get("r 1/x");await c.runners.instances("r1");await c.runners.allInstances();
+ await c.dispatch.pauseAll();await c.dispatch.resumeAll();await c.dispatch.pauseProject("p q");await c.dispatch.resumeProject("p");
+ await c.dispatch.pauseFeature("p","f/1");await c.dispatch.resumeFeature("p","f1");await c.dispatch.pauseProjectAutomations("p");await c.dispatch.resumeProjectAutomations("p");
+ await c.tasks.dispatchLease("p","t");await c.tasks.placementReasons("p","t/2");await c.scheduler.status();
+ assert.deepEqual(seen,["GET /api/v1/tasks/runner/status ","GET /api/v1/runners ","GET /api/v1/runners/r%201%2Fx ","GET /api/v1/runners/r1/instances ","GET /api/v1/instances ",
+  "POST /api/v1/tasks/runner/pause ","POST /api/v1/tasks/runner/resume ","POST /api/v1/tasks/runner/pause/p%20q ","POST /api/v1/tasks/runner/resume/p ",
+  "POST /api/v1/tasks/runner/features/pause/p/f%2F1 ","POST /api/v1/tasks/runner/features/resume/p/f1 ","POST /api/v1/tasks/runner/automations/pause/p ","POST /api/v1/tasks/runner/automations/resume/p ",
+  "GET /api/v1/tasks/p/t/dispatch-lease ","GET /api/v1/tasks/p/t%2F2/placement-reasons ","GET /api/v1/scheduler/status "]);
+});
+
+test("control routes return proxied instance JSON, null for 204, and server errors",async t=>{
+ const seen=[];let mode="ok";
+ const baseUrl=await server(t,async(req,res)=>{let body="";for await(const c of req)body+=c;seen.push(`${req.method} ${req.url} ${body}`);
+  if(mode==="bad"){res.end("not json");return;}
+  if(mode==="err"){res.writeHead(502).end('{"error":"Bad Gateway","message":"runner bridge not connected"}');return;}
+  if(req.url.endsWith("/prompt")){res.writeHead(204).end();return;}
+  if(req.url.endsWith("/abort")||req.url.includes("/permissions/")){res.end("true");return;}
+  if(req.method==="POST"){res.writeHead(201).end('{"success":true,"instance":{"instance_id":"i9","runner_id":"r","kind":"adhoc","status":"starting"}}');return;}
+  res.end('{"success":true}');});
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());
+ assert.equal(await c.control.sendPrompt("r","i","s/1",{text:"hi",model:{providerID:"p",modelID:"m"}}),null);
+ assert.equal(await c.control.abortSession("r","i","s"),true);
+ assert.equal(await c.control.respondPermission("r","i","s","per 1",{response:"reject"}),true);
+ assert.equal((await c.control.spawnInstance("r",{workdir:"/w"})).instance.instance_id,"i9");
+ assert.equal((await c.control.killInstance("r","i9")).success,true);
+ assert.deepEqual(seen,['POST /api/v1/control/runners/r/instances/i/sessions/s%2F1/prompt {"text":"hi","model":{"providerID":"p","modelID":"m"}}','POST /api/v1/control/runners/r/instances/i/sessions/s/abort ','POST /api/v1/control/runners/r/instances/i/sessions/s/permissions/per%201 {"response":"reject"}','POST /api/v1/control/runners/r/instances {"workdir":"/w"}','DELETE /api/v1/control/runners/r/instances/i9 ']);
+ mode="bad";await assert.rejects(c.control.abortSession("r","i","s"),e=>e instanceof BrainError&&e.code==="invalid_response");
+ mode="err";await assert.rejects(c.control.sendPrompt("r","i","s",{text:"x"}),e=>e instanceof BrainError&&e.status===502&&e.serverMessage==="runner bridge not connected");
+ await assert.rejects(c.control.killInstance("r",".."),e=>e.code==="invalid_request");
+});

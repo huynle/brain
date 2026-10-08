@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/bridge"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/service"
@@ -55,7 +56,8 @@ func TestDeliveredContractMatchesRouterAndInventory(t *testing.T) {
 	cfg.Tenancy.Mode = tenant.ModeSingle
 	// Task assignment routes have no unavailable-service placeholders. Walk
 	// the task-enabled composition; no method is invoked by chi.Walk.
-	router := api.NewRouter(cfg, api.WithHandler(api.NewHandler(nil, api.WithTaskService(service.NewTaskService(&cfg, nil, nil)), api.WithEventService(service.NewEventService(realtime.NewEventHub())))))
+	// Remote-control routes exist only with a bridge (no placeholder paths).
+	router := api.NewRouter(cfg, api.WithHandler(api.NewHandler(nil, api.WithTaskService(service.NewTaskService(&cfg, nil, nil)), api.WithEventService(service.NewEventService(realtime.NewEventHub())), api.WithBridgeService(&bridge.Hub{}))))
 	routes := map[string]bool{}
 	if err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		routes[method+" "+normalize(route)] = true
@@ -106,11 +108,24 @@ func TestLegacyTaskFeatureAmbiguityUsesStaticFeatureRoute(t *testing.T) {
 	for _, tc := range []struct {
 		path, pattern string
 	}{
+		// POST: a project literally named "runner" cannot clear the
+		// assignment of a feature named pause/resume; the dial route wins.
+		{"POST /api/v1/tasks/runner/features/pause/assignment/clear", "/api/v1/tasks/runner/features/pause/{projectId}/{featureId}"},
+		{"POST /api/v1/tasks/other/features/pause/assignment/clear", "/api/v1/tasks/{projectId}/features/{featureId}/assignment/clear"},
 		{"/api/v1/tasks/project/features/delivery", "/api/v1/tasks/{projectId}/features/{featureId}"},
 		{"/api/v1/tasks/project/ordinary/delivery", "/api/v1/tasks/{projectId}/{taskId}/delivery"},
+		// Same legacy precedence for the scheduler views: a task literally
+		// named "features" cannot be addressed; ordinary ids are unaffected.
+		{"/api/v1/tasks/project/features/dispatch-lease", "/api/v1/tasks/{projectId}/features/{featureId}"},
+		{"/api/v1/tasks/project/ordinary/dispatch-lease", "/api/v1/tasks/{projectId}/{taskId}/dispatch-lease"},
+		{"/api/v1/tasks/project/ordinary/placement-reasons", "/api/v1/tasks/{projectId}/{taskId}/placement-reasons"},
 	} {
+		method, path := http.MethodGet, tc.path
+		if m, p, ok := strings.Cut(tc.path, " "); ok {
+			method, path = m, p
+		}
 		rctx := chi.NewRouteContext()
-		if !router.Match(rctx, http.MethodGet, tc.path) {
+		if !router.Match(rctx, method, path) {
 			t.Fatalf("missing legacy route %s", tc.path)
 		}
 		if got := rctx.RoutePattern(); got != tc.pattern {

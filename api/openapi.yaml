@@ -2231,6 +2231,416 @@ paths:
       responses:
         default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200': {description: Run entry, content: {application/json: {schema: {$ref: '#/components/schemas/BrainEntry'}}}}
+  /tasks/runner/status:
+    get:
+      operationId: runners.status
+      summary: Report per-project task and automation pause dials
+      description: >-
+        paused/automationsPaused are true when ANY project is paused on that axis;
+        they are not a global switch.
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Pause dials
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RunnerStatusResponse'}
+  /tasks/runner/pause:
+    post:
+      operationId: dispatch.pauseAll
+      summary: Pause MANUAL task dispatch for every known project
+      description: >-
+        Writes a server-wide dispatch dial and notifies connected runners.
+        Holds or releases NEW dispatch only; running work is unaffected.
+        No request body is read.
+        Server-wide: affects every project. Automation-generated tasks follow a separate dial.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Dial updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessResponse'}
+  /tasks/runner/pause/{projectId}:
+    post:
+      operationId: dispatch.pauseProject
+      summary: Pause MANUAL task dispatch for one project
+      description: >-
+        Writes a server-wide dispatch dial and notifies connected runners.
+        Holds or releases NEW dispatch only; running work is unaffected.
+        No request body is read.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Dial updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessResponse'}
+  /tasks/runner/features/pause/{projectId}/{featureId}:
+    post:
+      operationId: dispatch.pauseFeature
+      summary: Pause task dispatch for one feature (all task authors)
+      description: >-
+        Writes a server-wide dispatch dial and notifies connected runners.
+        Holds or releases NEW dispatch only; running work is unaffected.
+        No request body is read.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Dial updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessResponse'}
+  /tasks/runner/automations/pause/{projectId}:
+    post:
+      operationId: dispatch.pauseProjectAutomations
+      summary: Pause AUTOMATION-GENERATED task dispatch for one project
+      description: >-
+        Writes a server-wide dispatch dial and notifies connected runners.
+        Holds or releases NEW dispatch only; running work is unaffected.
+        No request body is read.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Dial updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessResponse'}
+  /tasks/runner/resume:
+    post:
+      operationId: dispatch.resumeAll
+      summary: Resume MANUAL task dispatch for every known project
+      description: >-
+        Writes a server-wide dispatch dial and notifies connected runners.
+        Holds or releases NEW dispatch only; running work is unaffected.
+        No request body is read.
+        Server-wide: affects every project. Automation-generated tasks follow a separate dial.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Dial updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessResponse'}
+  /tasks/runner/resume/{projectId}:
+    post:
+      operationId: dispatch.resumeProject
+      summary: Resume MANUAL task dispatch for one project
+      description: >-
+        Writes a server-wide dispatch dial and notifies connected runners.
+        Holds or releases NEW dispatch only; running work is unaffected.
+        No request body is read.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Dial updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessResponse'}
+  /tasks/runner/features/resume/{projectId}/{featureId}:
+    post:
+      operationId: dispatch.resumeFeature
+      summary: Resume task dispatch for one feature (all task authors)
+      description: >-
+        Writes a server-wide dispatch dial and notifies connected runners.
+        Holds or releases NEW dispatch only; running work is unaffected.
+        No request body is read.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Dial updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessResponse'}
+  /tasks/runner/automations/resume/{projectId}:
+    post:
+      operationId: dispatch.resumeProjectAutomations
+      summary: Resume AUTOMATION-GENERATED task dispatch for one project
+      description: >-
+        Writes a server-wide dispatch dial and notifies connected runners.
+        Holds or releases NEW dispatch only; running work is unaffected.
+        No request body is read.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Dial updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessResponse'}
+  /tasks/{projectId}/{taskId}/dispatch-lease:
+    get:
+      operationId: tasks.dispatchLease
+      summary: Read the push-dispatch lease for a task
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Dispatch lease (404 when none exists)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DispatchLease'}
+  /tasks/{projectId}/{taskId}/placement-reasons:
+    get:
+      operationId: tasks.placementReasons
+      summary: List scheduler placement rejections for a task
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Rejections only; an empty list is not an acceptance record
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PlacementReasonListResponse'}
+  /scheduler/status:
+    get:
+      operationId: scheduler.status
+      summary: Read scheduler loop state and last per-project results
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Scheduler state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SchedulerStatus'}
+  /runners:
+    get:
+      operationId: runners.list
+      summary: List registered runners
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Runners, newest registration first
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RunnerListResponse'}
+  /runners/{runnerId}:
+    get:
+      operationId: runners.get
+      summary: Get one registered runner
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: runnerId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Runner
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RunnerInfo'}
+  /runners/{runnerId}/instances:
+    get:
+      operationId: runners.instances
+      summary: List executor instances reported by one runner
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: runnerId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Instances
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InstanceListResponse'}
+  /instances:
+    get:
+      operationId: runners.allInstances
+      summary: List executor instances across all runners
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Instances
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InstanceListResponse'}
+  /control/runners/{runnerId}/instances:
+    post:
+      operationId: control.spawnInstance
+      summary: Spawn an ad-hoc OpenCode instance on a runner
+      description: >-
+        Starts a process on the runner host (control:* scope, rate limited).
+        The runner enforces its allowed workdir roots.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: runnerId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SpawnInstanceSpec'}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '201':
+          description: Spawned instance
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ControlSpawnResponse'}
+  /control/runners/{runnerId}/instances/{instanceId}:
+    delete:
+      operationId: control.killInstance
+      summary: Terminate an ad-hoc OpenCode instance
+      description: >-
+        Terminates a process on the runner host (control:* scope). Task-owned
+        instances are refused with 409.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: runnerId, in: path, required: true, schema: {type: string}}
+        - {name: instanceId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Instance terminated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessResponse'}
+  /control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/prompt:
+    post:
+      operationId: control.sendPrompt
+      summary: Send a prompt to a remote OpenCode session
+      description: >-
+        Remote control of a runner host (control:* scope). The request is
+        tunneled over the runner bridge to the OpenCode instance; the response
+        body is the instance's own (opaque) JSON, which may be empty (204).
+        The prompt drives an agent that may run tools and call model providers.
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: runnerId, in: path, required: true, schema: {type: string}}
+        - {name: instanceId, in: path, required: true, schema: {type: string}}
+        - {name: sessionId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ControlPromptRequest'}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Proxied instance response
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ControlProxyResponse'}
+  /control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/abort:
+    post:
+      operationId: control.abortSession
+      summary: Abort a remote OpenCode session
+      description: >-
+        Remote control of a runner host (control:* scope). The request is
+        tunneled over the runner bridge to the OpenCode instance; the response
+        body is the instance's own (opaque) JSON, which may be empty (204).
+        No request body is read.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: runnerId, in: path, required: true, schema: {type: string}}
+        - {name: instanceId, in: path, required: true, schema: {type: string}}
+        - {name: sessionId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Proxied instance response
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ControlProxyResponse'}
+  /control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/permissions/{permissionId}:
+    post:
+      operationId: control.respondPermission
+      summary: Answer a remote session permission prompt
+      description: >-
+        Remote control of a runner host (control:* scope). The request is
+        tunneled over the runner bridge to the OpenCode instance; the response
+        body is the instance's own (opaque) JSON, which may be empty (204).
+        The body is forwarded untouched; once/always let the agent proceed with
+        the requested tool call.
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: runnerId, in: path, required: true, schema: {type: string}}
+        - {name: instanceId, in: path, required: true, schema: {type: string}}
+        - {name: sessionId, in: path, required: true, schema: {type: string}}
+        - {name: permissionId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ControlPermissionRequest'}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Proxied instance response
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ControlProxyResponse'}
 components:
   securitySchemes:
     bearerAuth:
@@ -2699,6 +3109,8 @@ components:
         remind_at:
           type: string
           format: date-time
+          description: RFC3339 with an offset, validated by the server (its message is returned on 400).
+          x-go-type: string
     SnoozeAttentionRequest:
       type: object
       required:
@@ -2707,6 +3119,8 @@ components:
         snoozed_until:
           type: string
           format: date-time
+          description: Informational; stored as sent (an empty value snoozes without a time).
+          x-go-type: string
     AttentionListResponse:
       type: object
       required:
@@ -5476,3 +5890,67 @@ components:
         - created_at
         - updated_at
       type: object
+    InstanceListResponse: {"properties":{"instances":{"anyOf":[{"items":{"$ref":"#/components/schemas/OpencodeInstance"},"type":"array"},{"type":"null"}]},"total":{"type":"integer"}},"required":["instances","total"],"type":"object"}
+    OpencodeInstance: {"properties":{"agent":{"type":"string"},"bridge_connected":{"type":"boolean"},"executor":{"type":"string"},"feature_id":{"type":"string"},"hostname":{"type":"string"},"instance_id":{"type":"string"},"kind":{"type":"string"},"last_seen":{"format":"int64","type":"integer"},"model":{"type":"string"},"pending_permissions":{"type":"integer"},"pid":{"type":"integer"},"port":{"type":"integer"},"priority":{"type":"string"},"project_id":{"type":"string"},"runner_id":{"type":"string"},"session_ids":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"started_at":{"format":"int64","type":"integer"},"status":{"type":"string"},"task_id":{"type":"string"},"title":{"type":"string"},"workdir":{"type":"string"}},"required":["instance_id","runner_id","kind","status"],"type":"object"}
+    PlacementReasonListResponse: {"properties":{"reasons":{"anyOf":[{"items":{"$ref":"#/components/schemas/PlacementReason"},"type":"array"},{"type":"null"}]},"total":{"type":"integer"}},"required":["reasons","total"],"type":"object"}
+    RunnerInfo: {"properties":{"active_tasks":{"type":"integer"},"bridge_connected":{"type":"boolean"},"capabilities":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"capacity":{"anyOf":[{"additionalProperties":{},"type":"object"},{"type":"null"}]},"dispatch_push":{"type":"boolean"},"draining":{"type":"boolean"},"executors":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"feature_assignments":{"anyOf":[{"items":{"$ref":"#/components/schemas/FeatureAssignmentResponse"},"type":"array"},{"type":"null"}]},"feature_ids":{"type":"string"},"hostname":{"type":"string"},"labels":{"anyOf":[{"additionalProperties":{"type":"string"},"type":"object"},{"type":"null"}]},"last_heartbeat":{"type":"string"},"machine_id":{"type":"string"},"max_parallel":{"type":"integer"},"paused":{"type":"boolean"},"projects":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"registered_at":{"type":"string"},"resources":{"anyOf":[{"additionalProperties":{},"type":"object"},{"type":"null"}]},"runner_id":{"type":"string"},"status":{"type":"string"},"version":{"type":"string"},"workspace_roots":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]}},"required":["runner_id","hostname","max_parallel","registered_at","last_heartbeat","status"],"type":"object"}
+    RunnerListResponse: {"properties":{"runners":{"anyOf":[{"items":{"$ref":"#/components/schemas/RunnerInfo"},"type":"array"},{"type":"null"}]},"total":{"type":"integer"}},"required":["runners","total"],"type":"object"}
+    RunnerStatusResponse: {"properties":{"automationPausedProjects":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"automationsPaused":{"type":"boolean"},"paused":{"type":"boolean"},"pausedFeatures":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"pausedProjects":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"running":{"type":"boolean"}},"required":["running","paused","pausedProjects","automationsPaused","automationPausedProjects"],"type":"object"}
+    SchedulerResult: {"properties":{"considered":{"type":"integer"},"dispatched":{"type":"integer"},"project_id":{"type":"string"},"skipped":{"type":"integer"},"skipped_already_leased":{"type":"integer"},"skipped_automations_paused":{"type":"integer"},"skipped_feature_paused":{"type":"integer"},"skipped_no_candidate":{"type":"integer"},"skipped_runner_unreachable":{"type":"integer"},"skipped_tasks_paused":{"type":"integer"}},"required":["project_id","considered","dispatched","skipped"],"type":"object"}
+    SchedulerStatus: {"properties":{"interval":{"type":"string"},"last_error":{"type":"string"},"last_expired_leases":{"format":"int64","type":"integer"},"last_project_results":{"anyOf":[{"additionalProperties":{"$ref":"#/components/schemas/SchedulerResult"},"type":"object"},{"type":"null"}]},"last_success_at":{"type":"string"},"last_tick_at":{"type":"string"},"running":{"type":"boolean"},"started":{"type":"boolean"},"total_ticks":{"format":"int64","type":"integer"}},"required":["started","running","interval","total_ticks","last_expired_leases"],"type":"object"}
+    SpawnInstanceSpec: {"properties":{"agent":{"type":"string"},"model":{"type":"string"},"title":{"type":"string"},"workdir":{"type":"string"}},"required":["workdir"],"type":"object"}
+    ControlPromptRequest:
+      type: object
+      description: Browser/agent-facing prompt body; the API translates it to OpenCode prompt_async parts.
+      properties:
+        text:
+          type: string
+          description: Prompt text; text or at least one file is required.
+        agent:
+          type: string
+        model:
+          $ref: '#/components/schemas/ControlPromptModel'
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/ControlFilePart'
+    ControlPromptModel:
+      type: object
+      description: Applied only when both ids are non-empty.
+      required: [providerID, modelID]
+      properties:
+        providerID:
+          type: string
+        modelID:
+          type: string
+    ControlFilePart:
+      type: object
+      description: Parts with an empty mime or url are skipped by the server.
+      required: [mime, url]
+      properties:
+        mime:
+          type: string
+        url:
+          type: string
+          description: Typically a data URL.
+        filename:
+          type: string
+    ControlPermissionRequest:
+      type: object
+      description: OpenCode permission vocabulary, forwarded to the instance untouched.
+      required: [response]
+      properties:
+        response:
+          type: string
+          enum: [once, always, reject]
+          x-enum-varnames: [PermissionOnce, PermissionAlways, PermissionReject]
+    ControlProxyResponse:
+      description: Opaque JSON returned by the OpenCode instance (e.g. a bare true); may be absent on 204.
+    ControlSpawnResponse:
+      type: object
+      required: [success, instance]
+      properties:
+        success:
+          type: boolean
+        instance:
+          $ref: '#/components/schemas/OpencodeInstance'

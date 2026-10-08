@@ -24,7 +24,7 @@ func TestReminderAndAttentionRoutes(t *testing.T) {
 	_, d := c.Reminders().Create(ctx, brain.CreateReminderRequest{}, brain.RequestOptions{})
 	_, e := c.Reminders().Update(ctx, "r", brain.UpdateReminderRequest{}, brain.RequestOptions{})
 	_, f := c.Reminders().Ack(ctx, "r", brain.RequestOptions{})
-	_, g := c.Reminders().Snooze(ctx, "r", brain.SnoozeReminderRequest{RemindAt: time.Now()}, brain.RequestOptions{})
+	_, g := c.Reminders().Snooze(ctx, "r", brain.SnoozeReminderRequest{RemindAt: time.Now().Format(time.RFC3339)}, brain.RequestOptions{})
 	_, h := c.Reminders().Fire(ctx, "r", brain.RequestOptions{})
 	_, i := c.Reminders().Delete(ctx, "r", brain.RequestOptions{})
 	_, j := c.Attention().List(ctx, &brain.AttentionListParams{Project: &project, IncludeSnoozed: &yes})
@@ -33,7 +33,7 @@ func TestReminderAndAttentionRoutes(t *testing.T) {
 	_, m := c.Attention().Create(ctx, brain.CreateAttentionRequest{}, brain.RequestOptions{})
 	_, n := c.Attention().Read(ctx, "a", brain.RequestOptions{})
 	_, o := c.Attention().Unread(ctx, "a", brain.RequestOptions{})
-	_, p := c.Attention().Snooze(ctx, "a", brain.SnoozeAttentionRequest{SnoozedUntil: time.Now()}, brain.RequestOptions{})
+	_, p := c.Attention().Snooze(ctx, "a", brain.SnoozeAttentionRequest{SnoozedUntil: time.Now().Format(time.RFC3339)}, brain.RequestOptions{})
 	_, q := c.Attention().Resolve(ctx, "a", brain.RequestOptions{})
 	_, r := c.Attention().Dismiss(ctx, "a", brain.RequestOptions{})
 	for _, err := range []error{a, b, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r} {

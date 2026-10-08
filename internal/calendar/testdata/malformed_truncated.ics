@@ -1,0 +1,8 @@
+BEGIN:VCALENDAR
+PRODID:-//Google Inc//Google Calendar 70.9054//EN
+VERSION:2.0
+BEGIN:VEVENT
+DTSTART:20251015T170000Z
+DTEND:20251015T180000Z
+UID:cut-off@google.com
+SUMMARY:Feed truncated mid-transfer

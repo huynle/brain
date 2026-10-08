@@ -2589,6 +2589,8 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ControlProxyResponse'}
+        '204':
+          description: The instance answered with no body (OpenCode prompt_async does); SDKs return empty (Go) or null (TS)
   /control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/abort:
     post:
       operationId: control.abortSession
@@ -2612,6 +2614,8 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ControlProxyResponse'}
+        '204':
+          description: The instance answered with no body (OpenCode prompt_async does); SDKs return empty (Go) or null (TS)
   /control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/permissions/{permissionId}:
     post:
       operationId: control.respondPermission
@@ -2642,6 +2646,8 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ControlProxyResponse'}
+        '204':
+          description: The instance answered with no body (OpenCode prompt_async does); SDKs return empty (Go) or null (TS)
   /monitors:
     post:
       operationId: monitors.create

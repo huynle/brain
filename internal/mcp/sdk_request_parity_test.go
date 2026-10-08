@@ -200,6 +200,9 @@ type parityCall struct {
 func TestRequestParity_RunnerControlSchedulerSnooze(t *testing.T) {
 	api := dedicatedAPI(t)
 	rec := &requestRecorder{}
+	// Every real response these tools receive, including the proxied
+	// instance replies, is checked against the public contract.
+	rec.contractCheck(t, func(string) bool { return true })
 	proxy := httptest.NewServer(rec.handler(api))
 	t.Cleanup(proxy.Close)
 	mcpSrv := httptest.NewServer(mcp.NewHTTPHandler(mcp.NewAPIClient(proxy.URL)))
@@ -279,6 +282,7 @@ func TestRequestParity_RunnerControlSchedulerSnooze(t *testing.T) {
 		}
 	}
 	g.check()
+	rec.contractReport(t)
 }
 
 func mustJSON(v any) []byte {

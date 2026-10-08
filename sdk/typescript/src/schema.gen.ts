@@ -8636,6 +8636,13 @@ export interface operations {
                     "application/json": components["schemas"]["ControlProxyResponse"];
                 };
             };
+            /** @description The instance answered with no body (OpenCode prompt_async does); SDKs return empty (Go) or null (TS) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Legacy error */
             default: {
                 headers: {
@@ -8668,6 +8675,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ControlProxyResponse"];
                 };
+            };
+            /** @description The instance answered with no body (OpenCode prompt_async does); SDKs return empty (Go) or null (TS) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Legacy error */
             default: {
@@ -8706,6 +8720,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ControlProxyResponse"];
                 };
+            };
+            /** @description The instance answered with no body (OpenCode prompt_async does); SDKs return empty (Go) or null (TS) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Legacy error */
             default: {

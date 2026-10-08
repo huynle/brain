@@ -915,6 +915,7 @@ paths:
       x-brain-profile: single
       operationId: entries.get
       summary: Get an entry by ID or legacy path
+      description: A legacy path is sent as ONE percent-encoded path segment (projects%2Fp%2Fnote%2Fid.md, as both SDKs encode it); the server decodes it once. Slashes sent literally are also accepted.
       responses:
         default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':

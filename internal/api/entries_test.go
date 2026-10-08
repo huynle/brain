@@ -679,6 +679,49 @@ func TestHandleGetEntry(t *testing.T) {
 			},
 		},
 		{
+			// The public SDKs send a legacy path as ONE percent-encoded
+			// segment (entries.get "ID or legacy path").
+			name: "success by escaped full path",
+			id:   "projects%2Fgovpu%2Ftask%2F1bg4bj9y.md",
+			mockRecall: func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error) {
+				if pathOrID != "projects/govpu/task/1bg4bj9y.md" {
+					return nil, fmt.Errorf("unexpected pathOrID: %s", pathOrID)
+				}
+				return &types.BrainEntry{ID: "1bg4bj9y", Path: pathOrID, Title: "Test Task", Type: "task", Status: "active"}, nil
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "escaped path not found names the decoded locator",
+			id:   "projects%2Fa%20b%2Fnote%2Fmissing.md",
+			mockRecall: func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error) {
+				if pathOrID != "projects/a b/note/missing.md" {
+					return nil, fmt.Errorf("unexpected pathOrID: %s", pathOrID)
+				}
+				return nil, ErrNotFound
+			},
+			wantStatus: http.StatusNotFound,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				if body.Message != "Entry not found: projects/a b/note/missing.md" {
+					t.Errorf("message = %q", body.Message)
+				}
+			},
+		},
+		{
+			// Segment-wise escaping is already decoded by net/http; a literal
+			// "%41" in the path must not be decoded a second time.
+			name: "segment-escaped path is decoded once",
+			id:   "projects/a%20b/note/c%2541.md",
+			mockRecall: func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error) {
+				if pathOrID != "projects/a b/note/c%41.md" {
+					return nil, fmt.Errorf("unexpected pathOrID: %s", pathOrID)
+				}
+				return &types.BrainEntry{ID: "c", Path: pathOrID, Title: "Percent", Type: "note", Status: "active"}, nil
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
 			name: "passes include query values",
 			id:   "abc12def?include=attachments,attachment_text",
 			mockRecall: func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error) {

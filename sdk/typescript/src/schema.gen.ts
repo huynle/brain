@@ -808,7 +808,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Get an entry by ID or legacy path */
+        /**
+         * Get an entry by ID or legacy path
+         * @description A legacy path is sent as ONE percent-encoded path segment (projects%2Fp%2Fnote%2Fid.md, as both SDKs encode it); the server decodes it once. Slashes sent literally are also accepted.
+         */
         get: operations["entries.get"];
         put?: never;
         post?: never;

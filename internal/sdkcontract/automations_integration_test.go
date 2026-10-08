@@ -17,6 +17,11 @@ func exerciseAutomationSDK(t *testing.T, c *brain.Client) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// entries.get by legacy path: the SDK sends the path as one escaped
+	// segment, which the real handler must resolve like the ID.
+	if byPath, err := c.Entries().Get(ctx, entry.Path); err != nil || byPath.Id != entry.Id {
+		t.Fatalf("entries.get by legacy path %q: %+v %v", entry.Path, byPath, err)
+	}
 	run, err := c.Automations().GetRun(ctx, entry.Id)
 	if err != nil || run.Content != content {
 		t.Fatalf("run=%+v err=%v", run, err)

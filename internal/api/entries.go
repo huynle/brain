@@ -320,7 +320,7 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 // HandleGetEntry handles GET /entries/{id} or GET /entries/path/to/entry.md.
 func (h *Handler) HandleGetEntry(w http.ResponseWriter, r *http.Request) {
 	// Chi wildcard /* captures everything after /entries/ in the "*" parameter
-	id := chi.URLParam(r, "*")
+	id := entryWildcardParam(r)
 	// Fallback to "id" parameter for backward compatibility (if route uses /{id})
 	if id == "" {
 		id = chi.URLParam(r, "id")

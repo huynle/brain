@@ -1,0 +1,346 @@
+=== session tail not connected (session_tail)
+ERROR
+Error: runner bridge not connected
+=== session children not connected (session_children)
+ERROR
+Error: runner bridge not connected
+=== resume live not connected (resume_task_with_context)
+OK
+Resumed task <TASK> in project sup: resumed=true, mode=rehydrate, injected_live=false, session=.
+=== session tail missing ids (session_tail)
+ERROR
+Error: runner_id and session_id are required
+=== session tail (session_tail)
+OK
+{"records":[{"id":"msg_1:prt_1","message_id":"msg_1","kind":"text","role":"user","text":"please list files","time":{"start":1700000000000}},{"id":"msg_2:prt_3","message_id":"msg_2","kind":"tool","role":"assistant","tool":"bash","status":"completed","text":"a.txt\nb.txt","time":{"created":1700000001000}},{"id":"msg_2:prt_4","message_id":"msg_2","kind":"text","role":"assistant","text":"Found two files. token=sk-ant-api03-SECRETSECRETSECRETSECRET","time":{"end":1700000003000,"start":1700000002000}}],"next_cursor":"<CURSOR>","truncated":false,"cursor_expired":false}
+--- runner received: history session=ses-1 recursive=false depth=0
+=== session tail page (session_tail)
+OK
+{"records":[{"id":"msg_2:prt_4","message_id":"msg_2","kind":"text","role":"assistant","text":"Found two files. token=sk-ant-api03-SECRETSECRETSECRETSECRET","time":{"end":1700000003000,"start":1700000002000}}],"next_cursor":"<CURSOR>","truncated":true,"cursor_expired":false}
+--- runner received: history session=ses-1 recursive=false depth=0
+=== session tail bad limit (session_tail)
+ERROR
+Error: limit must be 1..100 and max_bytes 1024..65536
+=== session tail empty (session_tail)
+OK
+{"records":[],"next_cursor":"<CURSOR>","truncated":false,"cursor_expired":false}
+--- runner received: history session=ses-empty recursive=false depth=0
+=== session tail unknown (session_tail)
+ERROR
+Error: session not found: ses-missing
+--- runner received: history session=ses-missing recursive=false depth=0
+=== session tail other runner (session_tail)
+ERROR
+Error: runner bridge not connected
+=== session children missing ids (session_children)
+ERROR
+Error: runner_id and session_id are required
+=== session children (session_children)
+OK
+{"children":[{"session_id":"ses_child_a","parent_id":"ses-parent","executor":"opencode","state":"unknown","last_activity":null},{"session_id":"ses_child_b","parent_id":"ses-parent","executor":"opencode","state":"unknown","last_activity":null},{"session_id":"ses_grandchild","parent_id":"ses_child_a","executor":"opencode","state":"unknown","last_activity":null}],"next_cursor":"<CURSOR>","truncated":false,"cursor_expired":false}
+--- runner received: children session=ses-parent recursive=true depth=5
+=== session children page (session_children)
+OK
+{"children":[{"session_id":"ses_child_a","parent_id":"ses-parent","executor":"opencode","state":"unknown","last_activity":null}],"next_cursor":"<CURSOR>","truncated":true,"cursor_expired":false}
+--- runner received: children session=ses-parent recursive=true depth=5
+=== session children bad limit (session_children)
+ERROR
+Error: limit must be 1..100
+=== session children unknown (session_children)
+ERROR
+Error: session not found: ses-missing
+--- runner received: children session=ses-missing recursive=true depth=5
+=== resume live inject (resume_task_with_context)
+OK
+Resumed task <TASK> in project sup: resumed=true, mode=live_injected, injected_live=true, session=ses-live.
+--- runner received: req POST /session/ses-live/prompt instance=ins-task body={"text":"focus on the tests"}
+=== task after live inject (task_get)
+OK
+## Supervised
+
+**ID:** <TASK>
+**Path:** projects/sup/task/<TASK>.md
+**Priority:** LOW
+**Status:** pending
+**Classification:** ready
+
+### Execution
+- agent: (unset — runner default)
+- model: (unset — provider default)
+- feature: feat-s
+
+### Dependencies (what this task needs)
+*No dependencies*
+
+### Dependents (what needs this task)
+*No tasks depend on this one*
+
+---
+
+s
+=== resource health (resource_health)
+OK
+{"availability":"recent runner samples only; empty means unavailable, including older runners or disabled memory guard","clear_fraction":0.7,"coverage":{"buffered":5,"capacity":1000,"oldest":"<TIME>"},"observed_at":"<TIME>","samples":[],"truncated":false,"warning_fraction":0.8}
+=== resource health task (resource_health)
+OK
+{"availability":"recent runner samples only; empty means unavailable, including older runners or disabled memory guard","clear_fraction":0.7,"coverage":{"buffered":5,"capacity":1000,"oldest":"<TIME>"},"observed_at":"<TIME>","samples":[],"truncated":false,"warning_fraction":0.8}
+=== events wait immediate (events_wait)
+OK
+{"events":[],"next_cursor":"<CURSOR>","cursor_expired":false,"timed_out":true,"shutdown":false,"truncated":false}
+=== events wait bad limit (events_wait)
+ERROR
+Error: timeout_ms must be 0..25000; limit 1..100
+=== events wait bad cursor (events_wait)
+ERROR
+Error: invalid cursor for these filters or caller
+=== events wait filtered (events_wait)
+OK
+{"events":[],"next_cursor":"<CURSOR>","cursor_expired":false,"timed_out":true,"shutdown":false,"truncated":false}
+=== delivery gate (delivery_gate)
+OK
+{"delivery":null,"implementation_status":"pending","task_id":"<TASK>","unmet":null}
+=== delivery gate unknown (delivery_gate)
+ERROR
+Error: task "zzzzzzzz" not found in project "sup": not found
+=== delivery gate missing (delivery_gate)
+ERROR
+Error: project and task_id required
+=== delivery verify unconfigured (delivery_verify)
+ERROR
+Error: invalid input: configure a delivery policy first
+=== delivery verify missing (delivery_verify)
+ERROR
+Error: project and task_id required
+=== delivery record missing command (delivery_record)
+ERROR
+Error: project, task_id and command required
+=== delivery record invalid policy (delivery_record)
+ERROR
+Error: invalid input: exact GitHub repository, PR, head and target required
+=== delivery record unknown field (delivery_record)
+ERROR
+Error: invalid input: json: unknown field "expected_revison"
+=== delivery record wrong type (delivery_record)
+ERROR
+Error: invalid input: json: cannot unmarshal string into Go struct field DeliveryCommand.expected_revision of type int
+=== delivery record configure (delivery_record)
+OK
+{"delivery":{"revision":1,"required":"integrated","repository":"huynle/brain-api","pull_request":42,"head":"0123456789abcdef0123456789abcdef01234567","target":"main","required_checks":["ci/test","ci/lint"]},"unmet":["delivery_evidence"]}
+=== delivery record stale (delivery_record)
+ERROR
+Error: conflict: delivery revision changed
+=== delivery record integration without evidence (delivery_record)
+ERROR
+Error: invalid input: integration evidence must name the verified merge commit and evidence reference
+=== delivery record unknown action (delivery_record)
+ERROR
+Error: invalid input: action must be configure, verify or integration
+=== delivery verify stale (delivery_verify)
+ERROR
+Error: conflict: delivery revision changed
+=== delivery gate configured (delivery_gate)
+OK
+{"delivery":{"revision":1,"required":"integrated","repository":"huynle/brain-api","pull_request":42,"head":"0123456789abcdef0123456789abcdef01234567","target":"main","required_checks":["ci/test","ci/lint"]},"implementation_status":"pending","task_id":"<TASK>","unmet":["delivery_evidence"]}
+=== delivery record unknown task (delivery_record)
+ERROR
+Error: task "zzzzzzzz" not found in project "sup": not found
+=== capabilities (supervisor_capabilities)
+OK
+{"client_installation":"unknown; server registration does not prove client installation, connection or grants","commit":"unknown","tools":{"delivery_gate":"read:*","delivery_record":"admin:*; exact artifact and revision required","delivery_verify":"admin:*; GitHub provider access required","events_wait":"read:*; retained ring; 25 second bound","execution_budget":"read:* for reads; admin:* for reservation protocol; opaque executor usage unknown","resource_health":"read:*; updated runner and enabled memory guard required","session_children":"control:*; persisted OpenCode linkage; live state unknown","session_tail":"control:*; OpenCode history requires connected runner","supervisor_capabilities":"read:*; server registration, not client installation","supervisor_checkpoint":"read:* for reads; admin:* for revision-checked mutations","supervisor_operation":"admin:*; durable idempotency and optional budget/handoff","supervisor_operation_get":"admin:*; submitting principal only","supervisor_snapshot":"read:*; bounded non-atomic projection","task_dispatch_preview":"read:*; no reservation; runner-local configuration unknown"},"transports":["stdio","streamable_http"],"version":"dev"}
+=== snapshot (supervisor_snapshot)
+OK
+{"after_task":"<TASK>","atomic":false,"checkpoint_coverage":"first 100 checkpoints; use supervisor_checkpoint for pagination and evidence","checkpoints":[],"event_cursor":"<CURSOR>","event_filters":{"project_id":"sup"},"snapshot_finished_at":"<TIME>","snapshot_started_at":"<TIME>","tasks":[{"classification":"ready","delivery_unmet":["delivery_evidence"],"feature_id":"feat-s","id":"<TASK>","is_abandoned":false,"status":"pending","waiting_on":[]}],"truncated":false,"unavailable_sources":["resource samples are separately timestamped via resource_health"]}
+=== snapshot filtered (supervisor_snapshot)
+OK
+{"after_task":"<TASK>","atomic":false,"checkpoint_coverage":"first 100 checkpoints; use supervisor_checkpoint for pagination and evidence","checkpoints":[],"event_cursor":"<CURSOR>","event_filters":{"project_id":"sup"},"snapshot_finished_at":"<TIME>","snapshot_started_at":"<TIME>","tasks":[{"classification":"ready","delivery_unmet":["delivery_evidence"],"feature_id":"feat-s","id":"<TASK>","is_abandoned":false,"status":"pending","waiting_on":[]}],"truncated":false,"unavailable_sources":["resource samples are separately timestamped via resource_health"]}
+=== snapshot bad limit (supervisor_snapshot)
+ERROR
+Error: limit must be 1..100
+=== dispatch preview (task_dispatch_preview)
+OK
+{"classification":"ready","configuration_source":"task values after server task-default resolution; runner-local defaults are not observed","configured":{"branch":"","executor":"","model":"","repository":"","target_branch":"","target_workdir":"","workdir":""},"dispatchable":false,"pause_explanation":"tasks_paused","paused":false,"project_id":"sup","ready":true,"reservation":false,"runners":[{"eligible":false,"reason":"runner does not support push dispatch","runner_id":"sup-runner"}],"selected_runner":"","snapshot_at":"<TIME>","task_id":"<TASK>","unknown":["runner-local model/executor defaults when omitted","resolved filesystem permissions and checkout path","effective runner timeout and total attempts"],"unresolved_dependencies":[],"waiting_on":[]}
+=== dispatch preview manual (task_dispatch_preview)
+OK
+{"classification":"ready","configuration_source":"task values after server task-default resolution; runner-local defaults are not observed","configured":{"branch":"","executor":"","model":"","repository":"","target_branch":"","target_workdir":"","workdir":""},"dispatchable":false,"pause_explanation":"manual dispatch bypasses project and feature pause dials; runner pause still applies","paused":false,"project_id":"sup","ready":true,"reservation":false,"runners":[{"eligible":false,"reason":"runner does not support push dispatch","runner_id":"sup-runner"}],"selected_runner":"","snapshot_at":"<TIME>","task_id":"<TASK>","unknown":["runner-local model/executor defaults when omitted","resolved filesystem permissions and checkout path","effective runner timeout and total attempts"],"unresolved_dependencies":[],"waiting_on":[]}
+=== dispatch preview done (task_dispatch_preview)
+OK
+{"classification":"not_pending","configuration_source":"task values after server task-default resolution; runner-local defaults are not observed","configured":{"branch":"","executor":"","model":"","repository":"","target_branch":"","target_workdir":"","workdir":""},"dispatchable":false,"pause_explanation":"tasks_paused","paused":false,"project_id":"sup-two","ready":false,"reservation":false,"runners":[{"eligible":false,"reason":"runner does not support push dispatch","runner_id":"sup-runner"}],"selected_runner":"","snapshot_at":"<TIME>","task_id":"<DONE>","unknown":["runner-local model/executor defaults when omitted","resolved filesystem permissions and checkout path","effective runner timeout and total attempts"],"unresolved_dependencies":[],"waiting_on":[]}
+=== dispatch preview unknown (task_dispatch_preview)
+ERROR
+Error: task not found
+=== checkpoint list empty (supervisor_checkpoint)
+OK
+{"after":"","checkpoints":[],"truncated":false}
+=== checkpoint request (supervisor_checkpoint)
+OK
+{"id":"chk-00001","project":"sup","task_id":"<TASK>","feature_id":"feat-s","artifact":"commit abc123","question":"Ship it?","state":"pending","revision":1}
+=== checkpoint request again (supervisor_checkpoint)
+OK
+{"id":"chk-00001","project":"sup","task_id":"<TASK>","feature_id":"feat-s","artifact":"commit abc123","question":"Ship it?","state":"pending","revision":1}
+=== checkpoint answer stale (supervisor_checkpoint)
+ERROR
+Error: checkpoint revision changed
+=== checkpoint answer (supervisor_checkpoint)
+OK
+{"id":"chk-00001","project":"sup","task_id":"<TASK>","feature_id":"feat-s","artifact":"commit abc123","question":"Ship it?","state":"answered","answer":"yes","answered_by":"local:local","answered_at":"<TIME>","revision":2}
+=== checkpoint verify (supervisor_checkpoint)
+OK
+{"id":"chk-00001","project":"sup","task_id":"<TASK>","feature_id":"feat-s","artifact":"commit abc123","question":"Ship it?","state":"verified","answer":"yes","answered_by":"local:local","answered_at":"<TIME>","verification_reference":"ci#1","verified_by":"local:local","revision":3}
+=== checkpoint bounds (supervisor_checkpoint)
+ERROR
+Error: checkpoint identity or content exceeds bounds
+=== checkpoint unknown field (supervisor_checkpoint)
+ERROR
+Error: json: unknown field "extra"
+=== checkpoint list (supervisor_checkpoint)
+OK
+{"after":"chk-00001","checkpoints":[{"id":"chk-00001","project":"sup","task_id":"<TASK>","feature_id":"feat-s","artifact":"commit abc123","question":"Ship it?","state":"verified","answer":"yes","answered_by":"local:local","answered_at":"<TIME>","verification_reference":"ci#1","verified_by":"local:local","revision":3}],"truncated":false}
+=== checkpoint versions (supervisor_checkpoint)
+OK
+{"limit":100,"versions":[{"id":"chk-00001","project":"sup","task_id":"<TASK>","feature_id":"feat-s","artifact":"commit abc123","question":"Ship it?","state":"verified","answer":"yes","answered_by":"local:local","answered_at":"<TIME>","verification_reference":"ci#1","verified_by":"local:local","revision":3},{"id":"chk-00001","project":"sup","task_id":"<TASK>","feature_id":"feat-s","artifact":"commit abc123","question":"Ship it?","state":"answered","answer":"yes","answered_by":"local:local","answered_at":"<TIME>","revision":2},{"id":"chk-00001","project":"sup","task_id":"<TASK>","feature_id":"feat-s","artifact":"commit abc123","question":"Ship it?","state":"pending","revision":1}]}
+=== checkpoint list after (supervisor_checkpoint)
+OK
+{"after":"","checkpoints":[],"truncated":false}
+=== budget unknown (execution_budget)
+ERROR
+Error: budget not found
+=== budget configure (execution_budget)
+OK
+{"revision":1}
+=== budget configure stale (execution_budget)
+ERROR
+Error: budget revision changed or immutable timezone/unit differs
+=== budget get (execution_budget)
+OK
+{"budget":{"id":"bud-0001","project":"sup","timezone":"UTC","unit":"runs","limit":5,"revision":1},"consumed_and_reserved":0,"enforcement":"atomic reservation admission; executor work outside this protocol is not metered","monetary_cost":null,"remaining":5,"token_usage":null,"window":"<WINDOW>"}
+=== budget reserve (execution_budget)
+OK
+{"created":true,"reservation":{"id":"res-0001","budget_id":"bud-0001","window":"<WINDOW>","units":2,"state":"reserved"}}
+=== budget reserve over (execution_budget)
+ERROR
+Error: budget exhausted: 2 consumed/reserved, 50 requested, 5 limit
+=== budget commit (execution_budget)
+OK
+{"state":"committed"}
+=== budget cancel unknown (execution_budget)
+ERROR
+Error: sql: no rows in result set
+=== budget get after (execution_budget)
+OK
+{"budget":{"id":"bud-0001","project":"sup","timezone":"UTC","unit":"runs","limit":5,"revision":1},"consumed_and_reserved":2,"enforcement":"atomic reservation admission; executor work outside this protocol is not metered","monetary_cost":null,"remaining":3,"token_usage":null,"window":"<WINDOW>"}
+=== budget unknown action (execution_budget)
+ERROR
+Error: unknown budget action
+=== budget invalid identity (execution_budget)
+ERROR
+Error: invalid budget identity
+=== budget wrong type (execution_budget)
+ERROR
+Error: json: cannot unmarshal number 1.5 into Go struct field .units of type int64
+=== operation bad id (supervisor_operation)
+ERROR
+Error: id must be 8..128 bytes; text at most 65536 bytes
+=== operation unsupported (supervisor_operation)
+ERROR
+Error: unsupported operation
+=== operation unknown field (supervisor_operation)
+ERROR
+Error: json: unknown field "bogus"
+=== operation prompt incomplete (supervisor_operation)
+ERROR
+Error: prompt needs runner, instance, session and text
+=== operation prompt (supervisor_operation)
+OK
+{"id":"op-prompt-0002","operation":"prompt","state":"delivered","created_at":"<TIME>","updated_at":"<TIME>","detail":"executor accepted guidance; this is not task completion"}
+--- runner received: req POST /session/ses-1/prompt_async instance=ins-adhoc body={"parts":[{"text":"please summarize","type":"text"}]}
+=== operation prompt replay (supervisor_operation)
+OK
+{"id":"op-prompt-0002","operation":"prompt","state":"delivered","created_at":"<TIME>","updated_at":"<TIME>","detail":"executor accepted guidance; this is not task completion"}
+=== operation prompt conflict (supervisor_operation)
+ERROR
+Error: id already belongs to a different payload
+=== operation prompt unknown session (supervisor_operation)
+OK
+{"id":"op-prompt-0003","operation":"prompt","state":"outcome_unknown","created_at":"<TIME>","updated_at":"<TIME>","detail":"operation returned an error or timed out; reconcile task/session state before issuing a new ID"}
+--- runner received: req POST /session/ses-missing/prompt_async instance=ins-adhoc body={"parts":[{"text":"x","type":"text"}]}
+=== operation trigger (supervisor_operation)
+OK
+{"id":"op-trigger-0001","operation":"trigger","state":"accepted","created_at":"<TIME>","updated_at":"<TIME>","detail":"trigger recorded; not proof of execution or task completion"}
+=== operation resume (supervisor_operation)
+OK
+{"id":"op-resume-0001","operation":"resume_with_context","state":"accepted","created_at":"<TIME>","updated_at":"<TIME>","detail":"resume recorded for runner dispatch; not proof of executor delivery or task completion"}
+=== operation checkpoint stale (supervisor_operation)
+ERROR
+Error: checkpoint missing, stale or outside task scope
+=== operation budget refused (supervisor_operation)
+ERROR
+Error: budget admission refused
+=== operation budget (supervisor_operation)
+OK
+{"id":"op-budget-0002","operation":"trigger","state":"accepted","created_at":"<TIME>","updated_at":"<TIME>","detail":"trigger recorded; not proof of execution or task completion"}
+=== operation wrong type (supervisor_operation)
+ERROR
+Error: json: cannot unmarshal string into Go struct field supervisorCommand.budget_units of type int64
+=== operation get (supervisor_operation_get)
+OK
+{"id":"op-prompt-0002","operation":"prompt","state":"delivered","created_at":"<TIME>","updated_at":"<TIME>","detail":"executor accepted guidance; this is not task completion"}
+=== operation get rejected (supervisor_operation_get)
+OK
+{"id":"op-budget-0001","operation":"trigger","state":"rejected","created_at":"<TIME>","updated_at":"<TIME>","detail":"budget admission refused"}
+=== operation get unknown (supervisor_operation_get)
+ERROR
+Error: operation not found
+=== operation get missing (supervisor_operation_get)
+ERROR
+Error: id required
+=== operation get odd id (supervisor_operation_get)
+ERROR
+Error: operation not found
+=== dead tail (session_tail)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/control/runners/r%201/sessions/s%2F1/tail?limit=20&max_bytes=16384": dial tcp <LOOPBACK>: connect: connection refused
+=== dead children (session_children)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/control/runners/r/sessions/s/descendants?limit=20": dial tcp <LOOPBACK>: connect: connection refused
+=== dead resource health (resource_health)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/events/resource-health?project_id=p+q": dial tcp <LOOPBACK>: connect: connection refused
+=== dead events wait (events_wait)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/events/wait?after=c&limit=100&project_id=p&timeout_ms=25000": dial tcp <LOOPBACK>: connect: connection refused
+=== dead gate (delivery_gate)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/p/t%2F1/delivery": dial tcp <LOOPBACK>: connect: connection refused
+=== dead verify (delivery_verify)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/p/t/delivery": dial tcp <LOOPBACK>: connect: connection refused
+=== dead record (delivery_record)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/p/t/delivery": dial tcp <LOOPBACK>: connect: connection refused
+=== dead capabilities (supervisor_capabilities)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/supervision/capabilities?limit=5&manual=true&project_id=p": dial tcp <LOOPBACK>: connect: connection refused
+=== dead snapshot (supervisor_snapshot)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/supervision/snapshot?limit=50&project_id=p": dial tcp <LOOPBACK>: connect: connection refused
+=== dead preview (task_dispatch_preview)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/supervision/dispatch-preview?limit=50&manual=true&project_id=p&task_id=t": dial tcp <LOOPBACK>: connect: connection refused
+=== dead operation (supervisor_operation)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/supervision/operations": dial tcp <LOOPBACK>: connect: connection refused
+=== dead operation get (supervisor_operation_get)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/supervision/operations/op%2F1": dial tcp <LOOPBACK>: connect: connection refused
+=== dead checkpoint list (supervisor_checkpoint)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/supervision/checkpoints?after=x&project=p": dial tcp <LOOPBACK>: connect: connection refused
+=== dead checkpoint command (supervisor_checkpoint)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/supervision/checkpoints": dial tcp <LOOPBACK>: connect: connection refused
+=== dead budget get (execution_budget)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/supervision/budgets?id=b&project=p": dial tcp <LOOPBACK>: connect: connection refused
+=== dead budget command (execution_budget)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/supervision/budgets": dial tcp <LOOPBACK>: connect: connection refused

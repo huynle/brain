@@ -1,0 +1,184 @@
+=== resolve missing client (context_resolve)
+ERROR
+Error: provide a 'client_id'
+=== resolve missing host (context_resolve)
+ERROR
+Error: provide a 'host_id'
+=== resolve minimal (context_resolve)
+OK
+## Context resolution
+
+- Project: unknown
+- Confidence: low
+- Source: fallback
+
+### Client
+- Client: c-1
+- Host: machine_00000001
+
+### Workspace
+=== resolve full (context_resolve)
+OK
+## Context resolution
+
+- Project: brain-api
+- Confidence: high
+- Source: folder_name
+
+### Client
+- Client: c-2
+- Host: machine_00000002
+- Kind: opencode
+- Hostname: box
+- Labels: gpu=true, zone=lab
+- Capabilities: git, docker
+
+### Workspace
+- Workspace: /Users/me/projects/brain-api
+- Git branch: main
+- Git remote: https://github.com/huynle/brain-api.git
+- Folder: brain-api
+=== placement missing project (project_placement_get)
+ERROR
+Error: provide a 'project'
+=== placement default (project_placement_get)
+OK
+## Project placement
+
+- Project: place-me
+- Affinity: soft
+=== placement put (project_placement_put)
+OK
+## Project placement updated
+
+- Project: place-me
+- Affinity: soft
+- Preferred machines: m1, m2
+- Allowed machines: m1, m2, m3
+- Workspace policy: worktree
+- Required labels: zone=lab
+- Required capabilities: git
+
+### Resources
+- cpu: 2
+- memory_mb: 2048
+=== placement get after put (project_placement_get)
+OK
+## Project placement
+
+- Project: place-me
+- Affinity: soft
+- Preferred machines: m1, m2
+- Allowed machines: m1, m2, m3
+- Workspace policy: worktree
+- Required labels: zone=lab
+- Required capabilities: git
+
+### Resources
+- cpu: 2
+- memory_mb: 2048
+=== placement put invalid affinity (project_placement_put)
+ERROR
+Error: Invalid request
+=== placement put minimal (project_placement_put)
+OK
+## Project placement updated
+
+- Project: place%20me%2F2
+- Affinity: none
+=== placement put missing project (project_placement_put)
+ERROR
+Error: provide a 'project'
+=== reader by id (reader_url)
+OK
+{"id":"<ENTRY>","path":"projects/reader/scratch/<ENTRY>.md","reader_url":"http://<LOOPBACK>/read.html?entry=projects%2Freader%2Fscratch%2F<ENTRY>.md","title":"Readable note"}
+=== reader by path (reader_url)
+OK
+{"id":"<ENTRY>","path":"projects/reader/scratch/<ENTRY>.md","reader_url":"http://<LOOPBACK>/read.html?entry=projects%2Freader%2Fscratch%2F<ENTRY>.md","title":"Readable note"}
+=== reader base override (reader_url)
+OK
+{"id":"<ENTRY>","path":"projects/reader/scratch/<ENTRY>.md","reader_url":"https://brain.example.test/read.html?entry=projects%2Freader%2Fscratch%2F<ENTRY>.md","title":"Readable note"}
+=== reader base invalid (reader_url)
+ERROR
+Error: base_url must be an http(s) origin without credentials, path, query, or fragment
+=== reader base with path (reader_url)
+ERROR
+Error: base_url must be an http(s) origin without credentials, path, query, or fragment
+=== reader missing path (reader_url)
+ERROR
+Error: path is required (entry path or short ID)
+=== reader unknown (reader_url)
+ERROR
+Error: Entry not found: zzzzzzzz
+=== reader unknown path (reader_url)
+ERROR
+Error: Entry not found: projects/reader/scratch/missing file.md
+=== sync status empty (sync_status)
+OK
+{"devices":[],"note":"Last reported browser state. Unknown means disconnected, suspended, closed, or reporting failed; unsent offline edits are invisible.","stale_after_seconds":35}
+=== sync diff missing args (sync_diff)
+ERROR
+Error: device_id and operation_id required
+=== sync diff unknown device (sync_diff)
+ERROR
+Error: device not reported
+=== sync reconcile unknown device (sync_reconcile)
+ERROR
+Error: device not reported
+=== sync status (sync_status)
+OK
+{"devices":[{"cache_mode":"recent","cached_entries":3,"device_id":"golden-device-0001","last_seen":"<TIME>","connection":"online","reported_online":true,"syncing":false,"ready":true,"cursor":7,"epoch":"epoch-1","pending":[{"id":"op-1","path":"projects/sync/scratch/<SYNCED>.md","method":"PATCH","revision":"r0","raw":"","error":"revision conflict"},{"id":"op-2","path":"projects/sync/scratch/missing.md","method":"PATCH","revision":"r9","raw":"","error":"timeout","failure":"uncertain"}]}],"note":"Last reported browser state. Unknown means disconnected, suspended, closed, or reporting failed; unsent offline edits are invisible.","stale_after_seconds":35}
+=== sync diff (sync_diff)
+OK
+{"device_id":"golden-device-0001","operation":{"id":"op-1","path":"projects/sync/scratch/<SYNCED>.md","method":"PATCH","revision":"r0","raw":"---\ntitle: Synced note\n---\nbrowser body","error":"revision conflict"},"server_raw":"---\ntitle: Synced note\ntype: scratch\ntags:\n  - scratch\nstatus: active\ncreated: <TIME>\nprojectId: sync\n---\n\nserver body\n","server_revision":"<REVISION>","snapshot":"<SNAPSHOT>","diff":"--- server\n+++ browser draft\n@@ full contents @@\n----\n-title: Synced note\n-type: scratch\n-tags:\n-  - scratch\n-status: active\n-created: <TIME>\n-projectId: sync\n----\n-\n-server body\n-\n+---\n+title: Synced note\n+---\n+browser body\n","connection":"online","last_seen":"<TIME>"}
+=== sync diff missing entry (sync_diff)
+OK
+{"device_id":"golden-device-0001","operation":{"id":"op-2","path":"projects/sync/scratch/missing.md","method":"PATCH","revision":"r9","raw":"---\ntitle: Gone\n---\nx","error":"timeout","failure":"uncertain"},"server_raw":"","server_revision":"","snapshot":"<SNAPSHOT>","diff":"--- server\n+++ browser draft\n@@ full contents @@\n-\n+---\n+title: Gone\n+---\n+x\n","connection":"online","last_seen":"<TIME>"}
+=== sync diff unknown op (sync_diff)
+ERROR
+Error: operation no longer reported
+=== sync reconcile invalid action (sync_reconcile)
+ERROR
+Error: snapshot, valid action, and raw for merge required
+=== sync reconcile merge without raw (sync_reconcile)
+ERROR
+Error: snapshot, valid action, and raw for merge required
+=== sync reconcile stale (sync_reconcile)
+ERROR
+Error: fetch a fresh diff before reconciling
+=== sync reconcile merge invalid raw (sync_reconcile)
+ERROR
+Error: full YAML and Markdown required
+=== sync reconcile uncertain rebase (sync_reconcile)
+ERROR
+Error: requires a reported failed edit; uncertain outcomes and missing entries permit discard only after review
+=== sync reconcile discard (sync_reconcile)
+OK
+{"command_id":"<COMMAND>","note":"The browser must reconnect and acknowledge. applied_locally means queued locally, not yet committed to the server.","status":"queued"}
+=== sync reconcile pending (sync_reconcile)
+ERROR
+Error: wait for the browser to acknowledge its prior command
+=== sync status after (sync_status)
+OK
+{"devices":[{"cache_mode":"recent","cached_entries":3,"device_id":"golden-device-0001","last_seen":"<TIME>","connection":"online","reported_online":true,"syncing":false,"ready":true,"cursor":7,"epoch":"epoch-1","pending":[{"id":"op-1","path":"projects/sync/scratch/<SYNCED>.md","method":"PATCH","revision":"r0","raw":"","error":"revision conflict"},{"id":"op-2","path":"projects/sync/scratch/missing.md","method":"PATCH","revision":"r9","raw":"","error":"timeout","failure":"uncertain"}],"command":{"id":"<COMMAND>","operation_id":"op-1","action":"discard","expected_raw":"","server_revision":"<REVISION>"}}],"note":"Last reported browser state. Unknown means disconnected, suspended, closed, or reporting failed; unsent offline edits are invisible.","stale_after_seconds":35}
+=== dead resolve (context_resolve)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/context/resolve": dial tcp <LOOPBACK>: connect: connection refused
+=== dead placement get (project_placement_get)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/projects/p%20q/placement": dial tcp <LOOPBACK>: connect: connection refused
+=== dead placement put (project_placement_put)
+ERROR
+Error: request failed: Put "http://<LOOPBACK>/api/v1/projects/p%2Fq/placement": dial tcp <LOOPBACK>: connect: connection refused
+=== dead reader (reader_url)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/entries/projects/p%20q/note/a.md": dial tcp <LOOPBACK>: connect: connection refused
+=== dead sync status (sync_status)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/sync/devices": dial tcp <LOOPBACK>: connect: connection refused
+=== dead sync diff (sync_diff)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/sync/devices/d%201/operations/o%2F1/diff": dial tcp <LOOPBACK>: connect: connection refused
+=== dead sync reconcile (sync_reconcile)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/sync/devices/d/operations/o/reconcile": dial tcp <LOOPBACK>: connect: connection refused

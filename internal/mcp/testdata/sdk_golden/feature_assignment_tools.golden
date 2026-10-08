@@ -1,0 +1,412 @@
+=== features empty (features)
+OK
+## Features for project: feat-proj
+
+No features found.
+=== feature ready empty (feature_ready)
+OK
+## Ready features for project: feat-proj
+
+No ready features found.
+=== features (features)
+OK
+## Features for project: feat-proj
+
+### feat-x
+- Dependencies: satisfied
+- Work: 1 task(s) ready to run
+- Tasks: 2 | Ready: 1 | Waiting: 1 | Blocked: 0 | Not pending: 0
+  - Build API (`<ONE>`) - pending/ready
+  - Wire UI (`<TWO>`) - pending/waiting
+
+### feat-y
+- Dependencies: satisfied
+- Work: nothing runnable — all 1 task(s) are outside the pending lifecycle (completed, draft, or cancelled)
+- Tasks: 1 | Ready: 0 | Waiting: 0 | Blocked: 0 | Not pending: 1
+  - Docs (`<THREE>`) - completed/not_pending
+
+### feat-z
+- Dependencies: waiting on other features
+- Work: nothing runnable yet — 1 waiting on dependencies
+- Tasks: 1 | Ready: 0 | Waiting: 1 | Blocked: 0 | Not pending: 0
+  - Later (`<FOUR>`) - pending/waiting
+
+=== features limit 1 (features)
+OK
+## Features for project: feat-proj
+
+_Showing 1 of 3 features — 2 omitted. Raise 'limit' to see the rest._
+
+### feat-x
+- Dependencies: satisfied
+- Work: 1 task(s) ready to run
+- Tasks: 2 | Ready: 1 | Waiting: 1 | Blocked: 0 | Not pending: 0
+  - Build API (`<ONE>`) - pending/ready
+  - Wire UI (`<TWO>`) - pending/waiting
+
+=== features ready only (features)
+OK
+## Ready features for project: feat-proj
+
+### feat-x
+- Dependencies: satisfied
+- Work: 1 task(s) ready to run
+- Tasks: 2 | Ready: 1 | Waiting: 1 | Blocked: 0 | Not pending: 0
+  - Build API (`<ONE>`) - pending/ready
+  - Wire UI (`<TWO>`) - pending/waiting
+
+=== feature ready (feature_ready)
+OK
+## Ready features for project: feat-proj
+
+### feat-x
+- Dependencies: satisfied
+- Work: 1 task(s) ready to run
+- Tasks: 2 | Ready: 1 | Waiting: 1 | Blocked: 0 | Not pending: 0
+  - Build API (`<ONE>`) - pending/ready
+  - Wire UI (`<TWO>`) - pending/waiting
+
+=== feature get (feature_get)
+OK
+## Feature feat-x
+
+- Project: feat-proj
+- Dependencies: satisfied
+- Work: 1 task(s) ready to run
+- Tasks: 2 | Ready: 1 | Waiting: 1 | Blocked: 0 | Not pending: 0
+
+### Git & merge
+- branch: feat-x
+- merges into: ⚠ tasks disagree — develop, main
+
+### Tasks
+- Build API (`<ONE>`) - pending/ready
+- Wire UI (`<TWO>`) - pending/waiting
+  waiting_on: <ONE>
+=== feature get done (feature_get)
+OK
+## Feature feat-y
+
+- Project: feat-proj
+- Dependencies: satisfied
+- Work: nothing runnable — all 1 task(s) are outside the pending lifecycle (completed, draft, or cancelled)
+- Tasks: 1 | Ready: 0 | Waiting: 0 | Blocked: 0 | Not pending: 1
+
+### Git & merge
+- branch: (unset)
+- merges into: (unset)
+
+### Tasks
+- Docs (`<THREE>`) - completed/not_pending
+=== feature get unknown (feature_get)
+ERROR
+Error: feature not found
+=== feature get missing id (feature_get)
+ERROR
+Error: provide a 'feature_id'
+=== feature candidates (feature_runner_candidates)
+OK
+## Runner candidates for feat-proj/feat-x
+
+### runner-gpu
+- Compatible: true
+- Available now: true
+- Executors: opencode, pi
+- Capabilities: gpu
+
+### runner-plain
+- Compatible: true
+- Available now: true
+- Executors: opencode
+- Capabilities: none
+
+
+=== feature candidates rejected (feature_runner_candidates)
+OK
+## Runner candidates for feat-proj/feat-x
+
+### runner-gpu
+- Compatible: true
+- Available now: true
+- Executors: opencode, pi
+- Capabilities: gpu
+
+### runner-plain
+- Compatible: true
+- Available now: true
+- Executors: opencode
+- Capabilities: none
+
+
+=== feature candidates unknown (feature_runner_candidates)
+OK
+## Runner candidates for feat-proj/feat-none
+
+### runner-gpu
+- Compatible: true
+- Available now: true
+- Executors: opencode, pi
+- Capabilities: gpu
+
+### runner-plain
+- Compatible: true
+- Available now: true
+- Executors: opencode
+- Capabilities: none
+
+
+=== feature candidates missing id (feature_runner_candidates)
+ERROR
+Error: provide a 'feature_id'
+=== feature assign missing runner (feature_assign)
+ERROR
+Error: provide a 'runner_id'
+=== feature assign missing feature (feature_assign)
+ERROR
+Error: provide a 'feature_id'
+=== feature assign unknown runner (feature_assign)
+ERROR
+Error: runner not found
+=== feature assign (feature_assign)
+OK
+## Feature assignment
+
+- Scope: all unfinished tasks in the feature
+- Project: feat-proj
+- Feature: feat-x
+- Status: active
+- Runner: runner-plain
+- Source: manual
+- Assigned at: <TIME>
+- Updated at: <TIME>
+=== feature assign again (feature_assign)
+ERROR
+Error: feature assignment conflict
+=== feature reassign (feature_assign)
+OK
+## Feature assignment
+
+- Scope: all unfinished tasks in the feature
+- Project: feat-proj
+- Feature: feat-x
+- Status: active
+- Runner: runner-gpu
+- Previous runner: runner-plain
+- Source: manual
+- Assigned at: <TIME>
+- Updated at: <TIME>
+=== feature clear (feature_clear_assignment)
+ERROR
+Error: Invalid request
+=== feature clear default intent (feature_clear_assignment)
+OK
+## Feature assignment
+
+- Scope: all unfinished tasks in the feature
+- Project: feat-proj
+- Feature: feat-x
+- Status: cleared
+- Previous runner: runner-gpu
+- Source: manual
+- Assigned at: <TIME>
+- Updated at: <TIME>
+=== feature clear missing id (feature_clear_assignment)
+ERROR
+Error: provide a 'feature_id'
+=== checkout missing id (feature_checkout)
+ERROR
+Error: provide a 'feature_id'
+=== checkout bad policy (feature_checkout)
+OK
+## Feature checkout
+
+- Project: feat-proj
+- Feature: feat-x
+- created: true
+- Generated key: feature-checkout:feat-x:round-1
+
+### Task
+- Title: Feature checkout: feat-x
+- ID: <CHECKOUT_CHECKOUT_BAD_POLICY>
+- Status: pending
+- Path: projects/feat-proj/task/<CHECKOUT_CHECKOUT_BAD_POLICY>.md
+=== checkout (feature_checkout)
+OK
+## Feature checkout
+
+- Project: feat-proj
+- Feature: feat-x
+- created: true
+- Generated key: feature-checkout:feat-x:round-1
+
+### Task
+- Title: Feature checkout: feat-x
+- ID: <CHECKOUT_CHECKOUT>
+- Status: pending
+- Path: projects/feat-proj/task/<CHECKOUT_CHECKOUT>.md
+=== checkout again (feature_checkout)
+OK
+## Feature checkout
+
+- Project: feat-proj
+- Feature: feat-x
+- created: true
+- Generated key: feature-checkout:feat-x:round-1
+
+### Task
+- Title: Feature checkout: feat-x
+- ID: <CHECKOUT_CHECKOUT_AGAIN>
+- Status: pending
+- Path: projects/feat-proj/task/<CHECKOUT_CHECKOUT_AGAIN>.md
+=== checkout unknown feature (feature_checkout)
+OK
+## Feature checkout
+
+- Project: feat-proj
+- Feature: feat-none
+- created: true
+- Generated key: feature-checkout:feat-none:round-1
+
+### Task
+- Title: Feature checkout: feat-none
+- ID: <CHECKOUT_CHECKOUT_UNKNOWN_FEATURE>
+- Status: pending
+- Path: projects/feat-proj/task/<CHECKOUT_CHECKOUT_UNKNOWN_FEATURE>.md
+=== candidates task (runner_candidates)
+OK
+## Runner candidates for feat-proj/<SOLO>
+
+- runner-gpu — compatible=true available=true
+
+=== candidates task rejected (runner_candidates)
+OK
+## Runner candidates for feat-proj/<SOLO>
+
+- runner-gpu — compatible=true available=true
+- runner-plain — compatible=false available=true — unsupported executor: pi
+
+=== candidates unknown task (runner_candidates)
+ERROR
+Error: task not found
+=== candidates proposed (runner_candidates)
+OK
+## Runner candidates for feat-proj/
+
+- runner-gpu — compatible=true available=true
+- runner-plain — compatible=false available=true — unsupported executor: pi
+
+=== candidates proposed feature (runner_candidates)
+OK
+## Runner candidates for feat-proj/
+
+- runner-gpu — compatible=true available=true
+- runner-plain — compatible=true available=true
+
+=== candidates proposed invalid (runner_candidates)
+OK
+## Runner candidates for feat-proj/
+
+- runner-gpu — compatible=true available=true
+- runner-plain — compatible=true available=true
+
+=== candidates proposed remote (runner_candidates)
+OK
+## Runner candidates for feat-proj/
+
+- runner-gpu — compatible=false available=true — git_remote must be a valid HTTPS URL; SSH remotes are not allowed
+- runner-plain — compatible=false available=true — git_remote must be a valid HTTPS URL; SSH remotes are not allowed
+
+=== assign missing (task_assign)
+ERROR
+Error: task_id and runner_id are required
+=== assign incompatible (task_assign)
+ERROR
+Error: conflict: runner runner-plain is incompatible: unsupported executor: pi
+=== assign (task_assign)
+OK
+## Task assignment
+
+- Project: feat-proj
+- Task: <SOLO>
+- Runner: runner-gpu
+- Scope: task
+- Status: active
+
+=== assign again (task_assign)
+OK
+## Task assignment
+
+- Project: feat-proj
+- Task: <SOLO>
+- Runner: runner-gpu
+- Scope: task
+- Status: active
+
+=== reassign (task_assign)
+OK
+## Task assignment
+
+- Project: feat-proj
+- Task: <SOLO>
+- Runner: runner-gpu
+- Scope: task
+- Status: active
+
+=== assign feature task (task_assign)
+ERROR
+Error: conflict: feature tasks must be assigned through their feature
+=== assign unknown task (task_assign)
+ERROR
+Error: task or runner not found
+=== clear (task_clear_assignment)
+OK
+## Task assignment
+
+- Project: feat-proj
+- Task: <SOLO>
+- Runner: none
+- Scope: task
+- Status: cleared
+
+=== clear again (task_clear_assignment)
+ERROR
+Error: task assignment not found
+=== clear missing (task_clear_assignment)
+ERROR
+Error: task_id is required
+=== dead features (features)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/p%20q/features": dial tcp <LOOPBACK>: connect: connection refused
+=== dead features ready only (features)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/p/features/ready": dial tcp <LOOPBACK>: connect: connection refused
+=== dead feature ready (feature_ready)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/p/features/ready": dial tcp <LOOPBACK>: connect: connection refused
+=== dead feature get (feature_get)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/p/features/f%2F1": dial tcp <LOOPBACK>: connect: connection refused
+=== dead feature candidates (feature_runner_candidates)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/p/features/f/runner-candidates": dial tcp <LOOPBACK>: connect: connection refused
+=== dead feature assign (feature_assign)
+ERROR
+Error: request failed: Put "http://<LOOPBACK>/api/v1/tasks/p/features/f/assignment": dial tcp <LOOPBACK>: connect: connection refused
+=== dead feature clear (feature_clear_assignment)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/p/features/f/assignment/clear": dial tcp <LOOPBACK>: connect: connection refused
+=== dead checkout (feature_checkout)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/p/features/f/checkout": dial tcp <LOOPBACK>: connect: connection refused
+=== dead candidates task (runner_candidates)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/p/t%201/runner-candidates": dial tcp <LOOPBACK>: connect: connection refused
+=== dead candidates proposed (runner_candidates)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/p/runner-candidates": dial tcp <LOOPBACK>: connect: connection refused
+=== dead assign (task_assign)
+ERROR
+Error: request failed: Put "http://<LOOPBACK>/api/v1/tasks/p/t/assignment": dial tcp <LOOPBACK>: connect: connection refused
+=== dead clear (task_clear_assignment)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/p/t/assignment/clear": dial tcp <LOOPBACK>: connect: connection refused

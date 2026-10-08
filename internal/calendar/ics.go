@@ -7,9 +7,11 @@
 //
 // Decoding is delegated to github.com/emersion/go-ical and recurrence rules
 // to github.com/teambition/rrule-go. The wrapper adds what those libraries
-// leave out: input-size and nesting guards, panic recovery around the
-// decoder, TZID → IANA mapping (including Windows zone names), RECURRENCE-ID
-// overrides, cancellation, all-day date semantics, and runaway-rule caps.
+// leave out: input-size and nesting guards, panic recovery, TZID → IANA
+// mapping (including Windows zone names), RECURRENCE-ID overrides,
+// cancellation, all-day date semantics, RFC 5545 rule-part validation, and
+// caps against runaway rules. See Brain quirk z41ihyno for the library
+// behaviors these guards exist for.
 package calendar
 
 import (
@@ -92,7 +94,6 @@ type vevent struct {
 
 	cancelled bool
 	sequence  int
-	order     int // position in the feed, for deterministic tie-breaks
 
 	start        icsTime
 	end          *icsTime
@@ -199,7 +200,6 @@ type parser struct {
 	feed       *Feed
 	tz         *tzResolver
 	byUID      map[string]*eventGroup
-	order      int
 	suppressed int
 	tzWarned   map[string]bool // uid + "\x00" + tzid already warned about
 }
@@ -233,9 +233,7 @@ func (p *parser) addEvent(c *ical.Component) {
 		description: propText(c, ical.PropDescription),
 		location:    propText(c, ical.PropLocation),
 		cancelled:   strings.EqualFold(propText(c, ical.PropStatus), "CANCELLED"),
-		order:       p.order,
 	}
-	p.order++
 	if seq := c.Props.Get(ical.PropSequence); seq != nil {
 		ev.sequence, _ = strconv.Atoi(strings.TrimSpace(seq.Value))
 	}
@@ -418,6 +416,9 @@ func buildRule(raw string, dtstart time.Time, allDay bool) (*rrule.RRule, error)
 	if opt.Interval > maxInterval {
 		return nil, fmt.Errorf("RRULE INTERVAL %d exceeds %d", opt.Interval, maxInterval)
 	}
+	if err := checkRuleParts(opt); err != nil {
+		return nil, err
+	}
 	opt.Dtstart = dtstart
 	if !allDay && untilIsDate(raw) {
 		opt.Until = opt.Until.AddDate(0, 0, 1).Add(-time.Second)
@@ -426,6 +427,40 @@ func buildRule(raw string, dtstart time.Time, allDay bool) (*rrule.RRule, error)
 		return nil, errors.New("RRULE can never reach its BYHOUR/BYMINUTE/BYSECOND values")
 	}
 	return rrule.NewRRule(*opt)
+}
+
+// checkRuleParts enforces RFC 5545 section 3.3.10 rule-part constraints that
+// rrule-go does not. Some violations make its iterator index out of range
+// (e.g. FREQ=MONTHLY;BYMONTHDAY=-27,19;BYDAY=53MO); others iterate rules no
+// RFC client would produce.
+func checkRuleParts(opt *rrule.ROption) error {
+	freq := opt.Freq
+	switch {
+	case len(opt.Byeaster) > 0:
+		return errors.New("RRULE BYEASTER is not part of RFC 5545")
+	case len(opt.Byweekno) > 0 && freq != rrule.YEARLY:
+		return errors.New("RRULE BYWEEKNO requires FREQ=YEARLY")
+	case len(opt.Byyearday) > 0 && (freq == rrule.DAILY || freq == rrule.WEEKLY || freq == rrule.MONTHLY):
+		return errors.New("RRULE BYYEARDAY is not allowed with DAILY, WEEKLY or MONTHLY")
+	case len(opt.Bymonthday) > 0 && freq == rrule.WEEKLY:
+		return errors.New("RRULE BYMONTHDAY is not allowed with WEEKLY")
+	case len(opt.Bysetpos) > 0 && len(opt.Bysecond)+len(opt.Byminute)+len(opt.Byhour)+len(opt.Byweekday)+
+		len(opt.Bymonthday)+len(opt.Byyearday)+len(opt.Byweekno)+len(opt.Bymonth) == 0:
+		return errors.New("RRULE BYSETPOS requires another BYxxx rule part")
+	}
+	for i := range opt.Byweekday {
+		n := opt.Byweekday[i].N()
+		switch {
+		case n == 0:
+		case freq != rrule.MONTHLY && freq != rrule.YEARLY:
+			return errors.New("RRULE BYDAY ordinals require FREQ=MONTHLY or YEARLY")
+		case freq == rrule.YEARLY && len(opt.Byweekno) > 0:
+			return errors.New("RRULE BYDAY ordinals are not allowed with BYWEEKNO")
+		case (freq == rrule.MONTHLY || len(opt.Bymonth) > 0) && (n > 5 || n < -5):
+			return fmt.Errorf("RRULE BYDAY ordinal %d is out of range within a month", n)
+		}
+	}
+	return nil
 }
 
 // subDailyReachable reports whether an HOURLY/MINUTELY/SECONDLY rule can

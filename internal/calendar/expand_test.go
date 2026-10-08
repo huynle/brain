@@ -567,3 +567,135 @@ func TestExpand_DeterministicAndConcurrencySafe(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestRules_RFC5545RulePartConstraints(t *testing.T) {
+	// rrule-go accepts these but some panic (index out of range) or iterate
+	// nonsensically; RFC 5545 forbids all of them. Each degrades to its
+	// DTSTART instance with a warning.
+	invalid := []string{
+		"FREQ=MONTHLY;BYMONTHDAY=-27,19;BYDAY=53MO", // panics in rrule-go
+		"FREQ=YEARLY;BYEASTER=1",                    // not RFC 5545
+		"FREQ=WEEKLY;BYDAY=1MO",                     // ordinal needs MONTHLY/YEARLY
+		"FREQ=YEARLY;BYWEEKNO=1;BYDAY=1MO",          // ordinal not allowed with BYWEEKNO
+		"FREQ=YEARLY;BYMONTH=3;BYDAY=6SU",           // within a month: ordinal ±1..5
+		"FREQ=DAILY;BYWEEKNO=1",                     // BYWEEKNO needs YEARLY
+		"FREQ=MONTHLY;BYYEARDAY=100",                // BYYEARDAY not with MONTHLY
+		"FREQ=WEEKLY;BYMONTHDAY=1",                  // BYMONTHDAY not with WEEKLY
+		"FREQ=MONTHLY;BYSETPOS=1",                   // BYSETPOS needs another BYxxx
+	}
+	var b strings.Builder
+	var want []string
+	for i, rule := range invalid {
+		start := time.Date(2025, 6, 2, i, 0, 0, 0, time.UTC)
+		fmt.Fprintf(&b, "BEGIN:VEVENT\r\nUID:bad-%d\r\nDTSTART:%s\r\nRRULE:%s\r\nEND:VEVENT\r\n", i, start.Format(dateTimeUTCLayout), rule)
+		want = append(want, fmt.Sprintf(`%s %s bad-%d "" allday=false rid=-`, start.Format(time.RFC3339), start.Format(time.RFC3339), i))
+	}
+	b.WriteString(`BEGIN:VEVENT
+UID:last-friday
+DTSTART:20251031T120000Z
+RRULE:FREQ=MONTHLY;BYDAY=-1FR;COUNT=2
+END:VEVENT
+BEGIN:VEVENT
+UID:twentieth-monday
+DTSTART:20250519T120000Z
+RRULE:FREQ=YEARLY;BYDAY=20MO;COUNT=1
+END:VEVENT
+BEGIN:VEVENT
+UID:last-weekday
+DTSTART:20251031T150000Z
+RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;COUNT=2
+END:VEVENT`)
+
+	var f *Feed
+	var occs []Occurrence
+	withTimeout(t, 20*time.Second, func() {
+		var err error
+		if f, err = Parse(strings.NewReader(wrapCalendar(b.String()))); err != nil {
+			t.Errorf("Parse: %v", err)
+			return
+		}
+		if occs, err = f.Expand(utc("2025-05-01T00:00:00Z"), utc("2025-12-01T00:00:00Z")); err != nil {
+			t.Errorf("Expand: %v", err)
+		}
+	})
+	if t.Failed() {
+		return
+	}
+	if len(f.Warnings) != len(invalid) {
+		t.Fatalf("got %d warnings, want %d: %q", len(f.Warnings), len(invalid), f.Warnings)
+	}
+	for i, w := range f.Warnings {
+		if !strings.Contains(w, fmt.Sprintf("bad-%d", i)) || !strings.Contains(w, "recurrence ignored") {
+			t.Errorf("warning %d = %q", i, w)
+		}
+	}
+	want = append([]string{
+		`2025-05-19T12:00:00Z 2025-05-19T12:00:00Z twentieth-monday "" allday=false rid=2025-05-19T12:00:00Z`,
+	}, want...)
+	want = append(want,
+		`2025-10-31T12:00:00Z 2025-10-31T12:00:00Z last-friday "" allday=false rid=2025-10-31T12:00:00Z`,
+		`2025-10-31T15:00:00Z 2025-10-31T15:00:00Z last-weekday "" allday=false rid=2025-10-31T15:00:00Z`,
+		`2025-11-28T12:00:00Z 2025-11-28T12:00:00Z last-friday "" allday=false rid=2025-11-28T12:00:00Z`,
+		`2025-11-28T15:00:00Z 2025-11-28T15:00:00Z last-weekday "" allday=false rid=2025-11-28T15:00:00Z`,
+	)
+	assertLines(t, occs, want...)
+}
+
+func TestTZID_ResolutionIsBounded(t *testing.T) {
+	long := "/" + strings.Repeat("junk/", 30) + "America/New_York" // > maxTZIDLen
+	f := mustParse(t, fmt.Sprintf(`
+BEGIN:VEVENT
+UID:a-long-tzid
+DTSTART;TZID=%s:20251015T090000
+END:VEVENT
+BEGIN:VEVENT
+UID:b-deep-path
+DTSTART;TZID=/vendor/x/y/z/America/Argentina/Buenos_Aires:20251015T090000
+END:VEVENT`, long))
+	if len(f.Warnings) != 1 || !strings.Contains(f.Warnings[0], "a-long-tzid") {
+		t.Fatalf("want one unknown-TZID warning for the over-long TZID, got %q", f.Warnings)
+	}
+	// The over-long TZID is floating (UTC default); the deep path still
+	// resolves through its last three components (UTC-3).
+	assertLines(t, expand(t, f, utc("2025-10-15T00:00:00Z"), utc("2025-10-16T00:00:00Z"), ExpandOptions{}),
+		`2025-10-15T09:00:00Z 2025-10-15T09:00:00Z a-long-tzid "" allday=false rid=-`,
+		`2025-10-15T12:00:00Z 2025-10-15T12:00:00Z b-deep-path "" allday=false rid=-`,
+	)
+}
+
+// FuzzRRuleExpansion drives arbitrary RRULE values through Parse and
+// Expand. Invalid or unsafe rules must degrade (warning) rather than panic
+// inside rrule-go, and results must stay sorted.
+func FuzzRRuleExpansion(f *testing.F) {
+	for _, rule := range []string{
+		"FREQ=WEEKLY;BYDAY=MO",
+		"FREQ=MONTHLY;BYDAY=-1FR;COUNT=3",
+		"FREQ=MONTHLY;BYMONTHDAY=-27,19;BYDAY=53MO",
+		"FREQ=YEARLY;BYWEEKNO=20;BYDAY=MO,FR",
+		"FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1",
+		"FREQ=HOURLY;INTERVAL=24;BYHOUR=5",
+		"FREQ=MINUTELY;INTERVAL=7;BYMINUTE=0,30;COUNT=5",
+		"FREQ=YEARLY;BYEASTER=-2",
+		"FREQ=DAILY;UNTIL=20251020",
+	} {
+		f.Add(rule, uint8(9), uint8(30), uint16(280))
+	}
+	f.Fuzz(func(t *testing.T, rule string, hour, minute uint8, yday uint16) {
+		if strings.ContainsAny(rule, "\r\n") {
+			t.Skip()
+		}
+		start := time.Date(2025, 1, 1, int(hour%24), int(minute%60), 0, 0, time.UTC).AddDate(0, 0, int(yday%365))
+		body := fmt.Sprintf("BEGIN:VEVENT\r\nUID:fuzz\r\nDTSTART:%s\r\nRRULE:%s\r\nEND:VEVENT", start.Format(dateTimeUTCLayout), rule)
+		feed, err := Parse(strings.NewReader(wrapCalendar(body)))
+		if err != nil {
+			return
+		}
+		occs, err := feed.Expand(utc("2025-10-01T00:00:00Z"), utc("2025-10-15T00:00:00Z"))
+		if err != nil && strings.Contains(err.Error(), "panicked") {
+			t.Fatalf("rule %q: %v", rule, err)
+		}
+		if !slices.IsSortedFunc(occs, compareOccurrences) {
+			t.Fatalf("rule %q: occurrences not sorted", rule)
+		}
+	})
+}

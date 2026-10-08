@@ -13,11 +13,14 @@ import (
 //  1. the TZID is itself an IANA name ("America/New_York");
 //  2. a Windows zone name ("Eastern Standard Time"), case-insensitive;
 //  3. the X-LIC-LOCATION of the feed's VTIMEZONE with that TZID;
-//  4. the longest IANA suffix of a path-style TZID
+//  4. the longest IANA suffix (up to three components) of a path-style TZID
 //     ("/mozilla.org/20050126_1/America/New_York").
 //
 // Unresolvable TZIDs return nil and the value is treated as floating time.
-// VTIMEZONE offset rules are never interpreted.
+// VTIMEZONE offset rules are never interpreted. TZIDs longer than
+// maxTZIDLen are not looked up, and step 4 tries at most three suffixes
+// (IANA names have at most three components), so a hostile feed cannot
+// force unbounded zone-database lookups.
 type tzResolver struct {
 	licLocation map[string]string
 	cache       map[string]*time.Location
@@ -48,7 +51,13 @@ func (r *tzResolver) resolve(tzid string) *time.Location {
 	return loc
 }
 
+// maxTZIDLen bounds TZIDs worth resolving; real ones are under 64 bytes.
+const maxTZIDLen = 128
+
 func (r *tzResolver) lookup(tzid string) *time.Location {
+	if len(tzid) > maxTZIDLen {
+		return nil
+	}
 	if loc := loadIANA(tzid); loc != nil {
 		return loc
 	}
@@ -60,11 +69,10 @@ func (r *tzResolver) lookup(tzid string) *time.Location {
 			return loc
 		}
 	}
-	for i := 0; i < len(tzid); i++ {
-		if tzid[i] == '/' {
-			if loc := loadIANA(tzid[i+1:]); loc != nil {
-				return loc
-			}
+	parts := strings.Split(tzid, "/")
+	for n := min(3, len(parts)-1); n >= 1; n-- { // longest suffix first
+		if loc := loadIANA(strings.Join(parts[len(parts)-n:], "/")); loc != nil {
+			return loc
 		}
 	}
 	return nil

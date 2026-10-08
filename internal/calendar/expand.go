@@ -82,7 +82,9 @@ func (f *Feed) Expand(start, end time.Time) ([]Occurrence, error) {
 // RDATE, and EXDATE. A RECURRENCE-ID override replaces the instance it
 // names, so a moved instance appears at its new time only. Cancelled events
 // and cancelled instances are omitted; a cancelled master drops its whole
-// series, overrides included.
+// series, overrides included. A panic inside recurrence iteration (an
+// rrule-go bug that parse-time validation missed) is returned as an error
+// naming the event instead of propagating.
 func (f *Feed) ExpandWithOptions(start, end time.Time, opts ExpandOptions) ([]Occurrence, error) {
 	return f.expand(start, end, opts, defaultLimits)
 }

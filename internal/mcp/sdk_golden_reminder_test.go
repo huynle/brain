@@ -1,9 +1,16 @@
 package mcp_test
 
-import "testing"
+import (
+	"sort"
+	"strings"
+	"testing"
+)
 
 func TestGolden_ReminderTools(t *testing.T) {
 	g := newGolden(t, "reminder_tools")
+	// reminder_list follows entry order, which ties at second resolution when
+	// reminders are created in the same second; compare the listed set.
+	g.postProcess(sortListedReminders)
 	project := g.project("golden-reminders")
 
 	g.call("create refuses without project", "reminder_create", map[string]any{"title": "nowhere"})
@@ -59,4 +66,20 @@ func TestGolden_ReminderTools(t *testing.T) {
 	g.callAt(dead, "dead api delete", "reminder_delete", map[string]any{"reminder_id": "abc"})
 	g.callAt(dead, "dead api snooze", "reminder_snooze", map[string]any{"reminder_id": "a/b", "remind_at": "later"})
 	g.check()
+}
+
+func sortListedReminders(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := 0; i < len(lines); i++ {
+		if !strings.HasPrefix(lines[i], "- **") {
+			continue
+		}
+		j := i
+		for j < len(lines) && strings.HasPrefix(lines[j], "- **") {
+			j++
+		}
+		sort.Strings(lines[i:j])
+		i = j
+	}
+	return strings.Join(lines, "\n")
 }

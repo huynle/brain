@@ -102,6 +102,9 @@ func operationHandlers(t *testing.T, g *egressGraph) (map[string]string, []strin
 		api.WithLogBuffer(logbuffer.New(1)),
 		api.WithSchedulerVisibilityService(&storage.TenantStore{}),
 		api.WithBridgeService(&bridge.Hub{}),
+		api.WithSupervisorOperations(&storage.TenantStore{}),
+		api.WithSupervisorCheckpoints(&storage.TenantStore{}),
+		api.WithExecutionBudgets(&storage.TenantStore{}),
 	)))
 	routes := map[string]string{}
 	if err := chi.Walk(router, func(method, route string, h http.Handler, _ ...func(http.Handler) http.Handler) error {
@@ -322,14 +325,13 @@ func TestSchedulerStatusCutIsSound(t *testing.T) {
 	}
 }
 
-// reviewedNonSDKRoutes: every router handler outside the 126-operation
+// reviewedNonSDKRoutes: every router handler outside the 146-operation
 // contract that reaches a provider sink, with its exact derived tokens.
 var reviewedNonSDKRoutes = map[string]string{
 	"(*" + pkgAPI + ".Handler).HandleAssistantChat":                "embedding_background+embedding_sync",
 	"(*" + pkgAPI + ".Handler).HandleAssistantChatStream":          "embedding_background+embedding_sync",
 	"(*" + pkgAPI + ".Handler).HandleAssistantStatus":              "embedding_background+embedding_sync",
 	"(*" + pkgAPI + ".Handler).HandleBackfillAttachmentExtraction": "embedding_sync",
-	"(*" + pkgAPI + ".Handler).HandleCreateMonitor":                "embedding_background+embedding_sync",
 	"(*" + pkgAPI + ".Handler).HandleEmbeddingBackfill":            "embedding_sync",
 	"(*" + pkgAPI + ".Handler).HandleEntrySyncMutation":            "embedding_background+embedding_sync",
 	"(*" + pkgAPI + ".Handler).HandleToggleMonitor":                "embedding_background+embedding_sync",
@@ -384,8 +386,8 @@ func TestOperationProviderEffectsDerivedFromCallGraph(t *testing.T) {
 	}
 	g := sharedEgressGraph(t)
 	handlers, chi := operationHandlers(t, g)
-	if len(handlers) != 126 {
-		t.Fatalf("resolved %d operation handlers, want 126", len(handlers))
+	if len(handlers) != 146 {
+		t.Fatalf("resolved %d operation handlers, want 146", len(handlers))
 	}
 	d := deriveEgress(g, handlers, chi, reviewedCuts)
 	justified := map[string]map[string]bool{}

@@ -316,6 +316,8 @@ export class BrainClient {
     claimStatus: (project: string, id: string, options?: RequestOptions): Promise<Schema["ClaimStatusResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/claim-status`, undefined, undefined, options),
     dispatchLease: (project: string,id: string,options?: RequestOptions): Promise<Schema["DispatchLease"]> => this.#request("GET",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/dispatch-lease`,undefined,undefined,options),
     placementReasons: (project: string,id: string,options?: RequestOptions): Promise<Schema["PlacementReasonListResponse"]> => this.#request("GET",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/placement-reasons`,undefined,undefined,options),
+    runnerCandidates: (project: string,id: string,options?: RequestOptions): Promise<Schema["RunnerCandidatesResponse"]> => this.#request("GET",`/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/runner-candidates`,undefined,undefined,options),
+    proposedRunnerCandidates: (project: string,request: Schema["TaskRunnerCandidatesRequest"],options?: RequestOptions): Promise<Schema["RunnerCandidatesResponse"]> => this.#request("POST",`/tasks/${encodeURIComponent(project)}/runner-candidates`,request,undefined,options),
     ready: (project: string, query?: NonNullable<operations["tasks.ready"]["parameters"]["query"]>, options?: RequestOptions): Promise<Schema["TaskSelectionResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/ready`, undefined, query, options),
     next: (project: string, query?: NonNullable<operations["tasks.next"]["parameters"]["query"]>, options?: RequestOptions): Promise<Schema["ResolvedTask"] | null> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/next`, undefined, query, options),
     waiting: (project: string, options?: RequestOptions): Promise<Schema["TaskSelectionResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/waiting`, undefined, undefined, options),
@@ -342,6 +344,7 @@ export class BrainClient {
     list: (project: string, options?: RequestOptions): Promise<Schema["FeatureListResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/features`, undefined, undefined, options),
     ready: (project: string, options?: RequestOptions): Promise<Schema["FeatureListResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/features/ready`, undefined, undefined, options),
     get: (project: string, id: string, options?: RequestOptions): Promise<Schema["FeatureResponse"]> => this.#request("GET", `/tasks/${encodeURIComponent(project)}/features/${encodeURIComponent(id)}`, undefined, undefined, options),
+    runnerCandidates: (project: string,id: string,options?: RequestOptions): Promise<Schema["RunnerCandidatesResponse"]> => this.#request("GET",`/tasks/${encodeURIComponent(project)}/features/${encodeURIComponent(id)}/runner-candidates`,undefined,undefined,options),
   });
   readonly observability = Object.freeze({
     timeline: (query?: NonNullable<operations["observability.timeline"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["TimelineResponse"]> => this.#request("GET","/timeline",undefined,query,options),
@@ -424,9 +427,39 @@ export class BrainClient {
     respondPermission: (runner: string,instance: string,session: string,id: string,request: Schema["ControlPermissionRequest"],options?: RequestOptions): Promise<Schema["ControlProxyResponse"] | null> => this.#proxied(`${this.#sessionPath(runner,instance,session)}/permissions/${encodeURIComponent(id)}`,request,options),
     spawnInstance: (runner: string,request: Schema["SpawnInstanceSpec"],options?: RequestOptions): Promise<Schema["ControlSpawnResponse"]> => this.#request("POST",`/control/runners/${encodeURIComponent(runner)}/instances`,request,undefined,options),
     killInstance: (runner: string,instance: string,options?: RequestOptions): Promise<Schema["SuccessResponse"]> => this.#request("DELETE",`/control/runners/${encodeURIComponent(runner)}/instances/${encodeURIComponent(instance)}`,undefined,undefined,options),
+    sessionTail: (runner: string,session: string,query?: NonNullable<operations["control.sessionTail"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["SessionTailPage"]> => this.#request("GET",`/control/runners/${encodeURIComponent(runner)}/sessions/${encodeURIComponent(session)}/tail`,undefined,query,options),
+    sessionDescendants: (runner: string,session: string,query?: NonNullable<operations["control.sessionDescendants"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["SessionChildrenPage"]> => this.#request("GET",`/control/runners/${encodeURIComponent(runner)}/sessions/${encodeURIComponent(session)}/descendants`,undefined,query,options),
   });
   readonly scheduler = Object.freeze({
     status: (options?: RequestOptions): Promise<Schema["SchedulerStatus"]> => this.#request("GET","/scheduler/status",undefined,undefined,options),
+  });
+  // Monitor templates create runnable tasks; an agent runs when one fires.
+  readonly monitors = Object.freeze({
+    create: (request: Schema["CreateMonitorRequest"],options?: RequestOptions): Promise<Schema["CreateMonitorResult"]> => this.#request("POST","/monitors",request,undefined,options),
+    deleteByScope: (request: Schema["DeleteMonitorByScopeRequest"],options?: RequestOptions): Promise<Schema["MonitorDeleteByScopeResponse"]> => this.#request("DELETE","/monitors/by-scope",request,undefined,options),
+  });
+  // Resolve writes the client registry row; the resolved project is not a grant.
+  readonly clientContext = Object.freeze({
+    resolve: (request: Schema["ResolveClientContextRequest"],options?: RequestOptions): Promise<Schema["ResolveClientContextResponse"]> => this.#request("POST","/context/resolve",request,undefined,options),
+  });
+  // Browser-reported sync state (admin only). reconcile queues a browser command (202).
+  readonly sync = Object.freeze({
+    devices: (options?: RequestOptions): Promise<Schema["SyncDevicesResponse"]> => this.#request("GET","/sync/devices",undefined,undefined,options),
+    diff: (device: string,operation: string,options?: RequestOptions): Promise<Schema["SyncDiff"]> => this.#request("GET",`/sync/devices/${encodeURIComponent(device)}/operations/${encodeURIComponent(operation)}/diff`,undefined,undefined,options),
+    reconcile: (device: string,operation: string,request: Schema["SyncReconcileRequest"],options?: RequestOptions): Promise<Schema["SyncReconcileResponse"]> => this.#request("POST",`/sync/devices/${encodeURIComponent(device)}/operations/${encodeURIComponent(operation)}/reconcile`,request,undefined,options),
+  });
+  // Supervisor reads and admin commands. submitOperation drives agents and
+  // tasks; command documents are sent as given and validated by the server.
+  readonly supervision = Object.freeze({
+    capabilities: (options?: RequestOptions): Promise<Schema["SupervisorCapabilities"]> => this.#request("GET","/supervision/capabilities",undefined,undefined,options),
+    snapshot: (query: NonNullable<operations["supervision.snapshot"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["SupervisorSnapshot"]> => this.#request("GET","/supervision/snapshot",undefined,query,options),
+    dispatchPreview: (query: NonNullable<operations["supervision.dispatchPreview"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["DispatchPreview"]> => this.#request("GET","/supervision/dispatch-preview",undefined,query,options),
+    submitOperation: (request: Schema["SupervisorOperationRequest"],options?: RequestOptions): Promise<Schema["SupervisorOperation"]> => this.#request("POST","/supervision/operations",request,undefined,options),
+    getOperation: (id: string,options?: RequestOptions): Promise<Schema["SupervisorOperation"]> => this.#request("GET",`/supervision/operations/${encodeURIComponent(id)}`,undefined,undefined,options),
+    checkpoints: (query: NonNullable<operations["supervision.checkpoints"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["SupervisorCheckpointList"]> => this.#request("GET","/supervision/checkpoints",undefined,query,options),
+    updateCheckpoint: (request: Schema["SupervisorCheckpointCommand"],options?: RequestOptions): Promise<Schema["SupervisorCheckpoint"]> => this.#request("POST","/supervision/checkpoints",request,undefined,options),
+    budget: (query: NonNullable<operations["supervision.budget"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["ExecutionBudgetStatus"]> => this.#request("GET","/supervision/budgets",undefined,query,options),
+    updateBudget: (request: Schema["ExecutionBudgetCommand"],options?: RequestOptions): Promise<Schema["ExecutionBudgetResult"]> => this.#request("POST","/supervision/budgets",request,undefined,options),
   });
   #sessionPath(runner: string,instance: string,session: string): string {
     return `/control/runners/${encodeURIComponent(runner)}/instances/${encodeURIComponent(instance)}/sessions/${encodeURIComponent(session)}`;

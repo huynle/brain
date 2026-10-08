@@ -9,12 +9,14 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/huynle/brain-api/internal/mcp"
+	"github.com/huynle/brain-api/internal/sdkcontract"
 )
 
 // requestRecorder is a reverse proxy between the hosted MCP and the real
@@ -25,6 +27,46 @@ import (
 type requestRecorder struct {
 	mu   sync.Mutex
 	reqs []string
+	// contract, when set, checks every real API response of an operation
+	// selected by checked against the public contract (see contractCheck).
+	contract   *sdkcontract.ResponseChecker
+	checked    func(op string) bool
+	violations []string
+	seen       map[string]map[int]bool // operation -> statuses observed
+}
+
+// contractCheck makes the recorder validate the real responses of the
+// operations selected by checked against api/openapi.yaml.
+func (r *requestRecorder) contractCheck(t *testing.T, checked func(op string) bool) {
+	t.Helper()
+	data, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.contract, err = sdkcontract.NewResponseChecker(data); err != nil {
+		t.Fatal(err)
+	}
+	r.checked, r.seen = checked, map[string]map[int]bool{}
+}
+
+// capturingWriter keeps a copy of the status and body the proxy relays.
+type capturingWriter struct {
+	http.ResponseWriter
+	status int
+	body   bytes.Buffer
+}
+
+func (w *capturingWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *capturingWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	w.body.Write(b)
+	return w.ResponseWriter.Write(b)
 }
 
 func (r *requestRecorder) handler(target string) http.Handler {
@@ -50,8 +92,41 @@ func (r *requestRecorder) handler(target string) http.Handler {
 		r.mu.Lock()
 		r.reqs = append(r.reqs, line)
 		r.mu.Unlock()
-		proxy.ServeHTTP(w, req)
+		if r.contract == nil {
+			proxy.ServeHTTP(w, req)
+			return
+		}
+		cw := &capturingWriter{ResponseWriter: w}
+		proxy.ServeHTTP(cw, req)
+		if cw.status == 0 {
+			cw.status = http.StatusOK
+		}
+		path := strings.TrimPrefix(req.URL.EscapedPath(), "/api/v1")
+		if op := r.contract.Operation(req.Method, path); op != "" && r.checked(op) {
+			_, err := r.contract.Check(req.Method, path, cw.status, cw.body.Bytes())
+			r.mu.Lock()
+			if r.seen[op] == nil {
+				r.seen[op] = map[int]bool{}
+			}
+			r.seen[op][cw.status] = true
+			if err != nil {
+				r.violations = append(r.violations, err.Error())
+			}
+			r.mu.Unlock()
+		}
 	})
+}
+
+// contractReport fails on any contract violation and returns, per checked
+// operation, the statuses seen (for coverage assertions).
+func (r *requestRecorder) contractReport(t *testing.T) map[string]map[int]bool {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, v := range r.violations {
+		t.Errorf("live response violates the public contract: %s", v)
+	}
+	return r.seen
 }
 
 func (r *requestRecorder) drain() []string {

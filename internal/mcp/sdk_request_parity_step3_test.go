@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"fmt"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 
@@ -17,6 +18,9 @@ import (
 func TestRequestParity_Step3Tools(t *testing.T) {
 	api := dedicatedAPI(t)
 	rec := &requestRecorder{}
+	// Every real response these tools receive is checked against the public
+	// contract they are about to be served through.
+	rec.contractCheck(t, func(string) bool { return true })
 	proxy := httptest.NewServer(rec.handler(api))
 	t.Cleanup(proxy.Close)
 	mcpSrv := httptest.NewServer(mcp.NewHTTPHandler(mcp.NewAPIClient(proxy.URL)))
@@ -132,4 +136,16 @@ func TestRequestParity_Step3Tools(t *testing.T) {
 		}
 	}
 	g.check()
+	seen := rec.contractReport(t)
+	var ops []string
+	for op, statuses := range seen {
+		var codes []string
+		for code := range statuses {
+			codes = append(codes, fmt.Sprint(code))
+		}
+		sort.Strings(codes)
+		ops = append(ops, op+" "+strings.Join(codes, ","))
+	}
+	sort.Strings(ops)
+	t.Logf("contract-checked live responses:\n%s", strings.Join(ops, "\n"))
 }

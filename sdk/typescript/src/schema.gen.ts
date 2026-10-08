@@ -2054,6 +2054,371 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/monitors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a monitor task from a template for a project or feature
+         * @description Creates a task from the named template (scheduled, e.g. blocked-inspector and dream, or gated on feature completion, e.g. feature-review). The task runs an agent when it fires; nothing runs synchronously. Duplicates for the same template and scope are refused with 409; unknown templates with 400.
+         */
+        post: operations["monitors.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/monitors/by-scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete the monitor task for a template and scope
+         * @description The JSON body names the template (templateId; the server also accepts template_id) and the scope. 404 when no monitor matches.
+         */
+        delete: operations["monitors.deleteByScope"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/{taskId}/runner-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List runners compatible with a standalone task
+         * @description Compatibility is durable fit; available reports temporary availability separately.
+         */
+        get: operations["tasks.runnerCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/runner-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * List runners compatible with a proposed task specification
+         * @description Read-only evaluation of placement-relevant fields before creating a task; nothing is stored. Unknown fields are refused with 400.
+         */
+        post: operations["tasks.proposedRunnerCandidates"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{projectId}/features/{featureId}/runner-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List runners compatible with every unfinished task in a feature */
+        get: operations["features.runnerCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/context/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register a client observation and resolve its Brain project
+         * @description Upserts the client registry row (client and host identity, labels, capabilities) and resolves the project from the workspace observation; a dream context is attached when one exists. Not a project grant.
+         */
+        post: operations["clientContext.resolve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sync/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read last-reported browser sync state
+         * @description Admin only. Reported state, not proof: unknown or stale connections may hold unsent edits. Draft contents are withheld here (use sync.diff).
+         */
+        get: operations["sync.devices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sync/devices/{deviceId}/operations/{operationId}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a reported browser draft against the current server version
+         * @description Admin only. The draft is untrusted reported content; snapshot binds a later reconcile to exactly this view.
+         */
+        get: operations["sync.diff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sync/devices/{deviceId}/operations/{operationId}/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Queue a revision-guarded reconciliation command for a browser
+         * @description Admin only. Queues a command the browser applies after it reconnects; nothing is written to the server here. A stale snapshot, a pending command or an unreconcilable edit is refused with 409.
+         */
+        post: operations["sync.reconcile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/runners/{runnerId}/sessions/{sessionId}/tail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a bounded projection of a session's visible text and tool output
+         * @description Remote read on a runner host (control:* scope) through the runner bridge; works for historical sessions while the runner is connected. Reasoning and tool inputs are excluded and known credential patterns redacted. Records are upserts keyed by message and part.
+         */
+        get: operations["control.sessionTail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/runners/{runnerId}/sessions/{sessionId}/descendants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a bounded page of persisted child-session linkage
+         * @description Remote read on a runner host (control:* scope) through the runner bridge, up to depth 5. state and last_activity are unknown in persisted linkage. A changed tree expires the cursor.
+         */
+        get: operations["control.sessionDescendants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supervision/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the server's supervisor tool registration
+         * @description Server registration, not client installation, connection or grants.
+         */
+        get: operations["supervision.capabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supervision/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a bounded, non-atomic supervisor projection of a project
+         * @description event_cursor is taken before the state reads, so events.wait from it replays concurrent changes.
+         */
+        get: operations["supervision.snapshot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supervision/dispatch-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview whether and where a task would dispatch
+         * @description Read-only; reserves no capacity and creates no claim. Runner-local configuration is unknown.
+         */
+        get: operations["supervision.dispatchPreview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supervision/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit an idempotent supervisor prompt, contextual resume or trigger
+         * @description Admin only. prompt drives an agent in a live session; resume_with_context injects into or relaunches a task; trigger runs a task. The same id with the same payload replays the durable receipt; a different payload is a 409. Optional budget reservation and checkpoint handoff are checked first. Delivered or accepted is not task completion. Unknown fields are refused with 400.
+         */
+        post: operations["supervision.submitOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supervision/operations/{operationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a supervisor operation receipt
+         * @description Admin only; scoped to the submitting principal. Never resends anything.
+         */
+        get: operations["supervision.getOperation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supervision/checkpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a project's checkpoints, or one checkpoint's versions
+         * @description With id, versions newest first (limit 100). Without id, up to 100 checkpoints after the cursor.
+         */
+        get: operations["supervision.checkpoints"];
+        put?: never;
+        /**
+         * Request, answer, verify or supersede a checkpoint
+         * @description Admin only, revision-checked. Answers are evidence for a later handoff, not verification or authorization. Unknown fields are refused with 400.
+         */
+        post: operations["supervision.updateCheckpoint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supervision/budgets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read an execution budget and its current window
+         * @description Units cover admitted work only; executor tokens and cost are unknown (always null).
+         */
+        get: operations["supervision.budget"];
+        put?: never;
+        /**
+         * Configure a budget or reserve, commit or cancel units
+         * @description Admin only. Configure is revision-checked; reservations gate supervisor operations. Unknown fields are refused with 400.
+         */
+        post: operations["supervision.updateBudget"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3742,6 +4107,421 @@ export interface components {
         ControlSpawnResponse: {
             success: boolean;
             instance: components["schemas"]["OpencodeInstance"];
+        };
+        CreateMonitorRequest: {
+            feature_id?: string;
+            project?: string;
+            schedule?: string;
+            scope_type: string;
+            template_id: string;
+        };
+        CreateMonitorResult: {
+            id: string;
+            path: string;
+            title: string;
+        };
+        DeleteMonitorByScopeRequest: {
+            scope: components["schemas"]["MonitorScope"];
+            templateId: string;
+        };
+        MonitorScope: {
+            feature_id?: string;
+            project?: string;
+            type: string;
+        };
+        MonitorDeleteByScopeResponse: {
+            path: string;
+            success: boolean;
+            taskId: string;
+        };
+        RunnerCandidatesResponse: {
+            assigned_runner_id?: string;
+            assignment_scope?: string;
+            candidates: components["schemas"]["RunnerCandidate"][] | null;
+            feature_id?: string;
+            project_id: string;
+            task_id?: string;
+        };
+        RunnerCandidate: {
+            available: boolean;
+            compatible: boolean;
+            reasons: components["schemas"]["RunnerCandidateReason"][] | null;
+            runner: components["schemas"]["RunnerInfo"];
+        };
+        RunnerCandidateReason: {
+            code: string;
+            message: string;
+            task_ids?: string[] | null;
+        };
+        TaskRunnerCandidatesRequest: {
+            execution_mode?: string;
+            executor?: string;
+            feature_id?: string;
+            git_remote?: string;
+            machine_affinity?: string;
+            origin_machine_id?: string;
+            requires_capability?: string[] | null;
+            target_workdir?: string;
+        };
+        ResolveClientContextRequest: {
+            client: components["schemas"]["BrainClientInfo"];
+            workspace: components["schemas"]["WorkspaceObservation"];
+        };
+        BrainClientInfo: {
+            arch?: string;
+            capabilities?: string[] | null;
+            client_id: string;
+            home_dir?: string;
+            host_id: string;
+            hostname?: string;
+            kind?: string;
+            labels?: {
+                [key: string]: string;
+            } | null;
+            os?: string;
+            username?: string;
+        };
+        WorkspaceObservation: {
+            folder_name?: string;
+            git_branch?: string;
+            git_common_dir?: string;
+            git_remote?: string;
+            git_root?: string;
+            git_worktree_main?: string;
+            path: string;
+        };
+        ResolveClientContextResponse: {
+            confidence: string;
+            dream?: components["schemas"]["DreamContext"] | null;
+            project_id: string;
+            source: string;
+        };
+        DreamContext: {
+            content?: string;
+            id?: string;
+            path?: string;
+            title?: string;
+        };
+        SyncDevice: {
+            cache_mode?: string;
+            cached_entries?: number;
+            command?: components["schemas"]["SyncCommand"] | null;
+            connection: string;
+            /** Format: int64 */
+            cursor: number;
+            device_id: string;
+            epoch: string;
+            error?: string;
+            last_seen: string;
+            last_successful_sync?: string;
+            owner?: string;
+            pending: components["schemas"]["SyncPending"][] | null;
+            ready: boolean;
+            reported_online: boolean;
+            syncing: boolean;
+        };
+        SyncPending: {
+            error?: string;
+            failure?: string;
+            id: string;
+            method: string;
+            path: string;
+            raw: string;
+            revision: string;
+        };
+        SyncCommand: {
+            action: string;
+            expected_raw: string;
+            id: string;
+            operation_id: string;
+            outcome?: string;
+            raw?: string;
+            server_revision: string;
+        };
+        SupervisorOperation: {
+            /** Format: date-time */
+            created_at: string;
+            detail: string;
+            id: string;
+            operation: string;
+            state: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ExecutionBudget: {
+            id: string;
+            /** Format: int64 */
+            limit: number;
+            project: string;
+            revision: number;
+            timezone: string;
+            unit: string;
+        };
+        BudgetReservation: {
+            budget_id: string;
+            id: string;
+            parent_id?: string;
+            state: string;
+            /** Format: int64 */
+            units: number;
+            window: string;
+        };
+        /** @description Last reported browser state. owner is never returned and pending/command raw drafts are blanked here (sync.diff returns a draft). */
+        SyncDevicesResponse: {
+            devices: components["schemas"]["SyncDevice"][] | null;
+            stale_after_seconds: number;
+            note: string;
+        };
+        SyncDiff: {
+            device_id: string;
+            operation: components["schemas"]["SyncPending"];
+            /** @description Current server YAML and Markdown; empty when the entry does not exist. */
+            server_raw: string;
+            /** @description Empty when the entry is missing or not yet created. */
+            server_revision: string;
+            /** @description Binds a later sync.reconcile to exactly this view. */
+            snapshot: string;
+            diff: string;
+            connection: string;
+            last_seen: string;
+        };
+        SyncReconcileRequest: {
+            /** @description Exact snapshot from sync.diff; stale snapshots are refused with 409. */
+            snapshot: string;
+            /** @enum {string} */
+            action: "discard" | "rebase" | "merge";
+            /** @description Full merged YAML frontmatter and Markdown; required for merge. */
+            raw?: string;
+        };
+        SyncReconcileResponse: {
+            command_id: string;
+            status: string;
+            note: string;
+        };
+        /** @description An upsert keyed by message and part; streaming parts can change between reads. */
+        SessionTailRecord: {
+            id: string;
+            message_id: string;
+            kind: string;
+            role?: string;
+            tool?: string;
+            status?: string;
+            text?: string;
+            /** @description The executor's own timing object, passed through unchanged. */
+            time?: unknown;
+            truncated?: boolean;
+        };
+        SessionTailPage: {
+            records: components["schemas"]["SessionTailRecord"][] | null;
+            next_cursor: string;
+            truncated: boolean;
+            cursor_expired: boolean;
+        };
+        /** @description Persisted linkage only; state is always unknown and last_activity null. */
+        SessionChild: {
+            session_id: string;
+            parent_id: string;
+            executor: string;
+            state: string;
+            last_activity: number | null;
+            /** Format: int64 */
+            created?: number;
+            children?: components["schemas"]["SessionChild"][] | null;
+        };
+        SessionChildrenPage: {
+            children: components["schemas"]["SessionChild"][] | null;
+            next_cursor?: string;
+            truncated: boolean;
+            cursor_expired: boolean;
+        };
+        SupervisorCapabilities: {
+            version: string;
+            commit: string;
+            transports: string[];
+            /** @description Tool name to its scope and availability notes. */
+            tools: {
+                [key: string]: string;
+            };
+            client_installation: string;
+        };
+        SupervisorSnapshotTask: {
+            id: string;
+            feature_id: string;
+            status: string;
+            classification: string;
+            waiting_on: string[] | null;
+            delivery_unmet: string[] | null;
+            is_abandoned: boolean;
+        };
+        SupervisorSnapshotCheckpoint: {
+            id: string;
+            task_id: string;
+            feature_id: string;
+            artifact: string;
+            state: string;
+            revision: number;
+        };
+        SupervisorSnapshot: {
+            /** Format: date-time */
+            snapshot_started_at: string;
+            /** Format: date-time */
+            snapshot_finished_at: string;
+            /** @description Always false; state is read without a transaction. */
+            atomic: boolean;
+            checkpoints: components["schemas"]["SupervisorSnapshotCheckpoint"][];
+            checkpoint_coverage: string;
+            tasks: components["schemas"]["SupervisorSnapshotTask"][];
+            truncated: boolean;
+            /** @description Cursor for the next page (last task id). */
+            after_task: string;
+            event_cursor: string;
+            event_filters: {
+                [key: string]: string;
+            };
+            unavailable_sources: string[];
+        };
+        DispatchPreviewRunner: {
+            runner_id: string;
+            eligible: boolean;
+            reason: string;
+        };
+        DispatchPreviewConfiguration: {
+            executor: string;
+            model: string;
+            workdir: string;
+            target_workdir: string;
+            repository: string;
+            branch: string;
+            target_branch: string;
+        };
+        DispatchPreview: {
+            /** Format: date-time */
+            snapshot_at: string;
+            project_id: string;
+            task_id: string;
+            ready: boolean;
+            paused: boolean;
+            pause_explanation: string;
+            dispatchable: boolean;
+            selected_runner: string;
+            runners: components["schemas"]["DispatchPreviewRunner"][];
+            classification: string;
+            waiting_on: string[] | null;
+            unresolved_dependencies: string[] | null;
+            configured: components["schemas"]["DispatchPreviewConfiguration"];
+            configuration_source: string;
+            unknown: string[];
+            /** @description Always false; a preview reserves nothing. */
+            reservation: boolean;
+        };
+        /** @description Command document, validated strictly by the server (unknown fields and wrong types are refused with its message). The Go SDK carries it as json.RawMessage so it is forwarded verbatim. */
+        SupervisorOperationRequest: {
+            /** @description 8 to 128 bytes; reuse after a timeout to read the same receipt. */
+            id: string;
+            /** @enum {string} */
+            operation: "prompt" | "resume_with_context" | "trigger";
+            project?: string;
+            task_id?: string;
+            runner_id?: string;
+            instance_id?: string;
+            session_id?: string;
+            /** @description At most 65536 bytes. */
+            text?: string;
+            budget_id?: string;
+            /** Format: int64 */
+            budget_units?: number;
+            parent_reservation?: string;
+            checkpoint_id?: string;
+            checkpoint_revision?: number;
+        };
+        SupervisorCheckpoint: {
+            id: string;
+            project: string;
+            task_id?: string;
+            feature_id?: string;
+            artifact: string;
+            question: string;
+            state: string;
+            answer?: string;
+            answered_by?: string;
+            answered_at?: string | null;
+            verification_reference?: string;
+            verified_by?: string;
+            revision: number;
+        };
+        /** @description With id, versions and limit. Without id, checkpoints, the next cursor (after) and truncated. */
+        SupervisorCheckpointList: {
+            versions?: components["schemas"]["SupervisorCheckpoint"][] | null;
+            limit?: number;
+            checkpoints?: components["schemas"]["SupervisorCheckpoint"][] | null;
+            after?: string;
+            truncated?: boolean;
+        };
+        /** @description state, answered_by, answered_at, verified_by and revision are server-owned and ignored on input. */
+        SupervisorCheckpointInput: {
+            /** @description 8 to 128 bytes. */
+            id: string;
+            project: string;
+            task_id?: string;
+            feature_id?: string;
+            artifact: string;
+            /** @description Required to request a new checkpoint. */
+            question?: string;
+            state?: string;
+            answer?: string;
+            answered_by?: string;
+            answered_at?: string | null;
+            verification_reference?: string;
+            verified_by?: string;
+            revision?: number;
+        };
+        /** @description Command document, validated strictly by the server. The Go SDK carries it as json.RawMessage so it is forwarded verbatim. */
+        SupervisorCheckpointCommand: {
+            /** @enum {string} */
+            action: "request" | "answer" | "verify" | "supersede";
+            expected_revision?: number;
+            checkpoint: components["schemas"]["SupervisorCheckpointInput"];
+        };
+        ExecutionBudgetStatus: {
+            budget: components["schemas"]["ExecutionBudget"];
+            /** Format: int64 */
+            consumed_and_reserved: number;
+            window: string;
+            /** Format: int64 */
+            remaining: number;
+            enforcement: string;
+            /** @description Always null; executor token usage is unknown. */
+            token_usage: unknown;
+            /** @description Always null; cost is unknown. */
+            monetary_cost: unknown;
+        };
+        /** @description id and project identify the budget; timezone, unit and limit apply to configure (revision is server-owned). */
+        ExecutionBudgetInput: {
+            id: string;
+            project: string;
+            timezone?: string;
+            unit?: string;
+            /** Format: int64 */
+            limit?: number;
+            revision?: number;
+        };
+        /** @description Command document, validated strictly by the server. The Go SDK carries it as json.RawMessage so it is forwarded verbatim. */
+        ExecutionBudgetCommand: {
+            /** @enum {string} */
+            action: "configure" | "reserve" | "commit" | "cancel";
+            budget: components["schemas"]["ExecutionBudgetInput"];
+            expected_revision?: number;
+            reservation_id?: string;
+            parent_id?: string;
+            /** Format: int64 */
+            units?: number;
+        };
+        /** @description configure returns revision; reserve returns reservation and created; commit and cancel return state. */
+        ExecutionBudgetResult: {
+            revision?: number;
+            reservation?: components["schemas"]["BudgetReservation"];
+            created?: boolean;
+            state?: string;
         };
     };
     responses: never;
@@ -7925,6 +8705,664 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ControlProxyResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "monitors.create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMonitorRequest"];
+            };
+        };
+        responses: {
+            /** @description Created monitor task */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateMonitorResult"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "monitors.deleteByScope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteMonitorByScopeRequest"];
+            };
+        };
+        responses: {
+            /** @description Deleted monitor task */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonitorDeleteByScopeResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.runnerCandidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Evaluated runners */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerCandidatesResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "tasks.proposedRunnerCandidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskRunnerCandidatesRequest"];
+            };
+        };
+        responses: {
+            /** @description Evaluated runners */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerCandidatesResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "features.runnerCandidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+                featureId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Evaluated runners */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerCandidatesResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "clientContext.resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveClientContextRequest"];
+            };
+        };
+        responses: {
+            /** @description Resolution */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolveClientContextResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "sync.devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reported devices */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncDevicesResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "sync.diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deviceId: string;
+                operationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Draft, server version and diff */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncDiff"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "sync.reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deviceId: string;
+                operationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncReconcileRequest"];
+            };
+        };
+        responses: {
+            /** @description Command queued for the browser */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncReconcileResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "control.sessionTail": {
+        parameters: {
+            query?: {
+                after?: string;
+                limit?: number;
+                max_bytes?: number;
+            };
+            header?: never;
+            path: {
+                runnerId: string;
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionTailPage"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "control.sessionDescendants": {
+        parameters: {
+            query?: {
+                after?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                runnerId: string;
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Descendant page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionChildrenPage"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "supervision.capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Registered supervisor tools */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupervisorCapabilities"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "supervision.snapshot": {
+        parameters: {
+            query: {
+                project_id: string;
+                task_id?: string;
+                feature_id?: string;
+                after_task?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupervisorSnapshot"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "supervision.dispatchPreview": {
+        parameters: {
+            query: {
+                project_id: string;
+                task_id: string;
+                manual?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DispatchPreview"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "supervision.submitOperation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SupervisorOperationRequest"];
+            };
+        };
+        responses: {
+            /** @description Durable operation receipt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupervisorOperation"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "supervision.getOperation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Operation receipt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupervisorOperation"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "supervision.checkpoints": {
+        parameters: {
+            query: {
+                project: string;
+                id?: string;
+                after?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Checkpoints or versions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupervisorCheckpointList"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "supervision.updateCheckpoint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SupervisorCheckpointCommand"];
+            };
+        };
+        responses: {
+            /** @description Current checkpoint */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupervisorCheckpoint"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "supervision.budget": {
+        parameters: {
+            query: {
+                project: string;
+                id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Budget and window usage */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionBudgetStatus"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "supervision.updateBudget": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExecutionBudgetCommand"];
+            };
+        };
+        responses: {
+            /** @description Outcome of the action */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionBudgetResult"];
                 };
             };
             /** @description Legacy error */

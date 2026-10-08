@@ -144,6 +144,31 @@ var reviewedProviderEffects = map[string]string{
 	"control.respondPermission":         "downstream_executor",
 	"control.spawnInstance":             "none",
 	"control.killInstance":              "none",
+	// Hosted MCP step 3. A monitor is a scheduled or feature-gated task that
+	// runs an agent when it fires (creation also indexes the task entry). A
+	// supervisor operation prompts an agent, injects/relaunches a task or
+	// triggers one. Sync reconcile queues a browser command that writes later
+	// through the ordinary entry-sync path; nothing else reaches a provider.
+	"monitors.create":                "embedding_sync+embedding_background+downstream_executor",
+	"monitors.deleteByScope":         "none",
+	"tasks.runnerCandidates":         "none",
+	"tasks.proposedRunnerCandidates": "none",
+	"features.runnerCandidates":      "none",
+	"clientContext.resolve":          "none",
+	"sync.devices":                   "none",
+	"sync.diff":                      "none",
+	"sync.reconcile":                 "none",
+	"control.sessionTail":            "none",
+	"control.sessionDescendants":     "none",
+	"supervision.capabilities":       "none",
+	"supervision.snapshot":           "none",
+	"supervision.dispatchPreview":    "none",
+	"supervision.submitOperation":    "downstream_executor",
+	"supervision.getOperation":       "none",
+	"supervision.checkpoints":        "none",
+	"supervision.updateCheckpoint":   "none",
+	"supervision.budget":             "none",
+	"supervision.updateBudget":       "none",
 }
 
 var providerTokens = map[string]bool{
@@ -169,8 +194,8 @@ func TestOperationPolicyProviderEffectsArePinned(t *testing.T) {
 	if strings.Join(policy.EventFanout, ",") != "webhook_http_for_subscribed_events,event_triggered_automations" {
 		t.Errorf("event_fanout must declare webhook and automation fan-out, got %v", policy.EventFanout)
 	}
-	if len(reviewedProviderEffects) != 126 || len(policy.Operations) != 126 {
-		t.Fatalf("pinned=%d policy=%d, want 126", len(reviewedProviderEffects), len(policy.Operations))
+	if len(reviewedProviderEffects) != 146 || len(policy.Operations) != 146 {
+		t.Fatalf("pinned=%d policy=%d, want 146", len(reviewedProviderEffects), len(policy.Operations))
 	}
 	for op, want := range reviewedProviderEffects {
 		row := policy.Operations[op]

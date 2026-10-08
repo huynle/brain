@@ -35,15 +35,21 @@ func publicFacadeNames(t *testing.T) []string {
 			names = append(names, namespace+"."+m[1])
 		}
 	}
-	// The hosted-MCP runner/dispatch/control/scheduler methods are public SDK
-	// methods but are never declared in the script facade (server-wide dial
-	// writes and code execution on runner hosts); the worker's inventory, and
-	// this closed-inventory check, exclude them by name.
+	// The hosted-MCP methods (runner/dispatch/control/scheduler in step 2;
+	// monitors, runner candidates, client context, sync, session views and
+	// supervision in step 3) are public SDK methods but are never declared in
+	// the script facade (server-wide dial writes, code execution on runner
+	// hosts, runnable work and agent prompts); the worker's inventory, and this
+	// closed-inventory check, exclude them by name.
 	kept := names[:0]
 	for _, name := range names {
 		group, _, _ := strings.Cut(name, ".")
-		if group == "runners" || group == "dispatch" || group == "control" || group == "scheduler" ||
-			name == "tasks.dispatchLease" || name == "tasks.placementReasons" {
+		switch group {
+		case "runners", "dispatch", "control", "scheduler", "monitors", "clientContext", "sync", "supervision":
+			continue
+		}
+		switch name {
+		case "tasks.dispatchLease", "tasks.placementReasons", "tasks.runnerCandidates", "tasks.proposedRunnerCandidates", "features.runnerCandidates":
 			continue
 		}
 		kept = append(kept, name)

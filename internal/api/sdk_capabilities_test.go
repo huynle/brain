@@ -59,9 +59,20 @@ func TestSDKCapabilitiesAdmission(t *testing.T) {
 	}
 }
 
+// syncReportingBrain and previewingRunTask carry the optional interfaces the
+// sync and dispatch-preview handlers assert at request time.
+type syncReportingBrain struct {
+	BrainService
+	syncDeviceService
+}
+type previewingRunTask struct {
+	RunTaskService
+	dispatchPreviewService
+}
+
 func TestSDKCapabilitiesInventory(t *testing.T) {
 	// Discovery may inspect service presence, never call it or enumerate resources.
-	h := &Handler{brain: struct{ BrainService }{}, tasks: struct{ TaskService }{}, attachments: struct{ AttachmentService }{}, goalService: struct{ GoalService }{}, reminders: struct{ ReminderService }{}, attention: struct{ AttentionService }{}, webhooks: struct{ WebhookService }{}, automationRun: struct{ AutomationRunService }{}, placement: struct{ ProjectPlacementService }{}, runTask: struct{ RunTaskService }{}, runFeature: struct{ RunFeatureService }{}, runProject: struct{ RunProjectService }{}, depChains: struct{ DependentChainService }{}, events: struct{ EventService }{}, timeline: struct{ TimelineService }{}, runner: struct{ RunnerService }{}, runnerRegistry: struct{ RunnerRegistryService }{}, schedulerViews: struct{ SchedulerVisibilityService }{}, scheduler: struct{ SchedulerService }{}, bridge: struct{ BridgeService }{}}
+	h := &Handler{brain: syncReportingBrain{}, tasks: struct{ TaskService }{}, monitor: struct{ MonitorService }{}, clientContext: struct{ ClientContextService }{}, supervisorOperations: struct{ SupervisorOperationStore }{}, supervisorCheckpoints: struct{ SupervisorCheckpointStore }{}, executionBudgets: struct{ ExecutionBudgetStore }{}, attachments: struct{ AttachmentService }{}, goalService: struct{ GoalService }{}, reminders: struct{ ReminderService }{}, attention: struct{ AttentionService }{}, webhooks: struct{ WebhookService }{}, automationRun: struct{ AutomationRunService }{}, placement: struct{ ProjectPlacementService }{}, runTask: previewingRunTask{}, runFeature: struct{ RunFeatureService }{}, runProject: struct{ RunProjectService }{}, depChains: struct{ DependentChainService }{}, events: struct{ EventService }{}, timeline: struct{ TimelineService }{}, runner: struct{ RunnerService }{}, runnerRegistry: struct{ RunnerRegistryService }{}, schedulerViews: struct{ SchedulerVisibilityService }{}, scheduler: struct{ SchedulerService }{}, bridge: struct{ BridgeService }{}}
 	read := func(h *Handler) []string {
 		t.Helper()
 		w := httptest.NewRecorder()
@@ -126,7 +137,19 @@ func TestSDKCapabilitiesInventory(t *testing.T) {
 	if !slices.Contains(got, "entries.get") {
 		t.Fatal("independent entry service disappeared")
 	}
-	if got := read(&Handler{}); !reflect.DeepEqual(got, []string{"capabilities.get", "health.get"}) {
+	if slices.Contains(got, "control.sessionTail") || slices.Contains(got, "control.sessionDescendants") || slices.Contains(got, "supervision.snapshot") {
+		t.Error("session views need the bridge and the snapshot needs tasks")
+	}
+	h.monitor, h.clientContext, h.supervisorOperations, h.supervisorCheckpoints, h.executionBudgets = nil, nil, nil, nil, nil
+	h.brain, h.runTask = struct{ BrainService }{}, struct{ RunTaskService }{}
+	got = read(h)
+	for _, id := range []string{"monitors.create", "monitors.deleteByScope", "clientContext.resolve", "sync.devices", "sync.reconcile", "supervision.dispatchPreview", "supervision.submitOperation", "supervision.getOperation", "supervision.checkpoints", "supervision.updateCheckpoint", "supervision.budget", "supervision.updateBudget"} {
+		if slices.Contains(got, id) {
+			t.Errorf("unwired operator operation advertised: %s", id)
+		}
+	}
+	// The supervisor registry read needs no service: its route always exists.
+	if got := read(&Handler{}); !reflect.DeepEqual(got, []string{"capabilities.get", "health.get", "supervision.capabilities"}) {
 		t.Fatalf("empty handler advertised=%v", got)
 	}
 }

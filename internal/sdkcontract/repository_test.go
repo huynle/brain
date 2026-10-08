@@ -56,7 +56,11 @@ func TestRepositoryContractAndWireParity(t *testing.T) {
 		reflect.TypeOf(types.CreateWebhookRequest{}), reflect.TypeOf(types.UpdateWebhookRequest{}), reflect.TypeOf(types.WebhookResponse{}), reflect.TypeOf(types.WebhookDeliveryResponse{}),
 		reflect.TypeOf(types.RunnerStatusResponse{}), reflect.TypeOf(types.RunnerListResponse{}), reflect.TypeOf(types.RunnerInfo{}),
 		reflect.TypeOf(types.InstanceListResponse{}), reflect.TypeOf(types.SpawnInstanceSpec{}),
-		reflect.TypeOf(types.DispatchLease{}), reflect.TypeOf(types.PlacementReasonListResponse{}), reflect.TypeOf(types.SchedulerStatus{}))
+		reflect.TypeOf(types.DispatchLease{}), reflect.TypeOf(types.PlacementReasonListResponse{}), reflect.TypeOf(types.SchedulerStatus{}),
+		reflect.TypeOf(types.CreateMonitorRequest{}), reflect.TypeOf(types.CreateMonitorResult{}), reflect.TypeOf(types.DeleteMonitorByScopeRequest{}), reflect.TypeOf(types.MonitorDeleteByScopeResponse{}),
+		reflect.TypeOf(types.RunnerCandidatesResponse{}), reflect.TypeOf(types.TaskRunnerCandidatesRequest{}),
+		reflect.TypeOf(types.ResolveClientContextRequest{}), reflect.TypeOf(types.ResolveClientContextResponse{}),
+		reflect.TypeOf(types.SyncDevice{}), reflect.TypeOf(types.SupervisorOperation{}), reflect.TypeOf(types.ExecutionBudget{}), reflect.TypeOf(types.BudgetReservation{}))
 	if err != nil {
 		t.Fatal(err)
 	}

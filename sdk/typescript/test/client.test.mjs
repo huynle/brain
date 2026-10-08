@@ -283,3 +283,36 @@ test("control routes return proxied instance JSON, null for 204, and server erro
  mode="err";await assert.rejects(c.control.sendPrompt("r","i","s",{text:"x"}),e=>e instanceof BrainError&&e.status===502&&e.serverMessage==="runner bridge not connected");
  await assert.rejects(c.control.killInstance("r",".."),e=>e.code==="invalid_request");
 });
+
+test("step-3 operator and supervision routes, verbatim command documents and errors",async t=>{
+ const seen=[];let mode="ok";
+ const baseUrl=await server(t,async(req,res)=>{let body="";for await(const c of req)body+=c;seen.push(`${req.method} ${req.url} ${body}`);
+  if(mode==="conflict"){res.writeHead(409).end('{"error":"Stale diff","message":"fetch a fresh diff before reconciling"}');return;}
+  if(req.method==="POST"&&req.url==="/api/v1/monitors"){res.writeHead(201).end('{"id":"m","path":"p","title":"t"}');return;}
+  if(req.url.endsWith("/reconcile")){res.writeHead(202).end('{"command_id":"c","status":"queued","note":"n"}');return;}
+  res.end("{}");});
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());
+ assert.equal((await c.monitors.create({template_id:"dream",scope_type:"project",project:"p",feature_id:""})).id,"m");
+ await c.monitors.deleteByScope({templateId:"dream",scope:{type:"feature",project:"p",feature_id:"f 1"}});
+ await c.tasks.runnerCandidates("p","t/1");await c.tasks.proposedRunnerCandidates("p q",{requires_capability:["gpu"]});await c.features.runnerCandidates("p","f/1");
+ await c.clientContext.resolve({client:{client_id:"c",host_id:"h"},workspace:{path:""}});
+ await c.sync.devices();await c.sync.diff("d 1","o/1");assert.equal((await c.sync.reconcile("d 1","o",{snapshot:"s",action:"discard",raw:""})).status,"queued");
+ await c.control.sessionTail("r 1","s/1",{after:"c u",limit:5,max_bytes:2048});await c.control.sessionDescendants("r","s",{limit:20});
+ await c.supervision.capabilities();await c.supervision.snapshot({project_id:"p q",limit:50});await c.supervision.dispatchPreview({project_id:"p",task_id:"t",manual:true});
+ await c.supervision.submitOperation({id:"op-12345678",operation:"trigger",bogus:1});await c.supervision.getOperation("a b/c");
+ await c.supervision.checkpoints({project:"p",id:"chk 1"});await c.supervision.updateCheckpoint({action:"request",checkpoint:{id:"x"},extra:true});
+ await c.supervision.budget({project:"p",id:"b"});await c.supervision.updateBudget({action:"reserve",units:1.5});
+ assert.deepEqual(seen,[
+  'POST /api/v1/monitors {"template_id":"dream","scope_type":"project","project":"p","feature_id":""}',
+  'DELETE /api/v1/monitors/by-scope {"templateId":"dream","scope":{"type":"feature","project":"p","feature_id":"f 1"}}',
+  'GET /api/v1/tasks/p/t%2F1/runner-candidates ','POST /api/v1/tasks/p%20q/runner-candidates {"requires_capability":["gpu"]}','GET /api/v1/tasks/p/features/f%2F1/runner-candidates ',
+  'POST /api/v1/context/resolve {"client":{"client_id":"c","host_id":"h"},"workspace":{"path":""}}',
+  'GET /api/v1/sync/devices ','GET /api/v1/sync/devices/d%201/operations/o%2F1/diff ','POST /api/v1/sync/devices/d%201/operations/o/reconcile {"snapshot":"s","action":"discard","raw":""}',
+  'GET /api/v1/control/runners/r%201/sessions/s%2F1/tail?after=c+u&limit=5&max_bytes=2048 ','GET /api/v1/control/runners/r/sessions/s/descendants?limit=20 ',
+  'GET /api/v1/supervision/capabilities ','GET /api/v1/supervision/snapshot?project_id=p+q&limit=50 ','GET /api/v1/supervision/dispatch-preview?project_id=p&task_id=t&manual=true ',
+  'POST /api/v1/supervision/operations {"id":"op-12345678","operation":"trigger","bogus":1}','GET /api/v1/supervision/operations/a%20b%2Fc ',
+  'GET /api/v1/supervision/checkpoints?project=p&id=chk+1 ','POST /api/v1/supervision/checkpoints {"action":"request","checkpoint":{"id":"x"},"extra":true}',
+  'GET /api/v1/supervision/budgets?project=p&id=b ','POST /api/v1/supervision/budgets {"action":"reserve","units":1.5}']);
+ mode="conflict";await assert.rejects(c.sync.reconcile("d","o",{snapshot:"s",action:"discard"}),e=>e instanceof BrainError&&e.code==="conflict"&&e.status===409&&e.serverMessage==="fetch a fresh diff before reconciling");
+ await assert.rejects(c.supervision.getOperation(".."),e=>e.code==="invalid_request");
+});

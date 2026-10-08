@@ -13,6 +13,7 @@ import (
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/service"
+	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/tenant"
 	"gopkg.in/yaml.v3"
 )
@@ -56,8 +57,11 @@ func TestDeliveredContractMatchesRouterAndInventory(t *testing.T) {
 	cfg.Tenancy.Mode = tenant.ModeSingle
 	// Task assignment routes have no unavailable-service placeholders. Walk
 	// the task-enabled composition; no method is invoked by chi.Walk.
-	// Remote-control routes exist only with a bridge (no placeholder paths).
-	router := api.NewRouter(cfg, api.WithHandler(api.NewHandler(nil, api.WithTaskService(service.NewTaskService(&cfg, nil, nil)), api.WithEventService(service.NewEventService(realtime.NewEventHub())), api.WithBridgeService(&bridge.Hub{}))))
+	// Remote-control routes exist only with a bridge, and the supervisor
+	// operation/checkpoint/budget routes only with their stores (no
+	// placeholder paths).
+	router := api.NewRouter(cfg, api.WithHandler(api.NewHandler(nil, api.WithTaskService(service.NewTaskService(&cfg, nil, nil)), api.WithEventService(service.NewEventService(realtime.NewEventHub())), api.WithBridgeService(&bridge.Hub{}),
+		api.WithSupervisorOperations(&storage.TenantStore{}), api.WithSupervisorCheckpoints(&storage.TenantStore{}), api.WithExecutionBudgets(&storage.TenantStore{}))))
 	routes := map[string]bool{}
 	if err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		routes[method+" "+normalize(route)] = true
@@ -119,6 +123,13 @@ func TestLegacyTaskFeatureAmbiguityUsesStaticFeatureRoute(t *testing.T) {
 		{"/api/v1/tasks/project/features/dispatch-lease", "/api/v1/tasks/{projectId}/features/{featureId}"},
 		{"/api/v1/tasks/project/ordinary/dispatch-lease", "/api/v1/tasks/{projectId}/{taskId}/dispatch-lease"},
 		{"/api/v1/tasks/project/ordinary/placement-reasons", "/api/v1/tasks/{projectId}/{taskId}/placement-reasons"},
+		// Runner candidates: a task literally named "features" cannot be
+		// evaluated; the feature route wins, as for delivery above. The
+		// proposed-task POST is a static segment and never a task id.
+		{"/api/v1/tasks/project/features/runner-candidates", "/api/v1/tasks/{projectId}/features/{featureId}"},
+		{"/api/v1/tasks/project/ordinary/runner-candidates", "/api/v1/tasks/{projectId}/{taskId}/runner-candidates"},
+		{"/api/v1/tasks/project/features/f/runner-candidates", "/api/v1/tasks/{projectId}/features/{featureId}/runner-candidates"},
+		{"POST /api/v1/tasks/project/runner-candidates", "/api/v1/tasks/{projectId}/runner-candidates"},
 	} {
 		method, path := http.MethodGet, tc.path
 		if m, p, ok := strings.Cut(tc.path, " "); ok {

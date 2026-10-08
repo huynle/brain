@@ -1,0 +1,233 @@
+=== tasks {"limit":3,"project":"parity3","status":"pending"} -> OK
+  GET /api/v1/tasks/parity3
+    auth="Bearer probe3-00" content-type="application/json" accept="" x-brain="" body=<none>
+=== tasks {"project":"par ity/x"} -> OK
+  GET /api/v1/tasks/par%20ity%2Fx
+    auth="Bearer probe3-01" content-type="application/json" accept="" x-brain="" body=<none>
+=== task_next {"project":"parity3"} -> OK
+  GET /api/v1/tasks/parity3/next
+    auth="Bearer probe3-02" content-type="application/json" accept="" x-brain="" body=<none>
+  GET /api/v1/entries/projects/parity3/task/<ALPHA>.md
+    auth="Bearer probe3-02" content-type="application/json" accept="" x-brain="" body=<none>
+=== task_next {"project":"parity-empty"} -> OK
+  GET /api/v1/tasks/parity-empty/next
+    auth="Bearer probe3-03" content-type="application/json" accept="" x-brain="" body=<none>
+  GET /api/v1/tasks/parity-empty
+    auth="Bearer probe3-03" content-type="application/json" accept="" x-brain="" body=<none>
+=== task_get {"project":"parity3","task_id":"<ALPHA>"} -> OK
+  GET /api/v1/tasks/parity3
+    auth="Bearer probe3-04" content-type="application/json" accept="" x-brain="" body=<none>
+  GET /api/v1/entries/projects/parity3/task/<ALPHA>.md
+    auth="Bearer probe3-04" content-type="application/json" accept="" x-brain="" body=<none>
+=== task_metadata {"project":"parity3","taskId":"parity solo"} -> OK
+  GET /api/v1/tasks/parity3
+    auth="Bearer probe3-05" content-type="application/json" accept="" x-brain="" body=<none>
+=== tasks_status {"project":"parity3","task_ids":["<ALPHA>","x/y"]} -> OK
+  POST /api/v1/tasks/parity3/status
+    auth="Bearer probe3-06" content-type="application/json" accept="" x-brain="" body={"taskIds":["<ALPHA>","x/y"]}
+=== tasks_status {"project":"parity3","task_ids":["<ALPHA>"],"timeout":1,"wait_for":"any"} -> OK
+  POST /api/v1/tasks/parity3/status
+    auth="Bearer probe3-07" content-type="application/json" accept="" x-brain="" body={"taskIds":["<ALPHA>"]}
+  POST /api/v1/tasks/parity3/status
+    auth="Bearer probe3-07" content-type="application/json" accept="" x-brain="" body={"taskIds":["<ALPHA>"]}
+=== task_trigger {"project":"parity3","task_id":"a b/c"} -> ERROR: Error: task not found: parity3/a%20b%2Fc
+  POST /api/v1/tasks/parity3/a%20b%2Fc/trigger
+    auth="Bearer probe3-08" content-type="application/json" accept="" x-brain="" body=<none>
+=== monitor_enable {"feature_id":"f 1/x","project":"parity3","schedule":"*/30 * * * *","template_id":"blocked-inspector"} -> OK
+  POST /api/v1/monitors
+    auth="Bearer probe3-09" content-type="application/json" accept="" x-brain="" body={"feature_id":"f 1/x","project":"parity3","schedule":"*/30 * * * *","scope_type":"feature","template_id":"blocked-inspector"}
+=== monitor_disable {"feature_id":"f 1/x","project":"parity3","template_id":"blocked-inspector"} -> OK
+  DELETE /api/v1/monitors/by-scope
+    auth="Bearer probe3-10" content-type="application/json" accept="" x-brain="" body={"scope":{"feature_id":"f 1/x","project":"parity3","type":"feature"},"templateId":"blocked-inspector"}
+=== feature_review_enable {"feature_id":"rev","project":"parity3"} -> OK
+  POST /api/v1/monitors
+    auth="Bearer probe3-11" content-type="application/json" accept="" x-brain="" body={"feature_id":"rev","project":"parity3","scope_type":"feature","template_id":"feature-review"}
+=== feature_review_disable {"feature_id":"rev","project":"parity3"} -> OK
+  DELETE /api/v1/monitors/by-scope
+    auth="Bearer probe3-12" content-type="application/json" accept="" x-brain="" body={"scope":{"feature_id":"rev","project":"parity3","type":"feature"},"templateId":"feature-review"}
+=== blocked_inspector_enable {"feature_id":"blk","project":"parity3","schedule":"0 * * * *"} -> OK
+  POST /api/v1/monitors
+    auth="Bearer probe3-13" content-type="application/json" accept="" x-brain="" body={"feature_id":"blk","project":"parity3","schedule":"0 * * * *","scope_type":"feature","template_id":"blocked-inspector"}
+=== blocked_inspector_disable {"feature_id":"blk","project":"parity3"} -> OK
+  DELETE /api/v1/monitors/by-scope
+    auth="Bearer probe3-14" content-type="application/json" accept="" x-brain="" body={"scope":{"feature_id":"blk","project":"parity3","type":"feature"},"templateId":"blocked-inspector"}
+=== dream_enable {"project":"parity3"} -> OK
+  POST /api/v1/monitors
+    auth="Bearer probe3-15" content-type="application/json" accept="" x-brain="" body={"feature_id":"","project":"parity3","scope_type":"project","template_id":"dream"}
+=== dream_disable {"project":"parity3"} -> OK
+  DELETE /api/v1/monitors/by-scope
+    auth="Bearer probe3-16" content-type="application/json" accept="" x-brain="" body={"scope":{"project":"parity3","type":"project"},"templateId":"dream"}
+=== resume_task_with_context {"executor_override":"pi","force":true,"injected_context":"ctx","prefer_same_session":false,"project":"parity3","task_id":"<SOLO>"} -> OK
+  POST /api/v1/tasks/parity3/<SOLO>/resume-with-context
+    auth="Bearer probe3-17" content-type="application/json" accept="" x-brain="" body={"executor_override":"pi","force":true,"injected_context":"ctx","prefer_same_session":false}
+=== resume_task_with_context {"injected_context":"ctx","project":"parity3","task_id":"t/1"} -> ERROR: Error: invalid taskId: must match [a-zA-Z0-9._-]{1,128}
+  POST /api/v1/tasks/parity3/t%2F1/resume-with-context
+    auth="Bearer probe3-18" content-type="application/json" accept="" x-brain="" body={"force":false,"injected_context":"ctx","prefer_same_session":true}
+=== features {"limit":2,"project":"parity3"} -> OK
+  GET /api/v1/tasks/parity3/features
+    auth="Bearer probe3-19" content-type="application/json" accept="" x-brain="" body=<none>
+=== features {"project":"parity3","ready_only":true} -> OK
+  GET /api/v1/tasks/parity3/features/ready
+    auth="Bearer probe3-20" content-type="application/json" accept="" x-brain="" body=<none>
+=== feature_ready {"project":"par ity"} -> OK
+  GET /api/v1/tasks/par%20ity/features/ready
+    auth="Bearer probe3-21" content-type="application/json" accept="" x-brain="" body=<none>
+=== feature_get {"feature_id":"f 1/x","project":"parity3"} -> ERROR: Error: feature not found
+  GET /api/v1/tasks/parity3/features/f%201%2Fx
+    auth="Bearer probe3-22" content-type="application/json" accept="" x-brain="" body=<none>
+=== feature_checkout {"feature_id":"f 1/x","project":"parity3"} -> OK
+  POST /api/v1/tasks/parity3/features/f%201%2Fx/checkout
+    auth="Bearer probe3-23" content-type="application/json" accept="" x-brain="" body={}
+=== feature_checkout {"checkout_mode":"ai","execution_branch":"b","execution_mode":"current_branch","feature_id":"f 1/x","merge_policy":"prompt_only","merge_strategy":"rebase","merge_target_branch":"main","open_pr_before_merge":true,"project":"parity3","remote_branch_policy":"delete"} -> OK
+  POST /api/v1/tasks/parity3/features/f%201%2Fx/checkout
+    auth="Bearer probe3-24" content-type="application/json" accept="" x-brain="" body={"checkout_mode":"ai","execution_branch":"b","execution_mode":"current_branch","merge_policy":"prompt_only","merge_strategy":"rebase","merge_target_branch":"main","open_pr_before_merge":true,"remote_branch_policy":"delete"}
+=== feature_assign {"feature_id":"f 1/x","project":"parity3","runner_id":"parity-runner"} -> OK
+  PUT /api/v1/tasks/parity3/features/f%201%2Fx/assignment
+    auth="Bearer probe3-25" content-type="application/json" accept="" x-brain="" body={"runner_id":"parity-runner"}
+=== feature_assign {"feature_id":"f 1/x","force":true,"intent":"reassign","project":"parity3","runner_id":"parity-runner"} -> OK
+  PUT /api/v1/tasks/parity3/features/f%201%2Fx/assignment
+    auth="Bearer probe3-26" content-type="application/json" accept="" x-brain="" body={"force":true,"intent":"reassign","runner_id":"parity-runner"}
+=== feature_clear_assignment {"feature_id":"f 1/x","project":"parity3"} -> OK
+  POST /api/v1/tasks/parity3/features/f%201%2Fx/assignment/clear
+    auth="Bearer probe3-27" content-type="application/json" accept="" x-brain="" body={"intent":"clear"}
+=== feature_clear_assignment {"feature_id":"f 1/x","intent":"clear","project":"parity3"} -> ERROR: Error: feature assignment not found
+  POST /api/v1/tasks/parity3/features/f%201%2Fx/assignment/clear
+    auth="Bearer probe3-28" content-type="application/json" accept="" x-brain="" body={"intent":"clear"}
+=== feature_runner_candidates {"feature_id":"f 1/x","include_rejected":true,"project":"parity3"} -> OK
+  GET /api/v1/tasks/parity3/features/f%201%2Fx/runner-candidates
+    auth="Bearer probe3-29" content-type="application/json" accept="" x-brain="" body=<none>
+=== runner_candidates {"project":"parity3","task_id":"<SOLO>"} -> OK
+  GET /api/v1/tasks/parity3/<SOLO>/runner-candidates
+    auth="Bearer probe3-30" content-type="application/json" accept="" x-brain="" body=<none>
+=== runner_candidates {"project":"parity3"} -> OK
+  POST /api/v1/tasks/parity3/runner-candidates
+    auth="Bearer probe3-31" content-type="application/json" accept="" x-brain="" body={}
+=== runner_candidates {"execution_mode":"worktree","executor":"pi","feature_id":"f","git_remote":"https://example.test/r.git","machine_affinity":"local","origin_machine_id":"m","project":"parity3","requires_capability":["gpu","x y"],"target_workdir":"/w"} -> OK
+  POST /api/v1/tasks/parity3/runner-candidates
+    auth="Bearer probe3-32" content-type="application/json" accept="" x-brain="" body={"execution_mode":"worktree","executor":"pi","feature_id":"f","git_remote":"https://example.test/r.git","machine_affinity":"local","origin_machine_id":"m","requires_capability":["gpu","x y"],"target_workdir":"/w"}
+=== task_assign {"project":"parity3","runner_id":"parity-runner","task_id":"<SOLO>"} -> OK
+  PUT /api/v1/tasks/parity3/<SOLO>/assignment
+    auth="Bearer probe3-33" content-type="application/json" accept="" x-brain="" body={"intent":"assign","runner_id":"parity-runner"}
+=== task_assign {"force":true,"intent":"reassign","project":"parity3","runner_id":"parity-runner","task_id":"<SOLO>"} -> OK
+  PUT /api/v1/tasks/parity3/<SOLO>/assignment
+    auth="Bearer probe3-34" content-type="application/json" accept="" x-brain="" body={"force":true,"intent":"reassign","runner_id":"parity-runner"}
+=== task_clear_assignment {"project":"parity3","task_id":"<SOLO>"} -> OK
+  POST /api/v1/tasks/parity3/<SOLO>/assignment/clear
+    auth="Bearer probe3-35" content-type="application/json" accept="" x-brain="" body={"intent":"clear"}
+=== context_resolve {"client_id":"c","host_id":"h"} -> OK
+  POST /api/v1/context/resolve
+    auth="Bearer probe3-36" content-type="application/json" accept="" x-brain="" body={"client":{"client_id":"c","host_id":"h"},"workspace":{"path":""}}
+=== context_resolve {"arch":"a","capabilities":["c1"],"client_id":"c","folder_name":"f","git_branch":"b","git_common_dir":"/g/.git","git_remote":"r","git_root":"/g","git_worktree_main":"/g","home_dir":"/h","host_id":"h","hostname":"n","kind":"k","labels":{"a":"b","n":1},"os":"o","path":"/p","username":"u"} -> OK
+  POST /api/v1/context/resolve
+    auth="Bearer probe3-37" content-type="application/json" accept="" x-brain="" body={"client":{"arch":"a","capabilities":["c1"],"client_id":"c","home_dir":"/h","host_id":"h","hostname":"n","kind":"k","labels":{"a":"b","n":"1"},"os":"o","username":"u"},"workspace":{"folder_name":"f","git_branch":"b","git_common_dir":"/g/.git","git_remote":"r","git_root":"/g","git_worktree_main":"/g","path":"/p"}}
+=== project_placement_get {"project":"par ity/x"} -> OK
+  GET /api/v1/projects/par%20ity%2Fx/placement
+    auth="Bearer probe3-38" content-type="application/json" accept="" x-brain="" body=<none>
+=== project_placement_put {"affinity":"none","project":"par ity"} -> OK
+  PUT /api/v1/projects/par%20ity/placement
+    auth="Bearer probe3-39" content-type="application/json" accept="" x-brain="" body={"affinity":"none","project_id":""}
+=== project_placement_put {"affinity":"strict","allowed_machines":["m1","m2"],"preferred_machines":["m1"],"project":"parity3","required_capabilities":["git"],"required_labels":{"z":"1"},"resources":{"cpu":2},"workspace_policy":"current_branch"} -> OK
+  PUT /api/v1/projects/parity3/placement
+    auth="Bearer probe3-40" content-type="application/json" accept="" x-brain="" body={"affinity":"strict","allowed_machines":["m1","m2"],"preferred_machines":["m1"],"project_id":"","required_capabilities":["git"],"required_labels":{"z":"1"},"resources":{"cpu":2},"workspace_policy":"current_branch"}
+=== reader_url {"path":"<NOTE>"} -> OK
+  GET /api/v1/entries/<NOTE>
+    auth="Bearer probe3-41" content-type="application/json" accept="" x-brain="" body=<none>
+=== reader_url {"base_url":"https://brain.example.test","path":"projects/parity3/scratch/<NOTE>.md"} -> OK
+  GET /api/v1/entries/projects/parity3/scratch/<NOTE>.md
+    auth="Bearer probe3-42" content-type="application/json" accept="" x-brain="" body=<none>
+=== reader_url {"path":"projects/a b/scratch/c%d.md"} -> ERROR: Error: Entry not found: projects/a b/scratch/c%d.md
+  GET /api/v1/entries/projects/a%20b/scratch/c%25d.md
+    auth="Bearer probe3-43" content-type="application/json" accept="" x-brain="" body=<none>
+=== session_tail {"runner_id":"parity-runner","session_id":"ses/1"} -> OK
+  GET /api/v1/control/runners/parity-runner/sessions/ses%2F1/tail?limit=20&max_bytes=16384
+    auth="Bearer probe3-44" content-type="application/json" accept="" x-brain="" body=<none>
+=== session_tail {"after":"cur 1","limit":5,"max_bytes":2048,"runner_id":"parity-runner","session_id":"ses/1"} -> ERROR: Error: invalid cursor for this session
+  GET /api/v1/control/runners/parity-runner/sessions/ses%2F1/tail?after=cur+1&limit=5&max_bytes=2048
+    auth="Bearer probe3-45" content-type="application/json" accept="" x-brain="" body=<none>
+=== session_children {"runner_id":"parity-runner","session_id":"ses/1"} -> OK
+  GET /api/v1/control/runners/parity-runner/sessions/ses%2F1/descendants?limit=20
+    auth="Bearer probe3-46" content-type="application/json" accept="" x-brain="" body=<none>
+=== session_children {"after":"x","limit":3,"runner_id":"parity-runner","session_id":"ses/1"} -> ERROR: Error: invalid children cursor
+  GET /api/v1/control/runners/parity-runner/sessions/ses%2F1/descendants?after=x&limit=3
+    auth="Bearer probe3-47" content-type="application/json" accept="" x-brain="" body=<none>
+=== resource_health {"project":"parity3"} -> OK
+  GET /api/v1/events/resource-health?project_id=parity3
+    auth="Bearer probe3-48" content-type="application/json" accept="" x-brain="" body=<none>
+=== resource_health {"project":"par ity","task_id":"t/1"} -> OK
+  GET /api/v1/events/resource-health?project_id=par+ity&task_id=t%2F1
+    auth="Bearer probe3-49" content-type="application/json" accept="" x-brain="" body=<none>
+=== events_wait {"project":"parity3","timeout_ms":0} -> OK
+  GET /api/v1/events/wait?limit=100&project_id=parity3&timeout_ms=0
+    auth="Bearer probe3-50" content-type="application/json" accept="" x-brain="" body=<none>
+=== events_wait {"after":"c u","feature_id":"f","limit":5,"project":"par ity","task_id":"t","timeout_ms":0,"type":"task.*"} -> ERROR: Error: invalid cursor for these filters or caller
+  GET /api/v1/events/wait?after=c+u&feature_id=f&limit=5&project_id=par+ity&task_id=t&timeout_ms=0&type=task.%2A
+    auth="Bearer probe3-51" content-type="application/json" accept="" x-brain="" body=<none>
+=== delivery_gate {"project":"parity3","task_id":"<SOLO>"} -> OK
+  GET /api/v1/tasks/parity3/<SOLO>/delivery
+    auth="Bearer probe3-52" content-type="application/json" accept="" x-brain="" body=<none>
+=== delivery_verify {"expected_revision":4,"project":"parity3","task_id":"t/1"} -> ERROR: Error: task "t%2F1" not found in project "parity3": not found
+  POST /api/v1/tasks/parity3/t%2F1/delivery
+    auth="Bearer probe3-53" content-type="application/json" accept="" x-brain="" body={"action":"verify","expected_revision":4}
+=== delivery_verify {"project":"parity3","task_id":"<SOLO>"} -> ERROR: Error: conflict: delivery revision changed
+  POST /api/v1/tasks/parity3/<SOLO>/delivery
+    auth="Bearer probe3-54" content-type="application/json" accept="" x-brain="" body={"action":"verify","expected_revision":-1}
+=== delivery_record {"command":{"action":"configure","expected_revision":0,"policy":{"required":"none"}},"project":"parity3","task_id":"<SOLO>"} -> OK
+  POST /api/v1/tasks/parity3/<SOLO>/delivery
+    auth="Bearer probe3-55" content-type="application/json" accept="" x-brain="" body={"action":"configure","expected_revision":0,"policy":{"required":"none"}}
+=== delivery_record {"command":{"action":"integration","artifact":"abc","evidence_reference":"r","expected_revision":1,"passed":false},"project":"parity3","task_id":"<SOLO>"} -> ERROR: Error: invalid input: integration evidence must name the verified merge commit and evidence reference
+  POST /api/v1/tasks/parity3/<SOLO>/delivery
+    auth="Bearer probe3-56" content-type="application/json" accept="" x-brain="" body={"action":"integration","artifact":"abc","evidence_reference":"r","expected_revision":1,"passed":false}
+=== supervisor_capabilities {"project":"parity3"} -> OK
+  GET /api/v1/supervision/capabilities?limit=50&project_id=parity3
+    auth="Bearer probe3-57" content-type="application/json" accept="" x-brain="" body=<none>
+=== supervisor_snapshot {"project":"parity3"} -> OK
+  GET /api/v1/supervision/snapshot?limit=50&project_id=parity3
+    auth="Bearer probe3-58" content-type="application/json" accept="" x-brain="" body=<none>
+=== supervisor_snapshot {"after_task":"a","feature_id":"f 1/x","limit":2,"manual":false,"project":"parity3","task_id":"<SOLO>"} -> OK
+  GET /api/v1/supervision/snapshot?after_task=a&feature_id=f+1%2Fx&limit=2&project_id=parity3&task_id=<SOLO>
+    auth="Bearer probe3-59" content-type="application/json" accept="" x-brain="" body=<none>
+=== task_dispatch_preview {"manual":true,"project":"parity3","task_id":"<SOLO>"} -> OK
+  GET /api/v1/supervision/dispatch-preview?limit=50&manual=true&project_id=parity3&task_id=<SOLO>
+    auth="Bearer probe3-60" content-type="application/json" accept="" x-brain="" body=<none>
+=== task_dispatch_preview {"after_task":"z","feature_id":"f","limit":9,"project":"parity3","task_id":"<SOLO>"} -> OK
+  GET /api/v1/supervision/dispatch-preview?after_task=z&feature_id=f&limit=9&project_id=parity3&task_id=<SOLO>
+    auth="Bearer probe3-61" content-type="application/json" accept="" x-brain="" body=<none>
+=== supervisor_operation {"id":"parity-op-01","instance_id":"ins-1","operation":"prompt","runner_id":"parity-runner","session_id":"ses-1","text":"go"} -> OK
+  POST /api/v1/supervision/operations
+    auth="Bearer probe3-62" content-type="application/json" accept="" x-brain="" body={"id":"parity-op-01","instance_id":"ins-1","operation":"prompt","runner_id":"parity-runner","session_id":"ses-1","text":"go"}
+=== supervisor_operation {"budget_id":"","budget_units":0,"checkpoint_revision":0,"id":"parity-op-02","operation":"trigger","project":"parity3","task_id":"<SOLO>"} -> OK
+  POST /api/v1/supervision/operations
+    auth="Bearer probe3-63" content-type="application/json" accept="" x-brain="" body={"budget_id":"","budget_units":0,"checkpoint_revision":0,"id":"parity-op-02","operation":"trigger","project":"parity3","task_id":"<SOLO>"}
+=== supervisor_operation_get {"id":"parity-op-01"} -> OK
+  GET /api/v1/supervision/operations/parity-op-01
+    auth="Bearer probe3-64" content-type="application/json" accept="" x-brain="" body=<none>
+=== supervisor_operation_get {"id":"a b/c"} -> ERROR: Error: operation not found
+  GET /api/v1/supervision/operations/a%20b%2Fc
+    auth="Bearer probe3-65" content-type="application/json" accept="" x-brain="" body=<none>
+=== supervisor_checkpoint {"project":"parity3"} -> OK
+  GET /api/v1/supervision/checkpoints?project=parity3
+    auth="Bearer probe3-66" content-type="application/json" accept="" x-brain="" body=<none>
+=== supervisor_checkpoint {"after":"z","id":"chk 1","project":"parity3"} -> OK
+  GET /api/v1/supervision/checkpoints?after=z&id=chk+1&project=parity3
+    auth="Bearer probe3-67" content-type="application/json" accept="" x-brain="" body=<none>
+=== supervisor_checkpoint {"command":{"action":"request","checkpoint":{"artifact":"a","id":"parity-chk-1","project":"parity3","question":"q?"},"expected_revision":0}} -> OK
+  POST /api/v1/supervision/checkpoints
+    auth="Bearer probe3-68" content-type="application/json" accept="" x-brain="" body={"action":"request","checkpoint":{"artifact":"a","id":"parity-chk-1","project":"parity3","question":"q?"},"expected_revision":0}
+=== execution_budget {"id":"b 1","project":"parity3"} -> ERROR: Error: budget not found
+  GET /api/v1/supervision/budgets?id=b+1&project=parity3
+    auth="Bearer probe3-69" content-type="application/json" accept="" x-brain="" body=<none>
+=== execution_budget {"command":{"action":"configure","budget":{"id":"parity-bud-1","limit":3,"project":"parity3","timezone":"UTC","unit":"runs"},"expected_revision":0}} -> OK
+  POST /api/v1/supervision/budgets
+    auth="Bearer probe3-70" content-type="application/json" accept="" x-brain="" body={"action":"configure","budget":{"id":"parity-bud-1","limit":3,"project":"parity3","timezone":"UTC","unit":"runs"},"expected_revision":0}
+=== sync_status null -> OK
+  GET /api/v1/sync/devices
+    auth="Bearer probe3-71" content-type="application/json" accept="" x-brain="" body=<none>
+=== sync_diff {"device_id":"parity-device-00001","operation_id":"op 1"} -> OK
+  GET /api/v1/sync/devices/parity-device-00001/operations/op%201/diff
+    auth="Bearer probe3-72" content-type="application/json" accept="" x-brain="" body=<none>
+=== sync_reconcile {"action":"discard","device_id":"parity-device-00001","operation_id":"op 1","snapshot":"stale"} -> ERROR: Error: fetch a fresh diff before reconciling
+  POST /api/v1/sync/devices/parity-device-00001/operations/op%201/reconcile
+    auth="Bearer probe3-73" content-type="application/json" accept="" x-brain="" body={"action":"discard","raw":"","snapshot":"stale"}
+=== sync_reconcile {"action":"merge","device_id":"d/1","operation_id":"o","raw":"---\nx\n---\n","snapshot":"s"} -> ERROR: Error: device not reported
+  POST /api/v1/sync/devices/d%2F1/operations/o/reconcile
+    auth="Bearer probe3-74" content-type="application/json" accept="" x-brain="" body={"action":"merge","raw":"---\nx\n---\n","snapshot":"s"}

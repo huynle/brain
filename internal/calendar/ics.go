@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -394,18 +395,81 @@ func zoneOf(x icsTime) *time.Location {
 	return x.t.Location()
 }
 
-// buildRule parses an RRULE value anchored at dtstart. A DATE-valued UNTIL
-// on a timed event is read as the end of that day, matching common clients.
+const (
+	// maxRuleLen bounds an RRULE value. Real rules are well under 200
+	// bytes; long BY* lists multiply rrule-go's per-period work.
+	maxRuleLen = 512
+	// maxInterval bounds INTERVAL. rrule-go adds it to int counters and
+	// walks the result day by day, so absurd values overflow or spin.
+	maxInterval = 10_000
+)
+
+// buildRule parses an RRULE value anchored at dtstart and rejects rules
+// rrule-go cannot iterate safely. A DATE-valued UNTIL on a timed event is
+// read as the end of that day, matching common clients.
 func buildRule(raw string, dtstart time.Time, allDay bool) (*rrule.RRule, error) {
+	if len(raw) > maxRuleLen {
+		return nil, fmt.Errorf("RRULE longer than %d bytes", maxRuleLen)
+	}
 	opt, err := rrule.StrToROptionInLocation(raw, dtstart.Location())
 	if err != nil {
 		return nil, err
+	}
+	if opt.Interval > maxInterval {
+		return nil, fmt.Errorf("RRULE INTERVAL %d exceeds %d", opt.Interval, maxInterval)
 	}
 	opt.Dtstart = dtstart
 	if !allDay && untilIsDate(raw) {
 		opt.Until = opt.Until.AddDate(0, 0, 1).Add(-time.Second)
 	}
+	if !subDailyReachable(opt, dtstart) {
+		return nil, errors.New("RRULE can never reach its BYHOUR/BYMINUTE/BYSECOND values")
+	}
 	return rrule.NewRRule(*opt)
+}
+
+// subDailyReachable reports whether an HOURLY/MINUTELY/SECONDLY rule can
+// ever satisfy its time-of-day filters. rrule-go advances such rules in an
+// unbounded loop until the filters match, so an unreachable combination
+// (e.g. FREQ=HOURLY;INTERVAL=24;BYHOUR=5 from 00:00) never returns. The
+// loop steps a time-of-day counter by INTERVAL modulo the day, so the
+// reachable values are those congruent to DTSTART's modulo
+// gcd(INTERVAL, units per day).
+func subDailyReachable(opt *rrule.ROption, dtstart time.Time) bool {
+	h, m, s := dtstart.Clock()
+	var perDay, pos int
+	var ok func(u int) bool
+	switch opt.Freq {
+	case rrule.HOURLY:
+		perDay, pos = 24, h
+		ok = func(u int) bool { return allowed(opt.Byhour, u) }
+	case rrule.MINUTELY:
+		perDay, pos = 24*60, h*60+m
+		ok = func(u int) bool { return allowed(opt.Byhour, u/60) && allowed(opt.Byminute, u%60) }
+	case rrule.SECONDLY:
+		perDay, pos = 24*3600, h*3600+m*60+s
+		ok = func(u int) bool {
+			return allowed(opt.Byhour, u/3600) && allowed(opt.Byminute, u/60%60) && allowed(opt.Bysecond, u%60)
+		}
+	default:
+		return true
+	}
+	step := gcd(max(opt.Interval, 1), perDay)
+	for u := pos % step; u < perDay; u += step {
+		if ok(u) {
+			return true
+		}
+	}
+	return false
+}
+
+func allowed(set []int, v int) bool { return len(set) == 0 || slices.Contains(set, v) }
+
+func gcd(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
 }
 
 func untilIsDate(raw string) bool {

@@ -915,6 +915,7 @@ paths:
       x-brain-profile: single
       operationId: entries.get
       summary: Get an entry by ID or legacy path
+      description: A legacy path is sent as ONE percent-encoded path segment (projects%2Fp%2Fnote%2Fid.md, as both SDKs encode it); the server decodes it once. Slashes sent literally are also accepted.
       responses:
         default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200':
@@ -2588,6 +2589,8 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ControlProxyResponse'}
+        '204':
+          description: The instance answered with no body (OpenCode prompt_async does); SDKs return empty (Go) or null (TS)
   /control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/abort:
     post:
       operationId: control.abortSession
@@ -2611,6 +2614,8 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ControlProxyResponse'}
+        '204':
+          description: The instance answered with no body (OpenCode prompt_async does); SDKs return empty (Go) or null (TS)
   /control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/permissions/{permissionId}:
     post:
       operationId: control.respondPermission
@@ -2641,6 +2646,417 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ControlProxyResponse'}
+        '204':
+          description: The instance answered with no body (OpenCode prompt_async does); SDKs return empty (Go) or null (TS)
+  /monitors:
+    post:
+      operationId: monitors.create
+      summary: Create a monitor task from a template for a project or feature
+      description: >-
+        Creates a task from the named template (scheduled, e.g. blocked-inspector
+        and dream, or gated on feature completion, e.g. feature-review). The task
+        runs an agent when it fires; nothing runs synchronously. Duplicates for
+        the same template and scope are refused with 409; unknown templates with
+        400.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateMonitorRequest'}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '201':
+          description: Created monitor task
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CreateMonitorResult'}
+  /monitors/by-scope:
+    delete:
+      operationId: monitors.deleteByScope
+      summary: Delete the monitor task for a template and scope
+      description: >-
+        The JSON body names the template (templateId; the server also accepts
+        template_id) and the scope. 404 when no monitor matches.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DeleteMonitorByScopeRequest'}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Deleted monitor task
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MonitorDeleteByScopeResponse'}
+  /tasks/{projectId}/{taskId}/runner-candidates:
+    get:
+      operationId: tasks.runnerCandidates
+      summary: List runners compatible with a standalone task
+      description: Compatibility is durable fit; available reports temporary availability separately.
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Evaluated runners
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RunnerCandidatesResponse'}
+  /tasks/{projectId}/runner-candidates:
+    post:
+      operationId: tasks.proposedRunnerCandidates
+      summary: List runners compatible with a proposed task specification
+      description: Read-only evaluation of placement-relevant fields before creating a task; nothing is stored. Unknown fields are refused with 400.
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TaskRunnerCandidatesRequest'}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Evaluated runners
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RunnerCandidatesResponse'}
+  /tasks/{projectId}/features/{featureId}/runner-candidates:
+    get:
+      operationId: features.runnerCandidates
+      summary: List runners compatible with every unfinished task in a feature
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: featureId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Evaluated runners
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RunnerCandidatesResponse'}
+  /context/resolve:
+    post:
+      operationId: clientContext.resolve
+      summary: Register a client observation and resolve its Brain project
+      description: >-
+        Upserts the client registry row (client and host identity, labels,
+        capabilities) and resolves the project from the workspace observation;
+        a dream context is attached when one exists. Not a project grant.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ResolveClientContextRequest'}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Resolution
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ResolveClientContextResponse'}
+  /sync/devices:
+    get:
+      operationId: sync.devices
+      summary: Read last-reported browser sync state
+      description: >-
+        Admin only. Reported state, not proof: unknown or stale connections may
+        hold unsent edits. Draft contents are withheld here (use sync.diff).
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Reported devices
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SyncDevicesResponse'}
+  /sync/devices/{deviceId}/operations/{operationId}/diff:
+    get:
+      operationId: sync.diff
+      summary: Read a reported browser draft against the current server version
+      description: Admin only. The draft is untrusted reported content; snapshot binds a later reconcile to exactly this view.
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: deviceId, in: path, required: true, schema: {type: string}}
+        - {name: operationId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Draft, server version and diff
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SyncDiff'}
+  /sync/devices/{deviceId}/operations/{operationId}/reconcile:
+    post:
+      operationId: sync.reconcile
+      summary: Queue a revision-guarded reconciliation command for a browser
+      description: >-
+        Admin only. Queues a command the browser applies after it reconnects;
+        nothing is written to the server here. A stale snapshot, a pending
+        command or an unreconcilable edit is refused with 409.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: deviceId, in: path, required: true, schema: {type: string}}
+        - {name: operationId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SyncReconcileRequest'}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '202':
+          description: Command queued for the browser
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SyncReconcileResponse'}
+  /control/runners/{runnerId}/sessions/{sessionId}/tail:
+    get:
+      operationId: control.sessionTail
+      summary: Read a bounded projection of a session's visible text and tool output
+      description: >-
+        Remote read on a runner host (control:* scope) through the runner
+        bridge; works for historical sessions while the runner is connected.
+        Reasoning and tool inputs are excluded and known credential patterns
+        redacted. Records are upserts keyed by message and part.
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: runnerId, in: path, required: true, schema: {type: string}}
+        - {name: sessionId, in: path, required: true, schema: {type: string}}
+        - {name: after, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+        - {name: max_bytes, in: query, schema: {type: integer, minimum: 1024, maximum: 65536}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Session page
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SessionTailPage'}
+  /control/runners/{runnerId}/sessions/{sessionId}/descendants:
+    get:
+      operationId: control.sessionDescendants
+      summary: Read a bounded page of persisted child-session linkage
+      description: >-
+        Remote read on a runner host (control:* scope) through the runner
+        bridge, up to depth 5. state and last_activity are unknown in persisted
+        linkage. A changed tree expires the cursor.
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: runnerId, in: path, required: true, schema: {type: string}}
+        - {name: sessionId, in: path, required: true, schema: {type: string}}
+        - {name: after, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Descendant page
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SessionChildrenPage'}
+  /supervision/capabilities:
+    get:
+      operationId: supervision.capabilities
+      summary: Read the server's supervisor tool registration
+      description: Server registration, not client installation, connection or grants.
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Registered supervisor tools
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SupervisorCapabilities'}
+  /supervision/snapshot:
+    get:
+      operationId: supervision.snapshot
+      summary: Read a bounded, non-atomic supervisor projection of a project
+      description: event_cursor is taken before the state reads, so events.wait from it replays concurrent changes.
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: project_id, in: query, required: true, schema: {type: string}}
+        - {name: task_id, in: query, schema: {type: string}}
+        - {name: feature_id, in: query, schema: {type: string}}
+        - {name: after_task, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Snapshot
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SupervisorSnapshot'}
+  /supervision/dispatch-preview:
+    get:
+      operationId: supervision.dispatchPreview
+      summary: Preview whether and where a task would dispatch
+      description: Read-only; reserves no capacity and creates no claim. Runner-local configuration is unknown.
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: project_id, in: query, required: true, schema: {type: string}}
+        - {name: task_id, in: query, required: true, schema: {type: string}}
+        - {name: manual, in: query, schema: {type: boolean}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Preview
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DispatchPreview'}
+  /supervision/operations:
+    post:
+      operationId: supervision.submitOperation
+      summary: Submit an idempotent supervisor prompt, contextual resume or trigger
+      description: >-
+        Admin only. prompt drives an agent in a live session; resume_with_context
+        injects into or relaunches a task; trigger runs a task. The same id with
+        the same payload replays the durable receipt; a different payload is a
+        409. Optional budget reservation and checkpoint handoff are checked
+        first. Delivered or accepted is not task completion. Unknown fields are
+        refused with 400.
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SupervisorOperationRequest'}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Durable operation receipt
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SupervisorOperation'}
+  /supervision/operations/{operationId}:
+    get:
+      operationId: supervision.getOperation
+      summary: Read a supervisor operation receipt
+      description: Admin only; scoped to the submitting principal. Never resends anything.
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: operationId, in: path, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Operation receipt
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SupervisorOperation'}
+  /supervision/checkpoints:
+    get:
+      operationId: supervision.checkpoints
+      summary: List a project's checkpoints, or one checkpoint's versions
+      description: With id, versions newest first (limit 100). Without id, up to 100 checkpoints after the cursor.
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: project, in: query, required: true, schema: {type: string}}
+        - {name: id, in: query, schema: {type: string}}
+        - {name: after, in: query, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Checkpoints or versions
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SupervisorCheckpointList'}
+    post:
+      operationId: supervision.updateCheckpoint
+      summary: Request, answer, verify or supersede a checkpoint
+      description: Admin only, revision-checked. Answers are evidence for a later handoff, not verification or authorization. Unknown fields are refused with 400.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SupervisorCheckpointCommand'}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Current checkpoint
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SupervisorCheckpoint'}
+  /supervision/budgets:
+    get:
+      operationId: supervision.budget
+      summary: Read an execution budget and its current window
+      description: Units cover admitted work only; executor tokens and cost are unknown (always null).
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: project, in: query, required: true, schema: {type: string}}
+        - {name: id, in: query, required: true, schema: {type: string}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Budget and window usage
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ExecutionBudgetStatus'}
+    post:
+      operationId: supervision.updateBudget
+      summary: Configure a budget or reserve, commit or cancel units
+      description: Admin only. Configure is revision-checked; reservations gate supervisor operations. Unknown fields are refused with 400.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ExecutionBudgetCommand'}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200':
+          description: Outcome of the action
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ExecutionBudgetResult'}
 components:
   securitySchemes:
     bearerAuth:
@@ -3118,9 +3534,11 @@ components:
       properties:
         snoozed_until:
           type: string
-          format: date-time
-          description: Informational; stored as sent (an empty value snoozes without a time).
-          x-go-type: string
+          description: >-
+            Informational and not validated: the server stores the string exactly
+            as sent and returns it in the item's snoozed_until. An RFC 3339
+            date-time is conventional; an empty value (or an absent body)
+            snoozes without a time, and any other text is kept verbatim.
     AttentionListResponse:
       type: object
       required:
@@ -5954,3 +6372,308 @@ components:
           type: boolean
         instance:
           $ref: '#/components/schemas/OpencodeInstance'
+    CreateMonitorRequest: {"properties":{"feature_id":{"type":"string"},"project":{"type":"string"},"schedule":{"type":"string"},"scope_type":{"type":"string"},"template_id":{"type":"string"}},"required":["template_id","scope_type"],"type":"object"}
+    CreateMonitorResult: {"properties":{"id":{"type":"string"},"path":{"type":"string"},"title":{"type":"string"}},"required":["id","path","title"],"type":"object"}
+    DeleteMonitorByScopeRequest: {"properties":{"scope":{"$ref":"#/components/schemas/MonitorScope"},"templateId":{"type":"string"}},"required":["templateId","scope"],"type":"object"}
+    MonitorScope: {"properties":{"feature_id":{"type":"string"},"project":{"type":"string"},"type":{"type":"string"}},"required":["type"],"type":"object"}
+    MonitorDeleteByScopeResponse: {"properties":{"path":{"type":"string"},"success":{"type":"boolean"},"taskId":{"type":"string"}},"required":["success","path","taskId"],"type":"object"}
+    RunnerCandidatesResponse: {"properties":{"assigned_runner_id":{"type":"string"},"assignment_scope":{"type":"string"},"candidates":{"anyOf":[{"items":{"$ref":"#/components/schemas/RunnerCandidate"},"type":"array"},{"type":"null"}]},"feature_id":{"type":"string"},"project_id":{"type":"string"},"task_id":{"type":"string"}},"required":["project_id","candidates"],"type":"object"}
+    RunnerCandidate: {"properties":{"available":{"type":"boolean"},"compatible":{"type":"boolean"},"reasons":{"anyOf":[{"items":{"$ref":"#/components/schemas/RunnerCandidateReason"},"type":"array"},{"type":"null"}]},"runner":{"$ref":"#/components/schemas/RunnerInfo"}},"required":["runner","compatible","available","reasons"],"type":"object"}
+    RunnerCandidateReason: {"properties":{"code":{"type":"string"},"message":{"type":"string"},"task_ids":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]}},"required":["code","message"],"type":"object"}
+    TaskRunnerCandidatesRequest: {"properties":{"execution_mode":{"type":"string"},"executor":{"type":"string"},"feature_id":{"type":"string"},"git_remote":{"type":"string"},"machine_affinity":{"type":"string"},"origin_machine_id":{"type":"string"},"requires_capability":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"target_workdir":{"type":"string"}},"type":"object"}
+    ResolveClientContextRequest: {"properties":{"client":{"$ref":"#/components/schemas/BrainClientInfo"},"workspace":{"$ref":"#/components/schemas/WorkspaceObservation"}},"required":["client","workspace"],"type":"object"}
+    BrainClientInfo: {"properties":{"arch":{"type":"string"},"capabilities":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}]},"client_id":{"type":"string"},"home_dir":{"type":"string"},"host_id":{"type":"string"},"hostname":{"type":"string"},"kind":{"type":"string"},"labels":{"anyOf":[{"additionalProperties":{"type":"string"},"type":"object"},{"type":"null"}]},"os":{"type":"string"},"username":{"type":"string"}},"required":["client_id","host_id"],"type":"object"}
+    WorkspaceObservation: {"properties":{"folder_name":{"type":"string"},"git_branch":{"type":"string"},"git_common_dir":{"type":"string"},"git_remote":{"type":"string"},"git_root":{"type":"string"},"git_worktree_main":{"type":"string"},"path":{"type":"string"}},"required":["path"],"type":"object"}
+    ResolveClientContextResponse: {"properties":{"confidence":{"type":"string"},"dream":{"anyOf":[{"$ref":"#/components/schemas/DreamContext"},{"type":"null"}]},"project_id":{"type":"string"},"source":{"type":"string"}},"required":["project_id","confidence","source"],"type":"object"}
+    DreamContext: {"properties":{"content":{"type":"string"},"id":{"type":"string"},"path":{"type":"string"},"title":{"type":"string"}},"type":"object"}
+    SyncDevice: {"properties":{"cache_mode":{"type":"string"},"cached_entries":{"type":"integer"},"command":{"anyOf":[{"$ref":"#/components/schemas/SyncCommand"},{"type":"null"}]},"connection":{"type":"string"},"cursor":{"format":"int64","type":"integer"},"device_id":{"type":"string"},"epoch":{"type":"string"},"error":{"type":"string"},"last_seen":{"type":"string"},"last_successful_sync":{"type":"string"},"owner":{"type":"string"},"pending":{"anyOf":[{"items":{"$ref":"#/components/schemas/SyncPending"},"type":"array"},{"type":"null"}]},"ready":{"type":"boolean"},"reported_online":{"type":"boolean"},"syncing":{"type":"boolean"}},"required":["device_id","last_seen","connection","reported_online","syncing","ready","cursor","epoch","pending"],"type":"object"}
+    SyncPending: {"properties":{"error":{"type":"string"},"failure":{"type":"string"},"id":{"type":"string"},"method":{"type":"string"},"path":{"type":"string"},"raw":{"type":"string"},"revision":{"type":"string"}},"required":["id","path","method","revision","raw"],"type":"object"}
+    SyncCommand: {"properties":{"action":{"type":"string"},"expected_raw":{"type":"string"},"id":{"type":"string"},"operation_id":{"type":"string"},"outcome":{"type":"string"},"raw":{"type":"string"},"server_revision":{"type":"string"}},"required":["id","operation_id","action","expected_raw","server_revision"],"type":"object"}
+    SupervisorOperation: {"properties":{"created_at":{"format":"date-time","type":"string"},"detail":{"type":"string"},"id":{"type":"string"},"operation":{"type":"string"},"state":{"type":"string"},"updated_at":{"format":"date-time","type":"string"}},"required":["id","operation","state","created_at","updated_at","detail"],"type":"object"}
+    ExecutionBudget: {"properties":{"id":{"type":"string"},"limit":{"format":"int64","type":"integer"},"project":{"type":"string"},"revision":{"type":"integer"},"timezone":{"type":"string"},"unit":{"type":"string"}},"required":["id","project","timezone","unit","limit","revision"],"type":"object"}
+    BudgetReservation: {"properties":{"budget_id":{"type":"string"},"id":{"type":"string"},"parent_id":{"type":"string"},"state":{"type":"string"},"units":{"format":"int64","type":"integer"},"window":{"type":"string"}},"required":["id","budget_id","window","units","state"],"type":"object"}
+    SyncDevicesResponse:
+      type: object
+      description: Last reported browser state. owner is never returned and pending/command raw drafts are blanked here (sync.diff returns a draft).
+      required: [devices, stale_after_seconds, note]
+      properties:
+        devices: {anyOf: [{type: array, items: {$ref: '#/components/schemas/SyncDevice'}}, {type: 'null'}]}
+        stale_after_seconds: {type: integer}
+        note: {type: string}
+    SyncDiff:
+      type: object
+      required: [device_id, operation, server_raw, server_revision, snapshot, diff, connection, last_seen]
+      properties:
+        device_id: {type: string}
+        operation: {$ref: '#/components/schemas/SyncPending'}
+        server_raw: {type: string, description: Current server YAML and Markdown; empty when the entry does not exist.}
+        server_revision: {type: string, description: Empty when the entry is missing or not yet created.}
+        snapshot: {type: string, description: Binds a later sync.reconcile to exactly this view.}
+        diff: {type: string}
+        connection: {type: string}
+        last_seen: {type: string}
+    SyncReconcileRequest:
+      type: object
+      required: [snapshot, action]
+      properties:
+        snapshot: {type: string, description: Exact snapshot from sync.diff; stale snapshots are refused with 409.}
+        action: {type: string, enum: [discard, rebase, merge]}
+        raw: {type: string, description: Full merged YAML frontmatter and Markdown; required for merge.}
+    SyncReconcileResponse:
+      type: object
+      required: [command_id, status, note]
+      properties:
+        command_id: {type: string}
+        status: {type: string}
+        note: {type: string}
+    SessionTailRecord:
+      type: object
+      description: An upsert keyed by message and part; streaming parts can change between reads.
+      required: [id, message_id, kind]
+      properties:
+        id: {type: string}
+        message_id: {type: string}
+        kind: {type: string}
+        role: {type: string}
+        tool: {type: string}
+        status: {type: string}
+        text: {type: string}
+        time: {description: "The executor's own timing object, passed through unchanged."}
+        truncated: {type: boolean}
+    SessionTailPage:
+      type: object
+      required: [records, next_cursor, truncated, cursor_expired]
+      properties:
+        records: {anyOf: [{type: array, items: {$ref: '#/components/schemas/SessionTailRecord'}}, {type: 'null'}]}
+        next_cursor: {type: string}
+        truncated: {type: boolean}
+        cursor_expired: {type: boolean}
+    SessionChild:
+      type: object
+      description: Persisted linkage only; state is always unknown and last_activity null.
+      required: [session_id, parent_id, executor, state, last_activity]
+      properties:
+        session_id: {type: string}
+        parent_id: {type: string}
+        executor: {type: string}
+        state: {type: string}
+        last_activity: {anyOf: [{type: integer, format: int64}, {type: 'null'}]}
+        created: {type: integer, format: int64}
+        children: {anyOf: [{type: array, items: {$ref: '#/components/schemas/SessionChild'}}, {type: 'null'}]}
+    SessionChildrenPage:
+      type: object
+      required: [children, truncated, cursor_expired]
+      properties:
+        children: {anyOf: [{type: array, items: {$ref: '#/components/schemas/SessionChild'}}, {type: 'null'}]}
+        next_cursor: {type: string}
+        truncated: {type: boolean}
+        cursor_expired: {type: boolean}
+    SupervisorCapabilities:
+      type: object
+      required: [version, commit, transports, tools, client_installation]
+      properties:
+        version: {type: string}
+        commit: {type: string}
+        transports: {type: array, items: {type: string}}
+        tools: {type: object, additionalProperties: {type: string}, description: Tool name to its scope and availability notes.}
+        client_installation: {type: string}
+    SupervisorSnapshotTask:
+      type: object
+      required: [id, feature_id, status, classification, waiting_on, delivery_unmet, is_abandoned]
+      properties:
+        id: {type: string}
+        feature_id: {type: string}
+        status: {type: string}
+        classification: {type: string}
+        waiting_on: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        delivery_unmet: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        is_abandoned: {type: boolean}
+    SupervisorSnapshotCheckpoint:
+      type: object
+      required: [id, task_id, feature_id, artifact, state, revision]
+      properties:
+        id: {type: string}
+        task_id: {type: string}
+        feature_id: {type: string}
+        artifact: {type: string}
+        state: {type: string}
+        revision: {type: integer}
+    SupervisorSnapshot:
+      type: object
+      required: [snapshot_started_at, snapshot_finished_at, atomic, checkpoints, checkpoint_coverage, tasks, truncated, after_task, event_cursor, event_filters, unavailable_sources]
+      properties:
+        snapshot_started_at: {type: string, format: date-time}
+        snapshot_finished_at: {type: string, format: date-time}
+        atomic: {type: boolean, description: Always false; state is read without a transaction.}
+        checkpoints: {type: array, items: {$ref: '#/components/schemas/SupervisorSnapshotCheckpoint'}}
+        checkpoint_coverage: {type: string}
+        tasks: {type: array, items: {$ref: '#/components/schemas/SupervisorSnapshotTask'}}
+        truncated: {type: boolean}
+        after_task: {type: string, description: Cursor for the next page (last task id).}
+        event_cursor: {type: string}
+        event_filters: {type: object, additionalProperties: {type: string}}
+        unavailable_sources: {type: array, items: {type: string}}
+    DispatchPreviewRunner:
+      type: object
+      required: [runner_id, eligible, reason]
+      properties:
+        runner_id: {type: string}
+        eligible: {type: boolean}
+        reason: {type: string}
+    DispatchPreviewConfiguration:
+      type: object
+      required: [executor, model, workdir, target_workdir, repository, branch, target_branch]
+      properties:
+        executor: {type: string}
+        model: {type: string}
+        workdir: {type: string}
+        target_workdir: {type: string}
+        repository: {type: string}
+        branch: {type: string}
+        target_branch: {type: string}
+    DispatchPreview:
+      type: object
+      required: [snapshot_at, project_id, task_id, ready, paused, pause_explanation, dispatchable, selected_runner, runners, classification, waiting_on, unresolved_dependencies, configured, configuration_source, unknown, reservation]
+      properties:
+        snapshot_at: {type: string, format: date-time}
+        project_id: {type: string}
+        task_id: {type: string}
+        ready: {type: boolean}
+        paused: {type: boolean}
+        pause_explanation: {type: string}
+        dispatchable: {type: boolean}
+        selected_runner: {type: string}
+        runners: {type: array, items: {$ref: '#/components/schemas/DispatchPreviewRunner'}}
+        classification: {type: string}
+        waiting_on: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        unresolved_dependencies: {anyOf: [{type: array, items: {type: string}}, {type: 'null'}]}
+        configured: {$ref: '#/components/schemas/DispatchPreviewConfiguration'}
+        configuration_source: {type: string}
+        unknown: {type: array, items: {type: string}}
+        reservation: {type: boolean, description: Always false; a preview reserves nothing.}
+    SupervisorOperationRequest:
+      type: object
+      additionalProperties: false
+      description: >-
+        Command document, validated strictly by the server (unknown fields and
+        wrong types are refused with its message). The Go SDK carries it as
+        json.RawMessage so it is forwarded verbatim.
+      required: [id, operation]
+      properties:
+        id: {type: string, description: 8 to 128 bytes; reuse after a timeout to read the same receipt.}
+        operation: {type: string, enum: [prompt, resume_with_context, trigger]}
+        project: {type: string}
+        task_id: {type: string}
+        runner_id: {type: string}
+        instance_id: {type: string}
+        session_id: {type: string}
+        text: {type: string, description: At most 65536 bytes.}
+        budget_id: {type: string}
+        budget_units: {type: integer, format: int64}
+        parent_reservation: {type: string}
+        checkpoint_id: {type: string}
+        checkpoint_revision: {type: integer}
+      x-go-type: json.RawMessage
+    SupervisorCheckpoint:
+      type: object
+      required: [id, project, artifact, question, state, revision]
+      properties:
+        id: {type: string}
+        project: {type: string}
+        task_id: {type: string}
+        feature_id: {type: string}
+        artifact: {type: string}
+        question: {type: string}
+        state: {type: string}
+        answer: {type: string}
+        answered_by: {type: string}
+        answered_at: {anyOf: [{type: string, format: date-time}, {type: 'null'}]}
+        verification_reference: {type: string}
+        verified_by: {type: string}
+        revision: {type: integer}
+    SupervisorCheckpointList:
+      type: object
+      description: With id, versions and limit. Without id, checkpoints, the next cursor (after) and truncated.
+      properties:
+        versions: {anyOf: [{type: array, items: {$ref: '#/components/schemas/SupervisorCheckpoint'}}, {type: 'null'}]}
+        limit: {type: integer}
+        checkpoints: {anyOf: [{type: array, items: {$ref: '#/components/schemas/SupervisorCheckpoint'}}, {type: 'null'}]}
+        after: {type: string}
+        truncated: {type: boolean}
+    SupervisorCheckpointInput:
+      type: object
+      additionalProperties: false
+      description: state, answered_by, answered_at, verified_by and revision are server-owned and ignored on input.
+      required: [id, project, artifact]
+      properties:
+        id: {type: string, description: 8 to 128 bytes.}
+        project: {type: string}
+        task_id: {type: string}
+        feature_id: {type: string}
+        artifact: {type: string}
+        question: {type: string, description: Required to request a new checkpoint.}
+        state: {type: string}
+        answer: {type: string}
+        answered_by: {type: string}
+        answered_at: {anyOf: [{type: string, format: date-time}, {type: 'null'}]}
+        verification_reference: {type: string}
+        verified_by: {type: string}
+        revision: {type: integer}
+    SupervisorCheckpointCommand:
+      type: object
+      additionalProperties: false
+      description: >-
+        Command document, validated strictly by the server. The Go SDK carries
+        it as json.RawMessage so it is forwarded verbatim.
+      required: [action, checkpoint]
+      properties:
+        action: {type: string, enum: [request, answer, verify, supersede]}
+        expected_revision: {type: integer}
+        checkpoint: {$ref: '#/components/schemas/SupervisorCheckpointInput'}
+      x-go-type: json.RawMessage
+    ExecutionBudgetStatus:
+      type: object
+      required: [budget, consumed_and_reserved, window, remaining, enforcement, token_usage, monetary_cost]
+      properties:
+        budget: {$ref: '#/components/schemas/ExecutionBudget'}
+        consumed_and_reserved: {type: integer, format: int64}
+        window: {type: string}
+        remaining: {type: integer, format: int64}
+        enforcement: {type: string}
+        token_usage: {description: Always null; executor token usage is unknown.}
+        monetary_cost: {description: Always null; cost is unknown.}
+    ExecutionBudgetInput:
+      type: object
+      additionalProperties: false
+      description: id and project identify the budget; timezone, unit and limit apply to configure (revision is server-owned).
+      required: [id, project]
+      properties:
+        id: {type: string}
+        project: {type: string}
+        timezone: {type: string}
+        unit: {type: string}
+        limit: {type: integer, format: int64}
+        revision: {type: integer}
+    ExecutionBudgetCommand:
+      type: object
+      additionalProperties: false
+      description: >-
+        Command document, validated strictly by the server. The Go SDK carries
+        it as json.RawMessage so it is forwarded verbatim.
+      required: [action, budget]
+      properties:
+        action: {type: string, enum: [configure, reserve, commit, cancel]}
+        budget: {$ref: '#/components/schemas/ExecutionBudgetInput'}
+        expected_revision: {type: integer}
+        reservation_id: {type: string}
+        parent_id: {type: string}
+        units: {type: integer, format: int64}
+      x-go-type: json.RawMessage
+    ExecutionBudgetResult:
+      type: object
+      description: configure returns revision; reserve returns reservation and created; commit and cancel return state.
+      properties:
+        revision: {type: integer}
+        reservation: {$ref: '#/components/schemas/BudgetReservation'}
+        created: {type: boolean}
+        state: {type: string}

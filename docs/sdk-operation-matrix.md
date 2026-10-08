@@ -2,7 +2,7 @@
 
 Source: `internal/api/router.go` at base `7bea47d1`. This is an explicit
 per-operation inventory, not a claim of complete SDK delivery or script availability.
-Paths below are relative to `/api/v1`. All 125 IDs (104 original + 21 runner/dispatch/control/scheduler) are now checked-in contract IDs
+Paths below are relative to `/api/v1`. All 145 IDs (104 original + 21 runner/dispatch/control/scheduler + 20 hosted-MCP operator/supervision) are now checked-in contract IDs
 with Go/TypeScript adapters; evidence and specific exclusions are stated below.
 This is not a claim that every effect/provider success path has been exercised.
 All have profile **single**,
@@ -36,7 +36,7 @@ The installed Node fixture now also submits a task, checks provenance, lists its
 actual run audit and fetches each audit entry. These assertions are checked in,
 not only held in an independent verifier overlay.
 `TestDeliveredContractMatchesRouterAndInventory` checks every delivered operation
-against the real Chi route inventory and its table row below (126 including capability discovery).
+against the real Chi route inventory and its table row below (146 including capability discovery).
 Task `status/metadata/claimStatus` and feature `list/ready/get` are implemented
 in both SDKs. External Go and installed Node consumers prove mixed found/missing
 status IDs, empty-ID validation, metadata, no claim acquisition, pending-to-completed
@@ -65,11 +65,11 @@ external-provider path is route/decoding-tested, not a live provider verificatio
 The metadata key contract has an exact server allowlist guard; embedded resume and
 nullable timestamp DTOs have real JSON round-trip parity tests.
 
-`api/operation-policy.yaml` now records all 126 operations' legacy scope, required
+`api/operation-policy.yaml` now records all 146 operations' legacy scope, required
 future resource checks, preconditions, conservative effects and provider class.
 `TestOperationPolicyInventoryIsCompleteAndUnavailable` checks contract/matrix
 coverage and scope agreement, including read-scoped attention writes.
-`TestOperationPolicyProviderEffectsArePinned` pins all 126 provider values
+`TestOperationPolicyProviderEffectsArePinned` pins all 146 provider values
 (closed `+`-joined token set). `TestOperationProviderEffectsDerivedFromCallGraph`
 derives embedding (synchronous or background) and Web Push effects from code.
 It is a policy-accuracy check, not a full verifier.
@@ -83,7 +83,7 @@ It is a policy-accuracy check, not a full verifier.
   `Embed(context.Context, []string)`, `scheduleEmbeddingRefresh`, phonepush
   `Enqueue`.
 - **Exact reviewed lists:**
-  - the 126 operation rows;
+  - the 146 operation rows;
   - non-SDK routes (chi routes plus everything referenced from `router.go`);
   - background goroutine roots, with per-function root counts;
   - callback roots;
@@ -91,7 +91,8 @@ It is a policy-accuracy check, not a full verifier.
 - **Fail-closed rules:** `reminders.ack` is excepted by one reviewed call edge,
   not by token. `scheduler.status` cuts one interface over-approximation edge
   (to `AssistantService.Status`, which cannot implement `api.SchedulerService`;
-  `TestSchedulerStatusCutIsSound` pins that). `TestNoUnreviewedReflectiveCalls` forbids reflective calls
+  `TestSchedulerStatusCutIsSound` pins that, and that the handler has no direct
+  static call to it, which the cut would otherwise hide). `TestNoUnreviewedReflectiveCalls` forbids reflective calls
   outside an allowlist.
 - **Over-approximation rules** (review `c969if7r`):
   - a helper's calls through a function parameter are signature-matched
@@ -128,7 +129,7 @@ it does not prove zero domain effects. Resource checks name required composition
 not legacy rights already enforced. Per-handler positive/negative preflight proofs
 remain mandatory before any row can become script-supported.
 
-All 126 operation declarations now name the legacy default JSON error response.
+All 146 operation declarations now name the legacy default JSON error response.
 `TestEveryOperationDeclaresLegacyErrorBehavior` guards coverage. The shared error
 schema requires `error`, but **not** `message`: the real task-dispatch conflict
 handler returns `{error, success:false}` without it, reproduced by
@@ -319,6 +320,26 @@ are conservative and need per-handler proof before any script allowlisting.
 | control.respondPermission | POST /control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/permissions/{permissionId} | C | once/always lets a remote agent run the requested tool; audit event |
 | control.spawnInstance | POST /control/runners/{runnerId}/instances | C | starts a process on a runner host; workdir allowlist; rate limited; audit event |
 | control.killInstance | DELETE /control/runners/{runnerId}/instances/{instanceId} | C | terminates a process on a runner host; task instances refused (409); audit event |
+| monitors.create | POST /monitors | A | creates a scheduled or feature-gated task that runs an agent when it fires; duplicate 409, unknown template 400 |
+| monitors.deleteByScope | DELETE /monitors/by-scope | A | deletes the monitor task matching template and scope (JSON body); 404 when none |
+| tasks.runnerCandidates | GET /tasks/{projectId}/{taskId}/runner-candidates | R | read; runner registry incl. host metadata; compatibility vs availability |
+| tasks.proposedRunnerCandidates | POST /tasks/{projectId}/runner-candidates | R | read-only evaluation of a proposed task; strict body; nothing stored |
+| features.runnerCandidates | GET /tasks/{projectId}/features/{featureId}/runner-candidates | R | read; every unfinished feature task against the runner registry |
+| clientContext.resolve | POST /context/resolve | R | writes the client registry row; resolved project is not a grant |
+| sync.devices | GET /sync/devices | A | read; last-reported browser state, drafts withheld |
+| sync.diff | GET /sync/devices/{deviceId}/operations/{operationId}/diff | A | read; untrusted reported draft vs server version; snapshot token |
+| sync.reconcile | POST /sync/devices/{deviceId}/operations/{operationId}/reconcile | A | queues a revision-guarded browser command (202); browser writes after reconnect |
+| control.sessionTail | GET /control/runners/{runnerId}/sessions/{sessionId}/tail | C | remote read of session text/tool output via the bridge; redacted; bounded cursor |
+| control.sessionDescendants | GET /control/runners/{runnerId}/sessions/{sessionId}/descendants | C | remote read of persisted child-session linkage via the bridge; bounded cursor |
+| supervision.capabilities | GET /supervision/capabilities | R | read; server tool registration, not client installation |
+| supervision.snapshot | GET /supervision/snapshot | R | read; bounded non-atomic project projection with an event cursor |
+| supervision.dispatchPreview | GET /supervision/dispatch-preview | R | read; placement preview, no reservation or claim |
+| supervision.submitOperation | POST /supervision/operations | A | prompts an agent, injects/relaunches or triggers a task; idempotent id; budget/checkpoint gates |
+| supervision.getOperation | GET /supervision/operations/{operationId} | A | read; own operation receipt; never resends |
+| supervision.checkpoints | GET /supervision/checkpoints | R | read; project checkpoints or one checkpoint's versions |
+| supervision.updateCheckpoint | POST /supervision/checkpoints | A | revision-checked checkpoint state; evidence, not authorization |
+| supervision.budget | GET /supervision/budgets | R | read; budget and window usage; tokens/cost unknown |
+| supervision.updateBudget | POST /supervision/budgets | A | configure (revision-checked) or reserve/commit/cancel units that gate supervisor operations |
 
 Task creation/update/dependency changes and automation CRUD are typed aliases of
 entry operations with type-specific validation, not invented REST routes.
@@ -334,13 +355,29 @@ Explicitly outside the script facade: `/control/**`, `/tokens/**`, `/auth/**`,
 `/embeddings/backfill`, `/attachments/backfill/extraction`, `/sync/**`,
 `/tasks/runner/**`, `/scheduler/**`, task dispatch-lease/placement-reasons,
 runner claim/release/renew/log ingestion, dispatch protocol,
-`/supervision/**`, and event ingestion. Operator surfaces, bulk-job execution,
-monitors, link-generation and client-context resolution require separate SDK
+`/supervision/**`, `/monitors/**`, `/context/resolve`, runner candidates and
+event ingestion. Bulk-job execution and link generation require separate SDK
 support decisions; no generic fallback exposes them. The 21 runner/dispatch/control/scheduler
 operations added for the hosted MCP (`runners.*`, `dispatch.*`, `control.*`,
 `tasks.dispatchLease`, `tasks.placementReasons`, `scheduler.status`) are typed
 Go/TS adapters only: `x-brain-script: false`, absent from the inactive facade
 fixture (its TS test asserts each is denied), and only the listed routes are
 covered — runner self-registration, heartbeats, bridge, exec, runner pause and
-the other `/control/**` routes stay outside the SDK. Capability discovery and
+the other `/control/**` routes stay outside the SDK. The 20 operations added for
+the step-3 tools (`monitors.*`, `tasks.runnerCandidates`,
+`tasks.proposedRunnerCandidates`, `features.runnerCandidates`,
+`clientContext.resolve`, `sync.*`, `control.sessionTail`,
+`control.sessionDescendants`, `supervision.*`) are likewise hosted-MCP adapters
+only: `x-brain-script: false`, absent from the facade fixture and excluded by
+name from the closed script inventory (still 105). Monitors create runnable
+work, `supervision.submitOperation` prompts agents and triggers or resumes
+tasks, the checkpoint/budget ledgers gate it, `sync.reconcile` queues a browser
+command and the session views read runner hosts. Supervisor, checkpoint and
+budget command documents are `json.RawMessage` in Go (the Go SDK also has
+`Tasks().SendDeliveryCommand`, the verbatim form of `tasks.verifyDelivery`):
+they are sent as given and the server's strict decoding is the only validator.
+`TestStep3OperationsMatchContractLive` (internal/mcp) checks every live success
+and error response of these operations against the declared schemas with
+`sdkcontract.ResponseChecker` (undeclared or missing properties, JSON types,
+undeclared statuses). Capability discovery and
 script execution routes are not registered at this checkpoint.

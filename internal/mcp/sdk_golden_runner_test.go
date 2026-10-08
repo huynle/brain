@@ -253,6 +253,31 @@ func TestGolden_RunnerAndControlTools(t *testing.T) {
 	g.call("resume all", "runner_resume_all", map[string]any{"confirm": true})
 	g.call("status after resume all", "runner_status", nil)
 
+	// More projects than the overview prints (12) in each of its three lists
+	// (tasks only, automations only, both): every list is capped and says how
+	// many it withheld.
+	dials := func(action string) {
+		for _, axis := range []struct {
+			prefix string
+			n      int
+			paths  []string
+		}{
+			{"cap-t", 15, []string{"/tasks/runner/%s/"}},
+			{"cap-a", 13, []string{"/tasks/runner/automations/%s/"}},
+			{"cap-b", 14, []string{"/tasks/runner/%s/", "/tasks/runner/automations/%s/"}},
+		} {
+			for i := 1; i <= axis.n; i++ {
+				for _, path := range axis.paths {
+					apiDo(t, "POST", api+"/api/v1"+fmt.Sprintf(path, action)+fmt.Sprintf("%s-%02d", axis.prefix, i), nil)
+				}
+			}
+		}
+	}
+	dials("pause")
+	g.call("status many paused", "runner_status", nil)
+	dials("resume")
+	g.call("status many resumed", "runner_status", nil)
+
 	ids := map[string]any{"runner_id": "golden-runner-1", "instance_id": "ins-adhoc", "session_id": "ses-1"}
 	with := func(extra map[string]any) map[string]any {
 		out := map[string]any{}

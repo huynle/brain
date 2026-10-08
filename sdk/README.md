@@ -5,8 +5,10 @@
 The reviewed public protocol lives in `api/openapi.yaml` (OpenAPI 3.1).
 All 104 original inventoried operations, 21 runner/dispatch/control/scheduler
 operations (`runners.*`, `dispatch.*`, `control.*`, `tasks.dispatchLease`,
-`tasks.placementReasons`, `scheduler.status`) and capability discovery have typed
-Go/TypeScript adapters, including
+`tasks.placementReasons`, `scheduler.status`), 20 operator/supervision
+operations (`monitors.*`, runner candidates, `clientContext.resolve`, `sync.*`,
+`control.sessionTail`/`sessionDescendants`, `supervision.*`) and capability
+discovery have typed Go/TypeScript adapters, including
 task/feature actions, metadata, project placement/deletion, delivery state,
 finite events, timeline and SSE. Exact evidence and remaining integration gates are in
 `docs/sdk-operation-matrix.md`. Task creation and dependency updates use typed
@@ -107,8 +109,21 @@ runners; resuming releases queued work. `RemoteControl()` / `control` is code ex
 on runner hosts (control:* scope): prompts and granted permissions drive a remote
 agent, spawn/kill start and stop processes. Proxied session calls return the
 instance's own JSON (`json.RawMessage`; TS `null` for an empty 204 body). None of
-these are script-exposed. Snooze timestamps (`remind_at`, `snoozed_until`) are
-plain strings in both SDKs: the server validates them and owns the error text.
+these are script-exposed. Snooze times (`remind_at`, `snoozed_until`) are plain
+strings in both SDKs: the server validates `remind_at` as RFC 3339 (its 400
+message is returned) and stores `snoozed_until` verbatim without validation.
+
+Monitors (`Monitors()` / `monitors`) create tasks that run agents when they fire.
+`Supervision()` / `supervision` reads bounded supervisor views and submits
+idempotent prompts, contextual resumes and triggers; its checkpoint and budget
+ledgers gate those operations. `Sync()` / `sync` reads browser-reported state and
+queues reconciliation commands (202; the browser writes after it reconnects).
+`ClientContext().Resolve` writes the client registry. Session tail/descendants
+are control:* reads of runner hosts. In Go the supervisor, checkpoint and budget
+command documents are `json.RawMessage`, and `Tasks().SendDeliveryCommand` sends a
+delivery command document as given: the server decodes them strictly and is the
+only validator (unknown fields and wrong types are refused with its message).
+None of these are script-exposed.
 
 Attachment upload takes bytes, never a filesystem path. Filenames cannot contain
 path separators or CR/LF/NUL. Uploads (including multipart overhead) and downloads

@@ -35,3 +35,20 @@ func entryPathParam(r *http.Request, name string) string {
 	}
 	return raw
 }
+
+// entryWildcardParam reads the /entries/* locator. The public SDKs send a
+// legacy entry path as ONE percent-encoded segment ("projects%2Fx%2Fa.md"),
+// which keeps r.URL.RawPath set, and chi then routes on, and returns params
+// from, the raw path: decode it once. When RawPath is empty the param already
+// came from the decoded path (slashes sent literally), so it is returned as is
+// and a literal "%41" in a path is never decoded a second time.
+func entryWildcardParam(r *http.Request) string {
+	raw := chi.URLParam(r, "*")
+	if r.URL.RawPath == "" {
+		return raw
+	}
+	if decoded, err := url.PathUnescape(raw); err == nil {
+		return decoded
+	}
+	return raw
+}

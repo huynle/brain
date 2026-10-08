@@ -82,7 +82,9 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	// handlers up to the bridge and must fail without reaching any host.
 	runnerHub := realtime.NewHub()
 	bridgeHub := bridge.NewHub(runnerHub)
-	h := api.NewHandler(svc, api.WithHub(runnerHub), api.WithTaskService(tasks), api.WithRunnerService(runnerDials), api.WithRunnerRegistryService(registry), api.WithSchedulerService(scheduler), api.WithSchedulerVisibilityService(store), api.WithBridgeService(bridgeHub), api.WithAttachmentService(attachments), api.WithGoalService(goals), api.WithReminderService(reminders), api.WithAttentionService(attention), api.WithWebhookService(webhooks), api.WithAutomationRunService(service.NewAutomationService(svc)), api.WithProjectPlacementService(placement), api.WithRunTaskService(scheduler), api.WithRunFeatureService(scheduler), api.WithRunProjectService(scheduler), api.WithDependentChainService(scheduler), api.WithLogBuffer(logbuffer.New(100)), api.WithEventService(events), api.WithTimelineService(timeline))
+	h := api.NewHandler(svc, api.WithHub(runnerHub), api.WithTaskService(tasks), api.WithRunnerService(runnerDials), api.WithRunnerRegistryService(registry), api.WithSchedulerService(scheduler), api.WithSchedulerVisibilityService(store), api.WithBridgeService(bridgeHub), api.WithAttachmentService(attachments), api.WithGoalService(goals), api.WithReminderService(reminders), api.WithAttentionService(attention), api.WithWebhookService(webhooks), api.WithAutomationRunService(service.NewAutomationService(svc)), api.WithProjectPlacementService(placement), api.WithRunTaskService(scheduler), api.WithRunFeatureService(scheduler), api.WithRunProjectService(scheduler), api.WithDependentChainService(scheduler), api.WithLogBuffer(logbuffer.New(100)), api.WithEventService(events), api.WithTimelineService(timeline),
+		api.WithMonitorService(service.NewMonitorService(svc)), api.WithClientContextService(service.NewClientContextService(store)),
+		api.WithSupervisorOperations(store), api.WithSupervisorCheckpoints(store), api.WithExecutionBudgets(store))
 	srv := httptest.NewServer(api.NewRouter(cfg, api.WithHandler(h), api.WithTokenValidator(control)))
 	defer srv.Close()
 	c, err := brain.New(brain.Config{BaseURL: srv.URL})
@@ -99,7 +101,7 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	}
 	defer authed.Close()
 	manifest, err := authed.Capabilities(context.Background())
-	if err != nil || manifest == nil || len(manifest.Operations) != 126 || manifest.Scripts.Available {
+	if err != nil || manifest == nil || len(manifest.Operations) != 146 || manifest.Scripts.Available {
 		t.Fatalf("fully composed discovery: %+v, %v", manifest, err)
 	}
 	if _, err := c.Capabilities(context.Background()); err == nil {
@@ -109,6 +111,7 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	exerciseWebhookSDK(t, authed)
 	exerciseAutomationSDK(t, authed)
 	exerciseRunnerControlSDK(t, authed)
+	exerciseOperatorSupervisionSDK(t, authed)
 	repo, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)

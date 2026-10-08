@@ -3,11 +3,10 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/sdk/brain"
 )
 
 func taskAssignmentProperties() map[string]Property {
@@ -31,20 +30,26 @@ func registerBrainRunnerCandidates(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{Name: "runner_candidates", Description: "List runners compatible with an existing standalone task or a proposed task specification.", InputSchema: InputSchema{Type: "object", Properties: props}}, func(ctx context.Context, args map[string]any) (string, error) {
 		project, taskID := ResolveProject(ctx, args), StringArg(args, "task_id", "")
 		var resp types.RunnerCandidatesResponse
-		method := http.MethodGet
-		path := "/tasks/" + url.PathEscape(project) + "/" + url.PathEscape(taskID) + "/runner-candidates"
-		var body any
-		if taskID == "" {
-			method = http.MethodPost
-			path = "/tasks/" + url.PathEscape(project) + "/runner-candidates"
-			body = types.TaskRunnerCandidatesRequest{
-				FeatureID: StringArg(args, "feature_id", ""), Executor: StringArg(args, "executor", ""),
-				RequiresCapability: StringSliceArg(args, "requires_capability"), GitRemote: StringArg(args, "git_remote", ""),
-				MachineAffinity: StringArg(args, "machine_affinity", ""), OriginMachineID: StringArg(args, "origin_machine_id", ""),
-				ExecutionMode: StringArg(args, "execution_mode", ""), TargetWorkdir: StringArg(args, "target_workdir", ""),
+		var call func(context.Context, *brain.Client) error
+		if taskID != "" {
+			call = func(ctx context.Context, sc *brain.Client) error {
+				_, err := sc.Tasks().RunnerCandidates(ctx, project, taskID)
+				return err
+			}
+		} else {
+			// Unset fields stay absent, as the omitempty legacy body had them.
+			req := brain.TaskRunnerCandidatesRequest{
+				FeatureId: optString(StringArg(args, "feature_id", "")), Executor: optString(StringArg(args, "executor", "")),
+				RequiresCapability: optStrings(StringSliceArg(args, "requires_capability")), GitRemote: optString(StringArg(args, "git_remote", "")),
+				MachineAffinity: optString(StringArg(args, "machine_affinity", "")), OriginMachineId: optString(StringArg(args, "origin_machine_id", "")),
+				ExecutionMode: optString(StringArg(args, "execution_mode", "")), TargetWorkdir: optString(StringArg(args, "target_workdir", "")),
+			}
+			call = func(ctx context.Context, sc *brain.Client) error {
+				_, err := sc.Tasks().ProposedRunnerCandidates(ctx, project, req)
+				return err
 			}
 		}
-		if err := client.Request(ctx, method, path, body, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, call); err != nil {
 			return "", err
 		}
 		return formatTaskRunnerCandidates(resp, BoolArg(args, "include_rejected", false)), nil
@@ -61,10 +66,12 @@ func registerBrainTaskAssign(s *Server, client *APIClient) {
 		if taskID == "" || runnerID == "" {
 			return "", fmt.Errorf("task_id and runner_id are required")
 		}
-		req := types.TaskAssignmentRequest{RunnerID: runnerID, Intent: StringArg(args, "intent", "assign"), Force: BoolArg(args, "force", false)}
+		req := brain.TaskAssignmentRequest{RunnerId: runnerID, Intent: optString(StringArg(args, "intent", "assign")), Force: optTrue(BoolArg(args, "force", false))}
 		var resp types.TaskAssignmentResponse
-		path := "/tasks/" + url.PathEscape(project) + "/" + url.PathEscape(taskID) + "/assignment"
-		if err := client.Request(ctx, http.MethodPut, path, req, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Tasks().Assign(ctx, project, taskID, req, brain.RequestOptions{})
+			return err
+		}); err != nil {
 			return "", err
 		}
 		return formatTaskAssignment(resp), nil
@@ -79,8 +86,10 @@ func registerBrainTaskClearAssignment(s *Server, client *APIClient) {
 			return "", fmt.Errorf("task_id is required")
 		}
 		var resp types.TaskAssignmentResponse
-		path := "/tasks/" + url.PathEscape(project) + "/" + url.PathEscape(taskID) + "/assignment/clear"
-		if err := client.Request(ctx, http.MethodPost, path, types.ClearFeatureAssignmentRequest{Intent: "clear"}, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Tasks().ClearAssignment(ctx, project, taskID, brain.ClearFeatureAssignmentRequest{Intent: "clear"}, brain.RequestOptions{})
+			return err
+		}); err != nil {
 			return "", err
 		}
 		return formatTaskAssignment(resp), nil

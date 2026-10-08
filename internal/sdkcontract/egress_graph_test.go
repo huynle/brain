@@ -47,7 +47,8 @@ import (
 //   - interface method values expand to every module implementation.
 type egressGraph struct {
 	edges     map[string]map[string]bool
-	sigs      map[string]string // node -> signature (without receiver)
+	direct    map[string]map[string]bool // static calls to a concrete function or method (no interface dispatch)
+	sigs      map[string]string          // node -> signature (without receiver)
 	callers   map[string]map[string]bool
 	declared  map[string]bool            // module FuncDecls and literals
 	enclosing map[string]string          // literal node -> enclosing declaration (stable review name)
@@ -214,7 +215,7 @@ func buildEgressGraph(t testing.TB) *egressGraph {
 		}
 		return os.Open(file)
 	})
-	g := &egressGraph{edges: map[string]map[string]bool{}, sigs: map[string]string{}, callers: map[string]map[string]bool{}, declared: map[string]bool{}, enclosing: map[string]string{}, goRoots: map[string]bool{}, address: map[string]bool{}, routerRef: map[string]bool{}}
+	g := &egressGraph{edges: map[string]map[string]bool{}, direct: map[string]map[string]bool{}, sigs: map[string]string{}, callers: map[string]map[string]bool{}, declared: map[string]bool{}, enclosing: map[string]string{}, goRoots: map[string]bool{}, address: map[string]bool{}, routerRef: map[string]bool{}}
 	type checked struct {
 		path, name string
 		files      []*ast.File
@@ -604,8 +605,15 @@ func buildEgressGraph(t testing.TB) *egressGraph {
 						if g.sigs[key] == "" {
 							g.sigs[key] = sigString(sig)
 						}
-						for _, m := range implementations(fn) {
+						impls := implementations(fn)
+						for _, m := range impls {
 							g.edge(from, m) // direct interface call: every implementation
+						}
+						if len(impls) == 0 {
+							if g.direct[from] == nil {
+								g.direct[from] = map[string]bool{}
+							}
+							g.direct[from][key] = true
 						}
 						return true
 					}

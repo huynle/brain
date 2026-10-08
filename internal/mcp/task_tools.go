@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/sdk/brain"
 )
 
 // RegisterTaskTools registers all 14 task tools on the server.
@@ -108,7 +108,7 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 			} `json:"stats"`
 			Cycles [][]string `json:"cycles"`
 		}
-		if err := client.Request(ctx, "GET", "/tasks/"+url.PathEscape(proj), nil, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, listTasks(proj)); err != nil {
 			return "", err
 		}
 
@@ -376,7 +376,10 @@ If no ready tasks, shows current queue state.`,
 		// empty queue arrives as a 200 with a zero-valued task. Treat an
 		// empty ID as "nothing ready".
 		var nextTask types.ResolvedTask
-		if err := client.Request(ctx, "GET", "/tasks/"+url.PathEscape(proj)+"/next", nil, nil, &nextTask); err != nil {
+		if err := sdkInto(ctx, client, &nextTask, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Tasks().Next(ctx, proj, nil)
+			return err
+		}); err != nil {
 			return "", err
 		}
 
@@ -390,7 +393,7 @@ If no ready tasks, shows current queue state.`,
 				} `json:"tasks"`
 				Stats *types.TaskStats `json:"stats"`
 			}
-			if err := client.Request(ctx, "GET", "/tasks/"+url.PathEscape(proj), nil, nil, &statsResp); err != nil {
+			if err := sdkInto(ctx, client, &statsResp, listTasks(proj)); err != nil {
 				return "", err
 			}
 
@@ -510,7 +513,7 @@ Use tasks to see the full task list and dependency status.`, waiting, depBlocked
 			Tags                []string `json:"tags"`
 			UserOriginalRequest string   `json:"user_original_request"`
 		}
-		if err := client.Request(ctx, "GET", "/entries/"+task.Path, nil, nil, &entry); err != nil {
+		if err := sdkInto(ctx, client, &entry, getEntry(task.Path)); err != nil {
 			return "", err
 		}
 
@@ -586,7 +589,7 @@ Use this to get detailed information about a specific task including:
 			Tasks []resolvedTaskWithDeps `json:"tasks"`
 			Count int                    `json:"count"`
 		}
-		if err := client.Request(ctx, "GET", "/tasks/"+url.PathEscape(proj), nil, nil, &tasksResp); err != nil {
+		if err := sdkInto(ctx, client, &tasksResp, listTasks(proj)); err != nil {
 			return "", err
 		}
 
@@ -653,7 +656,7 @@ Use this to get detailed information about a specific task including:
 			Tags                []string `json:"tags"`
 			UserOriginalRequest string   `json:"user_original_request"`
 		}
-		if err := client.Request(ctx, "GET", "/entries/"+task.Path, nil, nil, &entry); err != nil {
+		if err := sdkInto(ctx, client, &entry, getEntry(task.Path)); err != nil {
 			return "", err
 		}
 
@@ -760,7 +763,7 @@ or to inspect its dependency graph details. Complements task_get which returns c
 			Tasks []fullTask `json:"tasks"`
 			Count int        `json:"count"`
 		}
-		if err := client.Request(ctx, "GET", "/tasks/"+url.PathEscape(proj), nil, nil, &tasksResp); err != nil {
+		if err := sdkInto(ctx, client, &tasksResp, listTasks(proj)); err != nil {
 			return "", err
 		}
 
@@ -929,9 +932,7 @@ Example - wait for completion:
 			timeout = 300000
 		}
 
-		body := map[string]any{
-			"taskIds": taskIDs,
-		}
+		body := brain.MultiTaskStatusRequest{TaskIds: &taskIDs}
 
 		// Decode the real response type rather than hand-mirroring it.
 		//
@@ -955,7 +956,10 @@ Example - wait for completion:
 		// note that it stopped.
 		fetch := func() error {
 			var next types.MultiTaskStatusResponse
-			if err := client.Request(ctx, "POST", "/tasks/"+url.PathEscape(proj)+"/status", body, nil, &next); err != nil {
+			if err := sdkInto(ctx, client, &next, func(ctx context.Context, sc *brain.Client) error {
+				_, err := sc.Tasks().Status(ctx, proj, body)
+				return err
+			}); err != nil {
 				return err
 			}
 			resp = next
@@ -1088,7 +1092,10 @@ func registerBrainTaskTrigger(s *Server, client *APIClient) {
 		// did not run, and here is why" was indistinguishable from "the
 		// task ran".
 		var resp types.TriggerResponse
-		err := client.Request(ctx, "POST", "/tasks/"+url.PathEscape(proj)+"/"+url.PathEscape(taskID)+"/trigger", nil, nil, &resp)
+		err := sdkInto(ctx, client, &resp, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Tasks().Trigger(ctx, proj, taskID, brain.RequestOptions{})
+			return err
+		})
 		if err != nil {
 			// Returning the error as a nil-error string would leave isError
 			// unset, so the caller reads a failure as a normal result.
@@ -1165,22 +1172,12 @@ func registerBrainMonitorEnable(s *Server, client *APIClient) {
 		// so TemplateID and ScopeType both arrived empty, both required
 		// checks in HandleCreateMonitor fired, and these four tools
 		// returned HTTP 400 on every call.
-		body := map[string]any{
-			"template_id": templateID,
-			"scope_type":  scope["type"],
-			"project":     scope["project"],
-			"feature_id":  scope["feature_id"],
-		}
-		if schedule := StringArg(args, "schedule", ""); schedule != "" {
-			body["schedule"] = schedule
-		}
-
 		var resp struct {
 			ID    string `json:"id"`
 			Path  string `json:"path"`
 			Title string `json:"title"`
 		}
-		err := client.Request(ctx, "POST", "/monitors", body, nil, &resp)
+		err := createMonitor(ctx, client, templateID, scope, StringArg(args, "schedule", ""), &resp)
 
 		if err != nil {
 			msg := err.Error()
@@ -1228,10 +1225,7 @@ func registerBrainMonitorDisable(s *Server, client *APIClient) {
 			TaskID  string `json:"taskId"`
 			Path    string `json:"path"`
 		}
-		err := client.Request(ctx, "DELETE", "/monitors/by-scope", map[string]any{
-			"templateId": templateID,
-			"scope":      scope,
-		}, nil, &resp)
+		err := deleteMonitorByScope(ctx, client, templateID, scope, &resp)
 
 		if err != nil {
 			msg := err.Error()
@@ -1292,12 +1286,7 @@ func registerBrainFeatureReviewEnable(s *Server, client *APIClient) {
 		// so TemplateID and ScopeType both arrived empty, both required
 		// checks in HandleCreateMonitor fired, and these four tools
 		// returned HTTP 400 on every call.
-		err := client.Request(ctx, "POST", "/monitors", map[string]any{
-			"template_id": "feature-review",
-			"scope_type":  scope["type"],
-			"project":     scope["project"],
-			"feature_id":  scope["feature_id"],
-		}, nil, &resp)
+		err := createMonitor(ctx, client, "feature-review", scope, "", &resp)
 
 		if err != nil {
 			msg := err.Error()
@@ -1343,10 +1332,7 @@ func registerBrainFeatureReviewDisable(s *Server, client *APIClient) {
 			TaskID  string `json:"taskId"`
 			Path    string `json:"path"`
 		}
-		err := client.Request(ctx, "DELETE", "/monitors/by-scope", map[string]any{
-			"templateId": "feature-review",
-			"scope":      scope,
-		}, nil, &resp)
+		err := deleteMonitorByScope(ctx, client, "feature-review", scope, &resp)
 
 		if err != nil {
 			msg := err.Error()
@@ -1399,22 +1385,12 @@ func registerBrainBlockedInspectorEnable(s *Server, client *APIClient) {
 		// so TemplateID and ScopeType both arrived empty, both required
 		// checks in HandleCreateMonitor fired, and these four tools
 		// returned HTTP 400 on every call.
-		body := map[string]any{
-			"template_id": "blocked-inspector",
-			"scope_type":  scope["type"],
-			"project":     scope["project"],
-			"feature_id":  scope["feature_id"],
-		}
-		if schedule := StringArg(args, "schedule", ""); schedule != "" {
-			body["schedule"] = schedule
-		}
-
 		var resp struct {
 			ID    string `json:"id"`
 			Path  string `json:"path"`
 			Title string `json:"title"`
 		}
-		err := client.Request(ctx, "POST", "/monitors", body, nil, &resp)
+		err := createMonitor(ctx, client, "blocked-inspector", scope, StringArg(args, "schedule", ""), &resp)
 
 		if err != nil {
 			msg := err.Error()
@@ -1460,10 +1436,7 @@ func registerBrainBlockedInspectorDisable(s *Server, client *APIClient) {
 			TaskID  string `json:"taskId"`
 			Path    string `json:"path"`
 		}
-		err := client.Request(ctx, "DELETE", "/monitors/by-scope", map[string]any{
-			"templateId": "blocked-inspector",
-			"scope":      scope,
-		}, nil, &resp)
+		err := deleteMonitorByScope(ctx, client, "blocked-inspector", scope, &resp)
 
 		if err != nil {
 			msg := err.Error()
@@ -1513,22 +1486,12 @@ func registerBrainDreamEnable(s *Server, client *APIClient) {
 		// so TemplateID and ScopeType both arrived empty, both required
 		// checks in HandleCreateMonitor fired, and these four tools
 		// returned HTTP 400 on every call.
-		body := map[string]any{
-			"template_id": "dream",
-			"scope_type":  scope["type"],
-			"project":     scope["project"],
-			"feature_id":  scope["feature_id"],
-		}
-		if schedule := StringArg(args, "schedule", ""); schedule != "" {
-			body["schedule"] = schedule
-		}
-
 		var resp struct {
 			ID    string `json:"id"`
 			Path  string `json:"path"`
 			Title string `json:"title"`
 		}
-		err := client.Request(ctx, "POST", "/monitors", body, nil, &resp)
+		err := createMonitor(ctx, client, "dream", scope, StringArg(args, "schedule", ""), &resp)
 
 		if err != nil {
 			msg := err.Error()
@@ -1571,10 +1534,7 @@ func registerBrainDreamDisable(s *Server, client *APIClient) {
 			TaskID  string `json:"taskId"`
 			Path    string `json:"path"`
 		}
-		err := client.Request(ctx, "DELETE", "/monitors/by-scope", map[string]any{
-			"templateId": "dream",
-			"scope":      scope,
-		}, nil, &resp)
+		err := deleteMonitorByScope(ctx, client, "dream", scope, &resp)
 
 		if err != nil {
 			msg := err.Error()
@@ -1585,6 +1545,52 @@ func registerBrainDreamDisable(s *Server, client *APIClient) {
 		}
 
 		return fmt.Sprintf("Dream Mode disabled for project %q (task %s deleted). Existing dream entries are preserved.", project, resp.TaskID), nil
+	})
+}
+
+// getEntry reads an entry by ID or path for sdkInto. The SDK sends a path as
+// one escaped segment, which the entries handler decodes.
+func getEntry(pathOrID string) func(context.Context, *brain.Client) error {
+	return func(ctx context.Context, sc *brain.Client) error {
+		_, err := sc.Entries().Get(ctx, pathOrID)
+		return err
+	}
+}
+
+// listTasks reads GET /tasks/{project} for sdkInto.
+func listTasks(project string) func(context.Context, *brain.Client) error {
+	return func(ctx context.Context, sc *brain.Client) error {
+		_, err := sc.Tasks().List(ctx, project)
+		return err
+	}
+}
+
+// createMonitor creates a monitor with the flat body every enable tool sends:
+// project and feature_id always present (empty for a project scope), schedule
+// only when set.
+func createMonitor(ctx context.Context, client *APIClient, templateID string, scope map[string]string, schedule string, out any) error {
+	project, featureID := scope["project"], scope["feature_id"]
+	req := brain.CreateMonitorRequest{TemplateId: templateID, ScopeType: scope["type"], Project: &project, FeatureId: &featureID, Schedule: optString(schedule)}
+	return sdkInto(ctx, client, out, func(ctx context.Context, sc *brain.Client) error {
+		_, err := sc.Monitors().Create(ctx, req, brain.RequestOptions{})
+		return err
+	})
+}
+
+// deleteMonitorByScope deletes by template and scope; the scope carries
+// exactly the keys the disable tool set (a project scope has no feature_id).
+func deleteMonitorByScope(ctx context.Context, client *APIClient, templateID string, scope map[string]string, out any) error {
+	ms := brain.MonitorScope{Type: scope["type"]}
+	if project, ok := scope["project"]; ok {
+		ms.Project = &project
+	}
+	if featureID, ok := scope["feature_id"]; ok {
+		ms.FeatureId = &featureID
+	}
+	req := brain.DeleteMonitorByScopeRequest{TemplateId: templateID, Scope: ms}
+	return sdkInto(ctx, client, out, func(ctx context.Context, sc *brain.Client) error {
+		_, err := sc.Monitors().DeleteByScope(ctx, req, brain.RequestOptions{})
+		return err
 	})
 }
 
@@ -1907,18 +1913,19 @@ func registerBrainResumeTaskWithContext(s *Server, client *APIClient) {
 			return "", fmt.Errorf("injected_context is required")
 		}
 
-		body := map[string]any{
-			"injected_context":    injected,
-			"prefer_same_session": BoolArg(args, "prefer_same_session", true),
-			"force":               BoolArg(args, "force", false),
-		}
-		if override := StringArg(args, "executor_override", ""); override != "" {
-			body["executor_override"] = override
+		preferSame, force := BoolArg(args, "prefer_same_session", true), BoolArg(args, "force", false)
+		body := brain.ResumeWithContextOptions{
+			InjectedContext:   injected,
+			PreferSameSession: &preferSame,
+			Force:             &force,
+			ExecutorOverride:  optString(StringArg(args, "executor_override", "")),
 		}
 
 		var resp types.ResumeWithContextResult
-		path := "/tasks/" + url.PathEscape(projectID) + "/" + url.PathEscape(taskID) + "/resume-with-context"
-		if err := client.Request(ctx, "POST", path, body, nil, &resp); err != nil {
+		if err := sdkInto(ctx, client, &resp, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Tasks().ResumeWithContext(ctx, projectID, taskID, body, brain.RequestOptions{})
+			return err
+		}); err != nil {
 			return "", err
 		}
 

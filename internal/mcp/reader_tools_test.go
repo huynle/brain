@@ -13,15 +13,21 @@ import (
 func TestReaderURLResolvesAndEscapes(t *testing.T) {
 	calls := 0
 	path := "projects/demo/scratch/a space#&.md"
+	var locators []string
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if r.Header.Get("Authorization") != "Bearer secret" {
 			t.Error("auth not forwarded")
 		}
-		if strings.Contains(strings.ToLower(r.RequestURI), "%2f") {
-			t.Error("entry route separators must remain unescaped")
+		// entries.get sends the locator as ONE escaped path segment (the
+		// entries handler decodes it): separators never split the route.
+		segment, ok := strings.CutPrefix(r.URL.EscapedPath(), "/api/v1/entries/")
+		if !ok || strings.Contains(segment, "/") {
+			t.Errorf("entry locator not sent as one segment: %s", r.URL.EscapedPath())
 		}
-		if r.URL.Query().Get("injected") != "" {
+		locator, _ := url.PathUnescape(segment)
+		locators = append(locators, locator)
+		if r.URL.RawQuery != "" {
 			t.Error("path injected query")
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -57,6 +63,9 @@ func TestReaderURLResolvesAndEscapes(t *testing.T) {
 	}
 	if calls != 3 {
 		t.Fatal("override should only use connected API", calls)
+	}
+	if want := []string{"abcd1234?injected=yes", path, path}; strings.Join(locators, "|") != strings.Join(want, "|") {
+		t.Fatalf("locators %q, want %q", locators, want)
 	}
 	for _, base := range []string{"javascript:alert(1)", "https://secret@example.com", "https://example.com/path", "https://example.com?token=x", "https://example.com#x", "//example.com"} {
 		if _, err := s.tools["reader_url"].handler(context.Background(), map[string]any{"path": "abcd1234", "base_url": base}); err == nil {

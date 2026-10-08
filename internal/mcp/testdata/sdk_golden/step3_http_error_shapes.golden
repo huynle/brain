@@ -1,0 +1,732 @@
+=== json message 503 {"project":"p"} (tasks)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p"} (task_next)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p","task_id":"t"} (task_get)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p","task_id":"t"} (task_metadata)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p","task_ids":["t"]} (tasks_status)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p","task_id":"t"} (task_trigger)
+ERROR
+Error: maintenance window
+=== json message 503 {"feature_id":"f","project":"p","template_id":"blocked-inspector"} (monitor_enable)
+ERROR
+Error: maintenance window
+=== json message 503 {"feature_id":"f","project":"p","template_id":"blocked-inspector"} (monitor_disable)
+ERROR
+Error: maintenance window
+=== json message 503 {"feature_id":"f","project":"p"} (feature_review_enable)
+ERROR
+Error: maintenance window
+=== json message 503 {"feature_id":"f","project":"p"} (feature_review_disable)
+ERROR
+Error: maintenance window
+=== json message 503 {"feature_id":"f","project":"p"} (blocked_inspector_enable)
+ERROR
+Error: maintenance window
+=== json message 503 {"feature_id":"f","project":"p"} (blocked_inspector_disable)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p"} (dream_enable)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p"} (dream_disable)
+ERROR
+Error: maintenance window
+=== json message 503 {"injected_context":"c","project":"p","task_id":"t"} (resume_task_with_context)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p","task_id":"t"} (runner_candidates)
+ERROR
+Error: maintenance window
+=== json message 503 {"executor":"pi","project":"p"} (runner_candidates)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p","runner_id":"r","task_id":"t"} (task_assign)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p","task_id":"t"} (task_clear_assignment)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p"} (features)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p","ready_only":true} (features)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p"} (feature_ready)
+ERROR
+Error: maintenance window
+=== json message 503 {"feature_id":"f","project":"p"} (feature_get)
+ERROR
+Error: maintenance window
+=== json message 503 {"feature_id":"f","project":"p"} (feature_checkout)
+ERROR
+Error: maintenance window
+=== json message 503 {"feature_id":"f","project":"p","runner_id":"r"} (feature_assign)
+ERROR
+Error: maintenance window
+=== json message 503 {"feature_id":"f","project":"p"} (feature_clear_assignment)
+ERROR
+Error: maintenance window
+=== json message 503 {"feature_id":"f","project":"p"} (feature_runner_candidates)
+ERROR
+Error: maintenance window
+=== json message 503 {"client_id":"c","host_id":"h"} (context_resolve)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p"} (project_placement_get)
+ERROR
+Error: maintenance window
+=== json message 503 {"affinity":"soft","project":"p"} (project_placement_put)
+ERROR
+Error: maintenance window
+=== json message 503 {"path":"abcd1234"} (reader_url)
+ERROR
+Error: maintenance window
+=== json message 503 {"path":"projects/p/note/abcd1234.md"} (reader_url)
+ERROR
+Error: maintenance window
+=== json message 503 null (sync_status)
+ERROR
+Error: maintenance window
+=== json message 503 {"device_id":"d","operation_id":"o"} (sync_diff)
+ERROR
+Error: maintenance window
+=== json message 503 {"action":"discard","device_id":"d","operation_id":"o","snapshot":"s"} (sync_reconcile)
+ERROR
+Error: maintenance window
+=== json message 503 {"runner_id":"r","session_id":"s"} (session_tail)
+ERROR
+Error: maintenance window
+=== json message 503 {"runner_id":"r","session_id":"s"} (session_children)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p"} (resource_health)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p","timeout_ms":0} (events_wait)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p","task_id":"t"} (delivery_gate)
+ERROR
+Error: maintenance window
+=== json message 503 {"expected_revision":1,"project":"p","task_id":"t"} (delivery_verify)
+ERROR
+Error: maintenance window
+=== json message 503 {"command":{"action":"configure"},"project":"p","task_id":"t"} (delivery_record)
+ERROR
+Error: maintenance window
+=== json message 503 null (supervisor_capabilities)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p"} (supervisor_snapshot)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p","task_id":"t"} (task_dispatch_preview)
+ERROR
+Error: maintenance window
+=== json message 503 {"id":"op-errors-01","operation":"trigger","project":"p","task_id":"t"} (supervisor_operation)
+ERROR
+Error: maintenance window
+=== json message 503 {"id":"op-errors-01"} (supervisor_operation_get)
+ERROR
+Error: maintenance window
+=== json message 503 {"project":"p"} (supervisor_checkpoint)
+ERROR
+Error: maintenance window
+=== json message 503 {"command":{"action":"request"}} (supervisor_checkpoint)
+ERROR
+Error: maintenance window
+=== json message 503 {"id":"b","project":"p"} (execution_budget)
+ERROR
+Error: maintenance window
+=== json message 503 {"command":{"action":"commit"}} (execution_budget)
+ERROR
+Error: maintenance window
+=== json error only 403 {"project":"p"} (tasks)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p"} (task_next)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p","task_id":"t"} (task_get)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p","task_id":"t"} (task_metadata)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p","task_ids":["t"]} (tasks_status)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p","task_id":"t"} (task_trigger)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"feature_id":"f","project":"p","template_id":"blocked-inspector"} (monitor_enable)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"feature_id":"f","project":"p","template_id":"blocked-inspector"} (monitor_disable)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"feature_id":"f","project":"p"} (feature_review_enable)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"feature_id":"f","project":"p"} (feature_review_disable)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"feature_id":"f","project":"p"} (blocked_inspector_enable)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"feature_id":"f","project":"p"} (blocked_inspector_disable)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p"} (dream_enable)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p"} (dream_disable)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"injected_context":"c","project":"p","task_id":"t"} (resume_task_with_context)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p","task_id":"t"} (runner_candidates)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"executor":"pi","project":"p"} (runner_candidates)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p","runner_id":"r","task_id":"t"} (task_assign)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p","task_id":"t"} (task_clear_assignment)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p"} (features)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p","ready_only":true} (features)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p"} (feature_ready)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"feature_id":"f","project":"p"} (feature_get)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"feature_id":"f","project":"p"} (feature_checkout)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"feature_id":"f","project":"p","runner_id":"r"} (feature_assign)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"feature_id":"f","project":"p"} (feature_clear_assignment)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"feature_id":"f","project":"p"} (feature_runner_candidates)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"client_id":"c","host_id":"h"} (context_resolve)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p"} (project_placement_get)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"affinity":"soft","project":"p"} (project_placement_put)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"path":"abcd1234"} (reader_url)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"path":"projects/p/note/abcd1234.md"} (reader_url)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 null (sync_status)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"device_id":"d","operation_id":"o"} (sync_diff)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"action":"discard","device_id":"d","operation_id":"o","snapshot":"s"} (sync_reconcile)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"runner_id":"r","session_id":"s"} (session_tail)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"runner_id":"r","session_id":"s"} (session_children)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p"} (resource_health)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p","timeout_ms":0} (events_wait)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p","task_id":"t"} (delivery_gate)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"expected_revision":1,"project":"p","task_id":"t"} (delivery_verify)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"command":{"action":"configure"},"project":"p","task_id":"t"} (delivery_record)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 null (supervisor_capabilities)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p"} (supervisor_snapshot)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p","task_id":"t"} (task_dispatch_preview)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"id":"op-errors-01","operation":"trigger","project":"p","task_id":"t"} (supervisor_operation)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"id":"op-errors-01"} (supervisor_operation_get)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"project":"p"} (supervisor_checkpoint)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"command":{"action":"request"}} (supervisor_checkpoint)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"id":"b","project":"p"} (execution_budget)
+ERROR
+Error: API error: forbidden here
+=== json error only 403 {"command":{"action":"commit"}} (execution_budget)
+ERROR
+Error: API error: forbidden here
+=== non-json 502 {"project":"p"} (tasks)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p"} (task_next)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p","task_id":"t"} (task_get)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p","task_id":"t"} (task_metadata)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p","task_ids":["t"]} (tasks_status)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p","task_id":"t"} (task_trigger)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"feature_id":"f","project":"p","template_id":"blocked-inspector"} (monitor_enable)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"feature_id":"f","project":"p","template_id":"blocked-inspector"} (monitor_disable)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"feature_id":"f","project":"p"} (feature_review_enable)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"feature_id":"f","project":"p"} (feature_review_disable)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"feature_id":"f","project":"p"} (blocked_inspector_enable)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"feature_id":"f","project":"p"} (blocked_inspector_disable)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p"} (dream_enable)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p"} (dream_disable)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"injected_context":"c","project":"p","task_id":"t"} (resume_task_with_context)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p","task_id":"t"} (runner_candidates)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"executor":"pi","project":"p"} (runner_candidates)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p","runner_id":"r","task_id":"t"} (task_assign)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p","task_id":"t"} (task_clear_assignment)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p"} (features)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p","ready_only":true} (features)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p"} (feature_ready)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"feature_id":"f","project":"p"} (feature_get)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"feature_id":"f","project":"p"} (feature_checkout)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"feature_id":"f","project":"p","runner_id":"r"} (feature_assign)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"feature_id":"f","project":"p"} (feature_clear_assignment)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"feature_id":"f","project":"p"} (feature_runner_candidates)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"client_id":"c","host_id":"h"} (context_resolve)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p"} (project_placement_get)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"affinity":"soft","project":"p"} (project_placement_put)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"path":"abcd1234"} (reader_url)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"path":"projects/p/note/abcd1234.md"} (reader_url)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 null (sync_status)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"device_id":"d","operation_id":"o"} (sync_diff)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"action":"discard","device_id":"d","operation_id":"o","snapshot":"s"} (sync_reconcile)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"runner_id":"r","session_id":"s"} (session_tail)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"runner_id":"r","session_id":"s"} (session_children)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p"} (resource_health)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p","timeout_ms":0} (events_wait)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p","task_id":"t"} (delivery_gate)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"expected_revision":1,"project":"p","task_id":"t"} (delivery_verify)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"command":{"action":"configure"},"project":"p","task_id":"t"} (delivery_record)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 null (supervisor_capabilities)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p"} (supervisor_snapshot)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p","task_id":"t"} (task_dispatch_preview)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"id":"op-errors-01","operation":"trigger","project":"p","task_id":"t"} (supervisor_operation)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"id":"op-errors-01"} (supervisor_operation_get)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"project":"p"} (supervisor_checkpoint)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"command":{"action":"request"}} (supervisor_checkpoint)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"id":"b","project":"p"} (execution_budget)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 502 {"command":{"action":"commit"}} (execution_budget)
+ERROR
+Error: HTTP 502: 502 Bad Gateway
+=== non-json 200 {"project":"p"} (tasks)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p"} (task_next)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p","task_id":"t"} (task_get)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p","task_id":"t"} (task_metadata)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p","task_ids":["t"]} (tasks_status)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p","task_id":"t"} (task_trigger)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"feature_id":"f","project":"p","template_id":"blocked-inspector"} (monitor_enable)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"feature_id":"f","project":"p","template_id":"blocked-inspector"} (monitor_disable)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"feature_id":"f","project":"p"} (feature_review_enable)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"feature_id":"f","project":"p"} (feature_review_disable)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"feature_id":"f","project":"p"} (blocked_inspector_enable)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"feature_id":"f","project":"p"} (blocked_inspector_disable)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p"} (dream_enable)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p"} (dream_disable)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"injected_context":"c","project":"p","task_id":"t"} (resume_task_with_context)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p","task_id":"t"} (runner_candidates)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"executor":"pi","project":"p"} (runner_candidates)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p","runner_id":"r","task_id":"t"} (task_assign)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p","task_id":"t"} (task_clear_assignment)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p"} (features)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p","ready_only":true} (features)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p"} (feature_ready)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"feature_id":"f","project":"p"} (feature_get)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"feature_id":"f","project":"p"} (feature_checkout)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"feature_id":"f","project":"p","runner_id":"r"} (feature_assign)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"feature_id":"f","project":"p"} (feature_clear_assignment)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"feature_id":"f","project":"p"} (feature_runner_candidates)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"client_id":"c","host_id":"h"} (context_resolve)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p"} (project_placement_get)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"affinity":"soft","project":"p"} (project_placement_put)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"path":"abcd1234"} (reader_url)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"path":"projects/p/note/abcd1234.md"} (reader_url)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 null (sync_status)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"device_id":"d","operation_id":"o"} (sync_diff)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"action":"discard","device_id":"d","operation_id":"o","snapshot":"s"} (sync_reconcile)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"runner_id":"r","session_id":"s"} (session_tail)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"runner_id":"r","session_id":"s"} (session_children)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p"} (resource_health)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p","timeout_ms":0} (events_wait)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p","task_id":"t"} (delivery_gate)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"expected_revision":1,"project":"p","task_id":"t"} (delivery_verify)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"command":{"action":"configure"},"project":"p","task_id":"t"} (delivery_record)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 null (supervisor_capabilities)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p"} (supervisor_snapshot)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p","task_id":"t"} (task_dispatch_preview)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"id":"op-errors-01","operation":"trigger","project":"p","task_id":"t"} (supervisor_operation)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"id":"op-errors-01"} (supervisor_operation_get)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"project":"p"} (supervisor_checkpoint)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"command":{"action":"request"}} (supervisor_checkpoint)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"id":"b","project":"p"} (execution_budget)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== non-json 200 {"command":{"action":"commit"}} (execution_budget)
+ERROR
+Error: decode response: invalid character '<' looking for beginning of value
+=== bare 409 {"project":"p","template_id":"dream"} (monitor_enable)
+OK
+Monitor "dream" is already enabled for feature "". Disable first to reset.
+=== bare 409 {"feature_id":"f","project":"p"} (feature_review_enable)
+OK
+Feature Code Review is already enabled for feature "f". Use feature_review_disable first to reset it.
+=== bare 409 {"feature_id":"f","project":"p"} (blocked_inspector_enable)
+OK
+Blocked Task Inspector is already enabled for feature "f". Use blocked_inspector_disable first to reset it.
+=== bare 409 {"project":"p"} (dream_enable)
+OK
+Dream Mode is already enabled for project "p". Use dream_disable first to reset it.
+=== bare 409 {"project":"p","template_id":"dream"} (monitor_disable)
+ERROR
+Error: HTTP 409: 409 Conflict
+=== bare 409 {"feature_id":"f","project":"p"} (feature_review_disable)
+ERROR
+Error: HTTP 409: 409 Conflict
+=== bare 409 {"feature_id":"f","project":"p"} (blocked_inspector_disable)
+ERROR
+Error: HTTP 409: 409 Conflict
+=== bare 409 {"project":"p"} (dream_disable)
+ERROR
+Error: HTTP 409: 409 Conflict
+=== json 409 conflict {"project":"p","template_id":"dream"} (monitor_enable)
+OK
+Monitor "dream" is already enabled for feature "". Disable first to reset.
+=== json 409 conflict {"feature_id":"f","project":"p"} (feature_review_enable)
+OK
+Feature Code Review is already enabled for feature "f". Use feature_review_disable first to reset it.
+=== json 409 conflict {"feature_id":"f","project":"p"} (blocked_inspector_enable)
+OK
+Blocked Task Inspector is already enabled for feature "f". Use blocked_inspector_disable first to reset it.
+=== json 409 conflict {"project":"p"} (dream_enable)
+OK
+Dream Mode is already enabled for project "p". Use dream_disable first to reset it.
+=== json 409 conflict {"project":"p","template_id":"dream"} (monitor_disable)
+ERROR
+Error: Conflict: already there
+=== json 409 conflict {"feature_id":"f","project":"p"} (feature_review_disable)
+ERROR
+Error: Conflict: already there
+=== json 409 conflict {"feature_id":"f","project":"p"} (blocked_inspector_disable)
+ERROR
+Error: Conflict: already there
+=== json 409 conflict {"project":"p"} (dream_disable)
+ERROR
+Error: Conflict: already there
+=== bare 404 {"project":"p","template_id":"dream"} (monitor_enable)
+ERROR
+Error: HTTP 404: 404 Not Found
+=== bare 404 {"feature_id":"f","project":"p"} (feature_review_enable)
+ERROR
+Error: HTTP 404: 404 Not Found
+=== bare 404 {"feature_id":"f","project":"p"} (blocked_inspector_enable)
+ERROR
+Error: HTTP 404: 404 Not Found
+=== bare 404 {"project":"p"} (dream_enable)
+ERROR
+Error: HTTP 404: 404 Not Found
+=== bare 404 {"project":"p","template_id":"dream"} (monitor_disable)
+OK
+Monitor "dream" is not currently enabled for feature "". Nothing to disable.
+=== bare 404 {"feature_id":"f","project":"p"} (feature_review_disable)
+OK
+Feature Code Review is not currently enabled for feature "f". Nothing to disable.
+=== bare 404 {"feature_id":"f","project":"p"} (blocked_inspector_disable)
+OK
+Blocked Task Inspector is not currently enabled for feature "f". Nothing to disable.
+=== bare 404 {"project":"p"} (dream_disable)
+OK
+Dream Mode is not currently enabled for project "p". Nothing to disable.
+=== json 404 not found {"project":"p","template_id":"dream"} (monitor_enable)
+ERROR
+Error: monitor not found
+=== json 404 not found {"feature_id":"f","project":"p"} (feature_review_enable)
+ERROR
+Error: monitor not found
+=== json 404 not found {"feature_id":"f","project":"p"} (blocked_inspector_enable)
+ERROR
+Error: monitor not found
+=== json 404 not found {"project":"p"} (dream_enable)
+ERROR
+Error: monitor not found
+=== json 404 not found {"project":"p","template_id":"dream"} (monitor_disable)
+OK
+Monitor "dream" is not currently enabled for feature "". Nothing to disable.
+=== json 404 not found {"feature_id":"f","project":"p"} (feature_review_disable)
+OK
+Feature Code Review is not currently enabled for feature "f". Nothing to disable.
+=== json 404 not found {"feature_id":"f","project":"p"} (blocked_inspector_disable)
+OK
+Blocked Task Inspector is not currently enabled for feature "f". Nothing to disable.
+=== json 404 not found {"project":"p"} (dream_disable)
+OK
+Dream Mode is not currently enabled for project "p". Nothing to disable.
+=== json 500 mentions 404 {"project":"p","template_id":"dream"} (monitor_enable)
+ERROR
+Error: upstream said 404
+=== json 500 mentions 404 {"feature_id":"f","project":"p"} (feature_review_enable)
+ERROR
+Error: upstream said 404
+=== json 500 mentions 404 {"feature_id":"f","project":"p"} (blocked_inspector_enable)
+ERROR
+Error: upstream said 404
+=== json 500 mentions 404 {"project":"p"} (dream_enable)
+ERROR
+Error: upstream said 404
+=== json 500 mentions 404 {"project":"p","template_id":"dream"} (monitor_disable)
+OK
+Monitor "dream" is not currently enabled for feature "". Nothing to disable.
+=== json 500 mentions 404 {"feature_id":"f","project":"p"} (feature_review_disable)
+OK
+Feature Code Review is not currently enabled for feature "f". Nothing to disable.
+=== json 500 mentions 404 {"feature_id":"f","project":"p"} (blocked_inspector_disable)
+OK
+Blocked Task Inspector is not currently enabled for feature "f". Nothing to disable.
+=== json 500 mentions 404 {"project":"p"} (dream_disable)
+OK
+Dream Mode is not currently enabled for project "p". Nothing to disable.

@@ -4,6 +4,7 @@
 package brain
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -43,6 +44,27 @@ func (e DeliveryCommandAction) Valid() bool {
 	case Integration:
 		return true
 	case Verify:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SyncReconcileRequestAction.
+const (
+	Discard SyncReconcileRequestAction = "discard"
+	Merge   SyncReconcileRequestAction = "merge"
+	Rebase  SyncReconcileRequestAction = "rebase"
+)
+
+// Valid indicates whether the value is a known member of the SyncReconcileRequestAction enum.
+func (e SyncReconcileRequestAction) Valid() bool {
+	switch e {
+	case Discard:
+		return true
+	case Merge:
+		return true
+	case Rebase:
 		return true
 	default:
 		return false
@@ -243,6 +265,20 @@ type BacklinkEntry struct {
 	Type  string `json:"type"`
 }
 
+// BrainClientInfo defines model for BrainClientInfo.
+type BrainClientInfo struct {
+	Arch         *string            `json:"arch,omitempty"`
+	Capabilities *[]string          `json:"capabilities,omitempty"`
+	ClientId     string             `json:"client_id"`
+	HomeDir      *string            `json:"home_dir,omitempty"`
+	HostId       string             `json:"host_id"`
+	Hostname     *string            `json:"hostname,omitempty"`
+	Kind         *string            `json:"kind,omitempty"`
+	Labels       *map[string]string `json:"labels,omitempty"`
+	Os           *string            `json:"os,omitempty"`
+	Username     *string            `json:"username,omitempty"`
+}
+
 // BrainEntry defines model for BrainEntry.
 type BrainEntry struct {
 	AccessCount             *int                        `json:"access_count,omitempty"`
@@ -328,6 +364,16 @@ type BrainEntry struct {
 	Type                    string                      `json:"type"`
 	UserOriginalRequest     *string                     `json:"user_original_request,omitempty"`
 	Workdir                 *string                     `json:"workdir,omitempty"`
+}
+
+// BudgetReservation defines model for BudgetReservation.
+type BudgetReservation struct {
+	BudgetId string  `json:"budget_id"`
+	Id       string  `json:"id"`
+	ParentId *string `json:"parent_id,omitempty"`
+	State    string  `json:"state"`
+	Units    int64   `json:"units"`
+	Window   string  `json:"window"`
 }
 
 // BulkDeleteRequest defines model for BulkDeleteRequest.
@@ -601,6 +647,22 @@ type CreateGoalRequest struct {
 	Title     string           `json:"title"`
 }
 
+// CreateMonitorRequest defines model for CreateMonitorRequest.
+type CreateMonitorRequest struct {
+	FeatureId  *string `json:"feature_id,omitempty"`
+	Project    *string `json:"project,omitempty"`
+	Schedule   *string `json:"schedule,omitempty"`
+	ScopeType  string  `json:"scope_type"`
+	TemplateId string  `json:"template_id"`
+}
+
+// CreateMonitorResult defines model for CreateMonitorResult.
+type CreateMonitorResult struct {
+	Id    string `json:"id"`
+	Path  string `json:"path"`
+	Title string `json:"title"`
+}
+
 // CreateReminderRequest defines model for CreateReminderRequest.
 type CreateReminderRequest struct {
 	Config    ReminderConfig `json:"config"`
@@ -638,6 +700,12 @@ type CronRun struct {
 type DeleteGoalResponse struct {
 	GoalId  string `json:"goal_id"`
 	Success bool   `json:"success"`
+}
+
+// DeleteMonitorByScopeRequest defines model for DeleteMonitorByScopeRequest.
+type DeleteMonitorByScopeRequest struct {
+	Scope      MonitorScope `json:"scope"`
+	TemplateId string       `json:"templateId"`
 }
 
 // DeleteProjectResponse defines model for DeleteProjectResponse.
@@ -752,9 +820,57 @@ type DispatchLease struct {
 	TaskId            string  `json:"task_id"`
 }
 
+// DispatchPreview defines model for DispatchPreview.
+type DispatchPreview struct {
+	Classification      string                       `json:"classification"`
+	ConfigurationSource string                       `json:"configuration_source"`
+	Configured          DispatchPreviewConfiguration `json:"configured"`
+	Dispatchable        bool                         `json:"dispatchable"`
+	PauseExplanation    string                       `json:"pause_explanation"`
+	Paused              bool                         `json:"paused"`
+	ProjectId           string                       `json:"project_id"`
+	Ready               bool                         `json:"ready"`
+
+	// Reservation Always false; a preview reserves nothing.
+	Reservation            bool                    `json:"reservation"`
+	Runners                []DispatchPreviewRunner `json:"runners"`
+	SelectedRunner         string                  `json:"selected_runner"`
+	SnapshotAt             time.Time               `json:"snapshot_at"`
+	TaskId                 string                  `json:"task_id"`
+	Unknown                []string                `json:"unknown"`
+	UnresolvedDependencies *[]string               `json:"unresolved_dependencies"`
+	WaitingOn              *[]string               `json:"waiting_on"`
+}
+
+// DispatchPreviewConfiguration defines model for DispatchPreviewConfiguration.
+type DispatchPreviewConfiguration struct {
+	Branch        string `json:"branch"`
+	Executor      string `json:"executor"`
+	Model         string `json:"model"`
+	Repository    string `json:"repository"`
+	TargetBranch  string `json:"target_branch"`
+	TargetWorkdir string `json:"target_workdir"`
+	Workdir       string `json:"workdir"`
+}
+
+// DispatchPreviewRunner defines model for DispatchPreviewRunner.
+type DispatchPreviewRunner struct {
+	Eligible bool   `json:"eligible"`
+	Reason   string `json:"reason"`
+	RunnerId string `json:"runner_id"`
+}
+
 // DispatchRequest defines model for DispatchRequest.
 type DispatchRequest struct {
 	TargetRunnerId string `json:"targetRunnerId"`
+}
+
+// DreamContext defines model for DreamContext.
+type DreamContext struct {
+	Content *string `json:"content,omitempty"`
+	Id      *string `json:"id,omitempty"`
+	Path    *string `json:"path,omitempty"`
+	Title   *string `json:"title,omitempty"`
 }
 
 // EmbeddingHealthStatus defines model for EmbeddingHealthStatus.
@@ -798,6 +914,52 @@ type EventWaitResponse struct {
 	Shutdown      bool    `json:"shutdown"`
 	TimedOut      bool    `json:"timed_out"`
 	Truncated     bool    `json:"truncated"`
+}
+
+// ExecutionBudget defines model for ExecutionBudget.
+type ExecutionBudget struct {
+	Id       string `json:"id"`
+	Limit    int64  `json:"limit"`
+	Project  string `json:"project"`
+	Revision int    `json:"revision"`
+	Timezone string `json:"timezone"`
+	Unit     string `json:"unit"`
+}
+
+// ExecutionBudgetCommand Command document, validated strictly by the server. The Go SDK carries it as json.RawMessage so it is forwarded verbatim.
+type ExecutionBudgetCommand = json.RawMessage
+
+// ExecutionBudgetInput id and project identify the budget; timezone, unit and limit apply to configure (revision is server-owned).
+type ExecutionBudgetInput struct {
+	Id       string  `json:"id"`
+	Limit    *int64  `json:"limit,omitempty"`
+	Project  string  `json:"project"`
+	Revision *int    `json:"revision,omitempty"`
+	Timezone *string `json:"timezone,omitempty"`
+	Unit     *string `json:"unit,omitempty"`
+}
+
+// ExecutionBudgetResult configure returns revision; reserve returns reservation and created; commit and cancel return state.
+type ExecutionBudgetResult struct {
+	Created     *bool              `json:"created,omitempty"`
+	Reservation *BudgetReservation `json:"reservation,omitempty"`
+	Revision    *int               `json:"revision,omitempty"`
+	State       *string            `json:"state,omitempty"`
+}
+
+// ExecutionBudgetStatus defines model for ExecutionBudgetStatus.
+type ExecutionBudgetStatus struct {
+	Budget              ExecutionBudget `json:"budget"`
+	ConsumedAndReserved int64           `json:"consumed_and_reserved"`
+	Enforcement         string          `json:"enforcement"`
+
+	// MonetaryCost Always null; cost is unknown.
+	MonetaryCost interface{} `json:"monetary_cost"`
+	Remaining    int64       `json:"remaining"`
+
+	// TokenUsage Always null; executor token usage is unknown.
+	TokenUsage interface{} `json:"token_usage"`
+	Window     string      `json:"window"`
 }
 
 // Feature defines model for Feature.
@@ -1070,6 +1232,20 @@ type MetadataUpdateRequest struct {
 	Title                   *string                 `json:"title,omitempty"`
 }
 
+// MonitorDeleteByScopeResponse defines model for MonitorDeleteByScopeResponse.
+type MonitorDeleteByScopeResponse struct {
+	Path    string `json:"path"`
+	Success bool   `json:"success"`
+	TaskId  string `json:"taskId"`
+}
+
+// MonitorScope defines model for MonitorScope.
+type MonitorScope struct {
+	FeatureId *string `json:"feature_id,omitempty"`
+	Project   *string `json:"project,omitempty"`
+	Type      string  `json:"type"`
+}
+
 // MoveEntryRequest defines model for MoveEntryRequest.
 type MoveEntryRequest struct {
 	Project string `json:"project"`
@@ -1216,6 +1392,20 @@ type ReminderSummary struct {
 	Status          string  `json:"status"`
 	Timezone        *string `json:"timezone,omitempty"`
 	Title           string  `json:"title"`
+}
+
+// ResolveClientContextRequest defines model for ResolveClientContextRequest.
+type ResolveClientContextRequest struct {
+	Client    BrainClientInfo      `json:"client"`
+	Workspace WorkspaceObservation `json:"workspace"`
+}
+
+// ResolveClientContextResponse defines model for ResolveClientContextResponse.
+type ResolveClientContextResponse struct {
+	Confidence string        `json:"confidence"`
+	Dream      *DreamContext `json:"dream,omitempty"`
+	ProjectId  string        `json:"project_id"`
+	Source     string        `json:"source"`
 }
 
 // ResolvedTask defines model for ResolvedTask.
@@ -1482,6 +1672,31 @@ type RunTaskResponse struct {
 	TaskId     string  `json:"taskId"`
 }
 
+// RunnerCandidate defines model for RunnerCandidate.
+type RunnerCandidate struct {
+	Available  bool                     `json:"available"`
+	Compatible bool                     `json:"compatible"`
+	Reasons    *[]RunnerCandidateReason `json:"reasons"`
+	Runner     RunnerInfo               `json:"runner"`
+}
+
+// RunnerCandidateReason defines model for RunnerCandidateReason.
+type RunnerCandidateReason struct {
+	Code    string    `json:"code"`
+	Message string    `json:"message"`
+	TaskIds *[]string `json:"task_ids,omitempty"`
+}
+
+// RunnerCandidatesResponse defines model for RunnerCandidatesResponse.
+type RunnerCandidatesResponse struct {
+	AssignedRunnerId *string            `json:"assigned_runner_id,omitempty"`
+	AssignmentScope  *string            `json:"assignment_scope,omitempty"`
+	Candidates       *[]RunnerCandidate `json:"candidates"`
+	FeatureId        *string            `json:"feature_id,omitempty"`
+	ProjectId        string             `json:"project_id"`
+	TaskId           *string            `json:"task_id,omitempty"`
+}
+
 // RunnerInfo defines model for RunnerInfo.
 type RunnerInfo struct {
 	ActiveTasks        *int                         `json:"active_tasks,omitempty"`
@@ -1622,6 +1837,25 @@ type SectionsResponse struct {
 	Sections *[]SectionHeader `json:"sections"`
 }
 
+// SessionChild Persisted linkage only; state is always unknown and last_activity null.
+type SessionChild struct {
+	Children     *[]SessionChild `json:"children,omitempty"`
+	Created      *int64          `json:"created,omitempty"`
+	Executor     string          `json:"executor"`
+	LastActivity *int64          `json:"last_activity"`
+	ParentId     string          `json:"parent_id"`
+	SessionId    string          `json:"session_id"`
+	State        string          `json:"state"`
+}
+
+// SessionChildrenPage defines model for SessionChildrenPage.
+type SessionChildrenPage struct {
+	Children      *[]SessionChild `json:"children"`
+	CursorExpired bool            `json:"cursor_expired"`
+	NextCursor    *string         `json:"next_cursor,omitempty"`
+	Truncated     bool            `json:"truncated"`
+}
+
 // SessionInfo defines model for SessionInfo.
 type SessionInfo struct {
 	CronId    *string `json:"cron_id,omitempty"`
@@ -1634,9 +1868,32 @@ type SessionInfo struct {
 	Workdir   *string `json:"workdir,omitempty"`
 }
 
+// SessionTailPage defines model for SessionTailPage.
+type SessionTailPage struct {
+	CursorExpired bool                 `json:"cursor_expired"`
+	NextCursor    string               `json:"next_cursor"`
+	Records       *[]SessionTailRecord `json:"records"`
+	Truncated     bool                 `json:"truncated"`
+}
+
+// SessionTailRecord An upsert keyed by message and part; streaming parts can change between reads.
+type SessionTailRecord struct {
+	Id        string  `json:"id"`
+	Kind      string  `json:"kind"`
+	MessageId string  `json:"message_id"`
+	Role      *string `json:"role,omitempty"`
+	Status    *string `json:"status,omitempty"`
+	Text      *string `json:"text,omitempty"`
+
+	// Time The executor's own timing object, passed through unchanged.
+	Time      interface{} `json:"time,omitempty"`
+	Tool      *string     `json:"tool,omitempty"`
+	Truncated *bool       `json:"truncated,omitempty"`
+}
+
 // SnoozeAttentionRequest defines model for SnoozeAttentionRequest.
 type SnoozeAttentionRequest struct {
-	// SnoozedUntil Informational; stored as sent (an empty value snoozes without a time).
+	// SnoozedUntil Informational and not validated: the server stores the string exactly as sent and returns it in the item's snoozed_until. An RFC 3339 date-time is conventional; an empty value (or an absent body) snoozes without a time, and any other text is kept verbatim.
 	SnoozedUntil string `json:"snoozed_until"`
 }
 
@@ -1670,6 +1927,206 @@ type StatsResponse struct {
 // SuccessResponse defines model for SuccessResponse.
 type SuccessResponse struct {
 	Success bool `json:"success"`
+}
+
+// SupervisorCapabilities defines model for SupervisorCapabilities.
+type SupervisorCapabilities struct {
+	ClientInstallation string `json:"client_installation"`
+	Commit             string `json:"commit"`
+
+	// Tools Tool name to its scope and availability notes.
+	Tools      map[string]string `json:"tools"`
+	Transports []string          `json:"transports"`
+	Version    string            `json:"version"`
+}
+
+// SupervisorCheckpoint defines model for SupervisorCheckpoint.
+type SupervisorCheckpoint struct {
+	Answer                *string    `json:"answer,omitempty"`
+	AnsweredAt            *time.Time `json:"answered_at,omitempty"`
+	AnsweredBy            *string    `json:"answered_by,omitempty"`
+	Artifact              string     `json:"artifact"`
+	FeatureId             *string    `json:"feature_id,omitempty"`
+	Id                    string     `json:"id"`
+	Project               string     `json:"project"`
+	Question              string     `json:"question"`
+	Revision              int        `json:"revision"`
+	State                 string     `json:"state"`
+	TaskId                *string    `json:"task_id,omitempty"`
+	VerificationReference *string    `json:"verification_reference,omitempty"`
+	VerifiedBy            *string    `json:"verified_by,omitempty"`
+}
+
+// SupervisorCheckpointCommand Command document, validated strictly by the server. The Go SDK carries it as json.RawMessage so it is forwarded verbatim.
+type SupervisorCheckpointCommand = json.RawMessage
+
+// SupervisorCheckpointInput state, answered_by, answered_at, verified_by and revision are server-owned and ignored on input.
+type SupervisorCheckpointInput struct {
+	Answer     *string    `json:"answer,omitempty"`
+	AnsweredAt *time.Time `json:"answered_at,omitempty"`
+	AnsweredBy *string    `json:"answered_by,omitempty"`
+	Artifact   string     `json:"artifact"`
+	FeatureId  *string    `json:"feature_id,omitempty"`
+
+	// Id 8 to 128 bytes.
+	Id      string `json:"id"`
+	Project string `json:"project"`
+
+	// Question Required to request a new checkpoint.
+	Question              *string `json:"question,omitempty"`
+	Revision              *int    `json:"revision,omitempty"`
+	State                 *string `json:"state,omitempty"`
+	TaskId                *string `json:"task_id,omitempty"`
+	VerificationReference *string `json:"verification_reference,omitempty"`
+	VerifiedBy            *string `json:"verified_by,omitempty"`
+}
+
+// SupervisorCheckpointList With id, versions and limit. Without id, checkpoints, the next cursor (after) and truncated.
+type SupervisorCheckpointList struct {
+	After       *string                 `json:"after,omitempty"`
+	Checkpoints *[]SupervisorCheckpoint `json:"checkpoints,omitempty"`
+	Limit       *int                    `json:"limit,omitempty"`
+	Truncated   *bool                   `json:"truncated,omitempty"`
+	Versions    *[]SupervisorCheckpoint `json:"versions,omitempty"`
+}
+
+// SupervisorOperation defines model for SupervisorOperation.
+type SupervisorOperation struct {
+	CreatedAt time.Time `json:"created_at"`
+	Detail    string    `json:"detail"`
+	Id        string    `json:"id"`
+	Operation string    `json:"operation"`
+	State     string    `json:"state"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// SupervisorOperationRequest Command document, validated strictly by the server (unknown fields and wrong types are refused with its message). The Go SDK carries it as json.RawMessage so it is forwarded verbatim.
+type SupervisorOperationRequest = json.RawMessage
+
+// SupervisorSnapshot defines model for SupervisorSnapshot.
+type SupervisorSnapshot struct {
+	// AfterTask Cursor for the next page (last task id).
+	AfterTask string `json:"after_task"`
+
+	// Atomic Always false; state is read without a transaction.
+	Atomic             bool                           `json:"atomic"`
+	CheckpointCoverage string                         `json:"checkpoint_coverage"`
+	Checkpoints        []SupervisorSnapshotCheckpoint `json:"checkpoints"`
+	EventCursor        string                         `json:"event_cursor"`
+	EventFilters       map[string]string              `json:"event_filters"`
+	SnapshotFinishedAt time.Time                      `json:"snapshot_finished_at"`
+	SnapshotStartedAt  time.Time                      `json:"snapshot_started_at"`
+	Tasks              []SupervisorSnapshotTask       `json:"tasks"`
+	Truncated          bool                           `json:"truncated"`
+	UnavailableSources []string                       `json:"unavailable_sources"`
+}
+
+// SupervisorSnapshotCheckpoint defines model for SupervisorSnapshotCheckpoint.
+type SupervisorSnapshotCheckpoint struct {
+	Artifact  string `json:"artifact"`
+	FeatureId string `json:"feature_id"`
+	Id        string `json:"id"`
+	Revision  int    `json:"revision"`
+	State     string `json:"state"`
+	TaskId    string `json:"task_id"`
+}
+
+// SupervisorSnapshotTask defines model for SupervisorSnapshotTask.
+type SupervisorSnapshotTask struct {
+	Classification string    `json:"classification"`
+	DeliveryUnmet  *[]string `json:"delivery_unmet"`
+	FeatureId      string    `json:"feature_id"`
+	Id             string    `json:"id"`
+	IsAbandoned    bool      `json:"is_abandoned"`
+	Status         string    `json:"status"`
+	WaitingOn      *[]string `json:"waiting_on"`
+}
+
+// SyncCommand defines model for SyncCommand.
+type SyncCommand struct {
+	Action         string  `json:"action"`
+	ExpectedRaw    string  `json:"expected_raw"`
+	Id             string  `json:"id"`
+	OperationId    string  `json:"operation_id"`
+	Outcome        *string `json:"outcome,omitempty"`
+	Raw            *string `json:"raw,omitempty"`
+	ServerRevision string  `json:"server_revision"`
+}
+
+// SyncDevice defines model for SyncDevice.
+type SyncDevice struct {
+	CacheMode          *string        `json:"cache_mode,omitempty"`
+	CachedEntries      *int           `json:"cached_entries,omitempty"`
+	Command            *SyncCommand   `json:"command,omitempty"`
+	Connection         string         `json:"connection"`
+	Cursor             int64          `json:"cursor"`
+	DeviceId           string         `json:"device_id"`
+	Epoch              string         `json:"epoch"`
+	Error              *string        `json:"error,omitempty"`
+	LastSeen           string         `json:"last_seen"`
+	LastSuccessfulSync *string        `json:"last_successful_sync,omitempty"`
+	Owner              *string        `json:"owner,omitempty"`
+	Pending            *[]SyncPending `json:"pending"`
+	Ready              bool           `json:"ready"`
+	ReportedOnline     bool           `json:"reported_online"`
+	Syncing            bool           `json:"syncing"`
+}
+
+// SyncDevicesResponse Last reported browser state. owner is never returned and pending/command raw drafts are blanked here (sync.diff returns a draft).
+type SyncDevicesResponse struct {
+	Devices           *[]SyncDevice `json:"devices"`
+	Note              string        `json:"note"`
+	StaleAfterSeconds int           `json:"stale_after_seconds"`
+}
+
+// SyncDiff defines model for SyncDiff.
+type SyncDiff struct {
+	Connection string      `json:"connection"`
+	DeviceId   string      `json:"device_id"`
+	Diff       string      `json:"diff"`
+	LastSeen   string      `json:"last_seen"`
+	Operation  SyncPending `json:"operation"`
+
+	// ServerRaw Current server YAML and Markdown; empty when the entry does not exist.
+	ServerRaw string `json:"server_raw"`
+
+	// ServerRevision Empty when the entry is missing or not yet created.
+	ServerRevision string `json:"server_revision"`
+
+	// Snapshot Binds a later sync.reconcile to exactly this view.
+	Snapshot string `json:"snapshot"`
+}
+
+// SyncPending defines model for SyncPending.
+type SyncPending struct {
+	Error    *string `json:"error,omitempty"`
+	Failure  *string `json:"failure,omitempty"`
+	Id       string  `json:"id"`
+	Method   string  `json:"method"`
+	Path     string  `json:"path"`
+	Raw      string  `json:"raw"`
+	Revision string  `json:"revision"`
+}
+
+// SyncReconcileRequest defines model for SyncReconcileRequest.
+type SyncReconcileRequest struct {
+	Action SyncReconcileRequestAction `json:"action"`
+
+	// Raw Full merged YAML frontmatter and Markdown; required for merge.
+	Raw *string `json:"raw,omitempty"`
+
+	// Snapshot Exact snapshot from sync.diff; stale snapshots are refused with 409.
+	Snapshot string `json:"snapshot"`
+}
+
+// SyncReconcileRequestAction defines model for SyncReconcileRequest.Action.
+type SyncReconcileRequestAction string
+
+// SyncReconcileResponse defines model for SyncReconcileResponse.
+type SyncReconcileResponse struct {
+	CommandId string `json:"command_id"`
+	Note      string `json:"note"`
+	Status    string `json:"status"`
 }
 
 // TaskAssignmentRequest defines model for TaskAssignmentRequest.
@@ -1758,6 +2215,18 @@ type TaskMetadataResponse struct {
 	UnresolvedFeatureDeps *[]string               `json:"unresolved_feature_deps,omitempty"`
 	WaitingOn             *[]string               `json:"waiting_on"`
 	WaitingOnFeatures     *[]string               `json:"waiting_on_features,omitempty"`
+}
+
+// TaskRunnerCandidatesRequest defines model for TaskRunnerCandidatesRequest.
+type TaskRunnerCandidatesRequest struct {
+	ExecutionMode      *string   `json:"execution_mode,omitempty"`
+	Executor           *string   `json:"executor,omitempty"`
+	FeatureId          *string   `json:"feature_id,omitempty"`
+	GitRemote          *string   `json:"git_remote,omitempty"`
+	MachineAffinity    *string   `json:"machine_affinity,omitempty"`
+	OriginMachineId    *string   `json:"origin_machine_id,omitempty"`
+	RequiresCapability *[]string `json:"requires_capability,omitempty"`
+	TargetWorkdir      *string   `json:"target_workdir,omitempty"`
 }
 
 // TaskSelectionResponse defines model for TaskSelectionResponse.
@@ -1984,6 +2453,17 @@ type WebhookResponse struct {
 	Url       string             `json:"url"`
 }
 
+// WorkspaceObservation defines model for WorkspaceObservation.
+type WorkspaceObservation struct {
+	FolderName      *string `json:"folder_name,omitempty"`
+	GitBranch       *string `json:"git_branch,omitempty"`
+	GitCommonDir    *string `json:"git_common_dir,omitempty"`
+	GitRemote       *string `json:"git_remote,omitempty"`
+	GitRoot         *string `json:"git_root,omitempty"`
+	GitWorktreeMain *string `json:"git_worktree_main,omitempty"`
+	Path            string  `json:"path"`
+}
+
 // AttachmentsListParams defines parameters for AttachmentsList.
 type AttachmentsListParams struct {
 	ProjectId string `form:"project_id" json:"project_id"`
@@ -2039,6 +2519,19 @@ type AutomationsRunsParams struct {
 	Status       *string `form:"status,omitempty" json:"status,omitempty"`
 	AutomationId *string `form:"automation_id,omitempty" json:"automation_id,omitempty"`
 	Limit        *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ControlSessionDescendantsParams defines parameters for ControlSessionDescendants.
+type ControlSessionDescendantsParams struct {
+	After *string `form:"after,omitempty" json:"after,omitempty"`
+	Limit *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ControlSessionTailParams defines parameters for ControlSessionTail.
+type ControlSessionTailParams struct {
+	After    *string `form:"after,omitempty" json:"after,omitempty"`
+	Limit    *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	MaxBytes *int    `form:"max_bytes,omitempty" json:"max_bytes,omitempty"`
 }
 
 // EntriesListParams defines parameters for EntriesList.
@@ -2172,6 +2665,35 @@ type ObservabilityStatsParams struct {
 	Global   *bool   `form:"global,omitempty" json:"global,omitempty"`
 }
 
+// SupervisionBudgetParams defines parameters for SupervisionBudget.
+type SupervisionBudgetParams struct {
+	Project string `form:"project" json:"project"`
+	Id      string `form:"id" json:"id"`
+}
+
+// SupervisionCheckpointsParams defines parameters for SupervisionCheckpoints.
+type SupervisionCheckpointsParams struct {
+	Project string  `form:"project" json:"project"`
+	Id      *string `form:"id,omitempty" json:"id,omitempty"`
+	After   *string `form:"after,omitempty" json:"after,omitempty"`
+}
+
+// SupervisionDispatchPreviewParams defines parameters for SupervisionDispatchPreview.
+type SupervisionDispatchPreviewParams struct {
+	ProjectId string `form:"project_id" json:"project_id"`
+	TaskId    string `form:"task_id" json:"task_id"`
+	Manual    *bool  `form:"manual,omitempty" json:"manual,omitempty"`
+}
+
+// SupervisionSnapshotParams defines parameters for SupervisionSnapshot.
+type SupervisionSnapshotParams struct {
+	ProjectId string  `form:"project_id" json:"project_id"`
+	TaskId    *string `form:"task_id,omitempty" json:"task_id,omitempty"`
+	FeatureId *string `form:"feature_id,omitempty" json:"feature_id,omitempty"`
+	AfterTask *string `form:"after_task,omitempty" json:"after_task,omitempty"`
+	Limit     *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // ProjectsDeleteParams defines parameters for ProjectsDelete.
 type ProjectsDeleteParams struct {
 	Confirm string `form:"confirm" json:"confirm"`
@@ -2236,6 +2758,9 @@ type AttentionSnoozeJSONRequestBody = SnoozeAttentionRequest
 // AutomationsRunJSONRequestBody defines body for AutomationsRun for application/json ContentType.
 type AutomationsRunJSONRequestBody = RunAutomationRequest
 
+// ClientContextResolveJSONRequestBody defines body for ClientContextResolve for application/json ContentType.
+type ClientContextResolveJSONRequestBody = ResolveClientContextRequest
+
 // ControlSpawnInstanceJSONRequestBody defines body for ControlSpawnInstance for application/json ContentType.
 type ControlSpawnInstanceJSONRequestBody = SpawnInstanceSpec
 
@@ -2275,6 +2800,12 @@ type GoalsUpdateJSONRequestBody = UpdateGoalRequest
 // SearchInjectJSONRequestBody defines body for SearchInject for application/json ContentType.
 type SearchInjectJSONRequestBody = InjectRequest
 
+// MonitorsCreateJSONRequestBody defines body for MonitorsCreate for application/json ContentType.
+type MonitorsCreateJSONRequestBody = CreateMonitorRequest
+
+// MonitorsDeleteByScopeJSONRequestBody defines body for MonitorsDeleteByScope for application/json ContentType.
+type MonitorsDeleteByScopeJSONRequestBody = DeleteMonitorByScopeRequest
+
 // ProjectsSetPlacementJSONRequestBody defines body for ProjectsSetPlacement for application/json ContentType.
 type ProjectsSetPlacementJSONRequestBody = ProjectPlacement
 
@@ -2289,6 +2820,18 @@ type RemindersSnoozeJSONRequestBody = SnoozeReminderRequest
 
 // SearchQueryJSONRequestBody defines body for SearchQuery for application/json ContentType.
 type SearchQueryJSONRequestBody = SearchRequest
+
+// SupervisionUpdateBudgetJSONRequestBody defines body for SupervisionUpdateBudget for application/json ContentType.
+type SupervisionUpdateBudgetJSONRequestBody = ExecutionBudgetCommand
+
+// SupervisionUpdateCheckpointJSONRequestBody defines body for SupervisionUpdateCheckpoint for application/json ContentType.
+type SupervisionUpdateCheckpointJSONRequestBody = SupervisorCheckpointCommand
+
+// SupervisionSubmitOperationJSONRequestBody defines body for SupervisionSubmitOperation for application/json ContentType.
+type SupervisionSubmitOperationJSONRequestBody = SupervisorOperationRequest
+
+// SyncReconcileJSONRequestBody defines body for SyncReconcile for application/json ContentType.
+type SyncReconcileJSONRequestBody = SyncReconcileRequest
 
 // FeaturesAssignJSONRequestBody defines body for FeaturesAssign for application/json ContentType.
 type FeaturesAssignJSONRequestBody = FeatureAssignmentRequest
@@ -2310,6 +2853,9 @@ type FeaturesRunJSONRequestBody = RunFeatureRequest
 
 // ProjectsRunJSONRequestBody defines body for ProjectsRun for application/json ContentType.
 type ProjectsRunJSONRequestBody = RunProjectRequest
+
+// TasksProposedRunnerCandidatesJSONRequestBody defines body for TasksProposedRunnerCandidates for application/json ContentType.
+type TasksProposedRunnerCandidatesJSONRequestBody = TaskRunnerCandidatesRequest
 
 // TasksStatusJSONRequestBody defines body for TasksStatus for application/json ContentType.
 type TasksStatusJSONRequestBody = MultiTaskStatusRequest

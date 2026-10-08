@@ -478,6 +478,39 @@ there is no single global switch reported here.
 
 Pass project=<id> for a direct answer about one project.
 
+=== status many paused (runner_status)
+OK
+## Runner Status
+
+- Server running: true
+- Projects with task execution paused: 29
+- Projects with automation execution paused: 27
+
+These are per-project dials. A project absent from both lists dispatches normally;
+there is no single global switch reported here.
+
+### Paused on one axis only
+- Tasks paused, automations still running: cap-t-01, cap-t-02, cap-t-03, cap-t-04, cap-t-05, cap-t-06, cap-t-07, cap-t-08, cap-t-09, cap-t-10, cap-t-11, cap-t-12, ... (+3 more)
+- Automations paused, tasks still running: cap-a-01, cap-a-02, cap-a-03, cap-a-04, cap-a-05, cap-a-06, cap-a-07, cap-a-08, cap-a-09, cap-a-10, cap-a-11, cap-a-12, ... (+1 more)
+
+### Fully paused (both axes): 14
+cap-b-01, cap-b-02, cap-b-03, cap-b-04, cap-b-05, cap-b-06, cap-b-07, cap-b-08, cap-b-09, cap-b-10, cap-b-11, cap-b-12, ... (+2 more)
+
+Pass project=<id> for a direct answer about one project.
+
+=== status many resumed (runner_status)
+OK
+## Runner Status
+
+- Server running: true
+- Projects with task execution paused: 0
+- Projects with automation execution paused: 0
+
+These are per-project dials. A project absent from both lists dispatches normally;
+there is no single global switch reported here.
+
+Pass project=<id> for a direct answer about one project.
+
 === prompt missing ids (control_send_prompt)
 ERROR
 Error: instance_id is required

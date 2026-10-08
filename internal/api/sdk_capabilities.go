@@ -61,7 +61,20 @@ func sdkOperations(h *Handler) []string {
 	add(h.scheduler != nil, `scheduler.status`)
 	// Remote control is advertised when the bridge is wired; it still requires
 	// control:* per request and never implies script execution.
-	add(h.bridge != nil, `control.sendPrompt control.abortSession control.respondPermission control.spawnInstance control.killInstance`)
+	add(h.bridge != nil, `control.sendPrompt control.abortSession control.respondPermission control.spawnInstance control.killInstance control.sessionTail control.sessionDescendants`)
+	// Hosted-MCP step 3 operator surfaces, each with the service its route needs.
+	add(h.monitor != nil, `monitors.create monitors.deleteByScope`)
+	add(h.tasks != nil, `tasks.runnerCandidates tasks.proposedRunnerCandidates features.runnerCandidates`)
+	add(h.clientContext != nil, `clientContext.resolve`)
+	_, syncReports := h.brain.(syncDeviceService)
+	add(syncReports, `sync.devices sync.diff sync.reconcile`)
+	add(true, `supervision.capabilities`)
+	add(h.tasks != nil && h.events != nil, `supervision.snapshot`)
+	_, preview := h.runTask.(dispatchPreviewService)
+	add(preview, `supervision.dispatchPreview`)
+	add(h.supervisorOperations != nil, `supervision.submitOperation supervision.getOperation`)
+	add(h.supervisorCheckpoints != nil, `supervision.checkpoints supervision.updateCheckpoint`)
+	add(h.executionBudgets != nil, `supervision.budget supervision.updateBudget`)
 	slices.Sort(ops)
 	return ops
 }

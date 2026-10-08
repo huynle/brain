@@ -1,0 +1,643 @@
+=== tasks all (tasks)
+OK
+## Tasks for project: <tasks>
+
+**Stats:** 1 ready | 1 waiting | 2 dep_blocked | 1 status_blocked | 2 not_pending
+
+### Ready (can start now)
+- **[HIGH] Alpha root** (`<ALPHA>`) - pending
+  Dependencies: none
+
+### Waiting (deps incomplete)
+- **[MED] Beta child** (`<BETA>`) - pending
+  Depends on: <ALPHA>
+
+### Blocked
+- **[LOW] Zeta loop one** (`<ZETA1>`) - pending
+  Blocked by: circular_dependency
+- **[LOW] Zeta loop two** (`<ZETA2>`) - pending
+  Blocked by: circular_dependency
+
+### Not pending (completed / cancelled / archived)
+- **[LOW] Gamma blocked** (`<GAMMA>`) - blocked
+- **[MED] Delta done** (`<DELTA>`) - completed
+
+### Circular Dependencies Detected
+- Cycle: <ZETA1> -> <ZETA2>
+
+=== tasks limit 2 (tasks)
+OK
+## Tasks for project: <tasks>
+
+**Stats:** 1 ready | 1 waiting | 2 dep_blocked | 1 status_blocked | 2 not_pending
+
+*Showing 2 of 6 matching tasks (limit 2) — most actionable first.*
+
+### Ready (can start now)
+- **[HIGH] Alpha root** (`<ALPHA>`) - pending
+  Dependencies: none
+
+### Waiting (deps incomplete)
+- **[MED] Beta child** (`<BETA>`) - pending
+  Depends on: <ALPHA>
+
+### Circular Dependencies Detected
+- Cycle: <ZETA1> -> <ZETA2>
+
+=== tasks status pending (tasks)
+OK
+## Tasks for project: <tasks>
+
+**Stats (matching your filters):** 1 ready | 1 waiting | 2 dep_blocked | 0 status_blocked | 0 not_pending  ·  project total: 6
+
+### Ready (can start now)
+- **[HIGH] Alpha root** (`<ALPHA>`) - pending
+  Dependencies: none
+
+### Waiting (deps incomplete)
+- **[MED] Beta child** (`<BETA>`) - pending
+  Depends on: <ALPHA>
+
+### Blocked
+- **[LOW] Zeta loop one** (`<ZETA1>`) - pending
+  Blocked by: circular_dependency
+- **[LOW] Zeta loop two** (`<ZETA2>`) - pending
+  Blocked by: circular_dependency
+
+### Circular Dependencies Detected
+- Cycle: <ZETA1> -> <ZETA2>
+
+=== tasks classification waiting (tasks)
+OK
+## Tasks for project: <tasks>
+
+**Stats (matching your filters):** 0 ready | 1 waiting | 0 dep_blocked | 0 status_blocked | 0 not_pending  ·  project total: 6
+
+### Waiting (deps incomplete)
+- **[MED] Beta child** (`<BETA>`) - pending
+  Depends on: <ALPHA>
+
+### Circular Dependencies Detected
+- Cycle: <ZETA1> -> <ZETA2>
+
+=== tasks classification blocked (tasks)
+OK
+## Tasks for project: <tasks>
+
+**Stats (matching your filters):** 0 ready | 0 waiting | 2 dep_blocked | 0 status_blocked | 0 not_pending  ·  project total: 6
+
+### Blocked
+- **[LOW] Zeta loop one** (`<ZETA1>`) - pending
+  Blocked by: circular_dependency
+- **[LOW] Zeta loop two** (`<ZETA2>`) - pending
+  Blocked by: circular_dependency
+
+### Circular Dependencies Detected
+- Cycle: <ZETA1> -> <ZETA2>
+
+=== tasks not pending (tasks)
+OK
+## Tasks for project: <tasks>
+
+**Stats (matching your filters):** 0 ready | 0 waiting | 0 dep_blocked | 1 status_blocked | 2 not_pending  ·  project total: 6
+
+### Not pending (completed / cancelled / archived)
+- **[LOW] Gamma blocked** (`<GAMMA>`) - blocked
+- **[MED] Delta done** (`<DELTA>`) - completed
+
+### Circular Dependencies Detected
+- Cycle: <ZETA1> -> <ZETA2>
+
+=== tasks feature (tasks)
+OK
+## Tasks for project: <tasks>
+
+**Stats (matching your filters):** 1 ready | 1 waiting | 0 dep_blocked | 0 status_blocked | 0 not_pending  ·  project total: 6
+
+### Ready (can start now)
+- **[HIGH] Alpha root** (`<ALPHA>`) - pending
+  Dependencies: none
+
+### Waiting (deps incomplete)
+- **[MED] Beta child** (`<BETA>`) - pending
+  Depends on: <ALPHA>
+
+### Circular Dependencies Detected
+- Cycle: <ZETA1> -> <ZETA2>
+
+=== tasks no match (tasks)
+OK
+## Tasks for project: <tasks>
+
+**Stats (matching your filters):** 0 ready | 0 waiting | 0 dep_blocked | 0 status_blocked | 0 not_pending  ·  project total: 6
+
+### Circular Dependencies Detected
+- Cycle: <ZETA1> -> <ZETA2>
+
+*No tasks found matching criteria.*
+=== tasks empty project (tasks)
+OK
+## Tasks for project: <empty>
+
+**Stats:** 0 ready | 0 waiting | 0 dep_blocked | 0 status_blocked | 0 not_pending
+
+*No tasks found matching criteria.*
+=== next (task_next)
+OK
+## Next Task: Alpha root
+
+**ID:** <ALPHA>
+**Path:** projects/<tasks>/task/<ALPHA>.md
+**Priority:** HIGH
+**Status:** pending
+
+### User Original Request
+> do alpha
+> please
+
+### Quick Context
+- No dependencies
+
+---
+
+Alpha body
+
+Second paragraph.
+=== next empty project (task_next)
+OK
+No tasks at all in project "<empty>".
+
+This is what a mistyped or never-registered project id looks like: the lookup
+matches on a path prefix, so an unknown project returns an empty queue rather
+than an error. Confirm the id before concluding the queue is empty.
+
+Use tasks(project: "...") to list a project, or check the id you passed.
+=== next nothing ready (task_next)
+OK
+No ready tasks available.
+
+Current state:
+- 0 tasks waiting on dependencies
+- 0 tasks dep_blocked (deps unmet / cycle / blocked-by)
+- 1 tasks status_blocked (Status == "blocked")
+- 1 tasks completed
+
+Use tasks to see the full task list and dependency status.
+=== get by id (task_get)
+OK
+## Alpha root
+
+**ID:** <ALPHA>
+**Path:** projects/<tasks>/task/<ALPHA>.md
+**Priority:** HIGH
+**Status:** pending
+**Classification:** ready
+
+### Execution
+- agent: tdd-dev
+- branch: feat-a
+- feature: feat-a
+- merge policy: prompt_only
+- merges into: main
+- model: m/one
+
+### Dependencies (what this task needs)
+*No dependencies*
+
+### Dependents (what needs this task)
+- ○ **Beta child** (<BETA>) - pending
+
+### User Original Request
+> do alpha
+> please
+
+---
+
+Alpha body
+
+Second paragraph.
+=== get by title (task_get)
+OK
+## Beta child
+
+**ID:** <BETA>
+**Path:** projects/<tasks>/task/<BETA>.md
+**Priority:** MEDIUM
+**Status:** pending
+**Classification:** waiting
+
+### Execution
+- agent: (unset — runner default)
+- feature: feat-a
+- model: (unset — provider default)
+
+### Dependencies (what this task needs)
+- ○ **Alpha root** (<ALPHA>) - pending
+
+### Dependents (what needs this task)
+*No tasks depend on this one*
+
+---
+
+Beta body
+=== get blocked (task_get)
+OK
+## Gamma blocked
+
+**ID:** <GAMMA>
+**Path:** projects/<tasks>/task/<GAMMA>.md
+**Priority:** LOW
+**Status:** blocked
+**Classification:** not_pending
+
+### Execution
+- agent: (unset — runner default)
+- model: (unset — provider default)
+
+### Dependencies (what this task needs)
+*No dependencies*
+
+### Dependents (what needs this task)
+*No tasks depend on this one*
+
+---
+
+Gamma body
+=== get partial (task_get)
+ERROR
+Error: task not found: "zeta"
+
+Did you mean:
+- Zeta loop one (ID: <ZETA1>)
+- Zeta loop two (ID: <ZETA2>)
+=== get unknown (task_get)
+ERROR
+Error: task not found: "nothing-like-it"
+
+Use the tasks tool to list all tasks
+=== get missing id (task_get)
+ERROR
+Error: provide a 'task_id' (ID or title)
+=== metadata (task_metadata)
+OK
+{
+  "classification": "ready",
+  "created": "<TIME>",
+  "dependencies": {
+    "blocked_by": [],
+    "blocked_by_reason": null,
+    "depends_on": [],
+    "in_cycle": false,
+    "resolved_deps": [],
+    "unresolved_deps": [],
+    "waiting_on": []
+  },
+  "execution": {
+    "agent": "tdd-dev",
+    "complete_on_idle": null,
+    "direct_prompt": "",
+    "execution_mode": null,
+    "git_branch": "feat-a",
+    "git_remote": "",
+    "model": "m/one",
+    "resolved_workdir": "",
+    "target_workdir": "",
+    "workdir": ""
+  },
+  "feature": {
+    "depends_on": [],
+    "id": "feat-a",
+    "priority": null
+  },
+  "id": "<ALPHA>",
+  "merge": {
+    "checkout_mode": null,
+    "merge_policy": "prompt_only",
+    "merge_strategy": null,
+    "merge_target_branch": "main",
+    "open_pr_before_merge": null,
+    "remote_branch_policy": null
+  },
+  "modified": "<TIME>",
+  "origin": {
+    "machine_affinity": "none",
+    "origin_client_id": null,
+    "origin_machine_id": null,
+    "origin_path": null
+  },
+  "path": "projects/<tasks>/task/<ALPHA>.md",
+  "priority": "high",
+  "session_ids": [],
+  "status": "pending",
+  "tags": [
+    "task"
+  ],
+  "title": "Alpha root",
+  "user_original_request": "do alpha\nplease"
+}
+=== metadata dependent (task_metadata)
+OK
+{
+  "classification": "waiting",
+  "created": "<TIME>",
+  "dependencies": {
+    "blocked_by": [],
+    "blocked_by_reason": null,
+    "depends_on": [
+      "<ALPHA>"
+    ],
+    "in_cycle": false,
+    "resolved_deps": [
+      "<ALPHA>"
+    ],
+    "unresolved_deps": [],
+    "waiting_on": [
+      "<ALPHA>"
+    ]
+  },
+  "execution": {
+    "agent": "",
+    "complete_on_idle": null,
+    "direct_prompt": "",
+    "execution_mode": null,
+    "git_branch": "",
+    "git_remote": "",
+    "model": "",
+    "resolved_workdir": "",
+    "target_workdir": "",
+    "workdir": ""
+  },
+  "feature": {
+    "depends_on": [],
+    "id": "feat-a",
+    "priority": null
+  },
+  "id": "<BETA>",
+  "merge": {
+    "checkout_mode": null,
+    "merge_policy": null,
+    "merge_strategy": null,
+    "merge_target_branch": null,
+    "open_pr_before_merge": null,
+    "remote_branch_policy": null
+  },
+  "modified": "<TIME>",
+  "origin": {
+    "machine_affinity": "none",
+    "origin_client_id": null,
+    "origin_machine_id": null,
+    "origin_path": null
+  },
+  "path": "projects/<tasks>/task/<BETA>.md",
+  "priority": "medium",
+  "session_ids": [],
+  "status": "pending",
+  "tags": [
+    "task"
+  ],
+  "title": "Beta child",
+  "user_original_request": null
+}
+=== metadata partial (task_metadata)
+ERROR
+Error: task not found: "loop"
+
+Did you mean:
+- Zeta loop one (ID: <ZETA1>)
+- Zeta loop two (ID: <ZETA2>)
+=== metadata unknown (task_metadata)
+ERROR
+Error: task not found: "zzzzzzzz"
+
+Use the tasks tool to list all tasks
+=== metadata missing id (task_metadata)
+ERROR
+Error: provide a 'task_id' (ID or title)
+=== status mixed (tasks_status)
+OK
+## Task Status Check
+
+**Status:** Not all requested tasks are completed
+
+### Tasks
+- ○ **[HIGH] Alpha root** (`<ALPHA>`) - pending
+- ✓ **[MED] Delta done** (`<DELTA>`) - completed
+
+### Not Found
+- `zzzzzzzz` - no such task in project <tasks>
+
+These ids resolved to nothing, so no claim is made about them. A wrong
+project, a typo, or an archived task all look like this. Not-found ids
+are NOT treated as completed.
+
+**Summary:** 1/3 requested tasks completed
+=== status completed already (tasks_status)
+OK
+## Task Status Check
+
+**Wait:** condition met — all requested tasks are completed or validated (already true on the first check; nothing to wait for).
+
+**Status:** All requested tasks are completed
+
+### Tasks
+- ✓ **[MED] Delta done** (`<DELTA>`) - completed
+
+**Summary:** 1/1 requested tasks completed
+=== status wait not found (tasks_status)
+OK
+## Task Status Check
+
+**Wait:** not started — 1 requested id(s) resolved to no task, so the condition can never be met.
+
+**Status:** Not all requested tasks are completed
+
+### Not Found
+- `zzzzzzzz` - no such task in project <tasks>
+
+These ids resolved to nothing, so no claim is made about them. A wrong
+project, a typo, or an archived task all look like this. Not-found ids
+are NOT treated as completed.
+
+**Summary:** 0/1 requested tasks completed
+=== status missing ids (tasks_status)
+ERROR
+Error: provide at least one task ID in 'task_ids'
+=== trigger unscheduled (task_trigger)
+OK
+{
+  "operation": "task_trigger",
+  "project": "<tasks>",
+  "reason": "reset task from \"completed\" to pending",
+  "summary": "Task was triggered.",
+  "task_id": "<DELTA>",
+  "triggered": true
+}
+=== trigger unknown (task_trigger)
+ERROR
+Error: task not found: <tasks>/zzzzzzzz
+=== monitor enable (monitor_enable)
+OK
+Monitor "blocked-inspector" enabled for feature "feat-a":
+- **Task ID:** <MONITOR_ENABLE>
+- **Title:** Monitor: Blocked Task Inspector (feature feat-a)
+=== monitor enable again (monitor_enable)
+ERROR
+Error: monitor already exists for template "blocked-inspector" with this scope (id: <MONITOR_ENABLE>)
+=== monitor enable unknown template (monitor_enable)
+ERROR
+Error: unknown monitor template: no-such-template
+=== monitor enable missing args (monitor_enable)
+ERROR
+Error: Invalid request
+=== monitor disable (monitor_disable)
+OK
+Monitor "blocked-inspector" disabled for feature "feat-a" (task <MONITOR_ENABLE> deleted).
+=== monitor disable again (monitor_disable)
+ERROR
+Error: No monitor found for template "blocked-inspector" with given scope
+=== monitor disable missing template (monitor_disable)
+ERROR
+Error: templateId or template_id is required
+=== feature review enable (feature_review_enable)
+OK
+Feature Code Review enabled for feature "feat-a":
+- **Task ID:** <FEATURE_REVIEW_ENABLE>
+- **Title:** Monitor: Feature Code Review (feature feat-a)
+The review will trigger automatically when all feature tasks are completed.
+=== feature review enable again (feature_review_enable)
+ERROR
+Error: monitor already exists for template "feature-review" with this scope (id: <FEATURE_REVIEW_ENABLE>)
+=== feature review disable (feature_review_disable)
+OK
+Feature Code Review disabled for feature "feat-a" (task <FEATURE_REVIEW_ENABLE> deleted).
+=== feature review disable again (feature_review_disable)
+ERROR
+Error: No monitor found for template "feature-review" with given scope
+=== feature review enable empty feature (feature_review_enable)
+OK
+Feature Code Review enabled for feature "feat-none":
+- **Task ID:** <FEATURE_REVIEW_ENABLE_EMPTY_FEATURE>
+- **Title:** Monitor: Feature Code Review (feature feat-none)
+The review will trigger automatically when all feature tasks are completed.
+=== blocked inspector enable (blocked_inspector_enable)
+OK
+Blocked Task Inspector enabled for feature "feat-b":
+- **Task ID:** <BLOCKED_INSPECTOR_ENABLE>
+- **Title:** Monitor: Blocked Task Inspector (feature feat-b)
+The inspector will periodically check for blocked tasks and attempt to unblock them.
+=== blocked inspector enable again (blocked_inspector_enable)
+ERROR
+Error: monitor already exists for template "blocked-inspector" with this scope (id: <BLOCKED_INSPECTOR_ENABLE>)
+=== blocked inspector disable (blocked_inspector_disable)
+OK
+Blocked Task Inspector disabled for feature "feat-b" (task <BLOCKED_INSPECTOR_ENABLE> deleted).
+=== blocked inspector disable again (blocked_inspector_disable)
+ERROR
+Error: No monitor found for template "blocked-inspector" with given scope
+=== dream enable (dream_enable)
+OK
+Dream Mode enabled for project "<tasks>":
+- **Task ID:** <DREAM_ENABLE>
+- **Title:** Monitor: Dream Consolidation (project <tasks>)
+The dream will periodically consolidate project knowledge into a single injectable entry.
+=== dream enable again (dream_enable)
+ERROR
+Error: monitor already exists for template "dream" with this scope (id: <DREAM_ENABLE>)
+=== dream disable (dream_disable)
+OK
+Dream Mode disabled for project "<tasks>" (task <DREAM_ENABLE> deleted). Existing dream entries are preserved.
+=== dream disable again (dream_disable)
+ERROR
+Error: No monitor found for template "dream" with given scope
+=== resume missing task (resume_task_with_context)
+ERROR
+Error: task_id is required
+=== resume missing context (resume_task_with_context)
+ERROR
+Error: injected_context is required
+=== resume not abandoned (resume_task_with_context)
+OK
+Resumed task <GAMMA> in project <tasks>: resumed=false, mode=, injected_live=false, session=. Reason: task is not abandoned (status="blocked"); use trigger or force=true
+=== resume forced (resume_task_with_context)
+OK
+Resumed task <GAMMA> in project <tasks>: resumed=true, mode=rehydrate, injected_live=false, session=.
+=== resume forced again (resume_task_with_context)
+OK
+Resumed task <GAMMA> in project <tasks>: resumed=false, mode=, injected_live=false, session=. Reason: resume already requested; runner will pick up on next poll
+=== resume unknown task (resume_task_with_context)
+ERROR
+Error: task not found
+=== tasks after resume (tasks)
+OK
+## Tasks for project: <tasks>
+
+**Stats (matching your filters):** 4 ready | 1 waiting | 2 dep_blocked | 0 status_blocked | 0 not_pending
+
+### Ready (can start now)
+- **[HIGH] Alpha root** (`<ALPHA>`) - pending
+  Dependencies: none
+- **[LOW] Gamma blocked** (`<GAMMA>`) - pending
+  Dependencies: none
+- **[LOW] Monitor: Feature Code Review (feature feat-none)** (`<FEATURE_REVIEW_ENABLE_EMPTY_FEATURE>`) - pending
+  Dependencies: none
+- **[MED] Delta done** (`<DELTA>`) - pending
+  Dependencies: none
+
+### Waiting (deps incomplete)
+- **[MED] Beta child** (`<BETA>`) - pending
+  Depends on: <ALPHA>
+
+### Blocked
+- **[LOW] Zeta loop one** (`<ZETA1>`) - pending
+  Blocked by: circular_dependency
+- **[LOW] Zeta loop two** (`<ZETA2>`) - pending
+  Blocked by: circular_dependency
+
+### Circular Dependencies Detected
+- Cycle: <ZETA1> -> <ZETA2>
+
+=== dead tasks (tasks)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/p%20q": dial tcp <LOOPBACK>: connect: connection refused
+=== dead next (task_next)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/p/next": dial tcp <LOOPBACK>: connect: connection refused
+=== dead get (task_get)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/p": dial tcp <LOOPBACK>: connect: connection refused
+=== dead metadata (task_metadata)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/p": dial tcp <LOOPBACK>: connect: connection refused
+=== dead status (tasks_status)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/p/status": dial tcp <LOOPBACK>: connect: connection refused
+=== dead trigger (task_trigger)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/p/t%2F1/trigger": dial tcp <LOOPBACK>: connect: connection refused
+=== dead monitor enable (monitor_enable)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/monitors": dial tcp <LOOPBACK>: connect: connection refused
+=== dead monitor disable (monitor_disable)
+ERROR
+Error: request failed: Delete "http://<LOOPBACK>/api/v1/monitors/by-scope": dial tcp <LOOPBACK>: connect: connection refused
+=== dead feature review enable (feature_review_enable)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/monitors": dial tcp <LOOPBACK>: connect: connection refused
+=== dead feature review disable (feature_review_disable)
+ERROR
+Error: request failed: Delete "http://<LOOPBACK>/api/v1/monitors/by-scope": dial tcp <LOOPBACK>: connect: connection refused
+=== dead blocked inspector enable (blocked_inspector_enable)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/monitors": dial tcp <LOOPBACK>: connect: connection refused
+=== dead blocked inspector disable (blocked_inspector_disable)
+ERROR
+Error: request failed: Delete "http://<LOOPBACK>/api/v1/monitors/by-scope": dial tcp <LOOPBACK>: connect: connection refused
+=== dead dream enable (dream_enable)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/monitors": dial tcp <LOOPBACK>: connect: connection refused
+=== dead dream disable (dream_disable)
+ERROR
+Error: request failed: Delete "http://<LOOPBACK>/api/v1/monitors/by-scope": dial tcp <LOOPBACK>: connect: connection refused
+=== dead resume (resume_task_with_context)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/tasks/p/t/resume-with-context": dial tcp <LOOPBACK>: connect: connection refused

@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
 	"strconv"
+
+	"github.com/huynle/brain-api/sdk/brain"
 )
 
 // RegisterSupervisorTools registers the supervisor tools for MCP discovery.
@@ -25,8 +25,12 @@ func RegisterSupervisorTools(s *Server, client *APIClient) {
 		if runner == "" || session == "" {
 			return "", fmt.Errorf("runner_id and session_id are required")
 		}
-		var page json.RawMessage
-		if err := client.Request(ctx, http.MethodGet, "/control/runners/"+url.PathEscape(runner)+"/sessions/"+url.PathEscape(session)+"/tail", nil, map[string]string{"after": StringArg(args, "after", ""), "limit": strconv.Itoa(IntArg(args, "limit", 20)), "max_bytes": strconv.Itoa(IntArg(args, "max_bytes", 16384))}, &page); err != nil {
+		query := legacyQuery(map[string]string{"after": StringArg(args, "after", ""), "limit": strconv.Itoa(IntArg(args, "limit", 20)), "max_bytes": strconv.Itoa(IntArg(args, "max_bytes", 16384))})
+		page, err := sdkRaw(ctx, client, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.RemoteControl().SessionTail(ctx, runner, session, query)
+			return err
+		})
+		if err != nil {
 			return "", err
 		}
 
@@ -41,8 +45,12 @@ func registerSessionChildren(s *Server, client *APIClient) {
 		if runner == "" || session == "" {
 			return "", fmt.Errorf("runner_id and session_id are required")
 		}
-		var page json.RawMessage
-		if err := client.Request(ctx, http.MethodGet, "/control/runners/"+url.PathEscape(runner)+"/sessions/"+url.PathEscape(session)+"/descendants", nil, map[string]string{"limit": strconv.Itoa(IntArg(args, "limit", 20)), "after": StringArg(args, "after", "")}, &page); err != nil {
+		query := legacyQuery(map[string]string{"limit": strconv.Itoa(IntArg(args, "limit", 20)), "after": StringArg(args, "after", "")})
+		page, err := sdkRaw(ctx, client, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.RemoteControl().SessionDescendants(ctx, runner, session, query)
+			return err
+		})
+		if err != nil {
 			return "", err
 		}
 		return string(page), nil
@@ -55,8 +63,12 @@ func registerResourceHealth(s *Server, client *APIClient) {
 		if project == "" {
 			return "", fmt.Errorf("project is required")
 		}
-		var result json.RawMessage
-		if err := client.Request(ctx, http.MethodGet, "/events/resource-health", nil, map[string]string{"project_id": project, "task_id": StringArg(args, "task_id", "")}, &result); err != nil {
+		query := legacyQuery(map[string]string{"project_id": project, "task_id": StringArg(args, "task_id", "")})
+		result, err := sdkRaw(ctx, client, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Events().ResourceHealth(ctx, query)
+			return err
+		})
+		if err != nil {
 			return "", err
 		}
 		return string(result), nil
@@ -69,12 +81,15 @@ func registerEventWait(s *Server, client *APIClient) {
 		if project == "" {
 			return "", fmt.Errorf("project is required")
 		}
-		var result json.RawMessage
 		query := map[string]string{"project_id": project, "timeout_ms": strconv.Itoa(IntArg(args, "timeout_ms", 25000)), "limit": strconv.Itoa(IntArg(args, "limit", 100))}
 		for _, key := range []string{"task_id", "feature_id", "type", "after"} {
 			query[key] = StringArg(args, key, "")
 		}
-		if err := client.Request(ctx, http.MethodGet, "/events/wait", nil, query, &result); err != nil {
+		result, err := sdkRaw(ctx, client, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Events().Wait(ctx, legacyQuery(query))
+			return err
+		})
+		if err != nil {
 			return "", err
 		}
 		return string(result), nil
@@ -87,8 +102,11 @@ func registerDeliveryTools(s *Server, client *APIClient) {
 		if project == "" || task == "" {
 			return "", fmt.Errorf("project and task_id required")
 		}
-		var out json.RawMessage
-		if err := client.Request(ctx, http.MethodGet, "/tasks/"+url.PathEscape(project)+"/"+url.PathEscape(task)+"/delivery", nil, nil, &out); err != nil {
+		out, err := sdkRaw(ctx, client, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Tasks().Delivery(ctx, project, task)
+			return err
+		})
+		if err != nil {
 			return "", err
 		}
 		return string(out), nil
@@ -98,8 +116,12 @@ func registerDeliveryTools(s *Server, client *APIClient) {
 		if project == "" || task == "" {
 			return "", fmt.Errorf("project and task_id required")
 		}
-		var out json.RawMessage
-		if err := client.Request(ctx, http.MethodPost, "/tasks/"+url.PathEscape(project)+"/"+url.PathEscape(task)+"/delivery", map[string]any{"action": "verify", "expected_revision": IntArg(args, "expected_revision", -1)}, nil, &out); err != nil {
+		command := brain.DeliveryCommand{Action: brain.Verify, ExpectedRevision: IntArg(args, "expected_revision", -1)}
+		out, err := sdkRaw(ctx, client, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Tasks().VerifyDelivery(ctx, project, task, command, brain.RequestOptions{})
+			return err
+		})
+		if err != nil {
 			return "", err
 		}
 		return string(out), nil
@@ -123,8 +145,21 @@ func registerSupervisorReads(s *Server, client *APIClient) {
 			if manual, ok := args["manual"].(bool); ok && manual {
 				query["manual"] = "true"
 			}
-			var out json.RawMessage
-			if err := client.Request(ctx, http.MethodGet, "/supervision/"+path, nil, query, &out); err != nil {
+			out, err := sdkRaw(ctx, client, func(ctx context.Context, sc *brain.Client) error {
+				var err error
+				switch path {
+				case "capabilities":
+					// The registry read takes no parameters; the shared
+					// project/limit arguments are not sent.
+					_, err = sc.Supervision().Capabilities(ctx)
+				case "snapshot":
+					_, err = sc.Supervision().Snapshot(ctx, legacyQuery(query))
+				default:
+					_, err = sc.Supervision().DispatchPreview(ctx, legacyQuery(query))
+				}
+				return err
+			})
+			if err != nil {
 				return "", err
 			}
 			return string(out), nil
@@ -134,8 +169,17 @@ func registerSupervisorReads(s *Server, client *APIClient) {
 
 func registerOperationTools(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{Name: "supervisor_operation", Description: "Submit an idempotent prompt, contextual resume or trigger. Requires admin scope. Reuse the same ID after a timeout; a different payload with that ID conflicts. Accepted/delivered is not task completion. Unknown outcomes are never automatically replayed.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"id": {Type: "string"}, "operation": {Type: "string", Enum: []string{"prompt", "resume_with_context", "trigger"}}, "project": {Type: "string"}, "task_id": {Type: "string"}, "runner_id": {Type: "string"}, "instance_id": {Type: "string"}, "session_id": {Type: "string"}, "text": {Type: "string"}, "budget_id": {Type: "string"}, "budget_units": {Type: "number"}, "parent_reservation": {Type: "string"}, "checkpoint_id": {Type: "string"}, "checkpoint_revision": {Type: "number"}}, Required: []string{"id", "operation"}}}, func(ctx context.Context, args map[string]any) (string, error) {
-		var result json.RawMessage
-		if err := client.Request(ctx, http.MethodPost, "/supervision/operations", args, nil, &result); err != nil {
+		// The arguments are the command document, forwarded verbatim; the
+		// server's strict decoding is the only validator.
+		document, err := json.Marshal(args)
+		if err != nil {
+			return "", fmt.Errorf("marshal body: %w", err)
+		}
+		result, err := sdkRaw(ctx, client, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Supervision().SubmitOperation(ctx, document, brain.RequestOptions{})
+			return err
+		})
+		if err != nil {
 			return "", err
 		}
 		return string(result), nil
@@ -145,8 +189,11 @@ func registerOperationTools(s *Server, client *APIClient) {
 		if id == "" {
 			return "", fmt.Errorf("id required")
 		}
-		var result json.RawMessage
-		if err := client.Request(ctx, http.MethodGet, "/supervision/operations/"+url.PathEscape(id), nil, nil, &result); err != nil {
+		result, err := sdkRaw(ctx, client, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Supervision().GetOperation(ctx, id)
+			return err
+		})
+		if err != nil {
 			return "", err
 		}
 		return string(result), nil
@@ -155,17 +202,37 @@ func registerOperationTools(s *Server, client *APIClient) {
 
 func registerSupervisorLedgers(s *Server, client *APIClient) {
 	for name, path := range map[string]string{"supervisor_checkpoint": "checkpoints", "execution_budget": "budgets"} {
+		checkpoints := path == "checkpoints"
 		s.RegisterTool(Tool{Name: name, Description: "Read or update the durable " + path + " ledger. GET requires read scope; writes require admin scope. Explicit revisions prevent stale edits. Checkpoint answers are not verification. Budget units cover admitted work only; opaque executor tokens and cost are unknown.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"project": {Type: "string"}, "id": {Type: "string"}, "after": {Type: "string"}, "command": {Type: "object", Description: "Optional REST command object. Checkpoints: action request/answer/verify/supersede, expected_revision, checkpoint {id,project,artifact,question,answer,verification_reference}. Budgets: action configure/reserve/commit/cancel, expected_revision, budget {id,project,timezone,unit,limit}, reservation_id,parent_id,units."}}}}, func(ctx context.Context, args map[string]any) (string, error) {
-			method := http.MethodGet
-			var body any
-			query := map[string]string{"project": ResolveProjectArg(ctx, args), "id": StringArg(args, "id", ""), "after": StringArg(args, "after", "")}
-			if command, ok := args["command"].(map[string]any); ok {
-				method = http.MethodPost
-				body = command
-				query = nil
+			query := legacyQuery(map[string]string{"project": ResolveProjectArg(ctx, args), "id": StringArg(args, "id", ""), "after": StringArg(args, "after", "")})
+			call := func(ctx context.Context, sc *brain.Client) error {
+				var err error
+				if checkpoints {
+					_, err = sc.Supervision().Checkpoints(ctx, query)
+				} else {
+					_, err = sc.Supervision().Budget(ctx, query)
+				}
+				return err
 			}
-			var result json.RawMessage
-			if err := client.Request(ctx, method, "/supervision/"+path, body, query, &result); err != nil {
+			if command, ok := args["command"].(map[string]any); ok {
+				// The command document is forwarded verbatim; the server's
+				// strict decoding is the only validator.
+				document, err := json.Marshal(command)
+				if err != nil {
+					return "", fmt.Errorf("marshal body: %w", err)
+				}
+				call = func(ctx context.Context, sc *brain.Client) error {
+					var err error
+					if checkpoints {
+						_, err = sc.Supervision().UpdateCheckpoint(ctx, document, brain.RequestOptions{})
+					} else {
+						_, err = sc.Supervision().UpdateBudget(ctx, document, brain.RequestOptions{})
+					}
+					return err
+				}
+			}
+			result, err := sdkRaw(ctx, client, call)
+			if err != nil {
 				return "", err
 			}
 			return string(result), nil
@@ -177,8 +244,15 @@ func registerSupervisorLedgers(s *Server, client *APIClient) {
 		if project == "" || task == "" || !ok {
 			return "", fmt.Errorf("project, task_id and command required")
 		}
-		var result json.RawMessage
-		if err := client.Request(ctx, http.MethodPost, "/tasks/"+url.PathEscape(project)+"/"+url.PathEscape(task)+"/delivery", command, nil, &result); err != nil {
+		document, err := json.Marshal(command)
+		if err != nil {
+			return "", fmt.Errorf("marshal body: %w", err)
+		}
+		result, err := sdkRaw(ctx, client, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Tasks().SendDeliveryCommand(ctx, project, task, document, brain.RequestOptions{})
+			return err
+		})
+		if err != nil {
 			return "", err
 		}
 		return string(result), nil

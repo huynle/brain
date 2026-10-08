@@ -226,6 +226,9 @@ type golden struct {
 	scrubs []scrub
 	post   []func(string) string
 	out    strings.Builder
+	// keepTimes leaves RFC3339 text alone (transcripts whose times are all
+	// fixed inputs and must be compared verbatim).
+	keepTimes bool
 }
 
 func newGolden(t *testing.T, name string) *golden {
@@ -314,7 +317,9 @@ func (g *golden) normalize(s string) string {
 	for _, k := range keys {
 		s = strings.ReplaceAll(s, k, g.vars[k])
 	}
-	s = rfc3339Re.ReplaceAllString(s, "<TIME>")
+	if !g.keepTimes {
+		s = rfc3339Re.ReplaceAllString(s, "<TIME>")
+	}
 	s = loopbackRe.ReplaceAllString(s, "<LOOPBACK>")
 	for _, sc := range g.scrubs {
 		s = sc.re.ReplaceAllString(s, sc.repl)

@@ -63,11 +63,26 @@ func (l *actionLimiter) allow(key string) bool {
 	return l.counts[key] <= l.max
 }
 
-var (
-	controlPromptLimiter = newActionLimiter(controlPromptPerMinute)
-	controlSpawnLimiter  = newActionLimiter(controlSpawnPerMinute)
-	controlExecLimiter   = newActionLimiter(controlExecPerMinute)
-)
+// controlLimiters are one Handler's windows. Production single mode serves
+// the control routes from exactly one Handler for the process lifetime
+// (tenant graphs never serve them), so the limits are those of the whole
+// server; separate in-process servers no longer share package-level state.
+type controlLimiters struct {
+	prompt, spawn, exec *actionLimiter
+}
+
+// controlRateLimits returns this Handler's control limiters, created on
+// first use (Handlers built as struct literals included).
+func (h *Handler) controlRateLimits() *controlLimiters {
+	h.controlLimitsOnce.Do(func() {
+		h.controlLimits = controlLimiters{
+			prompt: newActionLimiter(controlPromptPerMinute),
+			spawn:  newActionLimiter(controlSpawnPerMinute),
+			exec:   newActionLimiter(controlExecPerMinute),
+		}
+	})
+	return &h.controlLimits
+}
 
 // limiterKey identifies the acting token for rate limiting.
 func limiterKey(r *http.Request) string {
@@ -274,7 +289,7 @@ const controlPromptMaxBytes = 24 << 20 // 24 MB
 // HandleControlPrompt handles POST .../sessions/{sessionId}/prompt — sends a
 // prompt via prompt_async (204; output streams via the events endpoint).
 func (h *Handler) HandleControlPrompt(w http.ResponseWriter, r *http.Request) {
-	if !controlPromptLimiter.allow(limiterKey(r)) {
+	if !h.controlRateLimits().prompt.allow(limiterKey(r)) {
 		WriteError(w, http.StatusTooManyRequests, "Too Many Requests", "prompt rate limit exceeded")
 		return
 	}
@@ -393,7 +408,7 @@ func (h *Handler) HandleControlProviders(w http.ResponseWriter, r *http.Request)
 // HandleControlSpawn handles POST /control/runners/{runnerId}/instances —
 // spawns a fresh ad-hoc OpenCode instance on the runner.
 func (h *Handler) HandleControlSpawn(w http.ResponseWriter, r *http.Request) {
-	if !controlSpawnLimiter.allow(limiterKey(r)) {
+	if !h.controlRateLimits().spawn.allow(limiterKey(r)) {
 		WriteError(w, http.StatusTooManyRequests, "Too Many Requests", "spawn rate limit exceeded")
 		return
 	}
@@ -639,7 +654,7 @@ func generateExecID() string {
 // stream is open every outcome — including the command's own failure — is
 // carried by the exec_exit event.
 func (h *Handler) HandleControlExec(w http.ResponseWriter, r *http.Request) {
-	if !controlExecLimiter.allow(limiterKey(r)) {
+	if !h.controlRateLimits().exec.allow(limiterKey(r)) {
 		WriteError(w, http.StatusTooManyRequests, "Too Many Requests", "exec rate limit exceeded")
 		return
 	}

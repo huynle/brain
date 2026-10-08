@@ -48,6 +48,8 @@ type Handler struct {
 	passwordTokens        PasswordTokenStore
 	passwordRefreshTTL    time.Duration
 	loginThrottle         *loginThrottle
+	controlLimitsOnce     sync.Once
+	controlLimits         controlLimiters
 }
 
 // HandlerOption configures a Handler.

@@ -1082,3 +1082,29 @@ func TestControlExecSignal_BridgeError(t *testing.T) {
 func (m *recordingEventService) Coverage() types.EventCoverage {
 	return types.EventCoverage{Buffered: 10, Capacity: 1000}
 }
+
+// Control rate limits belong to the Handler serving the routes: in
+// production that is the one single-mode handler (tenant graphs never serve
+// control routes), so the windows are unchanged there, while every in-process
+// server - each test's dedicated API - keeps its own instead of sharing
+// package-level state.
+func TestControlSpawnRateLimitIsPerHandler(t *testing.T) {
+	spawn := func(router http.Handler) int {
+		req := httptest.NewRequest(http.MethodPost, "/control/runners/r1/instances", strings.NewReader(`{"workdir":"/w"}`))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+	first := newControlTestRouter(&mockBridgeService{}, nil)
+	for i := 0; i < controlSpawnPerMinute; i++ {
+		if code := spawn(first); code != http.StatusCreated {
+			t.Fatalf("spawn %d: status %d", i+1, code)
+		}
+	}
+	if code := spawn(first); code != http.StatusTooManyRequests {
+		t.Fatalf("spawn over the per-minute limit: status %d", code)
+	}
+	if code := spawn(newControlTestRouter(&mockBridgeService{}, nil)); code != http.StatusCreated {
+		t.Fatalf("a second handler shares the first one's window: status %d", code)
+	}
+}

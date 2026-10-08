@@ -233,9 +233,10 @@ func TestRequestParity_RunnerControlSchedulerSnooze(t *testing.T) {
 		}
 		return out
 	}
-	// Spawns are rate limited per caller (6/min, process-wide, and every
-	// caller here is anonymous to the auth-less server), so this transcript
-	// and the golden spawn only 3 times per run; -count<=2 stays under it.
+	// Spawns are rate limited per caller (6/min) by the serving API's own
+	// handler; every caller here is anonymous to the auth-less server, but
+	// each test runs its own dedicated server, so repeated runs (-count=N)
+	// never share a window.
 	calls := []parityCall{
 		{"runner_status", map[string]any{"project": "parity"}},
 		{"runners", map[string]any{"status": "online", "limit": 5}},

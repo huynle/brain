@@ -33,3 +33,22 @@ func TestWebhookOperationRoutes(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+// A non-positive limit is invalid on the server (400), so it means "server
+// default" (50, the TypeScript default) and is omitted rather than sent.
+func TestWebhookDeliveriesOmitsNonPositiveLimit(t *testing.T) {
+	var got []string
+	c := client(t, func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.RequestURI())
+		_, _ = w.Write([]byte(`{"deliveries":[]}`))
+	}, brain.Config{})
+	for _, limit := range []int{0, -1, 7} {
+		if _, err := c.Webhooks().Deliveries(context.Background(), "w", limit); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{"/api/v1/webhooks/w/deliveries", "/api/v1/webhooks/w/deliveries", "/api/v1/webhooks/w/deliveries?limit=7"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("%v", got)
+	}
+}

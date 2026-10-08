@@ -1,0 +1,107 @@
+=== logs (task_logs)
+OK
+## Task Logs
+
+Project: <golden-obs>
+Task: <TASK_ID>
+Total entries: 0
+
+No log entries found.
+
+=== logs missing task (task_logs)
+ERROR
+Error: task_id is required
+=== logs unknown task (task_logs)
+ERROR
+Error: Task not found: zzzzzzzz in project <golden-obs>
+=== dispatch lease none (task_dispatch_lease)
+ERROR
+Error: dispatch lease not found
+=== dispatch lease missing task (task_dispatch_lease)
+ERROR
+Error: task_id is required
+=== placement reasons (task_placement_reasons)
+OK
+## Placement Reasons
+
+Project: <golden-obs>
+Task: <TASK_ID>
+Rejections recorded: 0
+
+No placement rejections recorded — the scheduler has never failed to find an eligible runner for this task.
+
+Note this table records rejections ONLY; a successful dispatch leaves no row here.
+If the task is not running, the cause is elsewhere: check runner_status(project:) for the pause dials
+and scheduler_status for the per-project skip reason.
+
+=== events invalid type (events_recent)
+ERROR
+Error: "automation.run" is not a type carried by the realtime event stream, so this filter cannot match here. Types it does carry: attachment.*, attention.*, control.*, entry.*, feature.*, project.*, reminder.*, runner.*, session.*, supervisor.*, task.*, webhook.* (use e.g. "task.*" for a whole family, or "*" for everything)
+=== events invalid source (events_recent)
+OK
+## Recent Events
+
+Found 0 events:
+
+No events matched.
+
+Searched <N> buffered event(s) (ring capacity 1000); oldest retained: <TIME>.
+This buffer is in-memory and starts empty after a restart; it is not a durable event log.
+
+=== events for seeded project (events_recent)
+OK
+## Recent Events
+
+Found 1 events:
+
+### entry.created
+- ID: <EVENT_ID>
+- Source: api
+- Timestamp: <TIME>
+- Project: <golden-obs>
+- Task: <TASK_ID>
+- Task path: projects/<golden-obs>/task/<TASK_ID>.md
+- Metadata:
+  - attachment_media_types: 
+  - entry_id: <TASK_ID>
+  - entry_type: task
+  - has_attachment: false
+  - tags: task
+  - title: Observed task
+
+
+=== automation runs none (automation_runs)
+OK
+## Automation Runs
+
+Found 0 runs:
+
+No automation runs found.
+
+=== automation run unknown (automation_run_get)
+ERROR
+Error: automation run not found
+=== automation run missing arg (automation_run_get)
+ERROR
+Error: run_id is required
+=== dead api logs (task_logs)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/p/t1/logs?limit=3": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api lease (task_dispatch_lease)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/p/t1/dispatch-lease": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api placement (task_placement_reasons)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/tasks/p/t1/placement-reasons": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api events (events_recent)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/events/recent?limit=4&project_id=p&type=task.%2A": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api runs (automation_runs)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/automation-runs?automation_id=a1&project=p": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api run get (automation_run_get)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/automation-runs/r1": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api scheduler (scheduler_status)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/scheduler/status": dial tcp <LOOPBACK>: connect: connection refused

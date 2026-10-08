@@ -1,0 +1,169 @@
+=== create missing project (goal_create)
+ERROR
+Error: provide a 'project'
+=== create missing title (goal_create)
+ERROR
+Error: provide a 'title'
+=== create invalid trigger (goal_create)
+OK
+Goal created: <goal-bad>
+- entry_id: <BAD_ENTRY_ID>
+- title: bad
+- project: <golden-goals>
+- status: active
+- trigger_source: both
+=== create (goal_create)
+OK
+Goal created: <GOAL_ID>
+- entry_id: <GOAL_ENTRY_ID>
+- title: Ship the thing
+- project: <golden-goals>
+- feature_id: golden-goal-feature
+- status: active
+- trigger_source: both
+=== create nested config (goal_create)
+OK
+Goal created: <GOAL2_ID>
+- entry_id: <GOAL2_ENTRY_ID>
+- title: Second goal
+- project: <golden-goals>
+- status: active
+- trigger_source: both
+=== list project (goal_list)
+OK
+## Goals (3)
+
+| goal_id | title | project | feature | status | trigger |
+|---|---|---|---|---|---|
+| <goal-bad> | bad | <golden-goals> | - | active | both |
+| <GOAL_ID> | Ship the thing | <golden-goals> | golden-goal-feature | active | both |
+| <GOAL2_ID> | Second goal | <golden-goals> | - | active | both |
+=== list feature (goal_list)
+OK
+## Goals (1)
+
+| goal_id | title | project | feature | status | trigger |
+|---|---|---|---|---|---|
+| <GOAL_ID> | Ship the thing | <golden-goals> | golden-goal-feature | active | both |
+=== list empty (goal_list)
+OK
+No goals found.
+
+Create one with `goal_create`.
+=== update missing id (goal_update)
+ERROR
+Error: provide a 'goal_id'
+=== update (goal_update)
+OK
+Goal updated: <GOAL_ID>
+- entry_id: <GOAL_ENTRY_ID>
+- title: Renamed goal
+- project: <golden-goals>
+- status: active
+- trigger_source: both
+=== update unknown (goal_update)
+ERROR
+Error: goal "nonexistent-goal": goal not found
+=== update invalid status (goal_update)
+OK
+Goal updated: <GOAL_ID>
+- entry_id: <GOAL_ENTRY_ID>
+- title: Renamed goal
+- project: <golden-goals>
+- status: exploded
+- trigger_source: both
+=== pause (goal_pause)
+OK
+Goal paused: <GOAL_ID>
+- entry_id: <GOAL_ENTRY_ID>
+- title: Renamed goal
+- project: <golden-goals>
+- status: blocked
+- trigger_source: both
+=== resume (goal_resume)
+OK
+Goal resumed: <GOAL_ID>
+- entry_id: <GOAL_ENTRY_ID>
+- title: Renamed goal
+- project: <golden-goals>
+- status: active
+- trigger_source: both
+=== pause unknown (goal_pause)
+ERROR
+Error: goal "nonexistent-goal": goal not found
+=== run (goal_run)
+OK
+## Reconcile: <GOAL2_ID>
+
+- Decision: need_work
+- Reason: no linked tasks; work must be generated
+- Project: <golden-goals>
+- Generated task: <GENERATED_TASK>
+- Linked tasks: 0
+=== run unknown (goal_run)
+ERROR
+Error: goal "nonexistent-goal": goal not found
+=== progress (goal_progress)
+OK
+## Progress: <GOAL2_ID>
+
+- entry_id: <GOAL2_ENTRY_ID>
+- Project: <golden-goals>
+- Goal: pending
+- Total: 1
+- Pending: 1
+- In Progress: 0
+- Completed: 0
+- Blocked: 0
+
+### Tasks
+- ○ **Goal: Second goal** (<GENERATED_TASK>)
+=== progress unknown (goal_progress)
+ERROR
+Error: goal "nonexistent-goal": goal not found
+=== audit (goal_audit)
+OK
+## Reconcile Audit: <GOAL2_ID>
+
+- **<TIME>** — need_work
+  Reason: no linked tasks; work must be generated
+  Generated task: <GENERATED_TASK>
+  Linked tasks: 0
+=== audit none (goal_audit)
+OK
+No reconcile audit records found for goal <GOAL_ID>.
+=== audit missing id (goal_audit)
+ERROR
+Error: provide a 'goal_id'
+=== archive (goal_archive)
+OK
+Goal archived: <GOAL_ID>
+- entry_id: <GOAL_ENTRY_ID>
+- title: Renamed goal
+- project: <golden-goals>
+- status: archived
+- trigger_source: both
+=== list all (goal_list)
+OK
+## Goals (3)
+
+| goal_id | title | project | feature | status | trigger |
+|---|---|---|---|---|---|
+| <goal-bad> | bad | <golden-goals> | - | active | both |
+| <GOAL_ID> | Renamed goal | <golden-goals> | - | archived | both |
+| <GOAL2_ID> | Second goal | <golden-goals> | - | active | both |
+=== delete (goal_delete)
+OK
+Goal deleted: <GOAL_ID>
+=== delete again (goal_delete)
+ERROR
+Error: goal "<GOAL_ID>": goal not found
+=== dead api list (goal_list)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/goals?project=p&status=all": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api run (goal_run)
+ERROR
+Error: request failed: Post "http://<LOOPBACK>/api/v1/goals/g1/run": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api audit (goal_audit)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/goals/g1/audit?limit=50": dial tcp <LOOPBACK>: connect: connection refused

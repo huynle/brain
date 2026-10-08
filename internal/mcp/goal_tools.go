@@ -3,11 +3,10 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/sdk/brain"
 )
 
 // RegisterGoalTools registers goal automation MCP tools on the server.
@@ -87,20 +86,22 @@ func registerBrainGoalCreate(s *Server, client *APIClient) {
 			return "", fmt.Errorf("provide a 'title'")
 		}
 
-		req := types.CreateGoalRequest{
+		req := brain.CreateGoalRequest{
 			Project:   project,
-			FeatureID: StringArg(args, "feature_id", ""),
+			FeatureId: optString(StringArg(args, "feature_id", "")),
 			Title:     title,
-			Content:   StringArg(args, "content", ""),
-			Config:    buildGoalConfig(args),
-			Action:    buildGoalAction(args),
+			Content:   optString(StringArg(args, "content", "")),
+			Config:    goalConfigToSDK(buildGoalConfig(args)),
+			Action:    automationActionToSDK(buildGoalAction(args)),
 		}
 
-		var goal types.GoalSummary
-		if err := client.Request(ctx, http.MethodPost, "/goals", req, nil, &goal); err != nil {
+		goal, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.GoalSummary, error) {
+			return sc.Goals().Create(ctx, req, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatGoalSummary("Goal created", &goal), nil
+		return formatGoalSummary("Goal created", goal), nil
 	})
 }
 
@@ -110,23 +111,22 @@ func registerBrainGoalList(s *Server, client *APIClient) {
 		Description: "List goal automations (active + blocked + completed by default), optionally filtered by project, feature_id, and status ('archived' or 'all' reveal hidden goals).",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"project": {Type: "string", Description: "Filter by project"}, "feature_id": {Type: "string", Description: "Filter by feature ID"}, "status": {Type: "string", Description: "Status filter: exact status, 'archived', or 'all' (default: active+blocked+completed)"}}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		query := map[string]string{}
-		if project := StringArg(args, "project", ""); project != "" {
-			query["project"] = project
+		params := &brain.GoalsListParams{
+			Project:   optString(StringArg(args, "project", "")),
+			FeatureId: optString(StringArg(args, "feature_id", "")),
+			Status:    optString(StringArg(args, "status", "")),
 		}
-		if featureID := StringArg(args, "feature_id", ""); featureID != "" {
-			query["feature_id"] = featureID
-		}
-		if status := StringArg(args, "status", ""); status != "" {
-			query["status"] = status
-		}
-		var resp struct {
-			Goals []types.GoalSummary `json:"goals"`
-		}
-		if err := client.Request(ctx, http.MethodGet, "/goals", nil, query, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.ListGoalsResponse, error) {
+			return sc.Goals().List(ctx, params)
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatGoalList(resp.Goals), nil
+		var goals []brain.GoalSummary
+		if resp.Goals != nil {
+			goals = *resp.Goals
+		}
+		return formatGoalList(goals), nil
 	})
 }
 
@@ -140,12 +140,14 @@ func registerBrainGoalUpdate(s *Server, client *APIClient) {
 		if goalID == "" {
 			return "", fmt.Errorf("provide a 'goal_id'")
 		}
-		req := buildUpdateGoalRequest(args)
-		var goal types.GoalSummary
-		if err := client.Request(ctx, http.MethodPatch, "/goals/"+url.PathEscape(goalID), req, nil, &goal); err != nil {
+		req := updateGoalRequestToSDK(buildUpdateGoalRequest(args))
+		goal, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.GoalSummary, error) {
+			return sc.Goals().Update(ctx, goalID, req, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatGoalSummary("Goal updated", &goal), nil
+		return formatGoalSummary("Goal updated", goal), nil
 	})
 }
 
@@ -159,12 +161,14 @@ func registerBrainGoalLifecycleAlias(s *Server, client *APIClient, name, descrip
 		if goalID == "" {
 			return "", fmt.Errorf("provide a 'goal_id'")
 		}
-		req := types.UpdateGoalRequest{Status: &status}
-		var goal types.GoalSummary
-		if err := client.Request(ctx, http.MethodPatch, "/goals/"+url.PathEscape(goalID), req, nil, &goal); err != nil {
+		req := brain.UpdateGoalRequest{Status: &status}
+		goal, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.GoalSummary, error) {
+			return sc.Goals().Update(ctx, goalID, req, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatGoalSummary(prefix, &goal), nil
+		return formatGoalSummary(prefix, goal), nil
 	})
 }
 
@@ -174,11 +178,13 @@ func registerBrainGoalRun(s *Server, client *APIClient) {
 		if goalID == "" {
 			return "", fmt.Errorf("provide a 'goal_id'")
 		}
-		var audit types.GoalReconcileAudit
-		if err := client.Request(ctx, http.MethodPost, "/goals/"+url.PathEscape(goalID)+"/run", nil, nil, &audit); err != nil {
+		audit, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.GoalReconcileAudit, error) {
+			return sc.Goals().Run(ctx, goalID, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatGoalRun(&audit), nil
+		return formatGoalRun(audit), nil
 	})
 }
 
@@ -188,11 +194,13 @@ func registerBrainGoalProgress(s *Server, client *APIClient) {
 		if goalID == "" {
 			return "", fmt.Errorf("provide a 'goal_id'")
 		}
-		var progress types.GoalProgressResponse
-		if err := client.Request(ctx, http.MethodGet, "/goals/"+url.PathEscape(goalID)+"/progress", nil, nil, &progress); err != nil {
+		progress, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.GoalProgressResponse, error) {
+			return sc.Goals().Progress(ctx, goalID)
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatGoalProgress(&progress), nil
+		return formatGoalProgress(progress), nil
 	})
 }
 
@@ -203,14 +211,17 @@ func registerBrainGoalAudit(s *Server, client *APIClient) {
 			return "", fmt.Errorf("provide a 'goal_id'")
 		}
 		limit := IntArg(args, "limit", 50)
-		query := map[string]string{"limit": fmt.Sprintf("%d", limit)}
-		var resp struct {
-			Audit []types.GoalReconcileAudit `json:"audit"`
-		}
-		if err := client.Request(ctx, http.MethodGet, "/goals/"+url.PathEscape(goalID)+"/audit", nil, query, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.GoalAuditResponse, error) {
+			return sc.Goals().Audit(ctx, goalID, limit)
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatGoalAudit(goalID, resp.Audit), nil
+		var audits []brain.GoalReconcileAudit
+		if resp.Audit != nil {
+			audits = *resp.Audit
+		}
+		return formatGoalAudit(goalID, audits), nil
 	})
 }
 
@@ -220,11 +231,10 @@ func registerBrainGoalDelete(s *Server, client *APIClient) {
 		if goalID == "" {
 			return "", fmt.Errorf("provide a 'goal_id'")
 		}
-		var resp struct {
-			Success bool   `json:"success"`
-			GoalID  string `json:"goal_id"`
-		}
-		if err := client.Request(ctx, http.MethodDelete, "/goals/"+url.PathEscape(goalID), nil, nil, &resp); err != nil {
+		if err := sdkDo(ctx, client, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Goals().Delete(ctx, goalID, brain.RequestOptions{})
+			return err
+		}); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Goal deleted: %s", goalID), nil
@@ -484,33 +494,122 @@ func stringSliceFromMap(m map[string]any, key string) []string {
 	return out
 }
 
-func formatGoalSummary(prefix string, goal *types.GoalSummary) string {
+// goalConfigToSDK maps the tool's argument-built GoalConfig onto the public
+// SDK DTO, keeping every omitempty field omitted when empty.
+func goalConfigToSDK(cfg types.GoalConfig) brain.GoalConfig {
+	return brain.GoalConfig{
+		Id:               cfg.ID,
+		Criteria:         optString(cfg.Criteria),
+		Validation:       optString(cfg.Validation),
+		Workdir:          optString(cfg.Workdir),
+		TriggerSource:    optString(cfg.TriggerSource),
+		TaskId:           optString(cfg.TaskID),
+		CompleteStatuses: optStringSlice(cfg.CompleteStatuses),
+		BlockedStatuses:  optStringSlice(cfg.BlockedStatuses),
+		Steering:         goalSteeringToSDK(cfg.Steering),
+	}
+}
+
+func goalSteeringToSDK(st *types.GoalSteering) *brain.GoalSteering {
+	if st == nil {
+		return nil
+	}
+	out := &brain.GoalSteering{Enabled: st.Enabled}
+	if st.CooldownMinutes != 0 {
+		n := st.CooldownMinutes
+		out.CooldownMinutes = &n
+	}
+	return out
+}
+
+func automationActionToSDK(a types.AutomationAction) brain.AutomationAction {
+	return brain.AutomationAction{
+		Type:               a.Type,
+		DirectPrompt:       optString(a.DirectPrompt),
+		Command:            optString(a.Command),
+		Agent:              optString(a.Agent),
+		Model:              optString(a.Model),
+		Executor:           optString(a.Executor),
+		TargetWorkdir:      optString(a.TargetWorkdir),
+		ExecutionMode:      optString(a.ExecutionMode),
+		SessionMode:        optString(a.SessionMode),
+		CompleteOnIdle:     a.CompleteOnIdle,
+		Timeout:            optString(a.Timeout),
+		RequiresCapability: optString(a.RequiresCapability),
+		SetStatus:          optString(a.SetStatus),
+	}
+}
+
+// updateGoalRequestToSDK preserves presence: a non-nil pointer (including one
+// to "" or []) is sent, which is how a field is cleared.
+func updateGoalRequestToSDK(r types.UpdateGoalRequest) brain.UpdateGoalRequest {
+	out := brain.UpdateGoalRequest{
+		Title:            r.Title,
+		Content:          r.Content,
+		Status:           r.Status,
+		FeatureId:        r.FeatureID,
+		Criteria:         r.Criteria,
+		Validation:       r.Validation,
+		Workdir:          r.Workdir,
+		TriggerSource:    r.TriggerSource,
+		TaskId:           r.TaskID,
+		CompleteStatuses: r.CompleteStatuses,
+		BlockedStatuses:  r.BlockedStatuses,
+		Steering:         goalSteeringToSDK(r.Steering),
+	}
+	if r.Action != nil {
+		action := automationActionToSDK(*r.Action)
+		out.Action = &action
+	}
+	return out
+}
+
+func optStringSlice(v []string) *[]string {
+	if len(v) == 0 {
+		return nil
+	}
+	return &v
+}
+
+// goalTriggerSource applies the server's trigger-source normalisation.
+func goalTriggerSource(cfg *brain.GoalConfig) string {
+	return (&types.GoalConfig{TriggerSource: derefString(cfg.TriggerSource)}).NormalizedTriggerSource()
+}
+
+func linkedTaskCount(tasks *[]brain.LinkedTaskSnapshot) int {
+	if tasks == nil {
+		return 0
+	}
+	return len(*tasks)
+}
+
+func formatGoalSummary(prefix string, goal *brain.GoalSummary) string {
 	if goal == nil {
 		return prefix
 	}
-	lines := []string{fmt.Sprintf("%s: %s", prefix, goal.GoalID)}
-	if goal.EntryID != "" {
-		lines = append(lines, fmt.Sprintf("- entry_id: %s", goal.EntryID))
+	lines := []string{fmt.Sprintf("%s: %s", prefix, goal.GoalId)}
+	if goal.EntryId != "" {
+		lines = append(lines, fmt.Sprintf("- entry_id: %s", goal.EntryId))
 	}
 	if goal.Title != "" {
 		lines = append(lines, fmt.Sprintf("- title: %s", goal.Title))
 	}
-	if goal.Project != "" {
-		lines = append(lines, fmt.Sprintf("- project: %s", goal.Project))
+	if v := derefString(goal.Project); v != "" {
+		lines = append(lines, fmt.Sprintf("- project: %s", v))
 	}
-	if goal.FeatureID != "" {
-		lines = append(lines, fmt.Sprintf("- feature_id: %s", goal.FeatureID))
+	if v := derefString(goal.FeatureId); v != "" {
+		lines = append(lines, fmt.Sprintf("- feature_id: %s", v))
 	}
 	if goal.Status != "" {
 		lines = append(lines, fmt.Sprintf("- status: %s", goal.Status))
 	}
 	if goal.Config != nil {
-		lines = append(lines, fmt.Sprintf("- trigger_source: %s", goal.Config.NormalizedTriggerSource()))
+		lines = append(lines, fmt.Sprintf("- trigger_source: %s", goalTriggerSource(goal.Config)))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func formatGoalList(goals []types.GoalSummary) string {
+func formatGoalList(goals []brain.GoalSummary) string {
 	if len(goals) == 0 {
 		return "No goals found.\n\nCreate one with `goal_create`."
 	}
@@ -518,71 +617,71 @@ func formatGoalList(goals []types.GoalSummary) string {
 	for _, goal := range goals {
 		trigger := ""
 		if goal.Config != nil {
-			trigger = goal.Config.NormalizedTriggerSource()
+			trigger = goalTriggerSource(goal.Config)
 		}
-		feature := goal.FeatureID
+		feature := derefString(goal.FeatureId)
 		if feature == "" {
 			feature = "-"
 		}
-		project := goal.Project
+		project := derefString(goal.Project)
 		if project == "" {
 			project = "(global)"
 		}
-		lines = append(lines, fmt.Sprintf("| %s | %s | %s | %s | %s | %s |", goal.GoalID, goal.Title, project, feature, goal.Status, trigger))
+		lines = append(lines, fmt.Sprintf("| %s | %s | %s | %s | %s | %s |", goal.GoalId, goal.Title, project, feature, goal.Status, trigger))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func formatGoalRun(audit *types.GoalReconcileAudit) string {
+func formatGoalRun(audit *brain.GoalReconcileAudit) string {
 	if audit == nil {
 		return "Reconcile: no audit returned"
 	}
-	lines := []string{fmt.Sprintf("## Reconcile: %s", audit.GoalID), "", fmt.Sprintf("- Decision: %s", audit.Decision), fmt.Sprintf("- Reason: %s", audit.Reason)}
-	if audit.Project != "" {
-		lines = append(lines, fmt.Sprintf("- Project: %s", audit.Project))
+	lines := []string{fmt.Sprintf("## Reconcile: %s", audit.GoalId), "", fmt.Sprintf("- Decision: %s", audit.Decision), fmt.Sprintf("- Reason: %s", audit.Reason)}
+	if v := derefString(audit.Project); v != "" {
+		lines = append(lines, fmt.Sprintf("- Project: %s", v))
 	}
-	if audit.FeatureID != "" {
-		lines = append(lines, fmt.Sprintf("- Feature: %s", audit.FeatureID))
+	if v := derefString(audit.FeatureId); v != "" {
+		lines = append(lines, fmt.Sprintf("- Feature: %s", v))
 	}
-	if audit.GeneratedTaskID != "" {
-		lines = append(lines, fmt.Sprintf("- Generated task: %s", audit.GeneratedTaskID))
+	if v := derefString(audit.GeneratedTaskId); v != "" {
+		lines = append(lines, fmt.Sprintf("- Generated task: %s", v))
 	}
-	lines = append(lines, fmt.Sprintf("- Linked tasks: %d", len(audit.LinkedTasks)))
+	lines = append(lines, fmt.Sprintf("- Linked tasks: %d", linkedTaskCount(audit.LinkedTasks)))
 	return strings.Join(lines, "\n")
 }
 
-func formatGoalProgress(p *types.GoalProgressResponse) string {
+func formatGoalProgress(p *brain.GoalProgressResponse) string {
 	if p == nil {
 		return "Progress: no data returned"
 	}
-	lines := []string{fmt.Sprintf("## Progress: %s", p.GoalID), ""}
-	if p.EntryID != "" {
-		lines = append(lines, fmt.Sprintf("- entry_id: %s", p.EntryID))
+	lines := []string{fmt.Sprintf("## Progress: %s", p.GoalId), ""}
+	if p.EntryId != "" {
+		lines = append(lines, fmt.Sprintf("- entry_id: %s", p.EntryId))
 	}
-	if p.Project != "" {
-		lines = append(lines, fmt.Sprintf("- Project: %s", p.Project))
+	if v := derefString(p.Project); v != "" {
+		lines = append(lines, fmt.Sprintf("- Project: %s", v))
 	}
-	if p.FeatureID != "" {
-		lines = append(lines, fmt.Sprintf("- Feature ID: %s", p.FeatureID))
+	if v := derefString(p.FeatureId); v != "" {
+		lines = append(lines, fmt.Sprintf("- Feature ID: %s", v))
 	}
 	if p.GoalStatus != "" {
 		lines = append(lines, fmt.Sprintf("- Goal: %s", p.GoalStatus))
 	}
 	// Only set for a feature-scoped goal; see GoalProgressResponse.
-	if p.FeatureStatus != "" {
-		lines = append(lines, fmt.Sprintf("- Feature: %s", p.FeatureStatus))
+	if v := derefString(p.FeatureStatus); v != "" {
+		lines = append(lines, fmt.Sprintf("- Feature: %s", v))
 	}
 	lines = append(lines, fmt.Sprintf("- Total: %d", p.Total), fmt.Sprintf("- Pending: %d", p.Pending), fmt.Sprintf("- In Progress: %d", p.InProgress), fmt.Sprintf("- Completed: %d", p.Completed), fmt.Sprintf("- Blocked: %d", p.Blocked))
-	if len(p.Tasks) > 0 {
+	if p.Tasks != nil && len(*p.Tasks) > 0 {
 		lines = append(lines, "", "### Tasks")
-		for _, task := range p.Tasks {
-			lines = append(lines, fmt.Sprintf("- %s **%s** (%s)", statusEmojiExtended(task.Status), task.Title, task.ID))
+		for _, task := range *p.Tasks {
+			lines = append(lines, fmt.Sprintf("- %s **%s** (%s)", statusEmojiExtended(task.Status), task.Title, task.Id))
 		}
 	}
 	return strings.Join(lines, "\n")
 }
 
-func formatGoalAudit(goalID string, audits []types.GoalReconcileAudit) string {
+func formatGoalAudit(goalID string, audits []brain.GoalReconcileAudit) string {
 	if len(audits) == 0 {
 		return fmt.Sprintf("No reconcile audit records found for goal %s.", goalID)
 	}
@@ -592,10 +691,10 @@ func formatGoalAudit(goalID string, audits []types.GoalReconcileAudit) string {
 		if audit.Reason != "" {
 			lines = append(lines, fmt.Sprintf("  Reason: %s", audit.Reason))
 		}
-		if audit.GeneratedTaskID != "" {
-			lines = append(lines, fmt.Sprintf("  Generated task: %s", audit.GeneratedTaskID))
+		if v := derefString(audit.GeneratedTaskId); v != "" {
+			lines = append(lines, fmt.Sprintf("  Generated task: %s", v))
 		}
-		lines = append(lines, fmt.Sprintf("  Linked tasks: %d", len(audit.LinkedTasks)))
+		lines = append(lines, fmt.Sprintf("  Linked tasks: %d", linkedTaskCount(audit.LinkedTasks)))
 	}
 	return strings.Join(lines, "\n")
 }

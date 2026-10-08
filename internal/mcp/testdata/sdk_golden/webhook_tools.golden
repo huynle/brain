@@ -1,0 +1,128 @@
+=== create missing url (webhook_create)
+ERROR
+Error: url is required
+=== create missing events (webhook_create)
+ERROR
+Error: events must be a non-empty array of event type strings
+=== create invalid url (webhook_create)
+ERROR
+Error: invalid URL "not a url": parse "not a url": invalid URI for request
+=== create (webhook_create)
+OK
+Webhook created successfully:
+
+- **ID:** <HOOK_ID>
+- **Name:** <golden-hook>
+- **URL:** <HOOK_PATH>/hook
+- **Events:** task.created, task.completed
+- **Enabled:** true
+- **Filter:** project=golden
+=== get (webhook_get)
+OK
+## Webhook configuration
+
+- **ID:** <HOOK_ID>
+- **Name:** <golden-hook>
+- **URL:** <HOOK_PATH>/hook
+- **Status:** enabled
+- **Events:** task.created, task.completed
+- **Filter:** project=golden
+- **Created:** <TIME>
+- **Updated:** <TIME>
+=== get missing arg (webhook_get)
+ERROR
+Error: id is required
+=== get unknown (webhook_get)
+ERROR
+Error: webhook not found: nonexistent. Use webhook_list to see existing webhooks
+=== update (webhook_update)
+OK
+## Webhook updated successfully
+
+- **ID:** <HOOK_ID>
+- **Name:** <golden-hook>-renamed
+- **URL:** <HOOK_PATH>/hook
+- **Status:** disabled
+- **Events:** task.completed
+- **Filter:** project=golden
+- **Created:** <TIME>
+- **Updated:** <TIME>
+=== update invalid url (webhook_update)
+ERROR
+Error: invalid URL "nope": parse "nope": invalid URI for request
+=== update unknown (webhook_update)
+ERROR
+Error: webhook not found: nonexistent. Use webhook_list to see existing webhooks
+=== toggle on (webhook_toggle)
+OK
+Webhook <HOOK_ID> (<golden-hook>-renamed) is now enabled.
+=== toggle unknown (webhook_toggle)
+ERROR
+Error: webhook not found: nonexistent. Use webhook_list to see existing webhooks
+=== list (webhook_list)
+OK
+## Webhooks (1)
+
+- **<golden-hook>-renamed** (`<HOOK_ID>`) - enabled
+  URL: <HOOK_PATH>/hook
+  Events: task.completed
+  Filter: project=golden
+=== list enabled only (webhook_list)
+OK
+## Webhooks (1)
+
+- **<golden-hook>-renamed** (`<HOOK_ID>`) - enabled
+  URL: <HOOK_PATH>/hook
+  Events: task.completed
+  Filter: project=golden
+=== deliveries none (webhook_deliveries)
+OK
+No deliveries recorded for webhook <HOOK_ID>.
+=== test (webhook_test)
+OK
+## Webhook test delivery result
+
+- **Delivery ID:** test_<HOOK_ID>_<MILLIS>
+- **Webhook ID:** <HOOK_ID>
+- **Event Type:** webhook.test
+- **Result:** success
+- **Status Code:** 200
+- **Latency:** <LATENCY>
+- **Created:** <TIME>
+=== deliveries (webhook_deliveries)
+OK
+## Webhook Deliveries for <HOOK_ID> (1)
+
+- **<DELIVERY_ID>** - success
+  Webhook ID: <HOOK_ID>
+  Event Type: webhook.test
+  Status Code: 200
+  Latency: <LATENCY>
+  Created: <TIME>
+=== test unknown (webhook_test)
+ERROR
+Error: webhook not found: nonexistent. Use webhook_list to see existing webhooks
+=== deliveries unknown (webhook_deliveries)
+ERROR
+Error: webhook not found: nonexistent. Use webhook_list to see existing webhooks
+=== delete (webhook_delete)
+OK
+Webhook <HOOK_ID> deleted successfully.
+=== delete again (webhook_delete)
+ERROR
+Error: webhook not found: <HOOK_ID>. Use webhook_list to see existing webhooks
+=== dead api list (webhook_list)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/webhooks?enabled=true": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api list all (webhook_list)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/webhooks?enabled=false": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api deliveries default limit (webhook_deliveries)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/webhooks/w1/deliveries": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api deliveries (webhook_deliveries)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/webhooks/w1/deliveries?limit=2": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api delete (webhook_delete)
+ERROR
+Error: request failed: Delete "http://<LOOPBACK>/api/v1/webhooks/w1": dial tcp <LOOPBACK>: connect: connection refused

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/sdk/brain"
 )
 
 // RegisterReminderTools registers the reminder MCP tools.
@@ -52,19 +53,19 @@ func reminderConfigProperties() map[string]Property {
 	}
 }
 
-func reminderConfigFromArgs(args map[string]any) types.ReminderConfig {
-	return types.ReminderConfig{
-		RemindAt:      StringArg(args, "remind_at", ""),
-		Timezone:      StringArg(args, "timezone", ""),
-		Action:        StringArg(args, "action", ""),
-		Repeat:        StringArg(args, "repeat", ""),
-		RepeatUntil:   StringArg(args, "repeat_until", ""),
-		Prompt:        StringArg(args, "prompt", ""),
-		Agent:         StringArg(args, "agent", ""),
-		Model:         StringArg(args, "model", ""),
-		Executor:      StringArg(args, "executor", ""),
-		ExecutionMode: StringArg(args, "execution_mode", ""),
-		TargetWorkdir: StringArg(args, "target_workdir", ""),
+func reminderConfigFromArgs(args map[string]any) brain.ReminderConfig {
+	return brain.ReminderConfig{
+		RemindAt:      optString(StringArg(args, "remind_at", "")),
+		Timezone:      optString(StringArg(args, "timezone", "")),
+		Action:        optString(StringArg(args, "action", "")),
+		Repeat:        optString(StringArg(args, "repeat", "")),
+		RepeatUntil:   optString(StringArg(args, "repeat_until", "")),
+		Prompt:        optString(StringArg(args, "prompt", "")),
+		Agent:         optString(StringArg(args, "agent", "")),
+		Model:         optString(StringArg(args, "model", "")),
+		Executor:      optString(StringArg(args, "executor", "")),
+		ExecutionMode: optString(StringArg(args, "execution_mode", "")),
+		TargetWorkdir: optString(StringArg(args, "target_workdir", "")),
 	}
 }
 
@@ -101,23 +102,27 @@ func registerBrainReminderCreate(s *Server, client *APIClient) {
 				"a reminder filed under the wrong project is one nobody will see")
 		}
 
-		req := types.CreateReminderRequest{
-			Project:   project,
-			FeatureID: StringArg(args, "feature_id", ""),
+		req := brain.CreateReminderRequest{
+			Project:   optString(project),
+			FeatureId: optString(StringArg(args, "feature_id", "")),
 			Title:     title,
-			Content:   StringArg(args, "content", ""),
-			Tags:      StringSliceArg(args, "tags"),
+			Content:   optString(StringArg(args, "content", "")),
 			Config:    reminderConfigFromArgs(args),
+		}
+		if tags := StringSliceArg(args, "tags"); len(tags) > 0 {
+			req.Tags = &tags
 		}
 		if global {
 			req.Global = &global
 		}
 
-		var out types.ReminderSummary
-		if err := client.Request(ctx, http.MethodPost, "/reminders", req, nil, &out); err != nil {
+		out, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.ReminderSummary, error) {
+			return sc.Reminders().Create(ctx, req, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatReminderSummary("Reminder created", &out), nil
+		return formatReminderSummary("Reminder created", out), nil
 	})
 }
 
@@ -134,36 +139,39 @@ func registerBrainReminderList(s *Server, client *APIClient) {
 			}, Description: "Filter by lifecycle state: armed (dated, waiting), undated, fired (waiting to be acknowledged), done, paused"},
 		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		q := map[string]string{}
-		if v := StringArg(args, "project", ""); v != "" {
-			q["project"] = v
+		params := &brain.RemindersListParams{
+			Project: optString(StringArg(args, "project", "")),
+			State:   optString(StringArg(args, "state", "")),
 		}
-		if v := StringArg(args, "state", ""); v != "" {
-			q["state"] = v
-		}
-		var out types.ReminderListResponse
-		if err := client.Request(ctx, http.MethodGet, "/reminders", nil, q, &out); err != nil {
+		out, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.ReminderListResponse, error) {
+			return sc.Reminders().List(ctx, params)
+		})
+		if err != nil {
 			return "", err
 		}
-		if len(out.Reminders) == 0 {
+		var reminders []brain.ReminderSummary
+		if out.Reminders != nil {
+			reminders = *out.Reminders
+		}
+		if len(reminders) == 0 {
 			return "No reminders found.", nil
 		}
 		var b strings.Builder
 		fmt.Fprintf(&b, "%d reminder(s):\n\n", out.Count)
-		for i := range out.Reminders {
-			r := out.Reminders[i]
-			fmt.Fprintf(&b, "- **%s** (`%s`) — %s", r.Title, r.ReminderID, r.State)
-			if r.RemindAt != "" {
-				fmt.Fprintf(&b, " · %s", r.RemindAt)
+		for i := range reminders {
+			r := reminders[i]
+			fmt.Fprintf(&b, "- **%s** (`%s`) — %s", r.Title, r.ReminderId, r.State)
+			if v := derefString(r.RemindAt); v != "" {
+				fmt.Fprintf(&b, " · %s", v)
 			}
-			if r.Repeat != "" {
-				fmt.Fprintf(&b, " · repeats %s", r.Repeat)
+			if v := derefString(r.Repeat); v != "" {
+				fmt.Fprintf(&b, " · repeats %s", v)
 			}
 			if r.Action != "" && r.Action != types.ReminderActionNotify {
 				fmt.Fprintf(&b, " · action: %s", r.Action)
 			}
-			if r.Project != "" {
-				fmt.Fprintf(&b, " · %s", r.Project)
+			if v := derefString(r.Project); v != "" {
+				fmt.Fprintf(&b, " · %s", v)
 			}
 			b.WriteString("\n")
 		}
@@ -183,11 +191,13 @@ func registerBrainReminderGet(s *Server, client *APIClient) {
 		if id == "" {
 			return "", fmt.Errorf("provide a 'reminder_id'")
 		}
-		var out types.ReminderSummary
-		if err := client.Request(ctx, http.MethodGet, "/reminders/"+url.PathEscape(id), nil, nil, &out); err != nil {
+		out, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.ReminderSummary, error) {
+			return sc.Reminders().Get(ctx, id)
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatReminderSummary("Reminder", &out), nil
+		return formatReminderSummary("Reminder", out), nil
 	})
 }
 
@@ -211,7 +221,7 @@ func registerBrainReminderUpdate(s *Server, client *APIClient) {
 		// Presence-based, not emptiness-based: an emptiness check cannot
 		// distinguish "clear the date" from "leave it alone", so clearing
 		// would be inexpressible.
-		req := types.UpdateReminderRequest{
+		req := brain.UpdateReminderRequest{
 			Title:         clearableStringArg(args, "title"),
 			Content:       clearableStringArg(args, "content"),
 			Status:        clearableStringArg(args, "status"),
@@ -227,11 +237,13 @@ func registerBrainReminderUpdate(s *Server, client *APIClient) {
 			ExecutionMode: clearableStringArg(args, "execution_mode"),
 			TargetWorkdir: clearableStringArg(args, "target_workdir"),
 		}
-		var out types.ReminderSummary
-		if err := client.Request(ctx, http.MethodPatch, "/reminders/"+url.PathEscape(id), req, nil, &out); err != nil {
+		out, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.ReminderSummary, error) {
+			return sc.Reminders().Update(ctx, id, req, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatReminderSummary("Reminder updated", &out), nil
+		return formatReminderSummary("Reminder updated", out), nil
 	})
 }
 
@@ -247,11 +259,13 @@ func registerBrainReminderAck(s *Server, client *APIClient) {
 		if id == "" {
 			return "", fmt.Errorf("provide a 'reminder_id'")
 		}
-		var out types.ReminderSummary
-		if err := client.Request(ctx, http.MethodPost, "/reminders/"+url.PathEscape(id)+"/ack", nil, nil, &out); err != nil {
+		out, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.ReminderSummary, error) {
+			return sc.Reminders().Ack(ctx, id, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatReminderSummary("Reminder acknowledged", &out), nil
+		return formatReminderSummary("Reminder acknowledged", out), nil
 	})
 }
 
@@ -271,12 +285,16 @@ func registerBrainReminderSnooze(s *Server, client *APIClient) {
 		if id == "" || at == "" {
 			return "", fmt.Errorf("provide a 'reminder_id' and a 'remind_at'")
 		}
+		// Stays on the legacy request client: the SDK's SnoozeReminderRequest
+		// types remind_at as time.Time, which would re-serialise the caller's
+		// offset/fraction and replace the server's validation message for a
+		// malformed value. The tool forwards the caller's string verbatim.
 		body := map[string]string{"remind_at": at}
 		var out types.ReminderSummary
 		if err := client.Request(ctx, http.MethodPost, "/reminders/"+url.PathEscape(id)+"/snooze", body, nil, &out); err != nil {
 			return "", err
 		}
-		return formatReminderSummary("Reminder snoozed", &out), nil
+		return formatReminderSummary("Reminder snoozed", reminderSummaryFromLegacy(&out)), nil
 	})
 }
 
@@ -292,48 +310,71 @@ func registerBrainReminderDelete(s *Server, client *APIClient) {
 		if id == "" {
 			return "", fmt.Errorf("provide a 'reminder_id'")
 		}
-		if err := client.Request(ctx, http.MethodDelete, "/reminders/"+url.PathEscape(id), nil, nil, nil); err != nil {
+		if err := sdkDo(ctx, client, func(ctx context.Context, sc *brain.Client) error {
+			_, err := sc.Reminders().Delete(ctx, id, brain.RequestOptions{})
+			return err
+		}); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Reminder `%s` deleted.", id), nil
 	})
 }
 
-func formatReminderSummary(heading string, r *types.ReminderSummary) string {
+// reminderSummaryFromLegacy adapts the legacy-decoded summary used by
+// reminder_snooze to the SDK shape the shared formatter renders.
+func reminderSummaryFromLegacy(r *types.ReminderSummary) *brain.ReminderSummary {
+	fireCount := r.FireCount
+	return &brain.ReminderSummary{
+		Title:           r.Title,
+		ReminderId:      r.ReminderID,
+		State:           r.State,
+		RemindAt:        optString(r.RemindAt),
+		Timezone:        optString(r.Timezone),
+		Action:          r.Action,
+		Repeat:          optString(r.Repeat),
+		RepeatUntil:     optString(r.RepeatUntil),
+		FireCount:       &fireCount,
+		Project:         optString(r.Project),
+		FiredAt:         optString(r.FiredAt),
+		GeneratedTaskId: optString(r.GeneratedTaskID),
+	}
+}
+
+func formatReminderSummary(heading string, r *brain.ReminderSummary) string {
 	if r == nil {
 		return heading
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: **%s**\n", heading, r.Title)
-	fmt.Fprintf(&b, "- reminder_id: `%s`\n", r.ReminderID)
+	fmt.Fprintf(&b, "- reminder_id: `%s`\n", r.ReminderId)
 	fmt.Fprintf(&b, "- state: %s\n", r.State)
-	if r.RemindAt != "" {
-		fmt.Fprintf(&b, "- remind_at: %s\n", r.RemindAt)
+	if v := derefString(r.RemindAt); v != "" {
+		fmt.Fprintf(&b, "- remind_at: %s\n", v)
 	} else {
 		b.WriteString("- remind_at: (undated — will not fire on its own)\n")
 	}
-	if r.Timezone != "" {
-		fmt.Fprintf(&b, "- timezone: %s\n", r.Timezone)
+	if v := derefString(r.Timezone); v != "" {
+		fmt.Fprintf(&b, "- timezone: %s\n", v)
 	}
 	fmt.Fprintf(&b, "- action: %s\n", r.Action)
-	if r.Repeat != "" {
-		fmt.Fprintf(&b, "- repeats: %s", r.Repeat)
-		if r.RepeatUntil != "" {
-			fmt.Fprintf(&b, " until %s", r.RepeatUntil)
+	if v := derefString(r.Repeat); v != "" {
+		fmt.Fprintf(&b, "- repeats: %s", v)
+		if until := derefString(r.RepeatUntil); until != "" {
+			fmt.Fprintf(&b, " until %s", until)
 		}
 		b.WriteString("\n")
 	}
-	if r.FireCount > 0 {
-		fmt.Fprintf(&b, "- fired %d time(s)\n", r.FireCount)
+	if n := derefInt(r.FireCount); n > 0 {
+		fmt.Fprintf(&b, "- fired %d time(s)\n", n)
 	}
-	if r.Project != "" {
-		fmt.Fprintf(&b, "- project: %s\n", r.Project)
+	if v := derefString(r.Project); v != "" {
+		fmt.Fprintf(&b, "- project: %s\n", v)
 	}
-	if r.FiredAt != "" {
-		fmt.Fprintf(&b, "- fired_at: %s\n", r.FiredAt)
+	if v := derefString(r.FiredAt); v != "" {
+		fmt.Fprintf(&b, "- fired_at: %s\n", v)
 	}
-	if r.GeneratedTaskID != "" {
-		fmt.Fprintf(&b, "- generated task: `%s`\n", r.GeneratedTaskID)
+	if v := derefString(r.GeneratedTaskId); v != "" {
+		fmt.Fprintf(&b, "- generated task: `%s`\n", v)
 	}
 	return b.String()
 }

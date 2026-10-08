@@ -1,0 +1,138 @@
+=== create refuses without project (reminder_create)
+ERROR
+Error: provide a 'project' (or set global: true) — a reminder filed under the wrong project is one nobody will see
+=== create missing title (reminder_create)
+ERROR
+Error: provide a 'title'
+=== create invalid remind_at (reminder_create)
+ERROR
+Error: remind_at "tomorrow" is not RFC3339 with an offset (e.g. <TIME> or <TIME>): parsing time "tomorrow" as "<TIME>07:00": cannot parse "tomorrow" as "2006"
+=== create task action without prompt (reminder_create)
+ERROR
+Error: action "task" requires a prompt: it is the instruction the generated task carries
+=== create undated (reminder_create)
+OK
+Reminder created: **Undated thing**
+- reminder_id: `<UNDATED_ID>`
+- state: undated
+- remind_at: (undated — will not fire on its own)
+- action: notify
+- project: <golden-reminders>
+
+=== create dated repeating (reminder_create)
+OK
+Reminder created: **Weekly check**
+- reminder_id: `<DATED_ID>`
+- state: armed
+- remind_at: <TIME>
+- timezone: America/Denver
+- action: task
+- repeats: weekly until <TIME>
+- project: <golden-reminders>
+
+=== get (reminder_get)
+OK
+Reminder: **Weekly check**
+- reminder_id: `<DATED_ID>`
+- state: armed
+- remind_at: <TIME>
+- timezone: America/Denver
+- action: task
+- repeats: weekly until <TIME>
+- project: <golden-reminders>
+
+=== get missing id arg (reminder_get)
+ERROR
+Error: provide a 'reminder_id'
+=== get unknown (reminder_get)
+ERROR
+Error: reminder not found
+=== list project (reminder_list)
+OK
+2 reminder(s):
+
+- **Undated thing** (`<UNDATED_ID>`) — undated · <golden-reminders>
+- **Weekly check** (`<DATED_ID>`) — armed · <TIME> · repeats weekly · action: task · <golden-reminders>
+
+=== list state undated (reminder_list)
+OK
+1 reminder(s):
+
+- **Undated thing** (`<UNDATED_ID>`) — undated · <golden-reminders>
+
+=== list empty project (reminder_list)
+OK
+No reminders found.
+=== list invalid state (reminder_list)
+OK
+No reminders found.
+=== update title (reminder_update)
+OK
+Reminder updated: **Renamed**
+- reminder_id: `<UNDATED_ID>`
+- state: undated
+- remind_at: (undated — will not fire on its own)
+- action: notify
+- project: <golden-reminders>
+
+=== update clears date (reminder_update)
+OK
+Reminder updated: **Weekly check**
+- reminder_id: `<DATED_ID>`
+- state: undated
+- remind_at: (undated — will not fire on its own)
+- timezone: America/Denver
+- action: task
+- project: <golden-reminders>
+
+=== update invalid action (reminder_update)
+ERROR
+Error: unknown reminder action "explode" (want one of: notify, task)
+=== update unknown (reminder_update)
+ERROR
+Error: reminder not found
+=== snooze missing args (reminder_snooze)
+ERROR
+Error: provide a 'reminder_id' and a 'remind_at'
+=== snooze (reminder_snooze)
+OK
+Reminder snoozed: **Renamed**
+- reminder_id: `<UNDATED_ID>`
+- state: armed
+- remind_at: <TIME>
+- action: notify
+- project: <golden-reminders>
+
+=== snooze invalid time (reminder_snooze)
+ERROR
+Error: remind_at "later" is not RFC3339 with an offset: parsing time "later" as "<TIME>07:00": cannot parse "later" as "2006"
+=== ack (reminder_ack)
+OK
+Reminder acknowledged: **Renamed**
+- reminder_id: `<UNDATED_ID>`
+- state: done
+- remind_at: <TIME>
+- action: notify
+- project: <golden-reminders>
+
+=== ack unknown (reminder_ack)
+ERROR
+Error: reminder not found
+=== delete (reminder_delete)
+OK
+Reminder `<DATED_ID>` deleted.
+=== delete again (reminder_delete)
+ERROR
+Error: reminder not found
+=== delete missing arg (reminder_delete)
+ERROR
+Error: provide a 'reminder_id'
+=== dead api get (reminder_get)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/reminders/abc": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api list (reminder_list)
+ERROR
+Error: request failed: Get "http://<LOOPBACK>/api/v1/reminders?project=<golden-reminders>&state=fired": dial tcp <LOOPBACK>: connect: connection refused
+=== dead api delete (reminder_delete)
+ERROR
+Error: request failed: Delete "http://<LOOPBACK>/api/v1/reminders/abc": dial tcp <LOOPBACK>: connect: connection refused

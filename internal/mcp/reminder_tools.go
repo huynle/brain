@@ -3,8 +3,6 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -285,16 +283,16 @@ func registerBrainReminderSnooze(s *Server, client *APIClient) {
 		if id == "" || at == "" {
 			return "", fmt.Errorf("provide a 'reminder_id' and a 'remind_at'")
 		}
-		// Stays on the legacy request client: the SDK's SnoozeReminderRequest
-		// types remind_at as time.Time, which would re-serialise the caller's
-		// offset/fraction and replace the server's validation message for a
-		// malformed value. The tool forwards the caller's string verbatim.
-		body := map[string]string{"remind_at": at}
-		var out types.ReminderSummary
-		if err := client.Request(ctx, http.MethodPost, "/reminders/"+url.PathEscape(id)+"/snooze", body, nil, &out); err != nil {
+		// remind_at is forwarded verbatim (the SDK carries it as a string): the
+		// server validates it and owns the error text, including reporting an
+		// unknown reminder before a malformed time.
+		out, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.ReminderSummary, error) {
+			return sc.Reminders().Snooze(ctx, id, brain.SnoozeReminderRequest{RemindAt: at}, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
-		return formatReminderSummary("Reminder snoozed", reminderSummaryFromLegacy(&out)), nil
+		return formatReminderSummary("Reminder snoozed", out), nil
 	})
 }
 
@@ -318,26 +316,6 @@ func registerBrainReminderDelete(s *Server, client *APIClient) {
 		}
 		return fmt.Sprintf("Reminder `%s` deleted.", id), nil
 	})
-}
-
-// reminderSummaryFromLegacy adapts the legacy-decoded summary used by
-// reminder_snooze to the SDK shape the shared formatter renders.
-func reminderSummaryFromLegacy(r *types.ReminderSummary) *brain.ReminderSummary {
-	fireCount := r.FireCount
-	return &brain.ReminderSummary{
-		Title:           r.Title,
-		ReminderId:      r.ReminderID,
-		State:           r.State,
-		RemindAt:        optString(r.RemindAt),
-		Timezone:        optString(r.Timezone),
-		Action:          r.Action,
-		Repeat:          optString(r.Repeat),
-		RepeatUntil:     optString(r.RepeatUntil),
-		FireCount:       &fireCount,
-		Project:         optString(r.Project),
-		FiredAt:         optString(r.FiredAt),
-		GeneratedTaskId: optString(r.GeneratedTaskID),
-	}
 }
 
 func formatReminderSummary(heading string, r *brain.ReminderSummary) string {

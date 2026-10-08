@@ -2,13 +2,12 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
 	"path/filepath"
 	"strings"
 
-	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/sdk/brain"
 )
 
 // RegisterControlTools registers explicit side-effecting runner/control MCP tools.
@@ -76,9 +75,10 @@ func registerBrainRunnerPauseFeature(s *Server, client *APIClient) {
 		if featureID == "" {
 			return "", fmt.Errorf("feature_id is required")
 		}
-		var resp controlSuccessResponse
-		path := "/tasks/runner/features/pause/" + url.PathEscape(projectID) + "/" + url.PathEscape(featureID)
-		if err := client.Request(ctx, http.MethodPost, path, map[string]any{}, nil, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.SuccessResponse, error) {
+			return sc.Dispatch().PauseFeature(ctx, projectID, featureID, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Paused dispatch for feature %s in project %s. Success: %t\n\nWork already running finishes; nothing new starts. The rest of %s is unaffected. Resume with runner_resume_feature.", featureID, projectID, resp.Success, projectID), nil
@@ -102,9 +102,10 @@ func registerBrainRunnerResumeFeature(s *Server, client *APIClient) {
 		if featureID == "" {
 			return "", fmt.Errorf("feature_id is required")
 		}
-		var resp controlSuccessResponse
-		path := "/tasks/runner/features/resume/" + url.PathEscape(projectID) + "/" + url.PathEscape(featureID)
-		if err := client.Request(ctx, http.MethodPost, path, map[string]any{}, nil, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.SuccessResponse, error) {
+			return sc.Dispatch().ResumeFeature(ctx, projectID, featureID, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Resumed dispatch for feature %s in project %s. Success: %t", featureID, projectID, resp.Success), nil
@@ -123,8 +124,10 @@ func registerBrainRunnerPauseProjectAutomations(s *Server, client *APIClient) {
 		if projectID == "" {
 			return "", fmt.Errorf("project is required")
 		}
-		var resp controlSuccessResponse
-		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/automations/pause/"+url.PathEscape(projectID), map[string]any{}, nil, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.SuccessResponse, error) {
+			return sc.Dispatch().PauseProjectAutomations(ctx, projectID, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Paused AUTOMATION-GENERATED task execution for project %s. Success: %t\n\nManual tasks are NOT paused by this call - they follow a separate dial (runner_pause_project).", projectID, resp.Success), nil
@@ -143,8 +146,10 @@ func registerBrainRunnerResumeProjectAutomations(s *Server, client *APIClient) {
 		if projectID == "" {
 			return "", fmt.Errorf("project is required")
 		}
-		var resp controlSuccessResponse
-		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/automations/resume/"+url.PathEscape(projectID), map[string]any{}, nil, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.SuccessResponse, error) {
+			return sc.Dispatch().ResumeProjectAutomations(ctx, projectID, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Resumed AUTOMATION-GENERATED task execution for project %s. Success: %t\n\nManual tasks follow a separate dial; if they are still paused, use runner_resume_project.", projectID, resp.Success), nil
@@ -163,8 +168,10 @@ func registerBrainRunnerPauseProject(s *Server, client *APIClient) {
 		if projectID == "" {
 			return "", fmt.Errorf("project is required")
 		}
-		var resp controlSuccessResponse
-		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/pause/"+url.PathEscape(projectID), map[string]any{}, nil, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.SuccessResponse, error) {
+			return sc.Dispatch().PauseProject(ctx, projectID, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Paused MANUAL task execution for project %s. Success: %t\n\n%s", projectID, resp.Success, automationsStillRunNote(projectID)), nil
@@ -183,8 +190,10 @@ func registerBrainRunnerResumeProject(s *Server, client *APIClient) {
 		if projectID == "" {
 			return "", fmt.Errorf("project is required")
 		}
-		var resp controlSuccessResponse
-		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/resume/"+url.PathEscape(projectID), map[string]any{}, nil, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.SuccessResponse, error) {
+			return sc.Dispatch().ResumeProject(ctx, projectID, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Resumed MANUAL task execution for project %s. Success: %t\n\nThe automation dial is separate and is unchanged by this call; use runner_resume_project_automations if automation-generated tasks are also paused.", projectID, resp.Success), nil
@@ -202,8 +211,10 @@ func registerBrainRunnerPauseAll(s *Server, client *APIClient) {
 		if !BoolArg(args, "confirm", false) {
 			return "", fmt.Errorf("confirm=true is required to pause runner execution for all projects")
 		}
-		var resp controlSuccessResponse
-		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/pause", map[string]any{}, nil, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.SuccessResponse, error) {
+			return sc.Dispatch().PauseAll(ctx, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Paused MANUAL task execution for all projects. Success: %t\n\nAutomation-generated tasks are NOT affected - they follow the separate automations dial.", resp.Success), nil
@@ -221,8 +232,10 @@ func registerBrainRunnerResumeAll(s *Server, client *APIClient) {
 		if !BoolArg(args, "confirm", false) {
 			return "", fmt.Errorf("confirm=true is required to resume runner execution for all projects")
 		}
-		var resp controlSuccessResponse
-		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/resume", map[string]any{}, nil, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.SuccessResponse, error) {
+			return sc.Dispatch().ResumeAll(ctx, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Resumed MANUAL task execution for all projects. Success: %t\n\nThe automations dial is separate and is unchanged by this call.", resp.Success), nil
@@ -251,18 +264,21 @@ func registerBrainControlSendPrompt(s *Server, client *APIClient) {
 		if text == "" {
 			return "", fmt.Errorf("text is required")
 		}
-		body := controlPromptBody{Text: text}
-		if agent := StringArg(args, "agent", ""); agent != "" {
-			body.Agent = agent
-		}
+		body := brain.ControlPromptRequest{Text: &text, Agent: optString(StringArg(args, "agent", ""))}
 		providerID := StringArgAlias(args, "", "provider_id", "providerID")
 		modelID := StringArgAlias(args, "", "model_id", "modelID")
 		if providerID != "" && modelID != "" {
-			body.Model = &controlPromptModel{ProviderID: providerID, ModelID: modelID}
+			body.Model = &brain.ControlPromptModel{ProviderID: providerID, ModelID: modelID}
+		}
+		raw, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*json.RawMessage, error) {
+			r, err := sc.Control().SendPrompt(ctx, ids.runnerID, ids.instanceID, ids.sessionID, body, brain.RequestOptions{})
+			return &r, err
+		})
+		if err != nil {
+			return "", err
 		}
 		var resp map[string]any
-		path := controlSessionPath(ids.runnerID, ids.instanceID, ids.sessionID) + "/prompt"
-		if err := client.Request(ctx, http.MethodPost, path, body, nil, &resp); err != nil {
+		if err := decodeLegacyBody(*raw, &resp); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Sent prompt to session %s on runner %s instance %s.", ids.sessionID, ids.runnerID, ids.instanceID), nil
@@ -283,9 +299,15 @@ func registerBrainControlAbortSession(s *Server, client *APIClient) {
 		if !ok.valid {
 			return "", fmt.Errorf("%s", ok.message)
 		}
+		raw, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*json.RawMessage, error) {
+			r, err := sc.Control().AbortSession(ctx, ids.runnerID, ids.instanceID, ids.sessionID, brain.RequestOptions{})
+			return &r, err
+		})
+		if err != nil {
+			return "", err
+		}
 		var resp controlSuccessResponse
-		path := controlSessionPath(ids.runnerID, ids.instanceID, ids.sessionID) + "/abort"
-		if err := client.Request(ctx, http.MethodPost, path, map[string]any{}, nil, &resp); err != nil {
+		if err := decodeLegacyBody(*raw, &resp); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Abort requested for session %s on runner %s instance %s. Success: %t", ids.sessionID, ids.runnerID, ids.instanceID, resp.Success), nil
@@ -328,10 +350,16 @@ func registerBrainControlPermission(s *Server, client *APIClient) {
 		default:
 			return "", fmt.Errorf("response must be once, always, or reject")
 		}
-		body := controlPermissionBody{Response: response}
+		body := brain.ControlPermissionRequest{Response: brain.ControlPermissionRequestResponse(response)}
+		raw, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*json.RawMessage, error) {
+			r, err := sc.Control().RespondPermission(ctx, ids.runnerID, ids.instanceID, ids.sessionID, permissionID, body, brain.RequestOptions{})
+			return &r, err
+		})
+		if err != nil {
+			return "", err
+		}
 		var resp controlSuccessResponse
-		path := controlSessionPath(ids.runnerID, ids.instanceID, ids.sessionID) + "/permissions/" + url.PathEscape(permissionID)
-		if err := client.Request(ctx, http.MethodPost, path, body, nil, &resp); err != nil {
+		if err := decodeLegacyBody(*raw, &resp); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Responded %s to permission %s for session %s on runner %s instance %s. Success: %t", response, permissionID, ids.sessionID, ids.runnerID, ids.instanceID, resp.Success), nil
@@ -361,18 +389,19 @@ func registerBrainControlSpawnInstance(s *Server, client *APIClient) {
 		if !filepath.IsAbs(workdir) {
 			return "", fmt.Errorf("workdir must be an absolute path")
 		}
-		body := controlSpawnBody{
-			Agent:   StringArg(args, "agent", ""),
-			Model:   StringArg(args, "model", ""),
-			Title:   StringArg(args, "title", ""),
+		body := brain.SpawnInstanceSpec{
+			Agent:   optString(StringArg(args, "agent", "")),
+			Model:   optString(StringArg(args, "model", "")),
+			Title:   optString(StringArg(args, "title", "")),
 			Workdir: workdir,
 		}
-		var resp controlSpawnResponse
-		path := "/control/runners/" + url.PathEscape(runnerID) + "/instances"
-		if err := client.Request(ctx, http.MethodPost, path, body, nil, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.ControlSpawnResponse, error) {
+			return sc.Control().SpawnInstance(ctx, runnerID, body, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Spawned control instance on runner %s. Instance: %s. Workdir: %s. Success: %t", runnerID, resp.Instance.InstanceID, workdir, resp.Success), nil
+		return fmt.Sprintf("Spawned control instance on runner %s. Instance: %s. Workdir: %s. Success: %t", runnerID, resp.Instance.InstanceId, workdir, resp.Success), nil
 	})
 }
 
@@ -397,9 +426,10 @@ func registerBrainControlKillInstance(s *Server, client *APIClient) {
 		if !BoolArg(args, "confirm", false) {
 			return "", fmt.Errorf("confirm=true is required to kill a control instance")
 		}
-		var resp controlSuccessResponse
-		path := "/control/runners/" + url.PathEscape(runnerID) + "/instances/" + url.PathEscape(instanceID)
-		if err := client.Request(ctx, http.MethodDelete, path, nil, nil, &resp); err != nil {
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.SuccessResponse, error) {
+			return sc.Control().KillInstance(ctx, runnerID, instanceID, brain.RequestOptions{})
+		})
+		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Killed control instance %s on runner %s. Success: %t", instanceID, runnerID, resp.Success), nil
@@ -408,36 +438,6 @@ func registerBrainControlKillInstance(s *Server, client *APIClient) {
 
 type controlSuccessResponse struct {
 	Success bool `json:"success"`
-}
-
-type controlSpawnResponse struct {
-	Success  bool                   `json:"success"`
-	Instance types.OpencodeInstance `json:"instance"`
-}
-
-type controlSpawnBody struct {
-	Agent   string `json:"agent,omitempty"`
-	Model   string `json:"model,omitempty"`
-	Title   string `json:"title,omitempty"`
-	Workdir string `json:"workdir"`
-}
-
-type controlPromptBody struct {
-	Agent string              `json:"agent,omitempty"`
-	Model *controlPromptModel `json:"model,omitempty"`
-	Text  string              `json:"text"`
-}
-
-type controlPromptModel struct {
-	ModelID    string `json:"modelID"`
-	ProviderID string `json:"providerID"`
-}
-
-// controlPermissionBody is proxied to the OpenCode instance untouched, so
-// it must carry exactly OpenCode's vocabulary. The former Remember field
-// was not part of that shape and was silently ignored downstream.
-type controlPermissionBody struct {
-	Response string `json:"response"`
 }
 
 type controlIDs struct {
@@ -467,10 +467,4 @@ func requireControlSessionIDs(args map[string]any) (controlIDs, validationResult
 		return ids, validationResult{message: "session_id is required"}
 	}
 	return ids, validationResult{valid: true}
-}
-
-func controlSessionPath(runnerID, instanceID, sessionID string) string {
-	return "/control/runners/" + url.PathEscape(runnerID) +
-		"/instances/" + url.PathEscape(instanceID) +
-		"/sessions/" + url.PathEscape(sessionID)
 }

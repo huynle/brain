@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -150,4 +151,48 @@ func derefInt(n *int) int {
 		return 0
 	}
 	return *n
+}
+
+// fromSDK copies an SDK DTO into the internal/types shape the existing
+// formatters read. Both are generated from / pinned to the same wire schema
+// (internal/sdkcontract parity test), so a JSON round trip is lossless and
+// keeps agent-facing text unchanged.
+func fromSDK[T any](v any) (T, error) {
+	var out T
+	data, err := json.Marshal(v)
+	if err == nil {
+		err = json.Unmarshal(data, &out)
+	}
+	if err != nil {
+		return out, fmt.Errorf("decode response: %w", err)
+	}
+	return out, nil
+}
+
+// decodeLegacyBody reproduces the legacy client's handling of a proxied
+// response body: decode only when non-empty, with the same error text.
+func decodeLegacyBody(raw []byte, out any) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	return nil
+}
+
+// sdkRead runs an SDK call and converts its DTO with fromSDK.
+func sdkRead[T any](ctx context.Context, c *APIClient, fn func(context.Context, *brain.Client) (any, error)) (T, error) {
+	var zero T
+	out, err := sdkCall(ctx, c, func(ctx context.Context, sc *brain.Client) (*any, error) {
+		v, err := fn(ctx, sc)
+		if err != nil {
+			return nil, err
+		}
+		return &v, nil
+	})
+	if err != nil {
+		return zero, err
+	}
+	return fromSDK[T](*out)
 }

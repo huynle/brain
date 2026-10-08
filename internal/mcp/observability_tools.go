@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -85,10 +84,10 @@ func registerBrainTaskDispatchLease(s *Server, client *APIClient) {
 			return "", fmt.Errorf("task_id is required")
 		}
 
-		path := fmt.Sprintf("/tasks/%s/%s/dispatch-lease", url.PathEscape(projectID), url.PathEscape(taskID))
-
-		var resp types.DispatchLease
-		if err := client.Request(ctx, http.MethodGet, path, nil, nil, &resp); err != nil {
+		resp, err := sdkRead[types.DispatchLease](ctx, client, func(ctx context.Context, sc *brain.Client) (any, error) {
+			return sc.Tasks().DispatchLease(ctx, projectID, taskID)
+		})
+		if err != nil {
 			return "", err
 		}
 
@@ -119,10 +118,10 @@ func registerBrainTaskPlacementReasons(s *Server, client *APIClient) {
 			return "", fmt.Errorf("task_id is required")
 		}
 
-		path := fmt.Sprintf("/tasks/%s/%s/placement-reasons", url.PathEscape(projectID), url.PathEscape(taskID))
-
-		var resp types.PlacementReasonListResponse
-		if err := client.Request(ctx, http.MethodGet, path, nil, nil, &resp); err != nil {
+		resp, err := sdkRead[types.PlacementReasonListResponse](ctx, client, func(ctx context.Context, sc *brain.Client) (any, error) {
+			return sc.Tasks().PlacementReasons(ctx, projectID, taskID)
+		})
+		if err != nil {
 			return "", err
 		}
 
@@ -269,8 +268,10 @@ func registerBrainSchedulerStatus(s *Server, client *APIClient) {
 			Properties: map[string]Property{},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		var resp types.SchedulerStatus
-		if err := client.Request(ctx, http.MethodGet, "/scheduler/status", nil, nil, &resp); err != nil {
+		resp, err := sdkRead[types.SchedulerStatus](ctx, client, func(ctx context.Context, sc *brain.Client) (any, error) {
+			return sc.Scheduler().Status(ctx)
+		})
+		if err != nil {
 			return "", err
 		}
 

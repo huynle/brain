@@ -26,7 +26,10 @@ import { listAutomationData } from "../lib/api";
 import type { BrainEntry } from "../lib/types";
 
 export interface UseAutomationsResult {
+  /** Rows to list: global and project-owned automations, never bindings. */
   automations: BrainEntry[];
+  /** Per-project bindings of the listed automations (entries with `extends`). */
+  bindings: BrainEntry[];
   isLoading: boolean;
   error: unknown;
   refetch: () => void;
@@ -52,6 +55,7 @@ export function useAutomations(projectId: string): UseAutomationsResult {
     isLoading: q.isPending && q.fetchStatus !== "idle",
     error: q.error,
     automations: q.data?.automations ?? [],
+    bindings: q.data?.bindings ?? [],
     refetch: () => void q.refetch(),
   };
 }

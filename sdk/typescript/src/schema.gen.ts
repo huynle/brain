@@ -1677,6 +1677,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/calendars": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Status of every configured calendar source
+         * @description Read-only. Lists each configured calendar source. A builtin source carries only its name and kind. An ics source reports when it was last fetched and last succeeded, its event count, its last error, and whether it is stale. Feed URLs and file paths are never returned.
+         */
+        get: operations["calendars.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/runner/status": {
         parameters: {
             query?: never;
@@ -2999,6 +3019,21 @@ export interface components {
             starts_at?: string;
             expires_at?: string;
             max_runs?: number;
+        };
+        CalendarsResponse: {
+            calendars: components["schemas"]["CalendarStatus"][];
+        };
+        CalendarStatus: {
+            name: string;
+            /** @enum {string} */
+            kind: "builtin" | "ics";
+            /** Format: date-time */
+            last_fetch?: string;
+            /** Format: date-time */
+            last_success?: string;
+            event_count?: number;
+            last_error?: string;
+            stale?: boolean;
         };
         RunAutomationRequest: {
             path: string;
@@ -8145,6 +8180,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AutomationEffective"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "calendars.list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Calendar source statuses */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarsResponse"];
                 };
             };
             /** @description Legacy error */

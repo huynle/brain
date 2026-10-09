@@ -2249,6 +2249,21 @@ paths:
       responses:
         default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200': {description: Effective view, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationEffective'}}}}
+  /calendars:
+    get:
+      operationId: calendars.list
+      summary: Status of every configured calendar source
+      description: >-
+        Read-only. Lists each configured calendar source. A builtin source carries only
+        its name and kind. An ics source reports when it was last fetched and last
+        succeeded, its event count, its last error, and whether it is stale. Feed URLs
+        and file paths are never returned.
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200': {description: Calendar source statuses, content: {application/json: {schema: {$ref: '#/components/schemas/CalendarsResponse'}}}}
   /tasks/runner/status:
     get:
       operationId: runners.status
@@ -3510,6 +3525,24 @@ components:
         starts_at: {type: string}
         expires_at: {type: string}
         max_runs: {type: integer}
+    CalendarsResponse:
+      type: object
+      required: [calendars]
+      properties:
+        calendars:
+          type: array
+          items: {$ref: '#/components/schemas/CalendarStatus'}
+    CalendarStatus:
+      type: object
+      required: [name, kind]
+      properties:
+        name: {type: string}
+        kind: {type: string, enum: [builtin, ics]}
+        last_fetch: {type: string, format: date-time}
+        last_success: {type: string, format: date-time}
+        event_count: {type: integer}
+        last_error: {type: string}
+        stale: {type: boolean}
     RunAutomationRequest:
       type: object
       required: [path]

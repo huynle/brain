@@ -36,7 +36,7 @@ The installed Node fixture now also submits a task, checks provenance, lists its
 actual run audit and fetches each audit entry. These assertions are checked in,
 not only held in an independent verifier overlay.
 `TestDeliveredContractMatchesRouterAndInventory` checks every delivered operation
-against the real Chi route inventory and its table row below (147 including capability discovery).
+against the real Chi route inventory and its table row below (148 including capability discovery).
 Task `status/metadata/claimStatus` and feature `list/ready/get` are implemented
 in both SDKs. External Go and installed Node consumers prove mixed found/missing
 status IDs, empty-ID validation, metadata, no claim acquisition, pending-to-completed
@@ -259,6 +259,7 @@ are conservative and need per-handler proof before any script allowlisting.
 | automations.runs | GET /automation-runs | R | visible execution/source output |
 | automations.getRun | GET /automation-runs/{runId} | R | execution/source output |
 | automations.effective | GET /automations/{id}/effective | R | project-scoped effective config; read-only (records entry access like entries.get) |
+| calendars.list | GET /calendars | R | configured calendar source status; read-only, never a feed URL or path |
 | reminders.list | GET /reminders | R | visible reminders |
 | reminders.get | GET /reminders/{reminderId} | R | reminder read |
 | reminders.create | POST /reminders | A | content/work/notices; reminder edit + action permissions |

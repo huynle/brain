@@ -10,6 +10,10 @@ import { reportBackgroundResult } from "../store/backgroundOperations";
  *
  * Per-project factory like the task/feature contexts: executeAutomation
  * needs the project id alongside the entry path.
+ *
+ * Project scope (a global automation viewed in one project) is different:
+ * its toggles and saves write that project's binding and never the global
+ * entry. See lib/automationBindings for the plans and bodies.
  */
 import { useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -18,11 +22,13 @@ import { useModal } from "../store/modal";
 import { useUI } from "../store/ui";
 import { useWorkspace } from "../store/workspace";
 import {
-  createEntry,
+  createAutomationBinding,
+  deleteAutomationBinding,
   deleteEntry,
   executeAutomation,
+  saveAutomationBindingOverrides,
+  setAutomationBindingStatus,
   updateEntry,
-  type CreateEntryRequest,
 } from "../lib/api";
 import {
   automationName,
@@ -31,9 +37,6 @@ import {
 import {
   OPT_IN_STATUS,
   OPT_OUT_STATUS,
-  bindingCreateBody,
-  bindingPatchBody,
-  bindingStatusPatch,
   emptyOverrides,
   planTurnOff,
   planTurnOn,
@@ -42,8 +45,8 @@ import {
 import type { BrainEntry } from "../lib/types";
 
 /**
- * Carry out a binding plan from planTurnOn/planTurnOff. The parent is never
- * written: a plan names a binding path, or creates a binding of the parent.
+ * Carry out a plan from planTurnOn/planTurnOff. A plan names a binding path
+ * or creates a binding of the parent. It never writes the parent.
  */
 async function applyBindingPlan(
   parent: BrainEntry,
@@ -54,15 +57,13 @@ async function applyBindingPlan(
     case "none":
       return;
     case "create":
-      await createEntry(
-        bindingCreateBody(parent, project, emptyOverrides(), plan.status) as CreateEntryRequest,
-      );
+      await createAutomationBinding(parent, project, emptyOverrides(), plan.status);
       return;
     case "patch":
-      await updateEntry(plan.path, bindingStatusPatch(plan.status));
+      await setAutomationBindingStatus(plan.path, plan.status);
       return;
     case "delete":
-      await deleteEntry(plan.path);
+      await deleteAutomationBinding(plan.path);
       return;
   }
 }
@@ -118,7 +119,7 @@ export function useAutomationActionContext(
         toast(`Paused ${automationName(a)}`, "success");
       },
 
-      // Project scope. These write this project's binding only; the global
+      // Project scope. These write this project's binding only. The global
       // entry is never archived from a project tab.
       turnOffHere: async (a, scope) => {
         await applyBindingPlan(a, scope.projectId, planTurnOff(scope.binding));
@@ -136,16 +137,19 @@ export function useAutomationActionContext(
 
       saveOverrides: async (a, scope, overrides) => {
         if (scope.binding) {
-          await updateEntry(
+          await saveAutomationBindingOverrides(
             scope.binding.path,
-            bindingPatchBody(overrides, scope.binding.status),
+            scope.binding.status,
+            overrides,
           );
         } else {
           // A new binding keeps the project's current state: a project the
           // filter does not select starts opted out, so saving never opts it in.
-          const status = scope.targeted ? OPT_IN_STATUS : OPT_OUT_STATUS;
-          await createEntry(
-            bindingCreateBody(a, scope.projectId, overrides, status) as CreateEntryRequest,
+          await createAutomationBinding(
+            a,
+            scope.projectId,
+            overrides,
+            scope.targeted ? OPT_IN_STATUS : OPT_OUT_STATUS,
           );
         }
         invalidate();

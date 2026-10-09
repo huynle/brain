@@ -14,6 +14,15 @@ import {
 import { API_V1 } from "./config";
 import { useAuth } from "./auth";
 import { parseSSEFrame } from "./sse";
+import {
+  automationEffectivePath,
+  bindingCreateBody,
+  bindingPatchBody,
+  bindingStatusPatch,
+  mergeAutomationRows,
+  type AutomationEffectiveView,
+  type BindingOverrides,
+} from "./automationBindings";
 import type {
   BrainEntry,
   CheckoutFeatureResult,
@@ -2046,7 +2055,10 @@ export const listEntries = (query?: {
 // scheduled/generated task entries, and automation_run records so the PWA can
 // render the same unified list the TUI does.
 export async function listAutomationData(project?: string): Promise<{
+  /** Rows the card lists: global and project-owned automations, never bindings. */
   automations: BrainEntry[];
+  /** Per-project bindings (entries with `extends`). They show through their parent's row. */
+  bindings: BrainEntry[];
   tasks: BrainEntry[];
   runs: BrainEntry[];
 }> {
@@ -2073,11 +2085,47 @@ export async function listAutomationData(project?: string): Promise<{
       .then((r) => r.entries || [])
       .catch(() => [] as BrainEntry[]),
   ]);
-  // Merge scoped + global automation entries, de-duped by id.
-  const byId = new Map<string, BrainEntry>();
-  for (const e of [...global, ...scoped]) byId.set(e.id, e);
-  return { automations: [...byId.values()], tasks, runs };
+  // Merge scoped + global automation entries, de-duped by id. Bindings are
+  // split out so they never appear as rows of their own.
+  const { rows, bindings } = mergeAutomationRows(scoped, global);
+  return { automations: rows, bindings, tasks, runs };
 }
+
+// ─── Per-project automation bindings ─────────────────────────────
+// Effective view: the config one project runs a global automation under,
+// with per-field inherited/overridden states (see automation_effective.go).
+export const getAutomationEffective = (id: string, project: string) => {
+  const { path, query } = automationEffectivePath(id, project);
+  return api<AutomationEffectiveView>(path, { query });
+};
+
+// A binding is written through the ordinary entry endpoints. Each helper
+// names one write, so callers never build a binding payload by hand.
+
+/** Create a binding of `parent` for `project`, with the given overrides and status. */
+export const createAutomationBinding = (
+  parent: BrainEntry,
+  project: string,
+  overrides: BindingOverrides,
+  status: string,
+) =>
+  createEntry(
+    bindingCreateBody(parent, project, overrides, status) as CreateEntryRequest,
+  );
+
+/** Change only a binding's status (active opts in; archived opts out). */
+export const setAutomationBindingStatus = (path: string, status: string) =>
+  updateEntry(path, bindingStatusPatch(status));
+
+/** Save a binding's overrides. Trigger and action are replaced in full. */
+export const saveAutomationBindingOverrides = (
+  path: string,
+  status: string,
+  overrides: BindingOverrides,
+) => updateEntry(path, bindingPatchBody(overrides, status));
+
+/** Remove a binding. The project then runs the parent as it is. */
+export const deleteAutomationBinding = (path: string) => deleteEntry(path);
 
 // ─── Automation runs (audit history) ─────────────────────────────
 // GET /automation-runs is the dedicated history route, and the ONLY one

@@ -63,13 +63,6 @@ func isScheduledCronAutomation(automation types.BrainEntry) bool {
 	return automation.Trigger.Schedule != "" || automation.Trigger.Every != ""
 }
 
-// dayFiltersFor returns the day filters that gate an automation's slots. The
-// built-in calendar and event filters arrive in a later change, so none apply
-// yet and every slot exists.
-func (s *AutomationService) dayFiltersFor(automation types.BrainEntry) []schedule.DayFilter {
-	return nil
-}
-
 // compiledScheduleFor returns automation's compiled schedule, compiling it
 // again only when the entry was modified since it was last compiled. ok is
 // false when the trigger cannot be scheduled. A warning is logged once per

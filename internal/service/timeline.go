@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -90,6 +91,7 @@ func (s *TimelineService) Timeline(ctx context.Context, from, to time.Time, proj
 	}
 	result := BuildTimeline(entries, events, TimelineProjectionOptions{
 		From: from, To: to, Now: s.now(), RunsRemaining: remaining, AutomationTargets: targets,
+		DayFilters: s.dayFilters(entries),
 	})
 	return &result, nil
 }
@@ -123,6 +125,24 @@ func (s *TimelineService) automationTargets(ctx context.Context, entries []types
 		targets[entry.ID] = automationTargetSet{Projects: projects, Err: err}
 	}
 	return targets
+}
+
+// dayFilters resolves, for every cron automation that names a calendar, the day
+// filters the scheduler applies to it. The timeline uses the scheduler's own
+// filters, so a calendar-gated projection cannot disagree with the scheduler.
+func (s *TimelineService) dayFilters(entries []types.BrainEntry) map[string][]schedule.DayFilter {
+	source, ok := s.targets.(automationDayFilterSource)
+	if !ok {
+		source = &AutomationService{}
+	}
+	filters := make(map[string][]schedule.DayFilter)
+	for _, entry := range entries {
+		if !cronProjectionCandidate(entry) || entry.Trigger.Calendar == "" {
+			continue
+		}
+		filters[entry.ID] = source.dayFiltersFor(entry)
+	}
+	return filters
 }
 
 // scopeTargetsToProject keeps the targets a project-scoped timeline shows: that
@@ -195,6 +215,10 @@ type TimelineProjectionOptions struct {
 	// lister: an unfiltered one fires once for its own project (or unscoped),
 	// and a filtered one is reported as unresolved.
 	AutomationTargets map[string]automationTargetSet
+	// DayFilters maps a cron automation's ID to the day filters its slots must
+	// pass (see AutomationService.dayFiltersFor). A calendar-gated automation
+	// absent from the map is not projected: the projection fails closed.
+	DayFilters map[string][]schedule.DayFilter
 }
 
 type timelineBuilder struct {
@@ -359,6 +383,14 @@ func (b *timelineBuilder) projectAutomation(entry types.BrainEntry) {
 	if err != nil {
 		b.warn(entry.ID, err)
 		return
+	}
+	if entry.Trigger.Calendar != "" {
+		filters, ok := b.opts.DayFilters[entry.ID]
+		if !ok {
+			b.warn(entry.ID, errors.New("calendar day filter unavailable; not projected"))
+			return
+		}
+		spec.DayFilters = filters
 	}
 	sched, err := schedule.Compile(spec)
 	if err != nil {

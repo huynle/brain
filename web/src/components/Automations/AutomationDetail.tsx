@@ -45,6 +45,7 @@ import {
 } from "../../lib/automationRuns";
 import { AutomationRunRows } from "./AutomationRunRows";
 import { AutomationRunDetail } from "./AutomationRunRows";
+import { AutomationScheduleRows } from "./AutomationScheduleRows";
 import type { SessionRef, Task } from "../../lib/types";
 
 export interface AutomationDetailProps {
@@ -251,6 +252,8 @@ export function AutomationDetail({
                 <div className="v">{automation.model}</div>
               </>
             )}
+            {/* Read-only trigger cadence and lifecycle window; shows only what is set. */}
+            <AutomationScheduleRows automation={automation} />
           </div>
           {actionStr && (
             <>

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/huynle/brain-api/internal/attentionstore"
@@ -28,6 +29,38 @@ type AttentionService struct {
 	store  *attentionstore.Store
 	events attentionEventIngester
 	now    func() time.Time
+	// notifier holds the system notifier once wired. It is set after the
+	// background workers start, so readers must tolerate it being unset.
+	notifier atomic.Pointer[systemNotifierBox]
+}
+
+type systemNotifierBox struct{ n SystemNotifier }
+
+// SetSystemNotifier publishes the system notifier to later consumers. It is
+// nil-safe: calling it on a nil service does nothing.
+func (s *AttentionService) SetSystemNotifier(n SystemNotifier) {
+	if s == nil {
+		return
+	}
+	s.notifier.Store(&systemNotifierBox{n: n})
+}
+
+// SystemNotifier returns the published notifier, or nil when none is set yet
+// (or the service is nil). Callers must treat nil as "no notifier".
+func (s *AttentionService) SystemNotifier() SystemNotifier {
+	if s == nil {
+		return nil
+	}
+	box := s.notifier.Load()
+	if box == nil {
+		return nil
+	}
+	return box.n
+}
+
+// ListAttentionRecipients returns every recipient that owns an attention item.
+func (s *AttentionService) ListAttentionRecipients(ctx context.Context) ([]string, error) {
+	return s.store.ListRecipients(ctx)
 }
 
 // AttentionServiceOption configures an AttentionService.

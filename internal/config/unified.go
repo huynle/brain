@@ -171,9 +171,16 @@ type ServerConfig struct {
 	Tenancy                TenancyConfig         `yaml:"tenancy"`
 	Embedding              EmbeddingConfig       `yaml:"embedding"`
 	Attachments            AttachmentConfig      `yaml:"attachments"`
+	Attention              AttentionConfig       `yaml:"attention"`
 
 	AttachmentExtraction AttachmentExtractionConfig `yaml:"attachment_extraction"`
 	Assistant            AssistantConfig            `yaml:"assistant"`
+}
+
+// AttentionConfig controls system-generated attention notices.
+type AttentionConfig struct {
+	// SystemRecipients lists token names that receive system notices.
+	SystemRecipients []string `yaml:"system_recipients"`
 }
 
 const MaxPasswordSessionTTLDays = 36500
@@ -333,6 +340,21 @@ func (c *UnifiedConfig) Validate() error {
 	// TLS pair — either both or neither.
 	if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
 		errs = append(errs, "server.tls_cert and server.tls_key must both be set or both empty")
+	}
+	// Attention system recipients are token names: each must be non-blank and
+	// listed once (compared after trimming).
+	seenRecipients := make(map[string]bool, len(c.Server.Attention.SystemRecipients))
+	for i, name := range c.Server.Attention.SystemRecipients {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			errs = append(errs, fmt.Sprintf("server.attention.system_recipients[%d] must not be blank", i))
+			continue
+		}
+		if seenRecipients[trimmed] {
+			errs = append(errs, fmt.Sprintf("server.attention.system_recipients lists %q more than once", trimmed))
+			continue
+		}
+		seenRecipients[trimmed] = true
 	}
 
 	// Task defaults enums.

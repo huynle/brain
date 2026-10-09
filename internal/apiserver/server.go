@@ -528,6 +528,10 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// keypair, retries, and the service-worker handler.
 	attentionDispatcher := service.NewAttentionDispatcher(graph.eventHub, attentionStore, pushSvc)
 	go attentionDispatcher.Start(ctx)
+	// System notices: publish the notifier on the attention service for later
+	// consumers, and run the one-shot startup scheduling report after the boot
+	// index scan (scanDone) so it never reads a partial index.
+	wireSystemNotices(ctx, attentionSvc, cfg, brainSvc, scanDone)
 
 	// ─── Rate Limiting ─────────────────────────────────────────────
 	var rateLimiter *api.RateLimiter

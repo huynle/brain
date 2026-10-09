@@ -5,17 +5,19 @@
  * This exists to answer "when does this fire next?" on a row that
  * otherwise only says "cron". It is a PREDICTION of what the server will
  * do, so it has to agree with the server's own matcher rather than with
- * cron folklore. Two places where the two differ, both deliberate here:
+ * cron folklore. Three places where the two differ, all deliberate here:
  *
- *   1. Day-of-month and day-of-week are ANDed, not ORed. Standard cron
- *      (Vixie) fires when EITHER matches once both are restricted, so
- *      `0 0 13 * 5` means "the 13th, and every Friday". `Schedule.Matches`
- *      in pkg/cron requires all five fields, so to the server it means
- *      "Friday the 13th". Mirroring the server is the whole point — a
- *      column that predicted the Vixie reading would be confidently wrong
- *      on exactly the expressions users find surprising.
+ *   1. Day fields follow pkg/cron's Vixie rule. When NEITHER day-of-month
+ *      nor day-of-week starts with `*`, a day qualifies if EITHER matches,
+ *      so `0 3 1 * 1` runs on the 1st and on every Monday. If either field
+ *      starts with `*` (a stepped star included), the two AND together, so
+ *      a stepped day-of-month with a Monday means only the odd-numbered
+ *      Mondays. See dayMatches.
  *   2. `V/S` (a step on a bare value, e.g. `5/15`) means "from V to the
  *      field maximum, stepping by S" — same as pkg/cron's parseFieldPart.
+ *   3. DST, as pkg/cron resolves it: a wall time skipped by a spring-forward
+ *      never fires, and a wall time repeated by a fall-back fires once, at
+ *      its first occurrence.
  *
  * Timezone handling matches the server's shape: the expression is matched
  * against WALL CLOCK in the automation's IANA zone, and the result is
@@ -24,11 +26,11 @@
  * is found — searching in instant space would need an Intl lookup per
  * candidate minute, which is far too slow for a 366-day worst case.
  *
- * Known limit: inside a DST transition the server advances by INSTANT
- * (Go's `t.Add(time.Minute)`) while this advances by wall clock, so the
- * two can disagree by up to an hour for runs landing in a skipped or
- * repeated local hour. This is a display hint, not a dispatch decision,
- * so that trade is worth the ~500x speedup.
+ * Known limit: this module steps wall-clock minutes and resolves each
+ * candidate to an instant afterwards, where pkg/cron steps instants. The
+ * shared DST vectors in cronSchedule.test.ts pin both to the same answers;
+ * a transition shape outside those vectors has not been checked against
+ * the server. This is a display hint, not a dispatch decision.
  */
 
 /** Inclusive bounds per field, in pkg/cron's field order. */
@@ -47,6 +49,10 @@ export interface CronSchedule {
   dayOfMonth: Set<number>;
   month: Set<number>;
   dayOfWeek: Set<number>;
+  /** True when the day-of-month field starts with `*`; see dayMatches. */
+  domStar: boolean;
+  /** True when the day-of-week field starts with `*`; see dayMatches. */
+  dowStar: boolean;
 }
 
 /**
@@ -134,7 +140,51 @@ export function parseCron(expr: string): CronSchedule | null {
     dayOfMonth: sets[2],
     month: sets[3],
     dayOfWeek: sets[4],
+    domStar: parts[2].startsWith("*"),
+    dowStar: parts[4].startsWith("*"),
   };
+}
+
+/**
+ * The day predicate shared by matching and searching, mirroring pkg/cron's
+ * dayMatches. When NEITHER day field starts with `*`, a day qualifies if it
+ * matches day-of-month OR day-of-week. Otherwise both must match; an
+ * unrestricted `*` matches every day, so that reduces to the restricted field.
+ */
+function dayMatches(s: CronSchedule, day: number, weekday: number): boolean {
+  const dom = s.dayOfMonth.has(day);
+  const dow = s.dayOfWeek.has(weekday);
+  if (s.domStar || s.dowStar) return dom && dow;
+  return dom || dow;
+}
+
+/** Milliseconds `timeZone` is ahead of UTC at `instant`, to the minute. */
+function offsetMsAt(instant: Date, timeZone: string): number {
+  const floored = Math.floor(instant.getTime() / 60_000) * 60_000;
+  return wallMsIn(instant, timeZone) - floored;
+}
+
+/** The wall clock `instant` shows in `timeZone`, read as if it were UTC. */
+function wallMsIn(instant: Date, timeZone: string): number {
+  const w = wallClockIn(instant, timeZone);
+  return Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute);
+}
+
+/**
+ * Moves `instant` back to the first pass of the wall clock `wallMs` when that
+ * wall clock repeats (a fall-back). A repeated span is at most a couple of
+ * hours, so an earlier pass lies within two hours before `instant`.
+ */
+function firstPass(instant: Date, wallMs: number, timeZone: string): Date {
+  const off = offsetMsAt(instant, timeZone);
+  const prevOff = offsetMsAt(new Date(instant.getTime() - 2 * 3_600_000), timeZone);
+  if (prevOff > off) {
+    const u = new Date(instant.getTime() - (prevOff - off));
+    if (offsetMsAt(u, timeZone) === prevOff && wallMsIn(u, timeZone) === wallMs) {
+      return u;
+    }
+  }
+  return instant;
 }
 
 /** Wall-clock fields, timezone-free. */
@@ -189,8 +239,9 @@ function wallClockIn(instant: Date, timeZone: string): WallClock {
  * Solved by fixed-point rather than a table: interpret the wall clock as
  * if it were UTC, measure how far that lands from the target zone, and
  * correct. Two passes settle the case where the correction itself crosses
- * an offset change. Ambiguous (repeated) local times resolve to one of the
- * two valid instants; skipped local times resolve just past the gap.
+ * an offset change. A repeated local time is moved back to its first
+ * occurrence (firstPass); a skipped one resolves just past the gap and is
+ * rejected by the round-trip check in nextCronRun.
  */
 function wallClockToInstant(wc: WallClock, timeZone: string): Date {
   const asIfUTC = Date.UTC(wc.year, wc.month - 1, wc.day, wc.hour, wc.minute);
@@ -208,7 +259,7 @@ function wallClockToInstant(wc: WallClock, timeZone: string): Date {
     if (drift === 0) break;
     guess -= drift;
   }
-  return new Date(guess);
+  return firstPass(new Date(guess), asIfUTC, timeZone);
 }
 
 /** Minutes in 366 days — the server's own search horizon. */
@@ -228,6 +279,9 @@ const LONGEST_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
  * the main thread for a noticeable fraction of a second per update.
  */
 function hasSatisfiableDate(s: CronSchedule): boolean {
+  // Under the OR rule a restricted day-of-week admits every weekday in every
+  // month, so "0 0 30 2 1" (February 30th OR Monday) is satisfiable.
+  if (!s.domStar && !s.dowStar) return true;
   for (const m of s.month) {
     for (const d of s.dayOfMonth) {
       if (d <= LONGEST_MONTH[m - 1]) return true;
@@ -289,10 +343,7 @@ export function nextCronRun(
       cursor.setUTCHours(0, 0, 0, 0);
       continue;
     }
-    if (
-      !sched.dayOfMonth.has(cursor.getUTCDate()) ||
-      !sched.dayOfWeek.has(cursor.getUTCDay())
-    ) {
+    if (!dayMatches(sched, cursor.getUTCDate(), cursor.getUTCDay())) {
       cursor.setUTCDate(cursor.getUTCDate() + 1);
       cursor.setUTCHours(0, 0, 0, 0);
       continue;
@@ -323,7 +374,10 @@ export function nextCronRun(
     if (
       shown.hour === wanted.hour &&
       shown.minute === wanted.minute &&
-      shown.day === wanted.day
+      shown.day === wanted.day &&
+      // A repeated wall time whose first pass is already behind `from` is
+      // not the next run: from inside the second pass, that hour has passed.
+      instant.getTime() > from.getTime()
     ) {
       return instant;
     }

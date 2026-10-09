@@ -101,7 +101,7 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	}
 	defer authed.Close()
 	manifest, err := authed.Capabilities(context.Background())
-	if err != nil || manifest == nil || len(manifest.Operations) != 146 || manifest.Scripts.Available {
+	if err != nil || manifest == nil || len(manifest.Operations) != 147 || manifest.Scripts.Available {
 		t.Fatalf("fully composed discovery: %+v, %v", manifest, err)
 	}
 	if _, err := c.Capabilities(context.Background()); err == nil {

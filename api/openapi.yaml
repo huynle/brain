@@ -2232,6 +2232,23 @@ paths:
       responses:
         default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200': {description: Run entry, content: {application/json: {schema: {$ref: '#/components/schemas/BrainEntry'}}}}
+  /automations/{id}/effective:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: automations.effective
+      summary: Effective config of one automation for one project, with its targeting and broken state
+      description: >-
+        Read-only. Resolves the parent with the project's binding overlaid, the same way
+        the scheduler does, and reports whether the scheduler targets the project. A
+        broken view is returned with 200 and broken_reason set.
+      x-brain-effect: read
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - {name: project, in: query, required: true, schema: {type: string, minLength: 1}}
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200': {description: Effective view, content: {application/json: {schema: {$ref: '#/components/schemas/AutomationEffective'}}}}
   /tasks/runner/status:
     get:
       operationId: runners.status
@@ -3467,6 +3484,32 @@ components:
           type: [array, 'null']
           items:
             $ref: '#/components/schemas/ResolvedTask'
+    AutomationEffective:
+      type: object
+      required: [id, project, fields, targeted, broken]
+      properties:
+        id: {type: string}
+        project: {type: string}
+        automation: {$ref: '#/components/schemas/AutomationEffectiveConfig'}
+        fields:
+          type: object
+          additionalProperties: {type: string, enum: [inherited, overridden]}
+        binding_id: {type: string}
+        binding_status: {type: string}
+        targeted: {type: boolean}
+        broken: {type: boolean}
+        broken_reason: {type: string, enum: [duplicate_binding, parent_missing, parent_not_automation]}
+    AutomationEffectiveConfig:
+      type: object
+      required: [id]
+      properties:
+        id: {type: string}
+        trigger: {$ref: '#/components/schemas/TriggerConfig'}
+        action: {$ref: '#/components/schemas/AutomationAction'}
+        timezone: {type: string}
+        starts_at: {type: string}
+        expires_at: {type: string}
+        max_runs: {type: integer}
     RunAutomationRequest:
       type: object
       required: [path]

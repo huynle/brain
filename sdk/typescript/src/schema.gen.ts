@@ -1655,6 +1655,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/automations/{id}/effective": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Effective config of one automation for one project, with its targeting and broken state
+         * @description Read-only. Resolves the parent with the project's binding overlaid, the same way the scheduler does, and reports whether the scheduler targets the project. A broken view is returned with 200 and broken_reason set.
+         */
+        get: operations["automations.effective"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/runner/status": {
         parameters: {
             query?: never;
@@ -2954,6 +2976,29 @@ export interface components {
         TaskFeatureFilter: string[];
         TaskSelectionResponse: {
             tasks: components["schemas"]["ResolvedTask"][] | null;
+        };
+        AutomationEffective: {
+            id: string;
+            project: string;
+            automation?: components["schemas"]["AutomationEffectiveConfig"];
+            fields: {
+                [key: string]: "inherited" | "overridden";
+            };
+            binding_id?: string;
+            binding_status?: string;
+            targeted: boolean;
+            broken: boolean;
+            /** @enum {string} */
+            broken_reason?: "duplicate_binding" | "parent_missing" | "parent_not_automation";
+        };
+        AutomationEffectiveConfig: {
+            id: string;
+            trigger?: components["schemas"]["TriggerConfig"];
+            action?: components["schemas"]["AutomationAction"];
+            timezone?: string;
+            starts_at?: string;
+            expires_at?: string;
+            max_runs?: number;
         };
         RunAutomationRequest: {
             path: string;
@@ -8067,6 +8112,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BrainEntry"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "automations.effective": {
+        parameters: {
+            query: {
+                project: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Effective view */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationEffective"];
                 };
             };
             /** @description Legacy error */

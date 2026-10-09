@@ -8,6 +8,45 @@ import (
 	"time"
 )
 
+// Defines values for AutomationEffectiveBrokenReason.
+const (
+	DuplicateBinding    AutomationEffectiveBrokenReason = "duplicate_binding"
+	ParentMissing       AutomationEffectiveBrokenReason = "parent_missing"
+	ParentNotAutomation AutomationEffectiveBrokenReason = "parent_not_automation"
+)
+
+// Valid indicates whether the value is a known member of the AutomationEffectiveBrokenReason enum.
+func (e AutomationEffectiveBrokenReason) Valid() bool {
+	switch e {
+	case DuplicateBinding:
+		return true
+	case ParentMissing:
+		return true
+	case ParentNotAutomation:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AutomationEffectiveFields.
+const (
+	Inherited  AutomationEffectiveFields = "inherited"
+	Overridden AutomationEffectiveFields = "overridden"
+)
+
+// Valid indicates whether the value is a known member of the AutomationEffectiveFields enum.
+func (e AutomationEffectiveFields) Valid() bool {
+	switch e {
+	case Inherited:
+		return true
+	case Overridden:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ControlPermissionRequestResponse.
 const (
 	PermissionAlways ControlPermissionRequestResponse = "always"
@@ -243,6 +282,36 @@ type AutomationAction struct {
 	TargetWorkdir      *string `json:"target_workdir,omitempty"`
 	Timeout            *string `json:"timeout,omitempty"`
 	Type               string  `json:"type"`
+}
+
+// AutomationEffective defines model for AutomationEffective.
+type AutomationEffective struct {
+	Automation    *AutomationEffectiveConfig           `json:"automation,omitempty"`
+	BindingId     *string                              `json:"binding_id,omitempty"`
+	BindingStatus *string                              `json:"binding_status,omitempty"`
+	Broken        bool                                 `json:"broken"`
+	BrokenReason  *AutomationEffectiveBrokenReason     `json:"broken_reason,omitempty"`
+	Fields        map[string]AutomationEffectiveFields `json:"fields"`
+	Id            string                               `json:"id"`
+	Project       string                               `json:"project"`
+	Targeted      bool                                 `json:"targeted"`
+}
+
+// AutomationEffectiveBrokenReason defines model for AutomationEffective.BrokenReason.
+type AutomationEffectiveBrokenReason string
+
+// AutomationEffectiveFields defines model for AutomationEffective.Fields.
+type AutomationEffectiveFields string
+
+// AutomationEffectiveConfig defines model for AutomationEffectiveConfig.
+type AutomationEffectiveConfig struct {
+	Action    *AutomationAction `json:"action,omitempty"`
+	ExpiresAt *string           `json:"expires_at,omitempty"`
+	Id        string            `json:"id"`
+	MaxRuns   *int              `json:"max_runs,omitempty"`
+	StartsAt  *string           `json:"starts_at,omitempty"`
+	Timezone  *string           `json:"timezone,omitempty"`
+	Trigger   *TriggerConfig    `json:"trigger,omitempty"`
 }
 
 // AutomationRetry defines model for AutomationRetry.
@@ -2547,6 +2616,11 @@ type AutomationsRunsParams struct {
 	Status       *string `form:"status,omitempty" json:"status,omitempty"`
 	AutomationId *string `form:"automation_id,omitempty" json:"automation_id,omitempty"`
 	Limit        *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// AutomationsEffectiveParams defines parameters for AutomationsEffective.
+type AutomationsEffectiveParams struct {
+	Project string `form:"project" json:"project"`
 }
 
 // ControlSessionDescendantsParams defines parameters for ControlSessionDescendants.

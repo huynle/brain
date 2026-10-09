@@ -23,8 +23,8 @@ func TestRegisterObservabilityTools_Count(t *testing.T) {
 	RegisterObservabilityTools(s, client)
 
 	count := len(s.tools)
-	if count != 7 {
-		t.Errorf("expected 7 observability tools registered, got %d", count)
+	if count != 8 {
+		t.Errorf("expected 8 observability tools registered, got %d", count)
 	}
 }
 
@@ -40,6 +40,7 @@ func TestRegisterObservabilityTools_Names(t *testing.T) {
 		"events_recent",
 		"automation_runs",
 		"automation_run_get",
+		"automation_effective",
 		"scheduler_status",
 	}
 
@@ -579,7 +580,7 @@ func TestHTTPHandlerRegistersObservabilityTools(t *testing.T) {
 		t.Fatalf("failed to parse tools list: %v", err)
 	}
 
-	// Verify all 7 observability tools are present
+	// Verify all 8 observability tools are present
 	expectedTools := []string{
 		"task_logs",
 		"task_dispatch_lease",
@@ -587,6 +588,7 @@ func TestHTTPHandlerRegistersObservabilityTools(t *testing.T) {
 		"events_recent",
 		"automation_runs",
 		"automation_run_get",
+		"automation_effective",
 		"scheduler_status",
 	}
 
@@ -970,5 +972,96 @@ func TestEventTypeFamilies_CoversEveryRealType(t *testing.T) {
 		if !families[want] {
 			t.Errorf("event type %q implies family %q, which eventTypeFamilies does not list", typ, want)
 		}
+	}
+}
+
+// =============================================================================
+// automation_effective: read-only per-project view of one automation
+// =============================================================================
+
+func TestBrainAutomationEffective_Schema(t *testing.T) {
+	s := NewServer()
+	RegisterObservabilityTools(s, NewAPIClient("http://localhost:3333"))
+
+	rt, ok := s.tools["automation_effective"]
+	if !ok {
+		t.Fatal("automation_effective is not registered")
+	}
+	tool := rt.tool
+	for _, req := range []string{"id", "project"} {
+		found := false
+		for _, got := range tool.InputSchema.Required {
+			if got == req {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("automation_effective required = %v, want it to include %q", tool.InputSchema.Required, req)
+		}
+	}
+	if len(tool.InputSchema.Required) != 2 {
+		t.Errorf("automation_effective required = %v, want exactly id and project", tool.InputSchema.Required)
+	}
+}
+
+func TestBrainAutomationEffective_ReturnsTheProjectView(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/automations/parent01/effective" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("project"); got != "p1" {
+			t.Errorf("project query = %q, want p1", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"parent01","project":"p1","fields":{"action.agent":"overridden"},"binding_id":"bind0001","binding_status":"active","targeted":true,"broken":false}`))
+	}))
+	defer srv.Close()
+
+	server := NewServer()
+	RegisterObservabilityTools(server, NewAPIClient(srv.URL))
+	rt, ok := server.tools["automation_effective"]
+	if !ok {
+		t.Fatal("automation_effective is not registered")
+	}
+	result, err := rt.handler(context.Background(), map[string]any{
+		"id":      "parent01",
+		"project": "p1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{"Automation Effective", "parent01", "bind0001", "\"targeted\": true", "action.agent"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("result missing %q:\n%s", want, result)
+		}
+	}
+}
+
+func TestBrainAutomationEffective_RequiresIDAndProject(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	server := NewServer()
+	RegisterObservabilityTools(server, NewAPIClient(srv.URL))
+	rt, ok := server.tools["automation_effective"]
+	if !ok {
+		t.Fatal("automation_effective is not registered")
+	}
+	for _, args := range []map[string]any{
+		{"project": "p1"},
+		{"id": "parent01"},
+	} {
+		if _, err := rt.handler(context.Background(), args); err == nil {
+			t.Errorf("args %v: want an error for the missing argument", args)
+		}
+	}
+	if calls != 0 {
+		t.Errorf("the API was called %d times for requests missing an argument", calls)
 	}
 }

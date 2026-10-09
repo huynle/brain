@@ -49,7 +49,7 @@ func publicFacadeNames(t *testing.T) []string {
 			continue
 		}
 		switch name {
-		case "tasks.dispatchLease", "tasks.placementReasons", "tasks.runnerCandidates", "tasks.proposedRunnerCandidates", "features.runnerCandidates":
+		case "tasks.dispatchLease", "tasks.placementReasons", "tasks.runnerCandidates", "tasks.proposedRunnerCandidates", "features.runnerCandidates", "automations.effective":
 			continue
 		}
 		kept = append(kept, name)

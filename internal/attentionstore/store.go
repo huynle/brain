@@ -238,6 +238,25 @@ func (s *Store) TransitionAttention(ctx context.Context, recipient, id, state, s
 	return n == 1, err
 }
 
+// ListRecipients returns the distinct recipients that own attention items,
+// sorted by name. It is the only read added for system-notice fan-out.
+func (s *Store) ListRecipients(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT recipient FROM attention_items ORDER BY recipient`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var recipient string
+		if err := rows.Scan(&recipient); err != nil {
+			return nil, err
+		}
+		out = append(out, recipient)
+	}
+	return out, rows.Err()
+}
+
 // AttentionCounts summarises a recipient's inbox for the bell badge.
 func (s *Store) AttentionCounts(ctx context.Context, recipient string) (types.AttentionCounts, error) {
 	var c types.AttentionCounts

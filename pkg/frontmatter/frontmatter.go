@@ -47,6 +47,18 @@ type TriggerConfig struct {
 	// Timezone is the IANA timezone name used to interpret Schedule for cron
 	// automations. Empty or invalid values fall back to UTC.
 	Timezone string `yaml:"timezone,omitempty" json:"timezone,omitempty"`
+	// Automation scheduling fields. They mirror internal/types.TriggerConfig;
+	// see that struct for their meaning. Each key must stay in this struct or
+	// it is written nowhere and read back empty.
+	Every       string               `yaml:"every,omitempty" json:"every,omitempty"`
+	At          string               `yaml:"at,omitempty" json:"at,omitempty"`
+	Stagger     string               `yaml:"stagger,omitempty" json:"stagger,omitempty"`
+	CatchUp     string               `yaml:"catch_up,omitempty" json:"catch_up,omitempty"`
+	Calendar    string               `yaml:"calendar,omitempty" json:"calendar,omitempty"`
+	SkipIfEvent *CalendarEventFilter `yaml:"skip_if_event,omitempty" json:"skip_if_event,omitempty"`
+	OnlyIfEvent *CalendarEventFilter `yaml:"only_if_event,omitempty" json:"only_if_event,omitempty"`
+	Match       map[string]string    `yaml:"match,omitempty" json:"match,omitempty"`
+	Offset      string               `yaml:"offset,omitempty" json:"offset,omitempty"`
 	// Filter is optional key-value filters applied to event fields.
 	Filter                 map[string]string `yaml:"filter,omitempty" json:"filter,omitempty"`
 	OncePer                string            `yaml:"once_per,omitempty" json:"once_per,omitempty"`
@@ -56,6 +68,17 @@ type TriggerConfig struct {
 	Cooldown string `yaml:"cooldown,omitempty" json:"cooldown,omitempty"`
 	// MaxConcurrent limits the number of concurrent executions.
 	MaxConcurrent int `yaml:"max_concurrent,omitempty" json:"max_concurrent,omitempty"`
+}
+
+// CalendarEventFilter selects calendar events for a trigger's skip_if_event /
+// only_if_event day filters (frontmatter representation). Mirrors
+// internal/types.CalendarEventFilter.
+type CalendarEventFilter struct {
+	Calendar    string `yaml:"calendar,omitempty" json:"calendar,omitempty"`
+	Title       string `yaml:"title,omitempty" json:"title,omitempty"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	Location    string `yaml:"location,omitempty" json:"location,omitempty"`
+	AllDay      string `yaml:"all_day,omitempty" json:"all_day,omitempty"`
 }
 
 // CronRun represents a single cron execution run.
@@ -128,6 +151,9 @@ type AutomationAction struct {
 	// and a field missing here is written nowhere and read back as empty
 	// no matter how correct the domain struct is.
 	SetStatus string `yaml:"set_status,omitempty" json:"set_status,omitempty"`
+	// PromptAppend is text a binding appends to its parent's prompt.
+	// Mirrors types.AutomationAction.PromptAppend.
+	PromptAppend string `yaml:"prompt_append,omitempty" json:"prompt_append,omitempty"`
 }
 
 // AutomationRetry defines retry behavior for failed automation actions (frontmatter representation).
@@ -264,6 +290,13 @@ type Frontmatter struct {
 	GeneratedBy     string `yaml:"generated_by,omitempty" json:"generated_by,omitempty"`
 	AutomationRunID string `yaml:"automation_run_id,omitempty" json:"automation_run_id,omitempty"`
 
+	// Automation scheduling: Extends is a binding's parent automation ID,
+	// ScheduledFor is the slot (RFC3339) an automation_run audit handled, and
+	// Binding is the binding ID applied to a generated task or audit.
+	Extends      string `yaml:"extends,omitempty" json:"extends,omitempty"`
+	ScheduledFor string `yaml:"scheduled_for,omitempty" json:"scheduled_for,omitempty"`
+	Binding      string `yaml:"binding,omitempty" json:"binding,omitempty"`
+
 	// Event trigger configuration
 	Trigger *TriggerConfig    `yaml:"trigger,omitempty" json:"trigger,omitempty"`
 	Action  *AutomationAction `yaml:"action,omitempty" json:"action,omitempty"`
@@ -353,6 +386,10 @@ type GenerateOptions struct {
 	GeneratedKey    string
 	GeneratedBy     string
 	AutomationRunID string
+
+	Extends      string
+	ScheduledFor string
+	Binding      string
 
 	Trigger  *TriggerConfig
 	Action   *AutomationAction
@@ -445,6 +482,9 @@ type rawFrontmatter struct {
 	GeneratedKey        string                     `yaml:"generated_key"`
 	GeneratedBy         string                     `yaml:"generated_by"`
 	AutomationRunID     string                     `yaml:"automation_run_id"`
+	Extends             string                     `yaml:"extends"`
+	ScheduledFor        string                     `yaml:"scheduled_for"`
+	Binding             string                     `yaml:"binding"`
 	Trigger             *TriggerConfig             `yaml:"trigger"`
 	Action              *AutomationAction          `yaml:"action"`
 	Retry               *AutomationRetry           `yaml:"retry"`
@@ -507,6 +547,7 @@ var knownFields = map[string]bool{
 	"agent": true, "model": true,
 	"generated": true, "generated_kind": true, "generated_key": true,
 	"generated_by": true, "automation_run_id": true,
+	"extends": true, "scheduled_for": true, "binding": true,
 	"trigger": true, "action": true, "retry": true, "goal": true,
 	"reminder": true,
 	"sessions": true, "run_finalizations": true,
@@ -658,6 +699,9 @@ func Parse(content string) (*Document, error) {
 		GeneratedKey:        raw.GeneratedKey,
 		GeneratedBy:         raw.GeneratedBy,
 		AutomationRunID:     raw.AutomationRunID,
+		Extends:             raw.Extends,
+		ScheduledFor:        raw.ScheduledFor,
+		Binding:             raw.Binding,
 		Trigger:             raw.Trigger,
 		Action:              raw.Action,
 		Retry:               raw.Retry,
@@ -951,6 +995,11 @@ func Serialize(fm *Frontmatter) string {
 	emit("generated_key", fm.GeneratedKey)
 	emit("generated_by", fm.GeneratedBy)
 	emit("automation_run_id", fm.AutomationRunID)
+	// Automation scheduling references. Escaped: scheduled_for is an RFC3339
+	// instant (colons), and extends/binding are caller-settable IDs.
+	emit("extends", fm.Extends)
+	emit("scheduled_for", fm.ScheduledFor)
+	emit("binding", fm.Binding)
 
 	// Automation fields (nested YAML structs)
 	if fm.Trigger != nil {
@@ -1109,6 +1158,9 @@ func Generate(opts *GenerateOptions) string {
 		GeneratedKey:        opts.GeneratedKey,
 		GeneratedBy:         opts.GeneratedBy,
 		AutomationRunID:     opts.AutomationRunID,
+		Extends:             opts.Extends,
+		ScheduledFor:        opts.ScheduledFor,
+		Binding:             opts.Binding,
 		Trigger:             opts.Trigger,
 		Action:              opts.Action,
 		Retry:               opts.Retry,

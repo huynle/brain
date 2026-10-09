@@ -30,12 +30,15 @@ type schedulingValues struct {
 
 func schedulingValuesV1() schedulingValues {
 	return schedulingValues{
-		extends:      "parent01",
+		// extends is set by the test to a saved cron parent (a binding must
+		// name a real parent, validated at save).
+		extends:      "",
 		scheduledFor: "2026-10-09T03:00:00Z",
 		binding:      "bind0001",
+		// Clock trigger: every and at are the interval form, which is exclusive
+		// with a cron schedule (validated at save).
 		trigger: types.TriggerConfig{
 			Type:     types.TriggerTypeCron,
-			Schedule: "0 3 * * *",
 			Timezone: "America/New_York",
 			Every:    "4d",
 			At:       "03:00",
@@ -49,7 +52,7 @@ func schedulingValuesV1() schedulingValues {
 			OnlyIfEvent: &types.CalendarEventFilter{Calendar: "personal", Title: "has:focus"},
 			Match:       map[string]string{"title": "re:(?i)^1:1 (?P<person>.+)$", "all_day": "false"},
 			Offset:      "-15m",
-			Filter:      map[string]string{"project": "*"},
+			Filter:      map[string]string{"tags": "has:supernote"}, // a binding cannot set filter.project
 		},
 		promptAppend: "Weight ingestion decisions more heavily.",
 		startsAt:     "2026-10-10T00:00:00Z",
@@ -61,7 +64,9 @@ func schedulingValuesV1() schedulingValues {
 
 func schedulingValuesV2() schedulingValues {
 	return schedulingValues{
-		extends:      "parent02",
+		// A calendar trigger cannot be a binding (its parent could not be
+		// calendar-typed), so v2 is a standalone automation.
+		extends:      "",
 		scheduledFor: "2026-10-11T07:30:00-04:00",
 		binding:      "bind0002",
 		trigger: types.TriggerConfig{
@@ -96,7 +101,7 @@ func (v schedulingValues) createRequest() types.CreateEntryRequest {
 		ScheduledFor: v.scheduledFor,
 		Binding:      v.binding,
 		Trigger:      &trigger,
-		Action:       &types.AutomationAction{Type: "prompt", Agent: "explore", PromptAppend: v.promptAppend},
+		Action:       &types.AutomationAction{Agent: "explore", PromptAppend: v.promptAppend},
 		StartsAt:     v.startsAt,
 		ExpiresAt:    v.expiresAt,
 		Timezone:     v.timezone,
@@ -113,7 +118,7 @@ func (v schedulingValues) updateRequest() types.UpdateEntryRequest {
 		ScheduledFor: &scheduledFor,
 		Binding:      &binding,
 		Trigger:      &trigger,
-		Action:       &types.AutomationAction{Type: "prompt", Agent: "explore", PromptAppend: v.promptAppend},
+		Action:       &types.AutomationAction{Agent: "explore", PromptAppend: v.promptAppend},
 		StartsAt:     &startsAt,
 		ExpiresAt:    &expiresAt,
 		Timezone:     &timezone,
@@ -204,6 +209,17 @@ func TestAutomationSchedulingFields_ServiceRoundTrip(t *testing.T) {
 	brain, _ := newTestBrainAndTaskService(t)
 	ctx := context.Background()
 	v1, v2 := schedulingValuesV1(), schedulingValuesV2()
+
+	// v1 is a binding, so it needs a real cron-triggered parent.
+	parent, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type: "automation", Title: "Scheduling parent", Content: "body", Project: "sched",
+		Trigger: &types.TriggerConfig{Type: types.TriggerTypeCron, Schedule: "0 9 * * *"},
+		Action:  &types.AutomationAction{Type: "prompt", DirectPrompt: "parent prompt"},
+	})
+	if err != nil {
+		t.Fatalf("Save parent: %v", err)
+	}
+	v1.extends = parent.ID
 
 	// Create -> file.
 	saved, err := brain.Save(ctx, v1.createRequest())

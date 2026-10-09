@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1356,7 +1359,7 @@ func TestAutomationService_HandleEventAllowsGenerationAfterCooldownElapsed(t *te
 }
 
 func TestAutomationService_HandleEventTreatsInvalidCooldownAsNoCooldown(t *testing.T) {
-	brain, _, _ := newTestBrainService(t)
+	brain, _, brainDir := newTestBrainService(t)
 	ctx := context.Background()
 	created := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 	setTestNow(t, created)
@@ -1370,7 +1373,7 @@ func TestAutomationService_HandleEventTreatsInvalidCooldownAsNoCooldown(t *testi
 		Trigger: &types.TriggerConfig{
 			Type:     "event",
 			Event:    types.EventTaskCompleted,
-			Cooldown: "not-a-duration",
+			Cooldown: "5m",
 		},
 		Action: &types.AutomationAction{
 			Type:         "prompt",
@@ -1379,6 +1382,23 @@ func TestAutomationService_HandleEventTreatsInvalidCooldownAsNoCooldown(t *testi
 	})
 	if err != nil {
 		t.Fatalf("Save automation failed: %v", err)
+	}
+	// Save now rejects an invalid cooldown, so store one out-of-band and
+	// re-index, as a pre-validation or hand-edited entry would be.
+	absPath := filepath.Join(brainDir, automationResp.Path)
+	raw, err := os.ReadFile(absPath)
+	if err != nil {
+		t.Fatalf("read automation: %v", err)
+	}
+	corrupted := regexp.MustCompile(`(?m)^(\s*)cooldown:.*$`).ReplaceAllString(string(raw), "${1}cooldown: not-a-duration")
+	if corrupted == string(raw) {
+		t.Fatalf("fixture has no cooldown line to corrupt:\n%s", raw)
+	}
+	if err := os.WriteFile(absPath, []byte(corrupted), 0o644); err != nil {
+		t.Fatalf("write corrupted automation: %v", err)
+	}
+	if err := brain.indexer.IndexFile(automationResp.Path); err != nil {
+		t.Fatalf("re-index corrupted automation: %v", err)
 	}
 
 	generated := true

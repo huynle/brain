@@ -165,6 +165,12 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		}
 	}
 
+	if req.Type == "automation" {
+		if err := validateAutomationDefinition(ctx, automationFrontmatterFromRequest(req), "", s.lookupAutomationParent); err != nil {
+			return nil, err
+		}
+	}
+
 	// Sanitize inputs
 	title := frontmatter.SanitizeTitle(req.Title)
 
@@ -1135,6 +1141,15 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		now := types.TimeNowUTC().Format(time.RFC3339)
 		noteText := fmt.Sprintf("\n\n---\n*Status changed to **%s** on %s*\n\n%s", statusStr, now, *req.Note)
 		body = body + noteText
+	}
+
+	// Validate the merged definition, but only when this update touches a field
+	// the scheduling rules read. Status, tag, content and note changes must keep
+	// working on an automation whose stored definition is already invalid.
+	if fm.Type == "automation" && automationUpdateTouchesDefinition(req) {
+		if err := validateAutomationDefinition(ctx, fm, row.ShortID, s.lookupAutomationParent); err != nil {
+			return nil, err
+		}
 	}
 
 	// Serialize updated frontmatter and write back

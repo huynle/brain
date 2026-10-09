@@ -251,6 +251,9 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.brain.Save(r.Context(), req)
 	if err != nil {
+		if writeFieldValidationError(w, err) {
+			return
+		}
 		if errors.Is(err, ErrInvalidInput) {
 			WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
 			return
@@ -610,6 +613,9 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 
 	entry, err := h.brain.Update(r.Context(), id, req)
 	if err != nil {
+		if writeFieldValidationError(w, err) {
+			return
+		}
 		if errors.Is(err, ErrConflict) {
 			WriteError(w, http.StatusConflict, "Conflict", err.Error())
 			return

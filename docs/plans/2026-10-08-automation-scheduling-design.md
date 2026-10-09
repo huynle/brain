@@ -442,3 +442,36 @@ Where the build differs from, or refines, the design above and the addendum.
   they go to users who already own attention items. Users known only by a push
   device are not included yet. With neither, they are logged only.
 - **Deferred.** Phase 6 (runner scheduled tasks adopting `pkg/schedule`).
+
+## Verification and late fixes (2026-10-09)
+
+- Every task was merged into `automation-scheduling` only after its own tests,
+  `go vet` and golangci-lint passed, then re-verified on the integration branch.
+- An independent adversarial review of the ICS poller passed all eight checks
+  (no secret in errors, logs, status, snapshots or notices; https-only and
+  redirect rules; size and time limits; 0600/0700 files; rotation; stale
+  episodes; `-race`; tenant isolation).
+- A live end-to-end run against an isolated server (temporary HOME and brain
+  dir, port 3399) used Google's public US-holidays iCal feed:
+  - `GET /calendars` listed the ICS source (fetched, 1 event in window) and
+    `xnys`; the secret URL path appeared in neither the server log nor the
+    snapshot (0600 file, 0700 directory).
+  - A `type: calendar` automation matching `re:(?i)^(?P<name>columbus) day$`
+    fired exactly once at its slot, with the title and capture fenced as
+    untrusted data and dedup key `cal:<id>:<uid>:<occurrence start>`.
+  - A global dream with `stagger: 2h` projected different per-project times;
+    a binding moved one project to `every: 2d` at 01:00 with agent `explore`;
+    an `archived` binding opted a project out.
+  - `calendar: xnys` at 09:30 New York skipped Thanksgiving and the weekend.
+  - A calendar trigger with a script action and an unknown calendar name were
+    rejected with 400 on the named field.
+- Bugs found late and fixed:
+  - Calendar triggers with script actions could render invite text into a shell
+    command. Calendar triggers now accept only prompt actions (save-time and
+    runtime), and script commands never receive event data.
+  - `server.calendars` and `server.attention` never reached a running server:
+    the CLI copies server settings through four structs field by field and
+    none carried them. Both are threaded through, with a test per hop.
+- Existing behaviour worth knowing: wildcard and selector fan-out only reaches
+  projects that have a `task/` directory (`TaskServiceImpl.ListProjects`);
+  note-only projects are not dreamed until they have a task.

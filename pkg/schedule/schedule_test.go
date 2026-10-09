@@ -6,10 +6,7 @@ import (
 	"time"
 )
 
-var (
-	newYork = mustLoad("America/New_York")
-	london  = mustLoad("Europe/London")
-)
+var newYork = mustLoad("America/New_York")
 
 func mustLoad(name string) *time.Location {
 	loc, err := time.LoadLocation(name)

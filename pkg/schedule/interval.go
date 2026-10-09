@@ -217,11 +217,19 @@ func floorDiv(a, b int) int {
 	return q
 }
 
+// civilDate returns midnight of a calendar date, normalizing an
+// out-of-range day (January 32 is February 1) as time.Date does.
+func civilDate(y int, m time.Month, d int) wall {
+	y, m, d = time.Date(y, m, d, 0, 0, 0, 0, time.UTC).Date()
+	return wall{year: y, month: m, day: d}
+}
+
 // calendarSlot returns base slot k of a d or w interval: the local
 // calendar date anchorDate + k*days, at the schedule's time of day.
 func (s *Schedule) calendarSlot(k int) time.Time {
-	y, m, d := time.Date(s.anchorWall.year, s.anchorWall.month, s.anchorWall.day+k*s.every.days(), 0, 0, 0, 0, time.UTC).Date()
-	return resolveWall(wall{y, m, d, s.anchorWall.hour, s.anchorWall.min, s.anchorWall.sec, 0}, s.loc)
+	w := civilDate(s.anchorWall.year, s.anchorWall.month, s.anchorWall.day+k*s.every.days())
+	w.hour, w.min, w.sec = s.anchorWall.hour, s.anchorWall.min, s.anchorWall.sec
+	return resolveWall(w, s.loc)
 }
 
 // calendarIndex returns floor(local days from the anchor date to t's local

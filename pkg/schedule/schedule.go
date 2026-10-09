@@ -165,24 +165,105 @@ type Slot struct {
 	At time.Time
 }
 
+// maxRejectedDays bounds a slot search: once the day filters have rejected
+// this many local days in a row, LatestSlot and NextSlot stop and report no
+// slot (ok false, nil error) — the same answer as a cron expression that
+// can never match. A thousand days is almost three years of daily slots,
+// far beyond any real closure (a market holiday weekend, an event-free
+// month), while an always-closed calendar costs at most a thousand filter
+// calls per search.
+const maxRejectedDays = 1000
+
 // LatestSlot returns the latest slot with At <= now for the target whose
-// stagger offset is offset.
+// stagger offset is offset, skipping slots whose base date a day filter
+// rejects. ok is false when no such slot exists: before an every
+// schedule's anchor, for a cron expression that never matches, or when the
+// search gives up after maxRejectedDays rejected days. A filter error, or
+// ctx's error once it is done, is returned unchanged.
 func (s *Schedule) LatestSlot(ctx context.Context, now time.Time, offset time.Duration) (Slot, bool, error) {
-	base, ok := s.prevBase(now.Add(-offset))
-	if !ok {
-		return Slot{}, false, nil
+	t := now.Add(-offset)
+	for range maxRejectedDays {
+		base, ok := s.prevBase(t)
+		if !ok {
+			return Slot{}, false, nil
+		}
+		day, allowed, err := s.dayAllowed(ctx, base)
+		if err != nil {
+			return Slot{}, false, err
+		}
+		if allowed {
+			return Slot{Base: base, At: base.Add(offset)}, true, nil
+		}
+		// Every earlier slot on the rejected day shares its verdict.
+		t = earlier(base, day).Add(-time.Nanosecond)
 	}
-	return Slot{Base: base, At: base.Add(offset)}, true, nil
+	return Slot{}, false, nil
 }
 
 // NextSlot returns the earliest slot with At > after for the target whose
-// stagger offset is offset.
+// stagger offset is offset, skipping slots whose base date a day filter
+// rejects. ok, errors and the search bound are as for LatestSlot.
 func (s *Schedule) NextSlot(ctx context.Context, after time.Time, offset time.Duration) (Slot, bool, error) {
-	base, ok := s.nextBase(after.Add(-offset))
-	if !ok {
-		return Slot{}, false, nil
+	t := after.Add(-offset)
+	for range maxRejectedDays {
+		base, ok := s.nextBase(t)
+		if !ok {
+			return Slot{}, false, nil
+		}
+		day, allowed, err := s.dayAllowed(ctx, base)
+		if err != nil {
+			return Slot{}, false, err
+		}
+		if allowed {
+			return Slot{Base: base, At: base.Add(offset)}, true, nil
+		}
+		// Every later slot on the rejected day shares its verdict.
+		t = later(base, s.dayStartAfter(day, 1).Add(-time.Nanosecond))
 	}
-	return Slot{Base: base, At: base.Add(offset)}, true, nil
+	return Slot{}, false, nil
+}
+
+// dayAllowed reports whether every day filter allows the local date of
+// base, and returns that date's start (zero when there are no filters).
+func (s *Schedule) dayAllowed(ctx context.Context, base time.Time) (time.Time, bool, error) {
+	if len(s.filters) == 0 {
+		return time.Time{}, true, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return time.Time{}, false, err
+	}
+	day := s.dayStart(base)
+	for _, f := range s.filters {
+		if ok, err := f.Allowed(ctx, day); err != nil || !ok {
+			return day, false, err
+		}
+	}
+	return day, true, nil
+}
+
+// dayStart returns the start of t's local date in the schedule's location:
+// local midnight, or the first instant after it when a DST change skips
+// midnight (resolveWall).
+func (s *Schedule) dayStart(t time.Time) time.Time { return s.dayStartAfter(t, 0) }
+
+// dayStartAfter returns the start of the local date n days after t's.
+func (s *Schedule) dayStartAfter(t time.Time, n int) time.Time {
+	y, m, d := t.In(s.loc).Date()
+	return resolveWall(civilDate(y, m, d+n), s.loc)
+}
+
+func earlier(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
+}
+
+func later(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
 }
 
 // prevBase returns the latest base instant at or before t.

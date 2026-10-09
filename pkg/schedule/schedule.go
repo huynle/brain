@@ -68,12 +68,13 @@ type Schedule struct {
 	stagger time.Duration
 	filters []DayFilter
 
-	cron   *cron.Schedule
-	every  Interval
-	hasAt  bool
-	atHour int
-	atMin  int
+	cron  *cron.Schedule
+	every Interval
+	// anchor is Spec.Anchor truncated to whole seconds.
 	anchor time.Time
+	// anchorWall is the anchor's local date with the slot time of day (At,
+	// else the anchor's own wall clock); d/w intervals only.
+	anchorWall wall
 }
 
 // Compile validates spec and returns its Schedule. Errors are *FieldError.
@@ -120,6 +121,7 @@ func (s *Schedule) compileEvery(spec Spec) error {
 		return fieldErr("every", err)
 	}
 	s.every = iv
+	hasAt, atHour, atMin := false, 0, 0
 	if spec.At != "" {
 		if !iv.Calendar() {
 			return fieldErr("at", fmt.Errorf("only valid with every in days (d) or weeks (w), not %q", spec.Every))
@@ -128,12 +130,17 @@ func (s *Schedule) compileEvery(spec Spec) error {
 		if err != nil {
 			return fieldErr("at", err)
 		}
-		s.hasAt, s.atHour, s.atMin = true, h, m
+		hasAt, atHour, atMin = true, h, m
 	}
 	if spec.Anchor.IsZero() {
 		return fieldErr("anchor", errors.New("required with every"))
 	}
-	s.anchor = spec.Anchor
+	s.anchor = spec.Anchor.Truncate(time.Second)
+	s.anchorWall = wallOf(s.anchor.In(s.loc))
+	if hasAt {
+		s.anchorWall.hour, s.anchorWall.min, s.anchorWall.sec = atHour, atMin, 0
+	}
+	s.anchorWall.ns = 0
 	return nil
 }
 
@@ -180,12 +187,24 @@ func (s *Schedule) NextSlot(ctx context.Context, after time.Time, offset time.Du
 
 // prevBase returns the latest base instant at or before t.
 func (s *Schedule) prevBase(t time.Time) (time.Time, bool) {
+	if s.cron == nil {
+		if s.every.Calendar() {
+			return s.calendarPrev(t)
+		}
+		return time.Time{}, false
+	}
 	b := s.cron.PrevAtOrBefore(t.In(s.loc))
 	return b, !b.IsZero()
 }
 
 // nextBase returns the earliest base instant after t.
 func (s *Schedule) nextBase(t time.Time) (time.Time, bool) {
+	if s.cron == nil {
+		if s.every.Calendar() {
+			return s.calendarNext(t)
+		}
+		return time.Time{}, false
+	}
 	b := s.cron.NextAfter(t.In(s.loc))
 	return b, !b.IsZero()
 }

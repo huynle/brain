@@ -81,17 +81,20 @@ func automationUpdateTouchesDefinition(req types.UpdateEntryRequest) bool {
 // lookupAutomationParent resolves a binding's parent by short ID. It reads
 // the index directly rather than Recall, which records an access.
 func (s *BrainServiceImpl) lookupAutomationParent(ctx context.Context, id string) (*types.BrainEntry, error) {
-	row, err := s.storage.GetNoteByShortID(ctx, id)
+	// resolveEntry is the reviewed, tenant-admitted lookup (no new unscoped
+	// storage call site). It also matches paths and titles, but a binding's
+	// extends names its parent by ID only: bindings are tagged extends:<id>.
+	row, err := s.resolveEntry(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("lookup by short ID: %w", err)
+		return nil, err
 	}
 	if row == nil {
 		return nil, nil
 	}
-	if err := s.admittedRow(ctx, row.Path); err != nil {
-		return nil, err
-	}
 	entry := NoteRowToBrainEntry(row)
+	if entry.ID != id {
+		return nil, nil
+	}
 	return &entry, nil
 }
 

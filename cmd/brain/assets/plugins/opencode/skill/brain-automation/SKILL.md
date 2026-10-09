@@ -271,7 +271,7 @@ A binding is a project-owned automation with `extends: "<global automation id>"`
 - Overridable: `trigger.schedule`, `every` and `at` (as one unit), `timezone`, `stagger`, `catch_up`, `calendar`, `skip_if_event`, `only_if_event`; `action.agent`, `model`, `executor`, `target_workdir`, `execution_mode`, `timeout`; `starts_at`, `expires_at`, `max_runs` (a binding's `0` inherits, `-1` is unlimited); `action.prompt_append`, which is appended to the parent prompt.
 - Not overridable: trigger type, action type, `direct_prompt`, `filter.project`.
 - Status `active` opts the project in. Any other status opts it out. Use `archived`; `inactive` is not a valid entry status.
-- Bindings work in single-tenant mode only. The parent must be a global automation that is not a calendar trigger, a goal, or itself a binding.
+- Bindings work in single-tenant mode only. Save rejects a parent that is a calendar trigger, a goal, or itself a binding. A binding of a project-owned parent is saved but never runs, so extend only global automations.
 - Inspect the merged result with the MCP tool `automation_effective` (`id`, `project`) or `GET /api/v1/automations/{id}/effective?project=<project>`.
 
 ### Scheduling Examples

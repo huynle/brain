@@ -191,3 +191,115 @@ test("runs sort newest first, and fold to one row per automation", () => {
   assert.equal(counts.get("wvnbqz7w"), 2);
   assert.equal(counts.get("zz11"), 1);
 });
+
+// Structured audits: the server now tags each run with its automation and
+// writes scheduled_for / binding as typed fields. The body stays for legacy
+// readers, so both shapes must parse to the same AutomationRun.
+
+/** A tagged run whose body no longer carries automation_id. */
+const STRUCTURED = [
+  "## Automation Run Audit",
+  "",
+  "project: demo",
+  "trigger_type: cron",
+  "trigger_event: 0 3 * * *",
+  "started_at: 2026-10-09T03:00:02Z",
+  "duration_ms: 1200",
+  "",
+  "### Generated Tasks",
+  "- t1abcd23",
+].join("\n");
+
+test("the structured automation tag outranks the body", () => {
+  const run = parseAutomationRun(
+    mkEntry({
+      tags: ["automation_run", "automation:zz11"],
+      content: GENERATED, // body says wvnbqz7w
+    }),
+  );
+  assert.equal(run.automationId, "zz11");
+});
+
+test("a tagged run parses with no automation_id in its body", () => {
+  const run = parseAutomationRun(
+    mkEntry({
+      tags: ["automation_run", "automation:wvnbqz7w"],
+      content: STRUCTURED,
+    }),
+  );
+  assert.equal(run.automationId, "wvnbqz7w");
+  assert.deepEqual(run.taskIds, ["t1abcd23"]);
+  assert.equal(runOutcome(run), "generated");
+});
+
+test("scheduled_for and binding come from typed fields when present", () => {
+  const run = parseAutomationRun(
+    mkEntry({
+      content: STRUCTURED,
+      tags: ["automation_run", "automation:wvnbqz7w", "binding:bind1"],
+      scheduled_for: "2026-10-09T03:00:00Z",
+      binding: "bind1",
+    }),
+  );
+  assert.equal(run.scheduledFor, "2026-10-09T03:00:00Z");
+  assert.equal(run.binding, "bind1");
+});
+
+test("a binding tag fills binding when the typed field is absent", () => {
+  const run = parseAutomationRun(
+    mkEntry({
+      content: STRUCTURED,
+      tags: ["automation_run", "automation:wvnbqz7w", "binding:bind1"],
+    }),
+  );
+  assert.equal(run.binding, "bind1");
+  assert.equal(run.scheduledFor, "");
+});
+
+test("legacy body-only audits still yield scheduled_for and binding", () => {
+  // Written before typed fields existed: everything lives in the body.
+  const legacy = [
+    "## Automation Run Audit",
+    "",
+    "automation_id: legacy1",
+    "project: demo",
+    "trigger_type: cron",
+    "started_at: 2026-10-09T03:00:02Z",
+    "scheduled_for: 2026-10-09T03:00:00Z",
+    "binding: bind9",
+    "duration_ms: 1200",
+    "",
+    "### Generated Tasks",
+    "- t1abcd23",
+  ].join("\n");
+  const run = parseAutomationRun(mkEntry({ content: legacy }));
+  assert.equal(run.automationId, "legacy1");
+  assert.equal(run.scheduledFor, "2026-10-09T03:00:00Z");
+  assert.equal(run.binding, "bind9");
+});
+
+test("an empty automation: tag is ignored in favour of the body", () => {
+  const run = parseAutomationRun(
+    mkEntry({ tags: ["automation_run", "automation:"], content: GENERATED }),
+  );
+  assert.equal(run.automationId, "wvnbqz7w");
+});
+
+test("structured and legacy runs group under the same automation", () => {
+  const runs = parseAutomationRuns([
+    mkEntry({
+      id: "new",
+      tags: ["automation_run", "automation:wvnbqz7w"],
+      content: STRUCTURED,
+      created: "2026-10-09T03:00:02Z",
+    }),
+    mkEntry({
+      id: "old",
+      content: GENERATED,
+      created: "2026-08-21T10:49:19Z",
+    }),
+  ]);
+  const latest = latestRunByAutomation(runs);
+  assert.equal(latest.get("wvnbqz7w")?.id, "new");
+  assert.equal(runCountByAutomation(runs).get("wvnbqz7w"), 2);
+});

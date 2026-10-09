@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -62,43 +61,6 @@ func isScheduledCronAutomation(automation types.BrainEntry) bool {
 		return false
 	}
 	return automation.Trigger.Schedule != "" || automation.Trigger.Every != ""
-}
-
-// automationScheduleSpec translates an automation's trigger into a
-// schedule.Spec. Day filters are attached by the caller (dayFiltersFor).
-func automationScheduleSpec(automation types.BrainEntry) (schedule.Spec, error) {
-	if automation.Trigger == nil {
-		return schedule.Spec{}, errors.New("automation has no trigger")
-	}
-	tc := automation.Trigger
-	spec := schedule.Spec{
-		Cron:     tc.Schedule,
-		Every:    tc.Every,
-		At:       tc.At,
-		Timezone: tc.Timezone,
-		Anchor:   automationAnchor(automation),
-	}
-	if tc.Stagger != "" {
-		stagger, err := time.ParseDuration(tc.Stagger)
-		if err != nil {
-			return schedule.Spec{}, fmt.Errorf("trigger.stagger: %w", err)
-		}
-		spec.Stagger = stagger
-	}
-	return spec, nil
-}
-
-// automationAnchor is where an interval schedule starts: starts_at when it is
-// set and parses, else the entry's creation instant. The zero time means the
-// anchor is missing, which Compile rejects for an interval.
-func automationAnchor(automation types.BrainEntry) time.Time {
-	if automation.StartsAt != "" {
-		if start, err := time.Parse(time.RFC3339, automation.StartsAt); err == nil {
-			return start
-		}
-	}
-	created, _ := time.Parse(time.RFC3339, automation.Created)
-	return created
 }
 
 // dayFiltersFor returns the day filters that gate an automation's slots. The

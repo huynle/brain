@@ -108,7 +108,6 @@ func newTenantGraph(ctx context.Context, store *storage.TenantStore, roots *tena
 	scheduler := service.NewSchedulerService(tasks, runner, runners, placement, store, hub)
 	eventHub := realtime.NewEventHub()
 	events := service.NewEventService(eventHub)
-	timeline := service.NewTimelineService(brain, events)
 	events.SetFeatureTaskLister(tasks)
 	events.SetFeatureAssignmentCleaner(store)
 	cascade := service.NewFeatureCascadeService(eventHub, scheduler)
@@ -118,6 +117,9 @@ func newTenantGraph(ctx context.Context, store *storage.TenantStore, roots *tena
 	// Wildcard automations enumerate this graph's projects, never an ambient
 	// deployment-wide project list or an unscoped fallback task.
 	automations.SetProjectLister(tasks)
+	// The timeline projects filtered global automations with the scheduler's
+	// own target resolution, so the two cannot disagree about which projects run.
+	timeline := service.NewTimelineService(brain, events, service.WithTimelineTargets(automations))
 	bridgeHub := bridge.NewHub(hub)
 	tasks.SetLiveInjector(newBridgeLiveInjector(runners, bridgeHub))
 	goals := service.NewGoalService(brain, tasks, store, service.WithGoalSteerer(newBridgeGoalSteerer(runners, bridgeHub)), service.WithGoalPauseChecker(runner))

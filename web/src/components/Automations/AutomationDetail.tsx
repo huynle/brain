@@ -27,11 +27,16 @@ import { useAutomations } from "../../hooks/useAutomations";
 import { useAutomationRuns } from "../../hooks/useAutomationRuns";
 import { useAutomationActionContext } from "../../hooks/useAutomationActionContext";
 import { useActionRunner } from "../../hooks/useActionRunner";
+import { useEffectiveAutomation } from "../../hooks/useEffectiveAutomation";
 import { useRowActions } from "../../hooks/useRowActions";
 import {
   buildAutomationActions,
   isEnabledAutomation,
+  isEnabledHere,
+  isGlobalAutomation,
+  type ProjectScope,
 } from "../../lib/actions/automationActions";
+import { bindingFor } from "../../lib/automationBindings";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
 import { relativeTime } from "../../lib/format";
@@ -46,6 +51,7 @@ import {
 import { AutomationRunRows } from "./AutomationRunRows";
 import { AutomationRunDetail } from "./AutomationRunRows";
 import { AutomationScheduleRows } from "./AutomationScheduleRows";
+import { AutomationBindingPanel } from "./AutomationBindingPanel";
 import type { SessionRef, Task } from "../../lib/types";
 
 export interface AutomationDetailProps {
@@ -66,7 +72,8 @@ export function AutomationDetail({
   onOpenTask,
   onOpenRunsPane,
 }: AutomationDetailProps): JSX.Element {
-  const { automations, isLoading, error, refetch } = useAutomations(projectId);
+  const { automations, bindings, isLoading, error, refetch } =
+    useAutomations(projectId);
   const runs = useAutomationRuns(projectId, automationId);
   const ctx = useAutomationActionContext(projectId);
   const runner = useActionRunner();
@@ -77,7 +84,14 @@ export function AutomationDetail({
   const [showConfig, setShowConfig] = useState(false);
   const [selectedRun, setSelectedRun] = useState<AutomationRun | undefined>();
 
-  const automation = automations.find((a) => a.id === automationId);
+  // A global automation viewed from a project runs or stops here through this
+  // project's binding. Hooks run before the early returns, so the query stays
+  // disabled ("" id) until the automation is known to be global.
+  const candidate = automations.find((a) => a.id === automationId);
+  const globalHere = !!candidate && isGlobalAutomation(candidate);
+  const eff = useEffectiveAutomation(globalHere ? automationId : "", projectId);
+
+  const automation = candidate;
 
   if (isLoading) return <Loading label="Loading automation…" />;
   if (error) return <ErrorState error={error} onRetry={refetch} />;
@@ -90,14 +104,29 @@ export function AutomationDetail({
     );
   }
 
-  const enabled = isEnabledAutomation(automation);
-  const errored = automation.status === "blocked";
+  const binding = globalHere ? bindingFor(bindings, automation.id, projectId) : null;
+  const scope: ProjectScope = {
+    projectId,
+    binding,
+    targeted: eff.effective?.targeted ?? false,
+  };
+  // Until a global automation's state here is read, nothing may act on it.
+  const known = !globalHere || eff.effective !== null;
+  const enabled = known && (globalHere ? isEnabledHere(automation, scope) : isEnabledAutomation(automation));
+  const errored = !globalHere && automation.status === "blocked";
   const name = automation.title || automation.id;
-  const actions = buildAutomationActions(automation, ctx);
+  const actions = buildAutomationActions(automation, ctx, globalHere ? scope : undefined);
   const byId = new Map(actions.map((a) => [a.id, a]));
   const runAction = byId.get("run");
   const toggleAction =
     enabled || errored ? byId.get("pause") : byId.get("enable");
+  const toggleText = globalHere
+    ? enabled
+      ? "Turn off here"
+      : "Turn on here"
+    : enabled || errored
+      ? "Pause"
+      : "Enable";
   const last = runs.runs[0];
 
   const action = (automation as { action?: unknown }).action;
@@ -123,7 +152,9 @@ export function AutomationDetail({
         <span
           className={`health ${enabled ? "active" : errored ? "blocked" : ""}`}
         >
-          {automation.status}
+          {globalHere
+            ? `${enabled ? "on" : "off"} here · global ${automation.status}`
+            : automation.status}
         </span>
         <span className="adetail-trigger">
           {automation.trigger?.type || "manual"}
@@ -145,11 +176,11 @@ export function AutomationDetail({
         </button>
         {toggleAction && (
           <button
-            disabled={runner.busy}
+            disabled={runner.busy || !known}
             onClick={() => runner.run(toggleAction)}
             title={toggleAction.disabledReason || toggleAction.label}
           >
-            {enabled || errored ? "Pause" : "Enable"}
+            {toggleText}
           </button>
         )}
         {onOpenRunsPane && (
@@ -161,6 +192,17 @@ export function AutomationDetail({
           </button>
         )}
       </div>
+
+      {/* A global automation's state in this project. Shown up front, not
+          folded, because a broken binding must be seen before anything else. */}
+      {globalHere && (
+        <AutomationBindingPanel
+          automation={automation}
+          projectId={projectId}
+          binding={binding}
+          ctx={ctx}
+        />
+      )}
 
       {/* The one-line health answer, above the fold and above the list:
           "did it run, and did it work". */}

@@ -151,7 +151,7 @@ func (s *TimelineService) dayFilters(entries []types.BrainEntry) map[string][]sc
 	}
 	filters := make(map[string][]schedule.DayFilter)
 	for _, entry := range entries {
-		if !cronProjectionCandidate(entry) || entry.Trigger.Calendar == "" {
+		if !cronProjectionCandidate(entry) || !hasDayFilters(entry.Trigger) {
 			continue
 		}
 		filters[entry.ID] = source.dayFiltersFor(entry)
@@ -182,7 +182,7 @@ func (s *TimelineService) resolveTargets(ctx context.Context, entry types.BrainE
 			set.Effective = make(map[string]types.BrainEntry)
 		}
 		set.Effective[target.project] = target.entry
-		if target.entry.Trigger != nil && target.entry.Trigger.Calendar != "" {
+		if hasDayFilters(target.entry.Trigger) {
 			if source, ok := s.targets.(automationDayFilterSource); ok {
 				if set.EffectiveDayFilters == nil {
 					set.EffectiveDayFilters = make(map[string][]schedule.DayFilter)
@@ -443,7 +443,7 @@ func (b *timelineBuilder) projectAutomation(entry types.BrainEntry) {
 		b.warn(entry.ID, err)
 		return
 	}
-	if entry.Trigger.Calendar != "" {
+	if hasDayFilters(entry.Trigger) {
 		filters, ok := b.opts.DayFilters[entry.ID]
 		if !ok {
 			b.warn(entry.ID, errors.New("calendar day filter unavailable; not projected"))
@@ -477,7 +477,7 @@ func (b *timelineBuilder) projectAutomation(entry types.BrainEntry) {
 				b.warn(entry.ID, err)
 				continue
 			}
-			if effective.Trigger.Calendar != "" {
+			if hasDayFilters(effective.Trigger) {
 				filters, ok := resolved.EffectiveDayFilters[project]
 				if !ok {
 					b.warn(entry.ID, errors.New("calendar day filter unavailable for project "+project+"; not projected"))

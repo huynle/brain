@@ -2454,11 +2454,11 @@ func TestAutomationService_CheckScheduledEmptyTimezoneDefaultsToUTC(t *testing.T
 // TestAutomationService_CheckScheduledInvalidTimezoneDefaultsToUTC verifies
 // that a malformed timezone string does not break scheduling: it falls back
 // to UTC (with a warn log emitted by pkg/cron.LoadTimezone).
-func TestAutomationService_CheckScheduledInvalidTimezoneDefaultsToUTC(t *testing.T) {
+// An unknown trigger.timezone is rejected on save, naming the field, so it
+// can never reach the scheduler and silently run in UTC.
+func TestAutomationService_CheckScheduledInvalidTimezoneRejectedOnSave(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx := context.Background()
-	// 07:00 UTC on Tuesday.
-	now := time.Date(2026, 7, 7, 7, 0, 0, 0, time.UTC)
 
 	_, err := brain.Save(ctx, types.CreateEntryRequest{
 		Type:     "automation",
@@ -2476,28 +2476,11 @@ func TestAutomationService_CheckScheduledInvalidTimezoneDefaultsToUTC(t *testing
 		},
 		Action: &types.AutomationAction{
 			Type:         "prompt",
-			DirectPrompt: "Should still fire in UTC fallback.",
+			DirectPrompt: "Should never be saved.",
 			Agent:        "assistant",
 		},
 	})
-	if err != nil {
-		t.Fatalf("Save bad-tz automation failed: %v", err)
-	}
-
-	automation := NewAutomationService(brain)
-	if err := automation.CheckScheduled(ctx, now); err != nil {
-		t.Fatalf("CheckScheduled bad-tz failed: %v", err)
-	}
-
-	resp, err := brain.List(ctx, types.ListEntriesRequest{
-		Type:    "task",
-		Project: "automation-cron-tz-bad",
-		Limit:   10,
-	})
-	if err != nil {
-		t.Fatalf("List bad-tz tasks failed: %v", err)
-	}
-	if len(resp.Entries) != 1 {
-		t.Fatalf("expected 1 generated task for invalid-timezone automation (UTC fallback) at 07:00 UTC, got %d", len(resp.Entries))
+	if got := fieldOfValidationError(err); got != "trigger.timezone" {
+		t.Fatalf("Save validation field = %q, want trigger.timezone (err: %v)", got, err)
 	}
 }

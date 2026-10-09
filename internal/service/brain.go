@@ -630,6 +630,9 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["timezone"].(string); ok {
 			fm.Timezone = v
 		}
+		if v, ok := metaInt(meta, "max_runs"); ok {
+			fm.MaxRuns = &v
+		}
 		if v, ok := meta["extends"].(string); ok {
 			fm.Extends = v
 		}
@@ -1820,6 +1823,14 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 
 	if !retirementMetadata(fields) {
 		if err := validateMetadataGitRemote(ctx, s.storage, row, fields); err != nil {
+			return nil, err
+		}
+	}
+
+	// An automation's lifecycle or prompt write must pass the same checks that
+	// Update applies, because this path writes the DB directly.
+	if row.Type != nil && *row.Type == "automation" && automationMetadataTouchesDefinition(fields) {
+		if err := s.validateAutomationMetadata(ctx, row, fields); err != nil {
 			return nil, err
 		}
 	}

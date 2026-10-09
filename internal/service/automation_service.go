@@ -18,6 +18,9 @@ type AutomationService struct {
 	brain        *BrainServiceImpl
 	projects     automationProjectLister
 	pauseChecker automationPauseChecker
+	// now is the injected clock for lifecycle decisions; nil means
+	// types.TimeNowUTC (see clock).
+	now func() time.Time
 }
 
 type automationPauseChecker interface {
@@ -221,7 +224,7 @@ func (s *AutomationService) Start(ctx context.Context, hub *realtime.EventHub) {
 	defer unsub()
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
-	_ = s.CheckScheduled(ctx, time.Now().UTC())
+	_ = s.CheckScheduled(ctx, s.clock())
 
 	seen := make(map[string]struct{})
 	process := func(evt types.Event) {
@@ -269,6 +272,13 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 	}
 
 	var firstErr error
+	// Expiry applies to every trigger type, so it is swept here before the
+	// cron-only loop below.
+	for _, automation := range automations.Entries {
+		if _, err := s.expireIfDue(ctx, automation); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
 	for _, automation := range automations.Entries {
 		if automation.Trigger == nil || automation.Action == nil || automation.Trigger.Type != "cron" {
 			continue
@@ -313,6 +323,17 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 			// the pause dial consulted, the project the generated task and
 			// its audit land in, and the {{.Project}} the prompt renders.
 			evt := types.Event{ProjectID: project}
+
+			// Lifecycle (starts_at, expires_at) gates the fire before the
+			// pause check, so an expired automation writes no audit.
+			if ok, err := s.lifecycleAllows(ctx, automation, project); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			} else if !ok {
+				continue
+			}
 
 			// The pause gate is checked HERE, after the schedule match,
 			// and not before it. A paused automation whose gate ran first
@@ -369,6 +390,15 @@ func (s *AutomationService) HandleEvent(ctx context.Context, evt types.Event) er
 
 	for _, automation := range automations.Entries {
 		if !automationMatchesEvent(automation, evt) {
+			continue
+		}
+		gateProject := automation.ProjectID
+		if gateProject == "" {
+			gateProject = evt.ProjectID
+		}
+		if ok, err := s.lifecycleAllows(ctx, automation, gateProject); err != nil {
+			return err
+		} else if !ok {
 			continue
 		}
 		if s.isAutomationPaused(automation, evt) {
@@ -576,6 +606,17 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 	project := automation.ProjectID
 	if project == "" {
 		project = evt.ProjectID
+	}
+	// Manual runs are explicit user overrides: they ignore lifecycle and are
+	// not counted. Every other firing is gated here as well.
+	if evt.Type != "manual" {
+		ok, err := s.lifecycleAllows(ctx, automation, project)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", nil
+		}
 	}
 	if skip, reason, err := s.shouldSkipTaskGeneration(ctx, project, automation); err != nil {
 		return "", err
@@ -938,7 +979,7 @@ func (s *AutomationService) createRunAudit(ctx context.Context, audit automation
 	if s == nil || s.brain == nil {
 		return "", nil
 	}
-	started := types.TimeNowUTC().UTC()
+	started := s.clock().UTC()
 	triggerType := "manual"
 	triggerEvent := audit.evt.Type
 	if audit.automation.Trigger != nil {
@@ -1012,6 +1053,10 @@ func (s *AutomationService) createRunAudit(ctx context.Context, audit automation
 	if tag := runAuditBindingTag(audit.binding); tag != "" {
 		tags = append(tags, tag)
 	}
+	// Manual runs are tagged so max_runs never counts them.
+	if audit.evt.Type == "manual" {
+		tags = append(tags, runAuditManualTag)
+	}
 
 	resp, err := s.brain.Save(ctx, types.CreateEntryRequest{
 		Type:         "automation_run",
@@ -1074,7 +1119,7 @@ func (s *AutomationService) shouldSkipTaskGeneration(ctx context.Context, projec
 		return true, "max_concurrent", nil
 	}
 
-	if automation.Trigger.Cooldown != "" && cooldownActive(tasks, automation.Trigger.Cooldown, types.TimeNowUTC()) {
+	if automation.Trigger.Cooldown != "" && cooldownActive(tasks, automation.Trigger.Cooldown, s.clock()) {
 		return true, "cooldown", nil
 	}
 

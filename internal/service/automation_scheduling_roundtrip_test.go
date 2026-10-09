@@ -246,8 +246,7 @@ func TestAutomationSchedulingFields_ServiceRoundTrip(t *testing.T) {
 	assertSchedulingEntry(t, "reindex/read", entry, v1)
 
 	// Fallback reconstruction (metadata JSON -> Frontmatter -> Serialize).
-	// reconstructFrontmatter has never carried max_runs (a pre-existing gap
-	// outside this change), so that one lifecycle field is not asserted here.
+	// Every lifecycle field, max_runs included, must survive it.
 	row, err := brain.storage.GetNoteByPath(ctx, saved.Path)
 	if err != nil || row == nil {
 		t.Fatalf("GetNoteByPath: %v (row %v)", err, row)
@@ -256,9 +255,7 @@ func TestAutomationSchedulingFields_ServiceRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reconstructFullContent: %v", err)
 	}
-	noMaxRuns := v1
-	noMaxRuns.maxRuns = 0
-	assertSchedulingFrontmatter(t, "reconstruct", reconstructed, noMaxRuns)
+	assertSchedulingFrontmatter(t, "reconstruct", reconstructed, v1)
 
 	// Typed update replaces every value.
 	updated, err := brain.Update(ctx, saved.Path, v2.updateRequest())

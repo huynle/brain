@@ -1,6 +1,11 @@
 // Package cron provides a 5-field cron expression parser and matcher.
 // Supports standard format: minute hour dayOfMonth month dayOfWeek
-// All time evaluation uses UTC.
+//
+// Times are evaluated in their own location (pass t.In(loc) to choose the
+// zone). Day fields follow Vixie cron: when neither day-of-month nor
+// day-of-week starts with '*', a day matches if EITHER matches; otherwise
+// both must. Across DST, a local time that does not exist never matches,
+// and a local time that occurs twice matches only at its first occurrence.
 package cron
 
 import (
@@ -170,6 +175,10 @@ func parseFieldPart(part string, lim fieldLimits, fs *fieldSet) error {
 // Matches checks if a given time matches the cron schedule.
 // The time is evaluated in its own location (use t.In(loc) to control timezone).
 // For backward compatibility, UTC times behave as before.
+//
+// Seconds are ignored. The second pass through a local hour repeated by a
+// DST fall-back never matches, so a schedule probed once a minute fires
+// once per wall-clock slot, at its first occurrence (addendum decision #7).
 func (s *Schedule) Matches(t time.Time) bool {
 	minute := t.Minute()
 	hour := t.Hour()
@@ -180,7 +189,72 @@ func (s *Schedule) Matches(t time.Time) bool {
 	return s.fields[0].has(minute) &&
 		s.fields[1].has(hour) &&
 		s.dayMatches(day, weekday) &&
-		s.fields[3].has(month)
+		s.fields[3].has(month) &&
+		!isRepeatedOccurrence(t)
+}
+
+// isRepeatedOccurrence reports whether t's local wall clock already
+// occurred at an earlier instant — the second pass through an hour that a
+// backward offset change (DST fall-back) repeats. A repeated wall time
+// fires once, at its first occurrence.
+func isRepeatedOccurrence(t time.Time) bool {
+	_, ok := earlierOccurrence(t)
+	return ok
+}
+
+// earlierOccurrence returns an earlier instant showing exactly t's local
+// wall clock, if one exists.
+//
+// An earlier instant u with the same wall clock satisfies
+// u + offset(u) = t + offset(t), so u = t - (offset(u) - offset(t)) for an
+// offset larger than t's. The candidates are the offsets of the zone
+// periods just before t's; the wall-clock comparison is the proof, so a
+// candidate from the wrong period is simply rejected. Two periods are
+// examined so a metadata-only transition (same offset, new abbreviation)
+// sitting inside a repeated span does not hide it.
+func earlierOccurrence(t time.Time) (time.Time, bool) {
+	_, off := t.Zone()
+	p := t
+	for i := 0; i < 2; i++ {
+		start, _ := p.ZoneBounds()
+		if start.IsZero() {
+			break // fixed zone, or no earlier transition
+		}
+		prev := start.Add(-time.Nanosecond)
+		if _, prevOff := prev.Zone(); prevOff > off {
+			u := t.Add(-time.Duration(prevOff-off) * time.Second)
+			if sameWallClock(u, t) {
+				return u, true
+			}
+		}
+		p = prev
+	}
+	return time.Time{}, false
+}
+
+// firstOccurrence maps t to the earliest instant showing the same local wall
+// clock. time.Date leaves the choice unspecified for a repeated wall time —
+// in practice it returns the first pass in America/New_York but the second
+// in Europe/London — so every constructed candidate goes through here.
+func firstOccurrence(t time.Time) time.Time {
+	for i := 0; i < 4; i++ {
+		u, ok := earlierOccurrence(t)
+		if !ok {
+			break
+		}
+		t = u
+	}
+	return t
+}
+
+// sameWallClock reports whether a and b show the same local date and time
+// of day, to the second.
+func sameWallClock(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	ah, ami, as := a.Clock()
+	bh, bmi, bs := b.Clock()
+	return ay == by && am == bm && ad == bd && ah == bh && ami == bmi && as == bs
 }
 
 // dayMatches is the single day predicate shared by matching and searching.
@@ -268,13 +342,13 @@ func (s *Schedule) advanceCandidate(t time.Time, loc *time.Location) time.Time {
 		// Skip to next valid month
 		for m := month + 1; m <= 12; m++ {
 			if s.fields[3].has(m) {
-				return time.Date(t.Year(), time.Month(m), 1, 0, 0, 0, 0, loc)
+				return firstOccurrence(time.Date(t.Year(), time.Month(m), 1, 0, 0, 0, 0, loc))
 			}
 		}
 		// Wrap to next year
 		for m := 1; m <= 12; m++ {
 			if s.fields[3].has(m) {
-				return time.Date(t.Year()+1, time.Month(m), 1, 0, 0, 0, 0, loc)
+				return firstOccurrence(time.Date(t.Year()+1, time.Month(m), 1, 0, 0, 0, 0, loc))
 			}
 		}
 	}
@@ -319,7 +393,7 @@ func (s *Schedule) advanceCandidate(t time.Time, loc *time.Location) time.Time {
 // "here is that hour" from "that hour does not happen today".
 func atLocalHour(t time.Time, h int, loc *time.Location) (time.Time, bool) {
 	c := time.Date(t.Year(), t.Month(), t.Day(), h, 0, 0, 0, loc)
-	return c, c.Hour() == h
+	return firstOccurrence(c), c.Hour() == h
 }
 
 // startOfNextDay returns the first instant of the day after t.
@@ -332,7 +406,7 @@ func atLocalHour(t time.Time, h int, loc *time.Location) (time.Time, bool) {
 // caller cannot be walked backwards by the substitution.
 func startOfNextDay(t time.Time, loc *time.Location) time.Time {
 	next := t.AddDate(0, 0, 1)
-	c := time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, loc)
+	c := firstOccurrence(time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, loc))
 	if !c.After(t) {
 		// Degenerate zone data: fall back to a plain forward step rather
 		// than handing back a candidate that cannot terminate the search.

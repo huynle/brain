@@ -669,6 +669,8 @@ func defaultConfig() *UnifiedConfig {
 		cfg.Server.Attachments = ucfg.Server.Attachments
 		cfg.Server.AttachmentExtraction = ucfg.Server.AttachmentExtraction
 		cfg.Server.Assistant = ucfg.Server.Assistant
+		cfg.Server.Attention = ucfg.Server.Attention
+		cfg.Server.Calendars = ucfg.Server.Calendars
 
 		// TLS from unified config. The unified schema uses flat `tls_cert` /
 		// `tls_key` YAML keys; map into the router's nested TLS struct.
@@ -791,6 +793,8 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.Attachments = cfg.Server.Attachments
 	cmdCfg.Server.AttachmentExtraction = cfg.Server.AttachmentExtraction
 	cmdCfg.Server.Assistant = cfg.Server.Assistant
+	cmdCfg.Server.Attention = cfg.Server.Attention
+	cmdCfg.Server.Calendars = cfg.Server.Calendars
 	// Runner — assign the full config directly, no lossy field-by-field copying
 	cmdCfg.Runner = cfg.Runner
 

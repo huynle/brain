@@ -60,6 +60,8 @@ type ServerOptions struct {
 
 	AttachmentExtraction config.AttachmentExtractionConfig
 	Assistant            config.AssistantConfig
+	Attention            config.AttentionConfig
+	Calendars            map[string]config.CalendarConfig
 
 	// TLSCert / TLSKey, when both set, cause the server to run TLS via
 	// ListenAndServeTLS. Go's net/http auto-enables HTTP/2 on TLS servers
@@ -278,6 +280,22 @@ func validateBindAuth(opts ServerOptions) error {
 	return fmt.Errorf("refusing unauthenticated non-loopback bind to %q: set ENABLE_AUTH=true or explicitly accept the risk with %s=true", opts.Host, escape)
 }
 
+// graphConfigFromOptions is the graph's configuration for a server started
+// with opts. Every server setting must be carried here: a field left out is
+// silently ignored by a running server (calendar sources and attention
+// recipients once were).
+func graphConfigFromOptions(opts ServerOptions, attachments config.AttachmentConfig) config.Config {
+	return config.Config{
+		BrainDir: opts.BrainDir, Host: opts.Host, Port: opts.Port,
+		EnableAuth: opts.EnableAuth, CORSOrigin: opts.CORSOrigin,
+		OAuthPIN: opts.OAuthPIN, JWTSecret: opts.JWTSecret,
+		TaskDefaults: opts.TaskDefaults, FeatureCheckout: opts.FeatureCheckout, FeatureDelivery: opts.FeatureDelivery,
+		Tenancy: opts.Tenancy, Embedding: opts.Embedding, Attachments: attachments,
+		AttachmentExtraction: opts.AttachmentExtraction, Assistant: opts.Assistant,
+		Attention: opts.Attention, Calendars: opts.Calendars,
+	}
+}
+
 func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, string, func(), error) {
 	// Also guard direct in-process assembly BEFORE migration, mkdir or storage.
 	var err error
@@ -328,14 +346,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	if opts.PasswordRefreshTokenTTL != nil {
 		passwordRefreshTTL = *opts.PasswordRefreshTokenTTL
 	}
-	graph, err := newTenantGraph(ctx, store, roots, config.Config{
-		BrainDir: opts.BrainDir, Host: opts.Host, Port: opts.Port,
-		EnableAuth: opts.EnableAuth, CORSOrigin: opts.CORSOrigin,
-		OAuthPIN: opts.OAuthPIN, JWTSecret: opts.JWTSecret,
-		TaskDefaults: opts.TaskDefaults, FeatureCheckout: opts.FeatureCheckout, FeatureDelivery: opts.FeatureDelivery,
-		Tenancy: opts.Tenancy, Embedding: opts.Embedding, Attachments: attachments,
-		AttachmentExtraction: opts.AttachmentExtraction, Assistant: opts.Assistant,
-	}, graphIdentity{tokens: views.tokens, verifier: credVerifier, passwords: control, passwordTTL: passwordRefreshTTL, passwordTTLSet: true, assistantMCPURL: assistantMCPBaseURL(opts)})
+	graph, err := newTenantGraph(ctx, store, roots, graphConfigFromOptions(opts, attachments), graphIdentity{tokens: views.tokens, verifier: credVerifier, passwords: control, passwordTTL: passwordRefreshTTL, passwordTTLSet: true, assistantMCPURL: assistantMCPBaseURL(opts)})
 	if err != nil {
 		cleanup()
 		return nil, "", nil, err

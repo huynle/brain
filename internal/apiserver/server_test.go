@@ -532,3 +532,39 @@ func entryStatusCode(handler http.Handler, relPath string) int {
 	handler.ServeHTTP(rec, req)
 	return rec.Code
 }
+
+// buildHTTPHandler builds the graph from ServerOptions field by field; calendar
+// sources and attention recipients must reach it, or a real server lists no
+// calendars and drops system notices.
+func TestGraphConfigFromOptionsCarriesCalendarsAndAttention(t *testing.T) {
+	opts := ServerOptions{
+		Calendars: map[string]config.CalendarConfig{"xnys": {Type: "builtin", Market: "XNYS"}},
+		Attention: config.AttentionConfig{SystemRecipients: []string{"ops"}},
+	}
+	cfg := graphConfigFromOptions(opts, config.AttachmentConfig{})
+	if got := cfg.Calendars["xnys"].Market; got != "XNYS" {
+		t.Fatalf("graph config calendars = %+v, want xnys/XNYS", cfg.Calendars)
+	}
+	if got := cfg.Attention.SystemRecipients; len(got) != 1 || got[0] != "ops" {
+		t.Fatalf("graph config attention recipients = %v, want [ops]", got)
+	}
+}
+
+func TestBuildHTTPHandlerServesConfiguredCalendars(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h, _, cleanup, err := buildHTTPHandler(ctx, ServerOptions{
+		Host: "localhost", BrainDir: dir, LogLevel: "error",
+		Calendars: map[string]config.CalendarConfig{"xnys": {Type: "builtin", Market: "XNYS"}},
+	})
+	if err != nil {
+		t.Fatalf("buildHTTPHandler: %v", err)
+	}
+	defer cleanup()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/calendars", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"xnys"`) {
+		t.Fatalf("GET /api/v1/calendars = %d %s, want xnys listed", rec.Code, rec.Body.String())
+	}
+}

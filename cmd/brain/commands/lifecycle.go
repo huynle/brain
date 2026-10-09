@@ -380,36 +380,45 @@ func (c *StartCommand) startDaemon(pidFile, logFile string) error {
 	return nil
 }
 
-// startForeground runs the API server in the current process.
-func (c *StartCommand) startForeground(pidFile, logFile string) error {
-	passwordRefreshTTL := time.Duration(c.Config.Server.PasswordSessionTTLDays) * 24 * time.Hour
-	opts := apiserver.ServerOptions{
-		Port:                    c.Config.Server.Port,
-		Host:                    c.Config.Server.Host,
-		BrainDir:                c.Config.Server.BrainDir,
-		EnableAuth:              c.Config.Server.EnableAuth,
-		LogLevel:                c.Config.Server.LogLevel,
-		CORSOrigin:              c.Config.Server.CORSOrigin,
-		OAuthPIN:                c.Config.Server.OAuthPIN,
-		JWTSecret:               c.Config.Server.JWTSecret,
+// serverOptionsFromConfig maps the server section of the CLI config onto the
+// API server's options. Every server setting must be carried here: a field
+// left out is silently ignored by `brain api`.
+func serverOptionsFromConfig(cfg *UnifiedConfig) apiserver.ServerOptions {
+	passwordRefreshTTL := time.Duration(cfg.Server.PasswordSessionTTLDays) * 24 * time.Hour
+	return apiserver.ServerOptions{
+		Port:                    cfg.Server.Port,
+		Host:                    cfg.Server.Host,
+		BrainDir:                cfg.Server.BrainDir,
+		EnableAuth:              cfg.Server.EnableAuth,
+		LogLevel:                cfg.Server.LogLevel,
+		CORSOrigin:              cfg.Server.CORSOrigin,
+		OAuthPIN:                cfg.Server.OAuthPIN,
+		JWTSecret:               cfg.Server.JWTSecret,
 		PasswordRefreshTokenTTL: &passwordRefreshTTL,
-		TaskDefaults:            c.Config.Server.TaskDefaults,
-		FeatureCheckout:         c.Config.Server.FeatureCheckout,
-		FeatureDelivery:         c.Config.Server.FeatureDelivery,
-		IndexWatch:              c.Config.Server.IndexWatch,
-		Embedding:               c.Config.Server.Embedding,
-		Attachments:             c.Config.Server.Attachments,
+		TaskDefaults:            cfg.Server.TaskDefaults,
+		FeatureCheckout:         cfg.Server.FeatureCheckout,
+		FeatureDelivery:         cfg.Server.FeatureDelivery,
+		IndexWatch:              cfg.Server.IndexWatch,
+		Embedding:               cfg.Server.Embedding,
+		Attachments:             cfg.Server.Attachments,
 
-		AttachmentExtraction: c.Config.Server.AttachmentExtraction,
-		Assistant:            c.Config.Server.Assistant,
+		AttachmentExtraction: cfg.Server.AttachmentExtraction,
+		Assistant:            cfg.Server.Assistant,
+		Attention:            cfg.Server.Attention,
+		Calendars:            cfg.Server.Calendars,
 
 		// TLS is optional. When both cert + key are set the server runs
 		// HTTPS with HTTP/2 auto-enabled by net/http. Browsers only speak
 		// h2 over TLS, which is required for the panes-v2 dashboard to
 		// keep more than 6 SSE streams alive concurrently.
-		TLSCert: c.Config.Server.TLS.CertPath,
-		TLSKey:  c.Config.Server.TLS.KeyPath,
+		TLSCert: cfg.Server.TLS.CertPath,
+		TLSKey:  cfg.Server.TLS.KeyPath,
 	}
+}
+
+// startForeground runs the API server in the current process.
+func (c *StartCommand) startForeground(pidFile, logFile string) error {
+	opts := serverOptionsFromConfig(c.Config)
 
 	// Tee slog to the terminal and the configured log file so
 	// `brain api logs -f` works against a foreground server too.

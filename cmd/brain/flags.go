@@ -278,6 +278,8 @@ type UnifiedConfig struct {
 
 		AttachmentExtraction uconfig.AttachmentExtractionConfig
 		Assistant            uconfig.AssistantConfig
+		Attention            uconfig.AttentionConfig
+		Calendars            map[string]uconfig.CalendarConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {

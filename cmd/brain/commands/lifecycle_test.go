@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/huynle/brain-api/internal/apiserver"
+	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/lifecycle"
 	"github.com/huynle/brain-api/internal/runner"
 	"github.com/huynle/brain-api/internal/runnercli"
@@ -589,5 +590,21 @@ func TestDevCommand_ForegroundDebug(t *testing.T) {
 	}
 	if api.Flags.Daemon || api.Flags.Port != 4321 || api.Flags.Host != "localhost" {
 		t.Errorf("flags = %+v, want foreground on the configured host/port", api.Flags)
+	}
+}
+
+// The foreground server options carry calendar sources and attention
+// recipients from the config, like every other server setting.
+func TestServerOptionsFromConfigCarriesCalendarsAndAttention(t *testing.T) {
+	cfg := &UnifiedConfig{}
+	cfg.Server.Calendars = map[string]config.CalendarConfig{"xnys": {Type: "builtin", Market: "XNYS"}}
+	cfg.Server.Attention = config.AttentionConfig{SystemRecipients: []string{"ops"}}
+
+	opts := serverOptionsFromConfig(cfg)
+	if got := opts.Calendars["xnys"].Market; got != "XNYS" {
+		t.Fatalf("opts.Calendars = %+v, want xnys/XNYS", opts.Calendars)
+	}
+	if got := opts.Attention.SystemRecipients; len(got) != 1 || got[0] != "ops" {
+		t.Fatalf("opts.Attention.SystemRecipients = %v, want [ops]", got)
 	}
 }

@@ -374,6 +374,8 @@ func (c *UnifiedConfig) Validate() error {
 		seenRecipients[trimmed] = true
 	}
 
+	errs = append(errs, validateCalendars(c.Server.Calendars)...)
+
 	// Task defaults enums.
 	if c.Server.TaskDefaults.ExecutionMode != "" {
 		switch c.Server.TaskDefaults.ExecutionMode {

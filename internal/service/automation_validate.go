@@ -46,6 +46,47 @@ func invalidAutomationField(field, message string) error {
 	return &automationValidationError{Field: field, Message: message}
 }
 
+// automationFrontmatterFromRequest returns the on-disk shape of a create
+// request, so Save validates exactly what it is about to write.
+func automationFrontmatterFromRequest(req types.CreateEntryRequest) *frontmatter.Frontmatter {
+	return &frontmatter.Frontmatter{
+		Type:      req.Type,
+		Trigger:   fmTriggerFromTypes(req.Trigger),
+		Action:    automationActionToFM(req.Action),
+		Extends:   frontmatter.SanitizeSimpleValue(req.Extends),
+		StartsAt:  req.StartsAt,
+		ExpiresAt: req.ExpiresAt,
+		MaxRuns:   req.MaxRuns,
+		Timezone:  req.Timezone,
+	}
+}
+
+// automationUpdateTouchesDefinition reports whether an update changes a field
+// the scheduling rules read. DirectPrompt counts because it writes the
+// action's prompt.
+func automationUpdateTouchesDefinition(req types.UpdateEntryRequest) bool {
+	return req.Trigger != nil || req.Action != nil || req.DirectPrompt != nil ||
+		req.Extends != nil || req.StartsAt != nil || req.ExpiresAt != nil ||
+		req.MaxRuns != nil || req.Timezone != nil
+}
+
+// lookupAutomationParent resolves a binding's parent by short ID. It reads
+// the index directly rather than Recall, which records an access.
+func (s *BrainServiceImpl) lookupAutomationParent(ctx context.Context, id string) (*types.BrainEntry, error) {
+	row, err := s.storage.GetNoteByShortID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("lookup by short ID: %w", err)
+	}
+	if row == nil {
+		return nil, nil
+	}
+	if err := s.admittedRow(ctx, row.Path); err != nil {
+		return nil, err
+	}
+	entry := NoteRowToBrainEntry(row)
+	return &entry, nil
+}
+
 // validateAutomationDefinition checks an automation's trigger and lifecycle
 // fields against the scheduling rules. selfID is the entry's own short ID
 // ("" when it has none yet) and parents resolves a binding's parent.
@@ -99,11 +140,14 @@ func validateAutomationBinding(ctx context.Context, fm *frontmatter.Frontmatter,
 		}
 	}
 	if fm.Action != nil {
-		if fm.Action.Type != "" {
-			return invalidAutomationField("action.type", "a binding cannot set the action type")
-		}
+		// Check the prompt first: an update that sets direct_prompt through the
+		// top-level mirror also fills in action.type "prompt", and the prompt is
+		// the field the caller actually changed.
 		if fm.Action.DirectPrompt != "" {
 			return invalidAutomationField("action.direct_prompt", "a binding cannot replace the prompt; use prompt_append")
+		}
+		if fm.Action.Type != "" {
+			return invalidAutomationField("action.type", "a binding cannot set the action type")
 		}
 	}
 	return nil

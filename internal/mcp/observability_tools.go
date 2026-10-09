@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -20,6 +21,7 @@ func RegisterObservabilityTools(s *Server, client *APIClient) {
 	registerBrainEventsRecent(s, client)
 	registerBrainAutomationRuns(s, client)
 	registerBrainAutomationRunGet(s, client)
+	registerBrainAutomationEffective(s, client)
 	registerBrainSchedulerStatus(s, client)
 }
 
@@ -257,6 +259,69 @@ func registerBrainAutomationRunGet(s *Server, client *APIClient) {
 
 		return formatAutomationRun(brainEntryFromSDK(*resp)), nil
 	})
+}
+
+// registerBrainAutomationEffective exposes GET /automations/{id}/effective: the
+// config one project runs an automation under, and whether it targets the project.
+func registerBrainAutomationEffective(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name: "automation_effective",
+		Description: "Show the config one project runs a global automation under: the parent with that project's " +
+			"binding applied, which fields are inherited or overridden, the governing binding and its status, " +
+			"whether the scheduler targets the project, and whether the binding is broken. Read-only.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"id":            {Type: "string", Description: "Automation ID or path (a global automation, a project-owned automation, or a binding)"},
+				"project":       {Type: "string", Description: "Project to resolve the automation for"},
+				"automation_id": {Type: "string", Description: "Alias for id"},
+			},
+			Required: []string{"id", "project"},
+		},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		id := StringArgAlias(args, "", "id", "automation_id")
+		if id == "" {
+			return "", fmt.Errorf("id is required")
+		}
+		project := StringArg(args, "project", "")
+		if project == "" {
+			return "", fmt.Errorf("project is required")
+		}
+
+		resp, err := sdkCall(ctx, client, func(ctx context.Context, sc *brain.Client) (*brain.AutomationEffective, error) {
+			return sc.Automations().Effective(ctx, id, project)
+		})
+		if err != nil {
+			return "", err
+		}
+		return formatAutomationEffective(*resp, project)
+	})
+}
+
+// formatAutomationEffective renders the view as a short header and its JSON.
+// The JSON is the whole view, so no field the server reports is dropped.
+func formatAutomationEffective(view brain.AutomationEffective, project string) (string, error) {
+	data, err := json.MarshalIndent(view, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("encode automation effective view: %w", err)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "## Automation Effective: %s\n\n", view.Id)
+	fmt.Fprintf(&b, "- Project: %s\n", project)
+	fmt.Fprintf(&b, "- Targeted: %t\n", view.Targeted)
+	if view.Broken {
+		reason := "unknown"
+		if view.BrokenReason != nil {
+			reason = string(*view.BrokenReason)
+		}
+		fmt.Fprintf(&b, "- Broken: %s\n", reason)
+	} else {
+		b.WriteString("- Broken: no\n")
+	}
+	b.WriteString("\n```json\n")
+	b.Write(data)
+	b.WriteString("\n```\n")
+	return b.String(), nil
 }
 
 func registerBrainSchedulerStatus(s *Server, client *APIClient) {

@@ -14,6 +14,7 @@ import (
 	"github.com/huynle/brain-api/internal/attentionstore"
 	"github.com/huynle/brain-api/internal/blobstore"
 	"github.com/huynle/brain-api/internal/bridge"
+	"github.com/huynle/brain-api/internal/calendar"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/logbuffer"
@@ -82,7 +83,11 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	// handlers up to the bridge and must fail without reaching any host.
 	runnerHub := realtime.NewHub()
 	bridgeHub := bridge.NewHub(runnerHub)
-	h := api.NewHandler(svc, api.WithHub(runnerHub), api.WithTaskService(tasks), api.WithRunnerService(runnerDials), api.WithRunnerRegistryService(registry), api.WithSchedulerService(scheduler), api.WithSchedulerVisibilityService(store), api.WithBridgeService(bridgeHub), api.WithAttachmentService(attachments), api.WithGoalService(goals), api.WithReminderService(reminders), api.WithAttentionService(attention), api.WithWebhookService(webhooks), api.WithAutomationRunService(service.NewAutomationService(svc)), api.WithProjectPlacementService(placement), api.WithRunTaskService(scheduler), api.WithRunFeatureService(scheduler), api.WithRunProjectService(scheduler), api.WithDependentChainService(scheduler), api.WithLogBuffer(logbuffer.New(100)), api.WithEventService(events), api.WithTimelineService(timeline),
+	calendars, err := calendar.NewRegistry(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := api.NewHandler(svc, api.WithCalendarService(calendars), api.WithHub(runnerHub), api.WithTaskService(tasks), api.WithRunnerService(runnerDials), api.WithRunnerRegistryService(registry), api.WithSchedulerService(scheduler), api.WithSchedulerVisibilityService(store), api.WithBridgeService(bridgeHub), api.WithAttachmentService(attachments), api.WithGoalService(goals), api.WithReminderService(reminders), api.WithAttentionService(attention), api.WithWebhookService(webhooks), api.WithAutomationRunService(service.NewAutomationService(svc)), api.WithProjectPlacementService(placement), api.WithRunTaskService(scheduler), api.WithRunFeatureService(scheduler), api.WithRunProjectService(scheduler), api.WithDependentChainService(scheduler), api.WithLogBuffer(logbuffer.New(100)), api.WithEventService(events), api.WithTimelineService(timeline),
 		api.WithMonitorService(service.NewMonitorService(svc)), api.WithClientContextService(service.NewClientContextService(store)),
 		api.WithSupervisorOperations(store), api.WithSupervisorCheckpoints(store), api.WithExecutionBudgets(store))
 	srv := httptest.NewServer(api.NewRouter(cfg, api.WithHandler(h), api.WithTokenValidator(control)))
@@ -101,7 +106,7 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	}
 	defer authed.Close()
 	manifest, err := authed.Capabilities(context.Background())
-	if err != nil || manifest == nil || len(manifest.Operations) != 147 || manifest.Scripts.Available {
+	if err != nil || manifest == nil || len(manifest.Operations) != 148 || manifest.Scripts.Available {
 		t.Fatalf("fully composed discovery: %+v, %v", manifest, err)
 	}
 	if _, err := c.Capabilities(context.Background()); err == nil {

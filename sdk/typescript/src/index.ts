@@ -381,6 +381,9 @@ export class BrainClient {
     getRun: (id: string,options?: RequestOptions): Promise<Schema["BrainEntry"]> => this.#request("GET",`/automation-runs/${encodeURIComponent(id)}`,undefined,undefined,options),
     effective: (id: string,project: string,options?: RequestOptions): Promise<Schema["AutomationEffective"]> => this.#request("GET",`/automations/${encodeURIComponent(id)}/effective`,undefined,{project},options),
   });
+  readonly calendars = Object.freeze({
+    list: (options?: RequestOptions): Promise<Schema["CalendarsResponse"]> => this.#request("GET","/calendars",undefined,undefined,options),
+  });
   readonly reminders = Object.freeze({
     list: (query?: NonNullable<operations["reminders.list"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["ReminderListResponse"]> => this.#request("GET","/reminders",undefined,query,options),
     get: (id: string,options?: RequestOptions): Promise<Schema["ReminderSummary"]> => this.#request("GET",`/reminders/${encodeURIComponent(id)}`,undefined,undefined,options),

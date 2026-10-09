@@ -47,6 +47,24 @@ func (e AutomationEffectiveFields) Valid() bool {
 	}
 }
 
+// Defines values for CalendarStatusKind.
+const (
+	Builtin CalendarStatusKind = "builtin"
+	Ics     CalendarStatusKind = "ics"
+)
+
+// Valid indicates whether the value is a known member of the CalendarStatusKind enum.
+func (e CalendarStatusKind) Valid() bool {
+	switch e {
+	case Builtin:
+		return true
+	case Ics:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ControlPermissionRequestResponse.
 const (
 	PermissionAlways ControlPermissionRequestResponse = "always"
@@ -527,6 +545,25 @@ type CalendarEventFilter struct {
 	Description *string `json:"description,omitempty"`
 	Location    *string `json:"location,omitempty"`
 	Title       *string `json:"title,omitempty"`
+}
+
+// CalendarStatus defines model for CalendarStatus.
+type CalendarStatus struct {
+	EventCount  *int               `json:"event_count,omitempty"`
+	Kind        CalendarStatusKind `json:"kind"`
+	LastError   *string            `json:"last_error,omitempty"`
+	LastFetch   *time.Time         `json:"last_fetch,omitempty"`
+	LastSuccess *time.Time         `json:"last_success,omitempty"`
+	Name        string             `json:"name"`
+	Stale       *bool              `json:"stale,omitempty"`
+}
+
+// CalendarStatusKind defines model for CalendarStatus.Kind.
+type CalendarStatusKind string
+
+// CalendarsResponse defines model for CalendarsResponse.
+type CalendarsResponse struct {
+	Calendars []CalendarStatus `json:"calendars"`
 }
 
 // CancelChainResponse defines model for CancelChainResponse.

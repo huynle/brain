@@ -96,7 +96,7 @@ func TestEveryOperationDeclaresLegacyErrorBehavior(t *testing.T) {
 			}
 		}
 	}
-	if count != 147 {
+	if count != 148 {
 		t.Fatalf("operation coverage changed: %d", count)
 	}
 }

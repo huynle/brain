@@ -20,6 +20,7 @@ import (
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/attentionstore"
 	"github.com/huynle/brain-api/internal/auth"
+	"github.com/huynle/brain-api/internal/calendar"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	mcppkg "github.com/huynle/brain-api/internal/mcp"
@@ -478,6 +479,15 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		cleanup()
 		return nil, "", nil, fmt.Errorf("failed to ensure built-in feature delivery automation: %w", err)
 	}
+	// ICS calendar poller (single mode). It is built over the graph's registry
+	// and this deployment's data directory, which holds the cached snapshots.
+	// Its stale notices are bound below, once the attention service exists.
+	calendarPoller, err := calendar.NewPoller(graph.calendars, cfg.Calendars, dataDir, calendar.PollerOptions{})
+	if err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("start calendar poller: %w", err)
+	}
+	graph.calendarPoller = calendarPoller
 	// Workers remain boot-owned and joined before the graph/shared owner.
 	stopWorkers := startSingleGraphWorkers(ctx, graph)
 	graphCleanup := cleanup
@@ -531,7 +541,8 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// System notices: publish the notifier on the attention service for later
 	// consumers, and run the one-shot startup scheduling report after the boot
 	// index scan (scanDone) so it never reads a partial index.
-	wireSystemNotices(ctx, attentionSvc, cfg, brainSvc, scanDone)
+	systemNotifier := wireSystemNotices(ctx, attentionSvc, cfg, brainSvc, scanDone)
+	calendarPoller.SetNotifier(calendarNotices(systemNotifier))
 
 	// ─── Rate Limiting ─────────────────────────────────────────────
 	var rateLimiter *api.RateLimiter

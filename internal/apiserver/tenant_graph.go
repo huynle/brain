@@ -61,6 +61,8 @@ type tenantGraph struct {
 	webhookDispatcher *realtime.WebhookDispatcher
 	triggerDispatcher *realtime.TriggerDispatcher
 	embeddingReady    bool
+	calendars         *calendar.Registry
+	calendarPoller    *calendar.Poller
 	closeOnce         sync.Once
 }
 
@@ -186,6 +188,7 @@ func newTenantGraph(ctx context.Context, store *storage.TenantStore, roots *tena
 		api.WithGoalService(goals),
 		api.WithReminderService(reminders),
 		api.WithAutomationRunService(automations),
+		api.WithCalendarService(calendars),
 		api.WithAssistantService(assistant),
 		api.WithBridgeService(bridgeHub),
 		api.WithLogBuffer(logbuffer.New(logbuffer.DefaultMaxLines)),
@@ -219,6 +222,7 @@ func newTenantGraph(ctx context.Context, store *storage.TenantStore, roots *tena
 		webhookDispatcher: realtime.NewWebhookDispatcher(eventHub, webhooks),
 		triggerDispatcher: realtime.NewTriggerDispatcher(eventHub, service.NewTriggerService(service.NewTriggerTaskStoreAdapter(store))),
 		embeddingReady:    !cfg.Embedding.Enabled || embedding != nil,
+		calendars:         calendars,
 	}, nil
 }
 

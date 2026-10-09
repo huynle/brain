@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/huynle/brain-api/internal/calendar"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -654,4 +655,10 @@ type WebhookService interface {
 	// and returns the delivery result. Unlike Deliver, this targets a single webhook
 	// by ID and waits for the result.
 	TestDeliver(ctx context.Context, webhookID string, event types.Event) (*types.WebhookDeliveryResponse, error)
+}
+
+// CalendarService reports the state of the configured calendar sources. The
+// statuses never carry a feed URL or file path.
+type CalendarService interface {
+	Statuses() []calendar.Status
 }

@@ -172,17 +172,7 @@ func toSnapshotFile(snap snapshot) snapshotFile {
 		Occurrences:     make([]occurrenceFile, 0, len(snap.Occurrences)),
 	}
 	for _, o := range snap.Occurrences {
-		f.Occurrences = append(f.Occurrences, occurrenceFile{
-			UID:          o.UID,
-			Calendar:     o.Calendar,
-			Start:        o.Start,
-			End:          o.End,
-			AllDay:       o.AllDay,
-			Title:        o.Title,
-			Description:  o.Description,
-			Location:     o.Location,
-			RecurrenceID: o.RecurrenceID,
-		})
+		f.Occurrences = append(f.Occurrences, occurrenceFile(o))
 	}
 	return f
 }
@@ -202,17 +192,7 @@ func fromSnapshotFile(f snapshotFile) snapshot {
 		Occurrences:     make([]Occurrence, 0, len(f.Occurrences)),
 	}
 	for _, o := range f.Occurrences {
-		snap.Occurrences = append(snap.Occurrences, Occurrence{
-			UID:          o.UID,
-			Calendar:     o.Calendar,
-			Start:        o.Start,
-			End:          o.End,
-			AllDay:       o.AllDay,
-			Title:        o.Title,
-			Description:  o.Description,
-			Location:     o.Location,
-			RecurrenceID: o.RecurrenceID,
-		})
+		snap.Occurrences = append(snap.Occurrences, Occurrence(o))
 	}
 	return snap
 }

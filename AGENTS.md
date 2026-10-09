@@ -91,6 +91,21 @@ A goal is an `automation` BrainEntry with `Goal *GoalConfig` (`generated_by: bra
 - **Lookups are status-agnostic** (`findGoalByID` searches all statuses) so pause (`blocked`) → resume (`active`) round-trips; only event dispatch and the ticker filter to `active`.
 - **Known limitation**: `complete` is status-based, not criteria-verified — a task that completes without actually meeting the goal criteria still completes the goal. A criteria-validation task on the complete path is the designed next step. Also `opencode run` exits when its current turn ends, so a steered agent must act on the injection within that turn.
 
+### Automation scheduling
+
+Clock and calendar triggers are evaluated on each scheduler tick by `CheckScheduled`. Slot arithmetic lives in `pkg/schedule` (`Compile`, `LatestSlot`, `Due`, `StaggerOffset`, `ParseCatchUp`). The service adapter is `internal/service/automation_schedule.go` and `automation_schedule_spec.go`. Day-of-month/day-of-week uses Vixie semantics in `pkg/cron` (`PrevAtOrBefore`, `DayFieldsBothRestricted`).
+
+- **Slot floor.** A slot fires only when it is newer than the target's floor: the latest of its last handled slot, the entry's modified time, and `starts_at`. The last handled slot is the newest `scheduled_for` on the target's `automation:<id>` run audits, cached in memory. With no audit it baselines one minute before now, so an upgrade replays nothing.
+- **Catch-up.** The latest missed slot fires once. `catch_up` caps lateness (`none` = on-time only). At most one late slot per automation per tick; on-time slots are never held back. Skipped slots count as handled.
+- **Stagger.** Offset = FNV-1a 64 of `automationID + "\x00" + project`, modulo the window in whole seconds. Stable across restarts and unaffected by other projects.
+- **Lifecycle** (`automation_lifecycle.go`). `starts_at` gates firing; `expires_at` completes a project-owned entry; `max_runs` counts run audits that created work per (automation, project), excluding `manual` and skips. Skip reasons: `paused`, `cooldown`, `max_concurrent`, `dedup`, `max_runs`, `calendar_non_prompt_action`.
+- **Bindings** (`automation_binding.go`). A binding is a project-owned automation with `extends:<parent>`; the save path maintains the `extends:<parent>` tag, and discovery uses that tag. Only status `active` opts a project in. Single local tenant only. Project-owned parents never run bindings, and calendar parents cannot have them. `effectiveAutomation` builds the merged config for the scheduler and for `automation_effective.go` (`GET /automations/{id}/effective`, MCP `automation_effective`).
+- **Calendars** (`server.calendars`, `internal/calendar`). Named sources only: `builtin` (XNYS, with `extra_closed`/`extra_open`) or `ics` read from `url_env` or `url_file`. A literal URL is never accepted. The poller keeps snapshots in `<data-dir>/calendars/` over [now−1d, now+14d]. A source with no successful fetch for 24h raises one attention item per stale episode. `GET /api/v1/calendars` reports status and never the URL.
+- **Day filters** (`automation_dayfilters.go`). `calendar`, `skip_if_event` and `only_if_event` are evaluated on the slot's local date. With no data, or a date outside the snapshot window, skip fails open and only-if fails closed.
+- **Calendar trigger** (`automation_calendar.go`). Fires once per occurrence, dedup key `cal:<automation>:<uid>:<start>`, default `catch_up` 1h. Prompt actions only, enforced on save and again at run time. Event text is fenced in `<untrusted-calendar-data>`.
+- **System notices** (`system_notifier.go`, `server.attention.system_recipients`). Recipients: the configured names, else users who already have attention items, else log only. The one-shot startup scheduling report runs after the boot index scan and flags Vixie day-field changes and lifecycle fields that now take effect.
+- **PWA.** Binding panel in `web/src/components/Automations/AutomationBindingPanel.tsx`; opt-out writes status `archived` (`web/src/lib/automationBindings.ts`).
+
 ### Abandonment + Resume model
 
 When a runner dies mid-task, or when a task's claim lease expires without renewal, the task's `status` stays stuck at `in_progress` while nothing is actually running it. The abandonment surface makes that recoverable without introducing new sweepers.

@@ -43,7 +43,7 @@ func TestParseEvery_Invalid(t *testing.T) {
 	for _, in := range []string{
 		"", "d", "4", "0d", "00m", "-1d", "+1d", "1.5d", "4D", "4H", "4 d", " 4d", "4d ",
 		"4dd", "4s", "1y", "4x", "d4", "1h30m", "１d",
-		"99999999999999999999d", // overflows int
+		"99999999999999999999d",                   // overflows int
 		"36526d", "5218w", "52596001m", "876601h", // longer than 100 years
 	} {
 		t.Run(in, func(t *testing.T) {

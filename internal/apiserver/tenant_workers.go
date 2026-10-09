@@ -30,6 +30,9 @@ func startSingleGraphWorkers(parent context.Context, g *tenantGraph) func() {
 	launch(func() { g.reminders.Start(ctx) })
 	launch(func() { g.webhookDispatcher.Start(ctx) })
 	launch(func() { g.triggerDispatcher.Start(ctx) })
+	if g.calendarPoller != nil {
+		launch(func() { g.calendarPoller.Run(ctx) })
+	}
 	var once sync.Once
 	return func() {
 		once.Do(func() {

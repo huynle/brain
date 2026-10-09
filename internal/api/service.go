@@ -420,6 +420,12 @@ type AutomationRunService interface {
 	// project, matching the cron path. Returns the created task ids, empty
 	// when generation was skipped (concurrency guard).
 	RunAutomationNow(ctx context.Context, pathOrID, project string) ([]string, error)
+
+	// EffectiveAutomation reports the config `project` runs automation pathOrID
+	// under, and whether the scheduler targets it there (see types.AutomationEffective).
+	// Unknown or non-automation entries wrap ErrNotFound; a missing, invalid or
+	// non-owning project wraps ErrInvalidInput.
+	EffectiveAutomation(ctx context.Context, pathOrID, project string) (*types.AutomationEffective, error)
 }
 
 // GoalService defines the interface for goal automation operations exposed over

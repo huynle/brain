@@ -340,6 +340,16 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				}
 			})
 
+			// ─── Automation effective view (read) ────────────────
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+				if o.handler != nil {
+					r.Get("/automations/{id}/effective", o.handler.HandleAutomationEffective)
+				} else {
+					r.Get("/automations/{id}/effective", notImplemented)
+				}
+			})
+
 			// ─── Automations (manual run) ────────────────────────
 			r.Group(func(r chi.Router) {
 				r.Use(RequireScope("admin:*", "runner:*"))

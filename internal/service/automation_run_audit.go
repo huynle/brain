@@ -8,6 +8,10 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
+// runAuditManualTag marks an audit written by a manual run (RunAutomationNow).
+// max_runs never counts tagged audits.
+const runAuditManualTag = "manual"
+
 // runAuditScheduledFor returns the audit slot as RFC3339 UTC, or "" for the
 // zero time, so unscheduled runs write no scheduled_for value.
 func runAuditScheduledFor(slot time.Time) string {

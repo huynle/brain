@@ -106,3 +106,38 @@ func TestRunAuditBindingTag(t *testing.T) {
 		t.Errorf("runAuditBindingTag(empty) = %q, want empty", got)
 	}
 }
+
+// TestCreateRunAudit_StructuredScheduledForAndBinding pins that a run audit
+// carries its slot and binding as typed fields, tags, and body lines, and
+// that the slot is stored as the same instant in UTC.
+func TestCreateRunAudit_StructuredScheduledForAndBinding(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	slot := time.Date(2026, 10, 9, 5, 0, 0, 0, time.FixedZone("EDT", -4*3600))
+
+	entry := saveRunAuditForTest(t, brain, automationRunAudit{
+		automation:   types.BrainEntry{ID: "auto1", Path: "projects/p/automation/auto1.md"},
+		project:      "p",
+		status:       "queued",
+		scheduledFor: slot,
+		binding:      "bind1",
+	})
+
+	if entry.ScheduledFor != "2026-10-09T09:00:00Z" {
+		t.Errorf("ScheduledFor = %q, want 2026-10-09T09:00:00Z", entry.ScheduledFor)
+	}
+	if entry.Binding != "bind1" {
+		t.Errorf("Binding = %q, want bind1", entry.Binding)
+	}
+	if !hasRunAuditTag(entry.Tags, "binding:bind1") {
+		t.Errorf("tags %v missing binding:bind1", entry.Tags)
+	}
+	if !strings.Contains(entry.Content, "scheduled_for: 2026-10-09T09:00:00Z\n") {
+		t.Errorf("body missing scheduled_for line:\n%s", entry.Content)
+	}
+	if !strings.Contains(entry.Content, "binding: bind1\n") {
+		t.Errorf("body missing binding line:\n%s", entry.Content)
+	}
+	if !strings.Contains(entry.Content, "automation_id: auto1\n") {
+		t.Errorf("body lost automation_id line:\n%s", entry.Content)
+	}
+}

@@ -975,6 +975,13 @@ func (s *AutomationService) createRunAudit(ctx context.Context, audit automation
 	if audit.generatedKey != "" {
 		fmt.Fprintf(&content, "dedup_key: %s\n", audit.generatedKey)
 	}
+	scheduledFor := runAuditScheduledFor(audit.scheduledFor)
+	if scheduledFor != "" {
+		fmt.Fprintf(&content, "scheduled_for: %s\n", scheduledFor)
+	}
+	if audit.binding != "" {
+		fmt.Fprintf(&content, "binding: %s\n", audit.binding)
+	}
 	fmt.Fprintf(&content, "started_at: %s\n", started.Format(time.RFC3339))
 	fmt.Fprintf(&content, "completed_at: %s\n", started.Format(time.RFC3339))
 	content.WriteString("duration_ms: 0\n")
@@ -1002,14 +1009,19 @@ func (s *AutomationService) createRunAudit(ctx context.Context, audit automation
 	if audit.automation.ID != "" {
 		tags = append(tags, "automation:"+audit.automation.ID)
 	}
+	if tag := runAuditBindingTag(audit.binding); tag != "" {
+		tags = append(tags, tag)
+	}
 
 	resp, err := s.brain.Save(ctx, types.CreateEntryRequest{
-		Type:    "automation_run",
-		Title:   fmt.Sprintf("Automation Run: %s", audit.automation.ID),
-		Content: content.String(),
-		Tags:    tags,
-		Status:  audit.status,
-		Project: audit.project,
+		Type:         "automation_run",
+		Title:        fmt.Sprintf("Automation Run: %s", audit.automation.ID),
+		Content:      content.String(),
+		Tags:         tags,
+		Status:       audit.status,
+		Project:      audit.project,
+		ScheduledFor: scheduledFor,
+		Binding:      audit.binding,
 	})
 	if err != nil {
 		return "", fmt.Errorf("create automation run audit: %w", err)

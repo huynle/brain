@@ -77,7 +77,7 @@ func (s *AutomationService) maxRunsReachedAt(ctx context.Context, automation typ
 	if count < limit {
 		return false, nil
 	}
-	if automation.ProjectID != "" {
+	if automation.ProjectID != "" && automation.Binding == "" {
 		return true, s.completeAtMaxRuns(ctx, automation.ID, limit, count)
 	}
 	return true, s.recordMaxRunsSkip(ctx, automation, project, slot)
@@ -183,6 +183,13 @@ func (s *AutomationService) expireIfDue(ctx context.Context, automation types.Br
 	now := s.clock()
 	if expiredCompletion(automation, now) == nil {
 		return false, nil
+	}
+	if automation.Binding != "" {
+		// An effective config names its binding. Its expiry may be the parent's
+		// or the binding's own: the sweep over active entries completes the
+		// entry that owns it. Here the firing is only refused, never written to
+		// the parent.
+		return true, nil
 	}
 	if err := s.updateAutomationGuarded(ctx, automation.ID, func(current types.BrainEntry) *types.UpdateEntryRequest {
 		return expiredCompletion(current, now)

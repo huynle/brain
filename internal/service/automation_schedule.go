@@ -54,6 +54,10 @@ type scheduledRun struct {
 // loop (see automationMatchesEvent for the event-path guard); without this
 // exclusion a goal carrying a cron trigger would be dispatched twice.
 func isScheduledCronAutomation(automation types.BrainEntry) bool {
+	// A binding is evaluated only through its parent's targets.
+	if automation.Extends != "" {
+		return false
+	}
 	if automation.Trigger == nil || automation.Action == nil || automation.Trigger.Type != "cron" {
 		return false
 	}
@@ -68,21 +72,78 @@ func isScheduledCronAutomation(automation types.BrainEntry) bool {
 // false when the trigger cannot be scheduled. A warning is logged once per
 // modification, not on every tick.
 func (s *AutomationService) compiledScheduleFor(automation types.BrainEntry) (*compiledAutomationSchedule, bool) {
+	return s.compiledScheduleForTarget(scheduleKey{automationID: automation.ID}, automation)
+}
+
+// compiledScheduleForTarget is compiledScheduleFor for one target of an
+// automation. A target's schedule depends on its effective config, so the
+// cache is keyed by (automation, project) and stamped with everything that
+// config is built from.
+func (s *AutomationService) compiledScheduleForTarget(key scheduleKey, automation types.BrainEntry) (*compiledAutomationSchedule, bool) {
+	stamp := automationStamp(automation)
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-	if cached, ok := s.compiled[automation.ID]; ok && cached.modified == automation.Modified {
+	if cached, ok := s.compiled[key]; ok && cached.modified == stamp {
 		return cached, cached.err == nil
 	}
 	compiled := s.compileAutomationSchedule(automation)
+	compiled.modified = stamp
 	if compiled.err != nil {
 		slog.Warn("automation schedule skipped: trigger cannot be scheduled",
 			"automation", automation.ID, "error", compiled.err)
 	}
 	if s.compiled == nil {
-		s.compiled = make(map[string]*compiledAutomationSchedule)
+		s.compiled = make(map[scheduleKey]*compiledAutomationSchedule)
 	}
-	s.compiled[automation.ID] = compiled
+	s.compiled[key] = compiled
 	return compiled, compiled.err == nil
+}
+
+// automationStamp identifies one revision of an effective config: the entry's
+// last write (a binding's write is folded into Modified) and the binding that
+// applied.
+func automationStamp(automation types.BrainEntry) string {
+	return automation.Modified + "|" + automation.Binding
+}
+
+// noteTargetStates records the state each target of one automation was
+// evaluated in, so a project that falls back to its parent's schedule does not
+// fire the parent's slots that predate the change. A project returns to the
+// parent when its binding is removed or opted out, or when it re-enters the
+// parent's targets. Its handled cursor then moves to now, because the change
+// instant is unknown and no earlier parent slot is owed.
+//
+// Entering a binding needs no cursor move. The binding's own write time is in
+// the effective Modified, which the slot floor already honours. A slot the
+// binding owes stays owed, even if the tick that first sees the change is late.
+func (s *AutomationService) noteTargetStates(automationID string, targets []automationTarget, now time.Time) {
+	var moved []scheduleKey
+	s.cacheMu.Lock()
+	if s.targetState == nil {
+		s.targetState = make(map[scheduleKey]string)
+	}
+	present := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		key := scheduleKey{automationID: automationID, project: target.project}
+		present[target.project] = struct{}{}
+		if prev, seen := s.targetState[key]; seen && prev != target.state &&
+			target.state == targetStateParent && prev != targetStateParent {
+			moved = append(moved, key)
+		}
+		s.targetState[key] = target.state
+	}
+	for key := range s.targetState {
+		if key.automationID != automationID {
+			continue
+		}
+		if _, ok := present[key.project]; !ok {
+			s.targetState[key] = targetStateAbsent
+		}
+	}
+	s.cacheMu.Unlock()
+	for _, key := range moved {
+		s.recordHandledSlot(key, now)
+	}
 }
 
 func (s *AutomationService) compileAutomationSchedule(automation types.BrainEntry) *compiledAutomationSchedule {
@@ -260,14 +321,19 @@ func scheduledDedupKey(automationID, project string, slot time.Time) string {
 func (s *AutomationService) forgetUnscheduled(live map[string]struct{}) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-	for id := range s.compiled {
-		if _, ok := live[id]; !ok {
-			delete(s.compiled, id)
+	for key := range s.compiled {
+		if _, ok := live[key.automationID]; !ok {
+			delete(s.compiled, key)
 		}
 	}
 	for key := range s.handled {
 		if _, ok := live[key.automationID]; !ok {
 			delete(s.handled, key)
+		}
+	}
+	for key := range s.targetState {
+		if _, ok := live[key.automationID]; !ok {
+			delete(s.targetState, key)
 		}
 	}
 }

@@ -170,6 +170,13 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		}
 	}
 
+	if req.Type == "automation" && req.Extends != "" {
+		// Placement and the single-tenant gate run before the parent lookup, so
+		// a refused binding never reads another tenant's parent.
+		if err := s.validateBindingWrite(ctx, "", req.Project, req.Global != nil && *req.Global, frontmatter.SanitizeSimpleValue(req.Extends)); err != nil {
+			return nil, err
+		}
+	}
 	if req.Type == "automation" {
 		if err := s.validateAutomation(ctx, automationFrontmatterFromRequest(req), ""); err != nil {
 			return nil, err
@@ -182,6 +189,11 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 	// Compose once and reuse for both the file and the response, so callers
 	// (notably the entry.created emitter) see the tags actually persisted.
 	sanitizedTags := frontmatter.ComposeEntryTags(req.Tags, req.Type)
+	if req.Type == "automation" {
+		// A binding is found by its extends tag, so the tag always mirrors
+		// the parent the entry names.
+		sanitizedTags = syncExtendsTag(sanitizedTags, frontmatter.SanitizeSimpleValue(req.Extends))
+	}
 
 	var sanitizedDeps []string
 	for _, dep := range req.DependsOn {
@@ -932,6 +944,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	if req.Extends != nil {
 		fm.Extends = frontmatter.SanitizeSimpleValue(*req.Extends)
 	}
+	if fm.Type == "automation" {
+		fm.Tags = syncExtendsTag(fm.Tags, fm.Extends)
+	}
 	if req.ScheduledFor != nil {
 		fm.ScheduledFor = frontmatter.SanitizeSimpleValue(*req.ScheduledFor)
 	}
@@ -1154,6 +1169,12 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	// Validate the merged definition, but only when this update touches a field
 	// the scheduling rules read. Status, tag, content and note changes must keep
 	// working on an automation whose stored definition is already invalid.
+	if fm.Type == "automation" && req.Extends != nil && fm.Extends != "" {
+		global := strings.HasPrefix(filepath.ToSlash(row.Path), "global/")
+		if err := s.validateBindingWrite(ctx, row.ShortID, extractProjectFromPath(row.Path), global, fm.Extends); err != nil {
+			return nil, err
+		}
+	}
 	if fm.Type == "automation" && automationUpdateTouchesDefinition(req) {
 		if err := s.validateAutomation(ctx, fm, row.ShortID); err != nil {
 			return nil, err

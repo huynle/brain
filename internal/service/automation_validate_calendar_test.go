@@ -122,3 +122,39 @@ func TestSaveRejectsUnknownAndWrongKindCalendars(t *testing.T) {
 		}
 	}
 }
+
+// An update that changes an automation's trigger runs the same calendar check as
+// a create: a builtin name is accepted, while an unknown or ics name is rejected
+// on trigger.calendar and the stored definition stays unchanged.
+func TestUpdateRejectsUnknownAndWrongKindCalendars(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	brain.SetCalendars(saveValidationRegistry(t))
+
+	created, err := brain.Save(context.Background(), types.CreateEntryRequest{
+		Type: "automation", Title: "calendar gate", Content: "gate", Status: "active",
+		Project: "p", Trigger: &types.TriggerConfig{Schedule: "0 9 * * *", Calendar: "xnys"},
+		Action: &types.AutomationAction{Type: "prompt", DirectPrompt: "run"},
+	})
+	if err != nil {
+		t.Fatalf("save with builtin calendar: %v", err)
+	}
+
+	update := func(calendar string) error {
+		_, err := brain.Update(context.Background(), created.Path, types.UpdateEntryRequest{
+			Trigger: &types.TriggerConfig{Schedule: "0 9 * * *", Calendar: calendar},
+		})
+		return err
+	}
+	if err := update("xnys"); err != nil {
+		t.Fatalf("update to builtin calendar: %v", err)
+	}
+	for _, name := range []string{"nope", "team"} {
+		err := update(name)
+		if err == nil {
+			t.Fatalf("update to calendar %q accepted, want rejection", name)
+		}
+		if !errors.Is(err, api.ErrInvalidInput) || !strings.Contains(err.Error(), "trigger.calendar") {
+			t.Fatalf("update to calendar %q: error %v, want invalid input naming trigger.calendar", name, err)
+		}
+	}
+}

@@ -141,3 +141,139 @@ func TestCreateRunAudit_StructuredScheduledForAndBinding(t *testing.T) {
 		t.Errorf("body lost automation_id line:\n%s", entry.Content)
 	}
 }
+
+// saveRunAuditAt writes one audit whose created instant is at.
+func saveRunAuditAt(t *testing.T, brain *BrainServiceImpl, at time.Time, audit automationRunAudit) {
+	t.Helper()
+	original := types.TimeNowUTC
+	types.TimeNowUTC = func() time.Time { return at }
+	t.Cleanup(func() { types.TimeNowUTC = original })
+	saveRunAuditForTest(t, brain, audit)
+}
+
+// TestListRunAudits_NewestFirstOwnAutomationOnly pins that the helper returns
+// one automation's audits from the tag index, newest first, and nothing else.
+func TestListRunAudits_NewestFirstOwnAutomationOnly(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	base := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	svc := NewAutomationService(brain)
+
+	for i, id := range []string{"runOld", "runMid", "runNew"} {
+		saveRunAuditAt(t, brain, base.Add(time.Duration(i)*time.Minute), automationRunAudit{
+			automation: types.BrainEntry{ID: "auto1", Path: "projects/p/automation/auto1.md"},
+			project:    "p",
+			status:     "queued",
+			summary:    id,
+		})
+	}
+	saveRunAuditAt(t, brain, base.Add(10*time.Minute), automationRunAudit{
+		automation: types.BrainEntry{ID: "auto2", Path: "projects/p/automation/auto2.md"},
+		project:    "p",
+		status:     "queued",
+	})
+
+	got, err := svc.listRunAudits(context.Background(), "p", "auto1", 10)
+	if err != nil {
+		t.Fatalf("listRunAudits: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d audits, want 3 for auto1", len(got))
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i-1].Created < got[i].Created {
+			t.Errorf("audits not newest first: %q before %q", got[i-1].Created, got[i].Created)
+		}
+	}
+	for _, e := range got {
+		if !hasRunAuditTag(e.Tags, "automation:auto1") {
+			t.Errorf("audit %s returned without automation:auto1 tag: %v", e.ID, e.Tags)
+		}
+	}
+	if !strings.Contains(got[0].Content, "summary: runNew") {
+		t.Errorf("first audit is not the newest run:\n%s", got[0].Content)
+	}
+}
+
+// TestListRunAudits_RespectsLimit pins that limit caps the page at the
+// newest entries.
+func TestListRunAudits_RespectsLimit(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	base := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	svc := NewAutomationService(brain)
+	for i := 0; i < 4; i++ {
+		saveRunAuditAt(t, brain, base.Add(time.Duration(i)*time.Minute), automationRunAudit{
+			automation: types.BrainEntry{ID: "auto1", Path: "projects/p/automation/auto1.md"},
+			project:    "p",
+			status:     "queued",
+			summary:    []string{"r0", "r1", "r2", "r3"}[i],
+		})
+	}
+
+	got, err := svc.listRunAudits(context.Background(), "p", "auto1", 2)
+	if err != nil {
+		t.Fatalf("listRunAudits: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d audits, want 2", len(got))
+	}
+	if !strings.Contains(got[0].Content, "summary: r3") || !strings.Contains(got[1].Content, "summary: r2") {
+		t.Errorf("limit did not keep the two newest audits:\n%q\n%q", got[0].Content, got[1].Content)
+	}
+}
+
+// TestListRunAudits_ProjectScoped pins that the same automation id in another
+// project is not returned.
+func TestListRunAudits_ProjectScoped(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	base := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	svc := NewAutomationService(brain)
+	auto := types.BrainEntry{ID: "auto1", Path: "projects/p/automation/auto1.md"}
+	saveRunAuditAt(t, brain, base, automationRunAudit{automation: auto, project: "p", status: "queued"})
+	saveRunAuditAt(t, brain, base.Add(time.Minute), automationRunAudit{automation: auto, project: "q", status: "queued"})
+
+	got, err := svc.listRunAudits(context.Background(), "p", "auto1", 10)
+	if err != nil {
+		t.Fatalf("listRunAudits: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d audits for project p, want 1", len(got))
+	}
+	if !strings.Contains(got[0].Content, "project: p") {
+		t.Errorf("returned audit is not from project p:\n%s", got[0].Content)
+	}
+}
+
+// TestListRunAudits_LegacyUntaggedAuditsAreNotReturned pins that the helper is
+// tag-only; legacy body-only audits are the API handler's fallback.
+func TestListRunAudits_LegacyUntaggedAuditsAreNotReturned(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	_, err := brain.Save(context.Background(), types.CreateEntryRequest{
+		Type:    "automation_run",
+		Title:   "Automation Run: legacy",
+		Content: "## Automation Run Audit\n\nautomation_id: auto1\nproject: p\n",
+		Status:  "queued",
+		Project: "p",
+	})
+	if err != nil {
+		t.Fatalf("Save legacy audit: %v", err)
+	}
+
+	svc := NewAutomationService(brain)
+	got, err := svc.listRunAudits(context.Background(), "p", "auto1", 10)
+	if err != nil {
+		t.Fatalf("listRunAudits: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d audits, want 0: legacy audit has no tag", len(got))
+	}
+}
+
+// TestListRunAudits_RejectsEmptyAutomationID pins that an empty id is an error,
+// not a query for the bare "automation:" tag.
+func TestListRunAudits_RejectsEmptyAutomationID(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	svc := NewAutomationService(brain)
+	if _, err := svc.listRunAudits(context.Background(), "p", "", 10); err == nil {
+		t.Fatal("listRunAudits with empty automation id returned nil error")
+	}
+}

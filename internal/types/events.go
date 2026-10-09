@@ -246,6 +246,18 @@ type Event struct {
 // TriggerConfig
 // =============================================================================
 
+// Trigger types carried in TriggerConfig.Type by automation entries. An empty
+// type is a legacy event trigger (Event carries the match rule).
+const (
+	TriggerTypeEvent   = "event"
+	TriggerTypeCron    = "cron"
+	TriggerTypeWebhook = "webhook"
+	TriggerTypeSession = "session"
+	// TriggerTypeCalendar fires on calendar event occurrences (Calendar +
+	// Match, at the occurrence start or end plus Offset).
+	TriggerTypeCalendar = "calendar"
+)
+
 // TriggerConfig defines when a hook should fire based on an event.
 //
 // A single TriggerConfig can express multiple events and OR-able filter
@@ -257,7 +269,8 @@ type Event struct {
 // exact-match filter values continue to work unchanged. New shapes are
 // opt-in via the Events slice and the "in:" filter value prefix.
 type TriggerConfig struct {
-	// Type is optional and used by automation entries (event, cron, webhook, session).
+	// Type is optional and used by automation entries (event, cron, webhook,
+	// session, calendar; see the TriggerType* constants).
 	// For legacy trigger-based tasks, this is typically empty and Event carries the match rule.
 	Type string `json:"type,omitempty" yaml:"type,omitempty"`
 	// Event is the event pattern to match (e.g., "task.completed", "task.*").
@@ -274,14 +287,51 @@ type TriggerConfig struct {
 	// Applies to cron-triggered automations; task-level Timezone lives on
 	// the task itself (types.CreateEntryRequest.Timezone).
 	Timezone string `json:"timezone,omitempty" yaml:"timezone,omitempty"`
+
+	// Automation scheduling fields (docs/plans/2026-10-08-automation-scheduling-design.md).
+	// They are durable frontmatter, carried end to end; nothing evaluates
+	// them yet.
+
+	// Every is a fixed interval, "<positive integer><m|h|d|w>" (e.g. "4d",
+	// "90m"), as an alternative to Schedule.
+	Every string `json:"every,omitempty" yaml:"every,omitempty"`
+	// At has one field and two meanings, chosen by the trigger type: for a
+	// clock trigger it is the local time of day "HH:MM" (24-hour) used with a
+	// day or week Every; for a calendar trigger it is "start" or "end" of the
+	// matched event occurrence.
+	At string `json:"at,omitempty" yaml:"at,omitempty"`
+	// Stagger is a duration (e.g. "2h") that spreads per-project runs by a
+	// stable per-project offset within it.
+	Stagger string `json:"stagger,omitempty" yaml:"stagger,omitempty"`
+	// CatchUp caps how late a missed slot may still fire: a duration, or
+	// "none" to never catch up.
+	CatchUp string `json:"catch_up,omitempty" yaml:"catch_up,omitempty"`
+	// Calendar names a calendar from server config. On a clock trigger it is
+	// a built-in day calendar (slots fire only on its open days); on a
+	// calendar trigger it is the calendar whose events are matched.
+	Calendar string `json:"calendar,omitempty" yaml:"calendar,omitempty"`
+	// SkipIfEvent skips a slot on any day covered by a matching event.
+	SkipIfEvent *CalendarEventFilter `json:"skip_if_event,omitempty" yaml:"skip_if_event,omitempty"`
+	// OnlyIfEvent allows a slot only on days covered by a matching event.
+	OnlyIfEvent *CalendarEventFilter `json:"only_if_event,omitempty" yaml:"only_if_event,omitempty"`
+	// Match selects events for a calendar trigger. Keys: title, description,
+	// location, all_day; values use the Filter forms.
+	Match map[string]string `json:"match,omitempty" yaml:"match,omitempty"`
+	// Offset is a signed duration (e.g. "-15m") added to the calendar
+	// trigger's occurrence start or end.
+	Offset string `json:"offset,omitempty" yaml:"offset,omitempty"`
+
 	// Filter is optional key-value filters applied to event fields.
 	//
-	// Filter values support four forms:
+	// Filter values support five forms (see MatchFilterValue):
 	//   - Exact match (default): "to_status": "completed" matches only "completed".
 	//   - OR-able set via "in:" prefix: "to_status": "in:completed,blocked"
 	//     matches if the event field is any of the comma-separated values.
 	//   - Set membership via "has:" prefix: "tags": "has:supernote" matches if
 	//     the comma-joined event value contains "supernote" as a whole element.
+	//   - Regular expression via "re:" prefix: "title": "re:(?i)^release" is an
+	//     RE2 match against the event field; an invalid or oversized pattern
+	//     matches nothing (limits: filter_regex.go).
 	//   - Wildcard "*" matches any non-empty value.
 	Filter map[string]string `json:"filter,omitempty" yaml:"filter,omitempty"`
 	// OncePer is an automation dedup key (e.g. feature_id, session, day).
@@ -294,6 +344,19 @@ type TriggerConfig struct {
 	Cooldown string `json:"cooldown,omitempty" yaml:"cooldown,omitempty"`
 	// MaxConcurrent limits the number of concurrent executions.
 	MaxConcurrent int `json:"max_concurrent,omitempty" yaml:"max_concurrent,omitempty"`
+}
+
+// CalendarEventFilter selects calendar events for a trigger's SkipIfEvent /
+// OnlyIfEvent day filters. Calendar names a configured calendar source; the
+// other fields match event fields with the Filter value forms ("*", "in:",
+// "has:", "re:", exact). AllDay is a string so it can carry those forms too
+// ("true" / "false" for an exact match). Empty fields match anything.
+type CalendarEventFilter struct {
+	Calendar    string `json:"calendar,omitempty" yaml:"calendar,omitempty"`
+	Title       string `json:"title,omitempty" yaml:"title,omitempty"`
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
+	Location    string `json:"location,omitempty" yaml:"location,omitempty"`
+	AllDay      string `json:"all_day,omitempty" yaml:"all_day,omitempty"`
 }
 
 // EventPatterns returns the union of Event and Events as the full set of

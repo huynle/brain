@@ -630,6 +630,9 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["timezone"].(string); ok {
 			fm.Timezone = v
 		}
+		if v, ok := metaInt(meta, "max_runs"); ok {
+			fm.MaxRuns = &v
+		}
 		if v, ok := meta["extends"].(string); ok {
 			fm.Extends = v
 		}

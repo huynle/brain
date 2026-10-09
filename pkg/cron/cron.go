@@ -27,6 +27,12 @@ var limits = [5]fieldLimits{
 // Schedule represents a parsed cron expression.
 type Schedule struct {
 	fields [5]fieldSet
+
+	// domStar and dowStar record whether the day-of-month and day-of-week
+	// fields were written starting with '*' ("*", "*/2", ...). They decide
+	// how the two day fields combine; see dayMatches.
+	domStar bool
+	dowStar bool
 }
 
 // fieldSet is a set of allowed values for a cron field.
@@ -59,7 +65,10 @@ func Parse(expr string) (*Schedule, error) {
 		return nil, fmt.Errorf("expected 5 fields, got %d", len(parts))
 	}
 
-	s := &Schedule{}
+	s := &Schedule{
+		domStar: strings.HasPrefix(parts[2], "*"),
+		dowStar: strings.HasPrefix(parts[4], "*"),
+	}
 	for i, part := range parts {
 		if err := parseField(part, limits[i], &s.fields[i]); err != nil {
 			return nil, fmt.Errorf("field %d (%s): %w", i, part, err)
@@ -170,9 +179,31 @@ func (s *Schedule) Matches(t time.Time) bool {
 
 	return s.fields[0].has(minute) &&
 		s.fields[1].has(hour) &&
-		s.fields[2].has(day) &&
-		s.fields[3].has(month) &&
-		s.fields[4].has(weekday)
+		s.dayMatches(day, weekday) &&
+		s.fields[3].has(month)
+}
+
+// dayMatches is the single day predicate shared by matching and searching.
+//
+// Vixie cron rule: when neither day field starts with '*', a day qualifies
+// if it matches day-of-month OR day-of-week ("0 3 1 * 1" runs on the 1st
+// and on every Monday). Otherwise both must match; an unrestricted "*"
+// field matches every day, so that reduces to the restricted field alone.
+// A stepped star such as "*/2" still counts as starred and ANDs.
+func (s *Schedule) dayMatches(day, weekday int) bool {
+	dom := s.fields[2].has(day)
+	dow := s.fields[4].has(weekday)
+	if s.domStar || s.dowStar {
+		return dom && dow
+	}
+	return dom || dow
+}
+
+// DayFieldsBothRestricted reports whether neither the day-of-month nor the
+// day-of-week field starts with '*' — the expressions whose day fields
+// combine with OR rather than AND.
+func (s *Schedule) DayFieldsBothRestricted() bool {
+	return !s.domStar && !s.dowStar
 }
 
 // NextAfter returns the next time after t that matches the schedule.
@@ -249,9 +280,7 @@ func (s *Schedule) advanceCandidate(t time.Time, loc *time.Location) time.Time {
 	}
 
 	// Check day of month and day of week
-	day := t.Day()
-	weekday := int(t.Weekday())
-	if !s.fields[2].has(day) || !s.fields[4].has(weekday) {
+	if !s.dayMatches(t.Day(), int(t.Weekday())) {
 		// Skip to next day
 		return startOfNextDay(t, loc)
 	}

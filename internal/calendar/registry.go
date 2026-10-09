@@ -191,3 +191,23 @@ func (r *Registry) snapshotOf(name string) (snapshot, bool) {
 	snap, ok := r.feeds[name]
 	return snap, ok
 }
+
+// Window returns the time span the source's latest snapshot covers: the
+// window of its last full (200) fetch, [start, end). The poller expands
+// [poll − windowBefore, poll + windowAfter), so the start is derived from the
+// recorded end with the same constants. ok is false for a name that is not an
+// ics source, and for a source that has never completed a full fetch. A nil
+// registry knows no windows.
+func (r *Registry) Window(name string) (start, end time.Time, ok bool) {
+	if r == nil {
+		return time.Time{}, time.Time{}, false
+	}
+	if kind, known := r.kinds[name]; !known || kind != KindICS {
+		return time.Time{}, time.Time{}, false
+	}
+	snap, found := r.snapshotOf(name)
+	if !found || snap.WindowEnd.IsZero() {
+		return time.Time{}, time.Time{}, false
+	}
+	return snap.WindowEnd.Add(-(windowBefore + windowAfter)), snap.WindowEnd, true
+}

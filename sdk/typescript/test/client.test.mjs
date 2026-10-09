@@ -66,6 +66,15 @@ test("automation namespace routes",async t=>{
  assert.deepEqual(seen,["POST /api/v1/automations/run","GET /api/v1/automation-runs?automation_id=a&limit=10&project=p","GET /api/v1/automation-runs/r"]);
 });
 
+test("automation effective route",async t=>{
+ const seen=[];const baseUrl=await server(t,async(req,res)=>{for await(const _ of req){};seen.push(req.method+" "+req.url);res.end(JSON.stringify({id:"a",project:"p q",fields:{"action.agent":"overridden"},targeted:true,broken:false}));});
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());
+ const view=await c.automations.effective("a","p q");
+ assert.equal(view.id,"a");assert.equal(view.targeted,true);assert.equal(view.broken,false);
+ await c.automations.effective("global/dream.md","p");
+ assert.deepEqual(seen,["GET /api/v1/automations/a/effective?project=p+q","GET /api/v1/automations/global%2Fdream.md/effective?project=p"]);
+});
+
 test("reminder and attention namespace routes",async t=>{
  const seen=[];const baseUrl=await server(t,async(req,res)=>{for await(const _ of req){};seen.push(req.method+" "+req.url);res.end("{}");});
  const c=new BrainClient({baseUrl});t.after(()=>c.close());

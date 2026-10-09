@@ -1827,6 +1827,14 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 		}
 	}
 
+	// An automation's lifecycle or prompt write must pass the same checks that
+	// Update applies, because this path writes the DB directly.
+	if row.Type != nil && *row.Type == "automation" && automationMetadataTouchesDefinition(fields) {
+		if err := s.validateAutomationMetadata(ctx, row, fields); err != nil {
+			return nil, err
+		}
+	}
+
 	// Status transitions stamp/clear completed_at. Injecting into the fields
 	// map here (before durability routing) means the stamp reaches both the
 	// SQLite metadata JSON and the markdown file, and every status-changing

@@ -801,6 +801,9 @@ func (h *Handler) HandleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
 
 	entry, err := h.brain.UpdateMetadata(r.Context(), id, fields)
 	if err != nil {
+		if writeFieldValidationError(w, err) {
+			return
+		}
 		if errors.Is(err, ErrConflict) {
 			WriteError(w, http.StatusConflict, "Conflict", err.Error())
 			return

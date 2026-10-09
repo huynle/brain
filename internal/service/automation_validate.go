@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/pkg/cron"
 	"github.com/huynle/brain-api/pkg/frontmatter"
@@ -91,6 +93,87 @@ func (s *BrainServiceImpl) lookupAutomationParent(ctx context.Context, id string
 	}
 	entry := NoteRowToBrainEntry(row)
 	return &entry, nil
+}
+
+// automationMetadataDefinitionKeys are the PATCH /metadata fields that change an
+// automation's lifecycle or prompt. A write touching any of them must pass the
+// same checks Update applies to a definition change.
+var automationMetadataDefinitionKeys = []string{"starts_at", "expires_at", "timezone", "max_runs", "direct_prompt", "extends"}
+
+func automationMetadataTouchesDefinition(fields map[string]interface{}) bool {
+	for _, key := range automationMetadataDefinitionKeys {
+		if _, ok := fields[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// validateAutomationMetadata checks an automation's merged definition after a
+// PATCH /metadata write. The incoming values are shape-checked first, then
+// the stored definition is merged with them and validated as a whole.
+func (s *BrainServiceImpl) validateAutomationMetadata(ctx context.Context, row *storage.NoteRow, fields map[string]interface{}) error {
+	if err := checkAutomationMetadataShapes(fields); err != nil {
+		return err
+	}
+	merged := make(map[string]interface{})
+	if row.Metadata != "" && row.Metadata != "{}" {
+		if err := json.Unmarshal([]byte(row.Metadata), &merged); err != nil {
+			return fmt.Errorf("parse metadata: %w", err)
+		}
+	}
+	for key, value := range fields {
+		merged[key] = value
+	}
+	if n, ok := wholeMaxRuns(merged["max_runs"]); ok {
+		merged["max_runs"] = float64(n)
+	}
+	fm := reconstructFrontmatter(row, merged)
+	if value, ok := fields["direct_prompt"]; ok {
+		// Mirror the top-level prompt into the action, as Update does, so the
+		// binding rule sees the prompt the caller set.
+		if fm.Action == nil {
+			fm.Action = &frontmatter.AutomationAction{}
+		}
+		fm.Action.DirectPrompt, _ = value.(string)
+	}
+	return validateAutomationDefinition(ctx, &fm, row.ShortID, s.lookupAutomationParent)
+}
+
+// checkAutomationMetadataShapes rejects incoming lifecycle values of the wrong
+// JSON type, which reconstruction would otherwise drop silently.
+func checkAutomationMetadataShapes(fields map[string]interface{}) error {
+	for _, key := range []string{"starts_at", "expires_at", "timezone", "direct_prompt", "extends"} {
+		value, ok := fields[key]
+		if !ok || value == nil {
+			continue
+		}
+		if _, isString := value.(string); !isString {
+			return invalidAutomationField(key, "want a string")
+		}
+	}
+	if value, ok := fields["max_runs"]; ok && value != nil {
+		if _, isWhole := wholeMaxRuns(value); !isWhole {
+			return invalidAutomationField("max_runs", "want a whole number")
+		}
+	}
+	return nil
+}
+
+// wholeMaxRuns reads a max_runs value from JSON (float64) or Go (int) form.
+func wholeMaxRuns(value interface{}) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		if v != float64(int64(v)) {
+			return 0, false
+		}
+		return int(v), true
+	}
+	return 0, false
 }
 
 // validateAutomationDefinition checks an automation's trigger and lifecycle
@@ -178,6 +261,11 @@ func validateAutomationTrigger(tc *frontmatter.TriggerConfig) error {
 	if tc.Schedule != "" {
 		if _, err := cron.Parse(tc.Schedule); err != nil {
 			return invalidAutomationField("trigger.schedule", err.Error())
+		}
+	}
+	if tc.Timezone != "" {
+		if _, err := time.LoadLocation(tc.Timezone); err != nil {
+			return invalidAutomationField("trigger.timezone", "want an IANA timezone name")
 		}
 	}
 	var every schedule.Interval

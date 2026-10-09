@@ -114,11 +114,15 @@ func automationStamp(automation types.BrainEntry) string {
 }
 
 // noteTargetStates records the state each target of one automation was
-// evaluated in. When a project's state changes (a binding is added, edited,
-// opted out, or removed) its handled cursor moves to now. Otherwise the
-// project's new schedule would fire every slot it skipped while the old
-// config applied. A project that leaves the targets is marked absent, so its
-// return is a change too.
+// evaluated in, so a project that falls back to its parent's schedule does not
+// fire the parent's slots that predate the change. A project returns to the
+// parent when its binding is removed or opted out, or when it re-enters the
+// parent's targets. Its handled cursor then moves to now, because the change
+// instant is unknown and no earlier parent slot is owed.
+//
+// Entering a binding needs no cursor move. The binding's own write time is in
+// the effective Modified, which the slot floor already honours. A slot the
+// binding owes stays owed, even if the tick that first sees the change is late.
 func (s *AutomationService) noteTargetStates(automationID string, targets []automationTarget, now time.Time) {
 	var moved []scheduleKey
 	s.cacheMu.Lock()
@@ -129,7 +133,8 @@ func (s *AutomationService) noteTargetStates(automationID string, targets []auto
 	for _, target := range targets {
 		key := scheduleKey{automationID: automationID, project: target.project}
 		present[target.project] = struct{}{}
-		if prev, seen := s.targetState[key]; seen && prev != target.state {
+		if prev, seen := s.targetState[key]; seen && prev != target.state &&
+			target.state == targetStateParent && prev != targetStateParent {
 			moved = append(moved, key)
 		}
 		s.targetState[key] = target.state

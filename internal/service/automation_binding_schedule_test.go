@@ -518,3 +518,33 @@ func saveBindingDirect(t *testing.T, brain *BrainServiceImpl, parent, project st
 	}
 	return resp.ID
 }
+
+// Removing a binding hands its project back to the parent. The project must
+// not fire the parent's slots that predate the removal.
+func TestBinding_RemovingABindingNeverFiresAPastSlot(t *testing.T) {
+	f := newSlotFixture(t, slotUTC(2026, 10, 8, 0, 0, 0), "p1", "p2")
+	parent := f.save(slotAutomation{global: true, trigger: types.TriggerConfig{Schedule: "0 3 * * *", Filter: map[string]string{"project": "*"}}})
+	f.tick(slotUTC(2026, 10, 8, 3, 0, 0))
+	binding := f.saveBinding(parent.ID, "p1", bindingSpec{trigger: cronTrigger("0 9 * * *")})
+	f.tick(slotUTC(2026, 10, 8, 9, 0, 0))
+	f.tick(slotUTC(2026, 10, 8, 9, 30, 0))
+	if n := tasksIn(t, f.brain, "p1", parent.ID); n != 2 {
+		t.Fatalf("setup: p1 has %d tasks after 03:00 and 09:00, want 2", n)
+	}
+
+	f.setNow(slotUTC(2026, 10, 8, 10, 0, 0))
+	if err := f.brain.Delete(context.Background(), binding.ID); err != nil {
+		t.Fatalf("delete binding: %v", err)
+	}
+	f.tick(slotUTC(2026, 10, 8, 10, 0, 0))
+	f.tick(slotUTC(2026, 10, 8, 13, 0, 0))
+	if n := tasksIn(t, f.brain, "p1", parent.ID); n != 2 {
+		t.Fatalf("removing the binding fired a past parent slot: p1 has %d tasks, want 2", n)
+	}
+
+	// The parent's own schedule resumes at its next slot.
+	f.tick(slotUTC(2026, 10, 9, 3, 0, 0))
+	if n := tasksIn(t, f.brain, "p1", parent.ID); n != 3 {
+		t.Fatalf("parent schedule after removal: p1 has %d tasks, want 3", n)
+	}
+}

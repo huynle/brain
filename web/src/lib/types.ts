@@ -906,6 +906,17 @@ export interface BrainEntry {
   schedule?: string;
   schedule_enabled?: boolean;
   run_once_at?: string;
+  // Lifecycle window (tasks and automations).
+  starts_at?: string;
+  expires_at?: string;
+  max_runs?: number;
+  timezone?: string;
+  // Per-project automation binding: the global automation this entry extends.
+  extends?: string;
+  // automation_run audits: the slot this run was for (RFC3339).
+  scheduled_for?: string;
+  // Generated tasks/audits: the binding that applied, if any.
+  binding?: string;
   // Present on a GET of a single automation entry (used to execute it) and on
   // task entries (sessions discovered by the runner).
   action?: AutomationAction;
@@ -1011,13 +1022,41 @@ export interface AutomationAction {
   complete_on_idle?: boolean;
   timeout?: string;
   requires_capability?: string;
+  set_status?: string;
+  /** Appended to the parent's direct_prompt by a per-project binding. */
+  prompt_append?: string;
   [k: string]: unknown;
 }
 
+/** Mirrors Go types.CalendarEventFilter: skip_if_event / only_if_event. */
+export interface CalendarEventFilter {
+  calendar?: string;
+  title?: string;
+  description?: string;
+  location?: string;
+  all_day?: string;
+}
+
 export interface TriggerConfig {
-  type?: string; // "event" | "cron" | "webhook" | "session"
+  type?: string; // "event" | "cron" | "webhook" | "session" | "calendar"
   event?: string;
   schedule?: string;
+  /** Interval "<n><m|h|d|w>", alternative to schedule. */
+  every?: string;
+  /** "HH:MM" for every d|w; "start" | "end" for calendar triggers. */
+  at?: string;
+  /** Per-project offset window, e.g. "2h". */
+  stagger?: string;
+  /** "" (latest missed slot), "none", or a duration cap. */
+  catch_up?: string;
+  /** Built-in day calendar (e.g. "xnys") or, for type calendar, an ICS source name. */
+  calendar?: string;
+  skip_if_event?: CalendarEventFilter;
+  only_if_event?: CalendarEventFilter;
+  /** Calendar trigger event match (title/description/location/all_day). */
+  match?: Record<string, string>;
+  /** Calendar trigger offset from start/end, e.g. "-15m". */
+  offset?: string;
   // IANA zone the cron expression is evaluated in. Empty/invalid means UTC,
   // matching pkg/cron.LoadTimezone on the server.
   timezone?: string;

@@ -11,6 +11,7 @@ import (
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/blobstore"
 	"github.com/huynle/brain-api/internal/bridge"
+	"github.com/huynle/brain-api/internal/calendar"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/logbuffer"
@@ -75,6 +76,13 @@ func newTenantGraph(ctx context.Context, store *storage.TenantStore, roots *tena
 	cfg.BrainDir = mapping.BrainAbsolute
 	cfg.Attachments = normalizeAttachmentConfig(cfg.BrainDir, cfg.Attachments)
 	cfg.Attachments.StorageRoot = mapping.BlobAbsolute
+	// Calendar sources that automation triggers name, built once from config.
+	// A source that cannot be built fails construction, so a calendar gate is
+	// never silently absent.
+	calendars, err := calendar.NewRegistry(cfg.Calendars)
+	if err != nil {
+		return nil, fmt.Errorf("server.calendars: %w", err)
+	}
 	idx := indexer.NewIndexer(cfg.BrainDir, store, roots.Brain(store.TenantID()))
 	// This constructor validates the persisted CAS policy and creates its private
 	// staging directory. It does not scan content or provision a mapping.
@@ -113,6 +121,7 @@ func newTenantGraph(ctx context.Context, store *storage.TenantStore, roots *tena
 	cascade := service.NewFeatureCascadeService(eventHub, scheduler)
 	scheduler.SetFeatureCascade(cascade)
 	automations := service.NewAutomationService(brain)
+	automations.SetCalendars(calendars)
 	automations.SetPauseChecker(runner)
 	// Wildcard automations enumerate this graph's projects, never an ambient
 	// deployment-wide project list or an unscoped fallback task.
@@ -232,5 +241,21 @@ func copyGraphConfig(cfg config.Config) config.Config {
 	cfg.Attachments.AllowedMIMETypes = slices.Clone(cfg.Attachments.AllowedMIMETypes)
 	cfg.Attachments.BlockedMIMETypes = slices.Clone(cfg.Attachments.BlockedMIMETypes)
 	cfg.AttachmentExtraction.SupportedMIMETypes = slices.Clone(cfg.AttachmentExtraction.SupportedMIMETypes)
+	cfg.Calendars = cloneCalendarSources(cfg.Calendars)
 	return cfg
+}
+
+// cloneCalendarSources copies the calendar map and the date lists inside it, so
+// a graph never shares calendar configuration with its caller.
+func cloneCalendarSources(in map[string]config.CalendarConfig) map[string]config.CalendarConfig {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]config.CalendarConfig, len(in))
+	for name, source := range in {
+		source.ExtraClosed = slices.Clone(source.ExtraClosed)
+		source.ExtraOpen = slices.Clone(source.ExtraOpen)
+		out[name] = source
+	}
+	return out
 }

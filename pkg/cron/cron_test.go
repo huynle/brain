@@ -410,7 +410,7 @@ func TestParse_DayOfWeek_Sunday_Both0And7(t *testing.T) {
 
 // A schedule whose only matching hour falls inside a spring-forward gap used
 // to hang NextAfter: time.Date normalizes the missing 02:00 BACKWARD to
-// 01:00, advanceCandidate then selects hour 2 again and returns the same
+// 01:00, the old search then selected hour 2 again and returned the same
 // instant, so the candidate never moved and the search burned all 527,040
 // iterations before returning the zero time.
 //

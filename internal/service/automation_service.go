@@ -994,10 +994,16 @@ func (s *AutomationService) createRunAudit(ctx context.Context, audit automation
 		}
 	}
 
+	var tags []string
+	if audit.automation.ID != "" {
+		tags = append(tags, "automation:"+audit.automation.ID)
+	}
+
 	resp, err := s.brain.Save(ctx, types.CreateEntryRequest{
 		Type:    "automation_run",
 		Title:   fmt.Sprintf("Automation Run: %s", audit.automation.ID),
 		Content: content.String(),
+		Tags:    tags,
 		Status:  audit.status,
 		Project: audit.project,
 	})

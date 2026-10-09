@@ -1,9 +1,12 @@
 package service
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/huynle/brain-api/internal/tenant"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -28,6 +31,11 @@ func bindingTag(parentID string) string {
 // parentID is set, exactly one extends:<parentID> tag appended. A stale tag
 // never survives an update that changed or cleared extends.
 func syncExtendsTag(tags []string, parentID string) []string {
+	if parentID == "" && !hasExtendsTag(tags) {
+		// Nothing to add or remove: keep the caller's slice, including nil,
+		// so entries that never had a binding serialize exactly as before.
+		return tags
+	}
 	out := make([]string, 0, len(tags)+1)
 	for _, tag := range tags {
 		if strings.HasPrefix(tag, bindingTagPrefix) {
@@ -214,4 +222,87 @@ func copyAction(action *types.AutomationAction) *types.AutomationAction {
 	}
 	c := *action
 	return &c
+}
+
+// hasExtendsTag reports whether any tag is an extends: tag.
+func hasExtendsTag(tags []string) bool {
+	for _, tag := range tags {
+		if strings.HasPrefix(tag, bindingTagPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// bindingsSupported reports whether this service serves the single local
+// tenant. Bindings are single-mode only: a project writer could override the
+// agent, executor and workdir of a global prompt, and no tenant authorization
+// rule yet says which writers may do that. A service without a storage handle
+// fails closed.
+func (s *BrainServiceImpl) bindingsSupported() bool {
+	return s != nil && s.storage != nil && s.storage.TenantID() == tenant.Local
+}
+
+// validateBindingWrite checks a binding before it is written. The single
+// tenant gate comes first, then the placement rules: a binding is saved with
+// its own project, never as a global entry. Last, a project may hold only one
+// binding per parent. selfID is the entry's own ID ("" on create), so an
+// update does not collide with itself.
+func (s *BrainServiceImpl) validateBindingWrite(ctx context.Context, selfID, project string, global bool, parentID string) error {
+	if !s.bindingsSupported() {
+		return invalidAutomationField("extends", "bindings are available in single-tenant mode only")
+	}
+	if global {
+		return invalidAutomationField("extends", "a global automation cannot be a binding: a binding belongs to one project")
+	}
+	if project == "" {
+		// Save files an unprojected entry under "default", so that is the
+		// project the binding is keyed to.
+		project = "default"
+	}
+	siblings, err := s.bindingsOfParent(ctx, parentID)
+	if err != nil {
+		return err
+	}
+	for _, sibling := range siblings {
+		if sibling.ID != selfID && bindingProject(sibling) == project {
+			return invalidAutomationField("extends", fmt.Sprintf("project %q already has a binding of %q", project, parentID))
+		}
+	}
+	return nil
+}
+
+// bindingsOfParent returns every binding of parentID, whatever its status.
+// Bindings are found by their extends tag. Status is deliberately not
+// filtered: an inactive binding is an opt-out, and the scheduler must see it.
+func (s *BrainServiceImpl) bindingsOfParent(ctx context.Context, parentID string) ([]types.BrainEntry, error) {
+	const pageSize = 200
+	var out []types.BrainEntry
+	for offset := 0; ; offset += pageSize {
+		resp, err := s.List(ctx, types.ListEntriesRequest{
+			Type:   "automation",
+			Tags:   bindingTag(parentID),
+			Limit:  pageSize,
+			Offset: offset,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list bindings of %s: %w", parentID, err)
+		}
+		if resp == nil {
+			return out, nil
+		}
+		out = append(out, resp.Entries...)
+		if len(resp.Entries) < pageSize {
+			return out, nil
+		}
+	}
+}
+
+// bindingProject is the project a binding belongs to. The stored project is
+// preferred, and the entry's path is the fallback.
+func bindingProject(binding types.BrainEntry) string {
+	if binding.ProjectID != "" {
+		return binding.ProjectID
+	}
+	return extractProjectFromPath(binding.Path)
 }

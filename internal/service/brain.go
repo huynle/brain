@@ -256,6 +256,9 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		GeneratedKey:        req.GeneratedKey,
 		GeneratedBy:         req.GeneratedBy,
 		AutomationRunID:     req.AutomationRunID,
+		Extends:             frontmatter.SanitizeSimpleValue(req.Extends),
+		ScheduledFor:        frontmatter.SanitizeSimpleValue(req.ScheduledFor),
+		Binding:             frontmatter.SanitizeSimpleValue(req.Binding),
 		Trigger:             fmTriggerFromTypes(req.Trigger),
 		Action:              automationActionToFM(req.Action),
 		Retry:               automationRetryToFM(req.Retry),
@@ -621,6 +624,15 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["timezone"].(string); ok {
 			fm.Timezone = v
 		}
+		if v, ok := meta["extends"].(string); ok {
+			fm.Extends = v
+		}
+		if v, ok := meta["scheduled_for"].(string); ok {
+			fm.ScheduledFor = v
+		}
+		if v, ok := meta["binding"].(string); ok {
+			fm.Binding = v
+		}
 
 		// Automation fields (nested maps from metadata JSON)
 		if v, ok := meta["trigger"]; ok {
@@ -900,6 +912,17 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 	if req.Timezone != nil {
 		fm.Timezone = *req.Timezone
+	}
+
+	// Automation scheduling references (an explicit "" clears the key).
+	if req.Extends != nil {
+		fm.Extends = frontmatter.SanitizeSimpleValue(*req.Extends)
+	}
+	if req.ScheduledFor != nil {
+		fm.ScheduledFor = frontmatter.SanitizeSimpleValue(*req.ScheduledFor)
+	}
+	if req.Binding != nil {
+		fm.Binding = frontmatter.SanitizeSimpleValue(*req.Binding)
 	}
 
 	// Git/execution fields
@@ -3577,11 +3600,35 @@ func fmTriggerFromTypes(t *types.TriggerConfig) *frontmatter.TriggerConfig {
 		Events:                 t.Events,
 		Schedule:               t.Schedule,
 		Timezone:               t.Timezone,
+		Every:                  t.Every,
+		At:                     t.At,
+		Stagger:                t.Stagger,
+		CatchUp:                t.CatchUp,
+		Calendar:               t.Calendar,
+		SkipIfEvent:            fmCalendarEventFilterFromTypes(t.SkipIfEvent),
+		OnlyIfEvent:            fmCalendarEventFilterFromTypes(t.OnlyIfEvent),
+		Match:                  t.Match,
+		Offset:                 t.Offset,
 		Filter:                 t.Filter,
 		OncePer:                t.OncePer,
 		Webhook:                t.Webhook,
 		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
 		Cooldown:               t.Cooldown,
 		MaxConcurrent:          t.MaxConcurrent,
+	}
+}
+
+// fmCalendarEventFilterFromTypes converts a calendar-event guard to its
+// on-disk mirror.
+func fmCalendarEventFilterFromTypes(f *types.CalendarEventFilter) *frontmatter.CalendarEventFilter {
+	if f == nil {
+		return nil
+	}
+	return &frontmatter.CalendarEventFilter{
+		Calendar:    f.Calendar,
+		Title:       f.Title,
+		Description: f.Description,
+		Location:    f.Location,
+		AllDay:      f.AllDay,
 	}
 }

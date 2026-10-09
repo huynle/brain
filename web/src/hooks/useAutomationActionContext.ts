@@ -17,12 +17,55 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useModal } from "../store/modal";
 import { useUI } from "../store/ui";
 import { useWorkspace } from "../store/workspace";
-import { deleteEntry, executeAutomation, updateEntry } from "../lib/api";
+import {
+  createEntry,
+  deleteEntry,
+  executeAutomation,
+  updateEntry,
+  type CreateEntryRequest,
+} from "../lib/api";
 import {
   automationName,
   type AutomationActionContext,
 } from "../lib/actions/automationActions";
+import {
+  OPT_IN_STATUS,
+  OPT_OUT_STATUS,
+  bindingCreateBody,
+  bindingPatchBody,
+  bindingStatusPatch,
+  emptyOverrides,
+  planTurnOff,
+  planTurnOn,
+  type BindingPlan,
+} from "../lib/automationBindings";
 import type { BrainEntry } from "../lib/types";
+
+/**
+ * Carry out a binding plan from planTurnOn/planTurnOff. The parent is never
+ * written: a plan names a binding path, or creates a binding of the parent.
+ */
+async function applyBindingPlan(
+  parent: BrainEntry,
+  project: string,
+  plan: BindingPlan,
+): Promise<void> {
+  switch (plan.kind) {
+    case "none":
+      return;
+    case "create":
+      await createEntry(
+        bindingCreateBody(parent, project, emptyOverrides(), plan.status) as CreateEntryRequest,
+      );
+      return;
+    case "patch":
+      await updateEntry(plan.path, bindingStatusPatch(plan.status));
+      return;
+    case "delete":
+      await deleteEntry(plan.path);
+      return;
+  }
+}
 
 export function useAutomationActionContext(
   projectId: string,
@@ -47,6 +90,12 @@ export function useAutomationActionContext(
         queryKey: ["v2", "automation-runs", projectId],
       });
 
+    // The effective view reads the binding, so every binding write makes it stale.
+    const invalidateEffective = () =>
+      void queryClient.invalidateQueries({
+        queryKey: ["v2", "automation-effective", projectId],
+      });
+
     return {
       runAutomation: async (a: BrainEntry) => {
         // executeAutomation expects the entry path (e.g.
@@ -67,6 +116,40 @@ export function useAutomationActionContext(
         await updateEntry(a.path, { status: "archived" });
         invalidate();
         toast(`Paused ${automationName(a)}`, "success");
+      },
+
+      // Project scope. These write this project's binding only; the global
+      // entry is never archived from a project tab.
+      turnOffHere: async (a, scope) => {
+        await applyBindingPlan(a, scope.projectId, planTurnOff(scope.binding));
+        invalidate();
+        invalidateEffective();
+        toast(`Turned ${automationName(a)} off here`, "success");
+      },
+
+      turnOnHere: async (a, scope) => {
+        await applyBindingPlan(a, scope.projectId, planTurnOn(scope.binding));
+        invalidate();
+        invalidateEffective();
+        toast(`Turned ${automationName(a)} on here`, "success");
+      },
+
+      saveOverrides: async (a, scope, overrides) => {
+        if (scope.binding) {
+          await updateEntry(
+            scope.binding.path,
+            bindingPatchBody(overrides, scope.binding.status),
+          );
+        } else {
+          // A new binding keeps the project's current state: a project the
+          // filter does not select starts opted out, so saving never opts it in.
+          const status = scope.targeted ? OPT_IN_STATUS : OPT_OUT_STATUS;
+          await createEntry(
+            bindingCreateBody(a, scope.projectId, overrides, status) as CreateEntryRequest,
+          );
+        }
+        invalidate();
+        invalidateEffective();
       },
 
       deleteAutomation: async (a: BrainEntry) => {

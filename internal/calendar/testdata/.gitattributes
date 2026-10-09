@@ -1,0 +1,3 @@
+# Fixtures are byte-exact iCalendar exports (Google/Outlook use CRLF line
+# endings). Keep core.autocrlf=input from normalizing them on commit.
+*.ics -text

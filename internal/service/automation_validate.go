@@ -137,7 +137,7 @@ func (s *BrainServiceImpl) validateAutomationMetadata(ctx context.Context, row *
 		}
 		fm.Action.DirectPrompt, _ = value.(string)
 	}
-	return validateAutomationDefinition(ctx, &fm, row.ShortID, s.lookupAutomationParent)
+	return s.validateAutomation(ctx, &fm, row.ShortID) // calendar names: automation_validate_calendar.go
 }
 
 // checkAutomationMetadataShapes rejects incoming lifecycle values of the wrong

@@ -171,7 +171,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 	}
 
 	if req.Type == "automation" {
-		if err := validateAutomationDefinition(ctx, automationFrontmatterFromRequest(req), "", s.lookupAutomationParent); err != nil {
+		if err := s.validateAutomation(ctx, automationFrontmatterFromRequest(req), ""); err != nil {
 			return nil, err
 		}
 	}
@@ -1155,7 +1155,7 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	// the scheduling rules read. Status, tag, content and note changes must keep
 	// working on an automation whose stored definition is already invalid.
 	if fm.Type == "automation" && automationUpdateTouchesDefinition(req) {
-		if err := validateAutomationDefinition(ctx, fm, row.ShortID, s.lookupAutomationParent); err != nil {
+		if err := s.validateAutomation(ctx, fm, row.ShortID); err != nil {
 			return nil, err
 		}
 	}

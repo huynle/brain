@@ -28,6 +28,8 @@ import (
 
 // fakeEvent is one occurrence of the "team" source.
 type fakeEvent struct {
+	// uid is optional; empty means a UID derived from the event's position.
+	uid                          string
 	title, description, location string
 	start, end                   time.Time
 	allDay                       bool
@@ -119,7 +121,7 @@ func writeFakeSnapshot(t *testing.T, dataDir, name string, snap *fakeSnapshot) {
 	}
 	for i, e := range snap.events {
 		file.Occurrences = append(file.Occurrences, onDiskEvent{
-			UID:         fmt.Sprintf("%s-%d", name, i),
+			UID:         eventUID(name, i, e.uid),
 			Calendar:    name,
 			Start:       e.start,
 			End:         e.end,
@@ -140,6 +142,15 @@ func writeFakeSnapshot(t *testing.T, dataDir, name string, snap *fakeSnapshot) {
 	if err := os.WriteFile(filepath.Join(dir, name+".json"), data, 0o600); err != nil {
 		t.Fatalf("write snapshot: %v", err)
 	}
+}
+
+// eventUID is the UID an event is written with: its own uid when it names
+// one (a recurring series shares one), else a value unique to its position.
+func eventUID(source string, index int, uid string) string {
+	if uid != "" {
+		return uid
+	}
+	return fmt.Sprintf("%s-%d", source, index)
 }
 
 // novAt is the November 2026 UTC instant at hour:00 on day.

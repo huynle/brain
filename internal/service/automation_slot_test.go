@@ -68,27 +68,37 @@ func (f *slotFixture) tick(at time.Time) {
 
 // slotAutomation describes one cron automation for the fixture to save.
 type slotAutomation struct {
-	project  string // owning project; empty with global set
-	global   bool
-	startsAt string
-	maxRuns  *int
-	trigger  types.TriggerConfig // Type is always cron
+	project   string // owning project; empty with global set
+	global    bool
+	startsAt  string
+	expiresAt string
+	maxRuns   *int
+	// prompt is the direct prompt; empty means "run for {{.Project}}".
+	prompt  string
+	trigger types.TriggerConfig // Type defaults to cron; set calendar for calendar triggers
 }
 
 func (f *slotFixture) save(a slotAutomation) *types.CreateEntryResponse {
 	f.t.Helper()
 	trigger := a.trigger
-	trigger.Type = "cron"
+	if trigger.Type == "" {
+		trigger.Type = "cron"
+	}
+	prompt := a.prompt
+	if prompt == "" {
+		prompt = "run for {{.Project}}"
+	}
 	req := types.CreateEntryRequest{
-		Type:     "automation",
-		Title:    "Slot automation",
-		Content:  "slot fixture",
-		Status:   "active",
-		Project:  a.project,
-		StartsAt: a.startsAt,
-		MaxRuns:  a.maxRuns,
-		Trigger:  &trigger,
-		Action:   &types.AutomationAction{Type: "prompt", DirectPrompt: "run for {{.Project}}"},
+		Type:      "automation",
+		Title:     "Slot automation",
+		Content:   "slot fixture",
+		Status:    "active",
+		Project:   a.project,
+		StartsAt:  a.startsAt,
+		ExpiresAt: a.expiresAt,
+		MaxRuns:   a.maxRuns,
+		Trigger:   &trigger,
+		Action:    &types.AutomationAction{Type: "prompt", DirectPrompt: prompt},
 	}
 	if a.global {
 		req.Global = serviceBoolPtr(true)

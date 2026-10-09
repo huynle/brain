@@ -63,6 +63,21 @@ func ValidateFilterValue(expr string) error {
 	return err
 }
 
+// MatchFilterCaptures reports the same match as MatchFilterValue and, when the
+// expression is a "re:" pattern that matches, the named capture groups of that
+// match (name -> captured text; a group that did not participate is ""). It
+// shares the compile cache and input limits with MatchFilterValue. For every
+// other form, and for a rejected or non-matching pattern, the captures are nil.
+//
+// Only named groups are returned. Unnamed groups never appear, so a pattern's
+// capture names are the only keys a caller can rely on.
+func MatchFilterCaptures(actual, filterExpr string) (bool, map[string]string) {
+	if pattern, ok := parseRegexFilter(filterExpr); ok {
+		return defaultFilterRegexCache.matchCaptures(pattern, actual)
+	}
+	return MatchFilterValue(actual, filterExpr), nil
+}
+
 // parseRegexFilter returns the pattern of a "re:<pattern>" expression. The
 // pattern is taken verbatim (no trimming): whitespace is significant in a
 // regular expression. The second return value is false for any other form.
@@ -172,6 +187,27 @@ func (c *filterRegexCache) match(pattern, actual string) bool {
 		return false
 	}
 	return re.MatchString(truncateFilterInput(actual))
+}
+
+// matchCaptures is match that also returns the named capture groups of the
+// first match. A rejected pattern, or one that does not match, returns nil.
+func (c *filterRegexCache) matchCaptures(pattern, actual string) (bool, map[string]string) {
+	re := c.get(pattern)
+	if re == nil {
+		return false, nil
+	}
+	found := re.FindStringSubmatch(truncateFilterInput(actual))
+	if found == nil {
+		return false, nil
+	}
+	captures := make(map[string]string)
+	for i, name := range re.SubexpNames() {
+		if i == 0 || name == "" {
+			continue
+		}
+		captures[name] = found[i]
+	}
+	return true, captures
 }
 
 // get returns the compiled pattern, or nil if it was rejected. Compilation

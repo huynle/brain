@@ -361,3 +361,102 @@ func TestFilterRegexCache_ConcurrentUse(t *testing.T) {
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
+
+// MatchFilterCaptures reports the same match as MatchFilterValue and, for a
+// "re:" form that matches, the named capture groups of the pattern.
+func TestMatchFilterCaptures(t *testing.T) {
+	tests := []struct {
+		name         string
+		actual       string
+		filterExpr   string
+		wantMatch    bool
+		wantCaptures map[string]string
+	}{
+		{
+			name:       "named group captured",
+			actual:     "1:1 Alice Smith",
+			filterExpr: "re:^1:1 (?P<person>.+)$",
+			wantMatch:  true, wantCaptures: map[string]string{"person": "Alice Smith"},
+		},
+		{
+			name:       "several named groups",
+			actual:     "Review: 2026-11-24 billing",
+			filterExpr: `re:^Review: (?P<day>\d{4}-\d{2}-\d{2}) (?P<topic>\w+)$`,
+			wantMatch:  true, wantCaptures: map[string]string{"day": "2026-11-24", "topic": "billing"},
+		},
+		{
+			name:       "unnamed groups are not captures",
+			actual:     "abc",
+			filterExpr: "re:(a)(b)c",
+			wantMatch:  true, wantCaptures: map[string]string{},
+		},
+		{
+			name:       "optional group that did not participate captures empty",
+			actual:     "x",
+			filterExpr: "re:^x(?P<rest>y)?$",
+			wantMatch:  true, wantCaptures: map[string]string{"rest": ""},
+		},
+		{
+			name:       "regex mismatch captures nothing",
+			actual:     "standup",
+			filterExpr: "re:^1:1 (?P<person>.+)$",
+			wantMatch:  false, wantCaptures: nil,
+		},
+		{
+			name:       "invalid pattern matches nothing",
+			actual:     "anything",
+			filterExpr: "re:(?P<x>",
+			wantMatch:  false, wantCaptures: nil,
+		},
+		{
+			name:       "non-regex exact form matches without captures",
+			actual:     "completed",
+			filterExpr: "completed",
+			wantMatch:  true, wantCaptures: nil,
+		},
+		{
+			name:       "non-regex in form matches without captures",
+			actual:     "blocked",
+			filterExpr: "in:completed,blocked",
+			wantMatch:  true, wantCaptures: nil,
+		},
+		{
+			name:       "wildcard matches without captures",
+			actual:     "x",
+			filterExpr: "*",
+			wantMatch:  true, wantCaptures: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotMatch, gotCaptures := MatchFilterCaptures(tt.actual, tt.filterExpr)
+			if gotMatch != tt.wantMatch {
+				t.Fatalf("MatchFilterCaptures(%q, %q) match = %v, want %v", tt.actual, tt.filterExpr, gotMatch, tt.wantMatch)
+			}
+			if gotMatch != MatchFilterValue(tt.actual, tt.filterExpr) {
+				t.Fatalf("MatchFilterCaptures and MatchFilterValue disagree for %q / %q", tt.actual, tt.filterExpr)
+			}
+			if len(gotCaptures) != len(tt.wantCaptures) {
+				t.Fatalf("captures = %v, want %v", gotCaptures, tt.wantCaptures)
+			}
+			for k, v := range tt.wantCaptures {
+				if gotCaptures[k] != v {
+					t.Fatalf("capture %q = %q, want %q (all: %v)", k, gotCaptures[k], v, gotCaptures)
+				}
+			}
+		})
+	}
+}
+
+// Captures come from the same bounded input the match sees: a group past the
+// 4 KiB limit cannot capture text the matcher never read.
+func TestMatchFilterCaptures_InputTruncatedAt4KiB(t *testing.T) {
+	long := strings.Repeat("a", maxFilterRegexInputBytes+10) + "END"
+	ok, caps := MatchFilterCaptures(long, "re:(?P<tail>END)$")
+	if ok {
+		t.Fatalf("capture past the input limit matched: %v", caps)
+	}
+	if caps != nil {
+		t.Fatalf("captures = %v, want nil", caps)
+	}
+}

@@ -182,7 +182,7 @@ func (s *TimelineService) resolveTargets(ctx context.Context, entry types.BrainE
 			set.Effective = make(map[string]types.BrainEntry)
 		}
 		set.Effective[target.project] = target.entry
-		if target.entry.Trigger != nil && target.entry.Trigger.Calendar != "" {
+		if hasDayFilters(target.entry.Trigger) {
 			if source, ok := s.targets.(automationDayFilterSource); ok {
 				if set.EffectiveDayFilters == nil {
 					set.EffectiveDayFilters = make(map[string][]schedule.DayFilter)

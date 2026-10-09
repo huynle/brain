@@ -201,7 +201,7 @@ func formatInstants(ts []time.Time) []string {
 
 // An out-of-office week covers Mon 23 09:00 to Fri 27 17:00. A daily 09:00
 // automation skips each covered day and runs on the days either side of it.
-func TestEventSkipIfEventSkipsEachCoveredDay(t *testing.T) {
+func TestCalendarEventSkipIfEventSkipsEachCoveredDay(t *testing.T) {
 	ooo := fakeEvent{title: "Out of office", start: novAt(23, 9), end: novAt(27, 17)}
 	f := newSlotFixture(t, novAt(22, 0), "p")
 	f.svc.SetCalendars(eventRegistry(t, healthySnapshot(ooo)))
@@ -217,7 +217,7 @@ func TestEventSkipIfEventSkipsEachCoveredDay(t *testing.T) {
 // An all-day event counts on every date it covers, and its end is exclusive:
 // Holiday on Thu 26 and Fri 27 skips those days, and Sat 28 runs. The timed
 // "Team sync" on Tue 24 does not match an all_day filter, so Tue runs.
-func TestEventSkipIfEventAllDayEventCoversEveryDateItSpans(t *testing.T) {
+func TestCalendarEventSkipIfEventAllDayEventCoversEveryDateItSpans(t *testing.T) {
 	holiday := fakeEvent{title: "Holiday", allDay: true, start: novAt(26, 0), end: novAt(28, 0)}
 	sync := fakeEvent{title: "Team sync", start: novAt(24, 9), end: novAt(24, 10)}
 	f := newSlotFixture(t, novAt(22, 0), "p")
@@ -234,7 +234,7 @@ func TestEventSkipIfEventAllDayEventCoversEveryDateItSpans(t *testing.T) {
 // A title given as a regular expression ("re:") matches case-insensitively
 // through the shared filter rules: "OOO:" and "Out of office" match, and
 // "Office hours" does not.
-func TestEventSkipIfEventRegexTitleMatch(t *testing.T) {
+func TestCalendarEventSkipIfEventRegexTitleMatch(t *testing.T) {
 	events := []fakeEvent{
 		{title: "OOO: Alice", start: novAt(24, 9), end: novAt(24, 10)},
 		{title: "Team sync", start: novAt(25, 9), end: novAt(25, 10)},
@@ -255,7 +255,7 @@ func TestEventSkipIfEventRegexTitleMatch(t *testing.T) {
 // The day is the slot's local date in the trigger's timezone. A 22:00 New York
 // call on Wed 25 Nov is Thu 26 03:00 UTC: it blocks Wed's 09:00 New York slot,
 // and Thu's slot still runs.
-func TestEventTimedEventMatchesTheSchedulesLocalDay(t *testing.T) {
+func TestCalendarEventTimedEventMatchesTheSchedulesLocalDay(t *testing.T) {
 	call := fakeEvent{title: "Late call", start: novAt(26, 3), end: novAt(26, 4)}
 	f := newSlotFixture(t, novAt(22, 0), "p")
 	f.svc.SetCalendars(eventRegistry(t, healthySnapshot(call)))
@@ -273,7 +273,7 @@ func TestEventTimedEventMatchesTheSchedulesLocalDay(t *testing.T) {
 
 // A stale snapshot still gates. The poller raises the stale alert separately,
 // so the last good occurrences keep their effect.
-func TestEventSkipIfEventUsesAStaleSnapshot(t *testing.T) {
+func TestCalendarEventSkipIfEventUsesAStaleSnapshot(t *testing.T) {
 	ooo := fakeEvent{title: "Out of office", start: novAt(24, 9), end: novAt(24, 17)}
 	snap := healthySnapshot(ooo)
 	snap.stale = true
@@ -294,7 +294,7 @@ func TestEventSkipIfEventUsesAStaleSnapshot(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // only_if_event allows a day only when a matching event covers it.
-func TestEventOnlyIfEventRunsOnlyOnMatchingDays(t *testing.T) {
+func TestCalendarEventOnlyIfEventRunsOnlyOnMatchingDays(t *testing.T) {
 	release := fakeEvent{title: "Release day", start: novAt(24, 10), end: novAt(24, 11)}
 	f := newSlotFixture(t, novAt(22, 0), "p")
 	f.svc.SetCalendars(eventRegistry(t, healthySnapshot(release)))
@@ -310,7 +310,7 @@ func TestEventOnlyIfEventRunsOnlyOnMatchingDays(t *testing.T) {
 // When both filters are set, both apply. Location "Office" lets Mon 23 and
 // Tue 24 through, but Tue has a "Sick" event, which skip_if_event blocks.
 // Wed's event is at "Client site", so only_if_event blocks it.
-func TestEventBothFiltersApply(t *testing.T) {
+func TestCalendarEventBothFiltersApply(t *testing.T) {
 	events := []fakeEvent{
 		{title: "Work from office", location: "Office", start: novAt(23, 9), end: novAt(23, 10)},
 		{title: "Sick", location: "Office", start: novAt(24, 9), end: novAt(24, 10)},
@@ -334,7 +334,7 @@ func TestEventBothFiltersApply(t *testing.T) {
 
 // With no snapshot at all, skip_if_event allows every day (fail open) and
 // only_if_event allows none (fail closed).
-func TestEventWithoutASnapshotFailsOpenForSkipAndClosedForOnlyIf(t *testing.T) {
+func TestCalendarEventWithoutASnapshotFailsOpenForSkipAndClosedForOnlyIf(t *testing.T) {
 	f := newSlotFixture(t, novAt(22, 0), "p")
 	f.svc.SetCalendars(eventRegistry(t, nil))
 	skip := f.save(slotAutomation{project: "p", trigger: types.TriggerConfig{
@@ -358,7 +358,7 @@ func TestEventWithoutASnapshotFailsOpenForSkipAndClosedForOnlyIf(t *testing.T) {
 //
 // Window: Nov 20 through Dec 4. The skip event (Nov 24) and the only_if
 // event (Nov 23) are inside it. Ticks run Nov 19 through Dec 7.
-func TestEventOutsideTheSnapshotWindowFailsOpenOrClosed(t *testing.T) {
+func TestCalendarEventOutsideTheSnapshotWindowFailsOpenOrClosed(t *testing.T) {
 	ooo := fakeEvent{title: "Out of office", start: novAt(24, 9), end: novAt(24, 17)}
 	release := fakeEvent{title: "Release day", start: novAt(23, 10), end: novAt(23, 11)}
 	f := newSlotFixture(t, novAt(18, 0), "p")
@@ -387,7 +387,7 @@ func TestEventOutsideTheSnapshotWindowFailsOpenOrClosed(t *testing.T) {
 
 // A binding's skip_if_event gates only the project the binding is for. The
 // parent and the other project keep their own schedules.
-func TestEventBindingSkipIfEventAffectsOnlyItsProject(t *testing.T) {
+func TestCalendarEventBindingSkipIfEventAffectsOnlyItsProject(t *testing.T) {
 	ooo := fakeEvent{title: "Out of office", start: novAt(24, 9), end: novAt(24, 17)}
 	f := newSlotFixture(t, novAt(22, 0), "p1", "p2")
 	f.svc.SetCalendars(eventRegistry(t, healthySnapshot(ooo)))
@@ -419,7 +419,7 @@ func TestEventBindingSkipIfEventAffectsOnlyItsProject(t *testing.T) {
 // event ending exactly at midnight does not cover the day, a point event at the
 // next midnight does not either, and an all-day event covers the dates from its
 // start up to, not including, its end.
-func TestEventDayCoverageEdges(t *testing.T) {
+func TestCalendarEventDayCoverageEdges(t *testing.T) {
 	cases := []struct {
 		name    string
 		event   fakeEvent
@@ -502,7 +502,7 @@ func TestTimelineEventSkipProjectsNoCoveredDay(t *testing.T) {
 
 // Fail-open and fail-closed warnings are logged once per automation
 // modification and reason, not on every evaluated day.
-func TestEventGateWarnsOncePerReasonPerModification(t *testing.T) {
+func TestCalendarEventGateWarnsOncePerReasonPerModification(t *testing.T) {
 	var buf bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
@@ -563,5 +563,52 @@ func TestEventGateWarnsOncePerReasonPerModification(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "day outside the snapshot window") {
 		t.Fatalf("warning does not name the window reason; log:\n%s", buf.String())
+	}
+}
+
+// A binding that adds skip_if_event to an ungated parent gates only its own
+// project: the timeline must apply the binding's event gate, exactly as the
+// scheduler compiles each target from its effective config.
+func TestTimelineBindingEventGateOnlyItsProject(t *testing.T) {
+	ooo := fakeEvent{title: "Out of office", start: novAt(24, 9), end: novAt(24, 17)}
+	reg := eventRegistry(t, healthySnapshot(ooo))
+	brain, _, _ := newTestBrainService(t)
+	brain.SetCalendars(reg)
+	parent := saveGlobalDreamParent(t, brain, "Dream")
+	if _, err := brain.Save(context.Background(), types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Out-of-office dream for p1",
+		Status:  "active",
+		Project: "p1",
+		Extends: parent,
+		Trigger: &types.TriggerConfig{
+			Type:        types.TriggerTypeCron,
+			Schedule:    "0 9 * * *",
+			Timezone:    "UTC",
+			SkipIfEvent: &types.CalendarEventFilter{Calendar: "team", Title: "Out of office"},
+		},
+	}); err != nil {
+		t.Fatalf("save event-gated binding: %v", err)
+	}
+
+	from := slotUTC(2026, 11, 22, 0, 0, 0)
+	to := slotUTC(2026, 12, 1, 0, 0, 0)
+	automation := NewAutomationService(brain)
+	automation.SetCalendars(reg)
+	automation.SetProjectLister(&stubProjectLister{projects: []string{"p1", "p2"}})
+	service := NewTimelineService(brain, &timelineEventReaderFake{},
+		WithTimelineClock(func() time.Time { return from }),
+		WithTimelineTargets(automation))
+
+	result, err := service.Timeline(context.Background(), from, to, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []time.Time{novAt(22, 9), novAt(23, 9), novAt(25, 9), novAt(26, 9), novAt(27, 9), novAt(28, 9), novAt(29, 9), novAt(30, 9)}
+	if got := projectionInstants(result.Items, parent, "p1"); !sameInstants(got, want) {
+		t.Fatalf("p1 projected %v, want its binding's 09:00 runs without Nov 24: %v", formatInstants(got), formatInstants(want))
+	}
+	if p2 := projectionInstants(result.Items, parent, "p2"); len(p2) != 9 {
+		t.Fatalf("p2 projected %d runs (%v), want the parent's 9 daily runs, ungated", len(p2), formatInstants(p2))
 	}
 }

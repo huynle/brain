@@ -13,6 +13,7 @@
 package schedule
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -146,4 +147,45 @@ func (s *Schedule) Stagger() time.Duration { return s.stagger }
 // to pass to LatestSlot and NextSlot for that target.
 func (s *Schedule) Offset(automationID, project string) time.Duration {
 	return StaggerOffset(automationID, project, s.stagger)
+}
+
+// Slot is one scheduled instant for one target.
+type Slot struct {
+	// Base is the schedule's own instant — the cron match or interval
+	// step — before the target's stagger offset.
+	Base time.Time
+	// At is Base plus the offset: when the target's run is due.
+	At time.Time
+}
+
+// LatestSlot returns the latest slot with At <= now for the target whose
+// stagger offset is offset.
+func (s *Schedule) LatestSlot(ctx context.Context, now time.Time, offset time.Duration) (Slot, bool, error) {
+	base, ok := s.prevBase(now.Add(-offset))
+	if !ok {
+		return Slot{}, false, nil
+	}
+	return Slot{Base: base, At: base.Add(offset)}, true, nil
+}
+
+// NextSlot returns the earliest slot with At > after for the target whose
+// stagger offset is offset.
+func (s *Schedule) NextSlot(ctx context.Context, after time.Time, offset time.Duration) (Slot, bool, error) {
+	base, ok := s.nextBase(after.Add(-offset))
+	if !ok {
+		return Slot{}, false, nil
+	}
+	return Slot{Base: base, At: base.Add(offset)}, true, nil
+}
+
+// prevBase returns the latest base instant at or before t.
+func (s *Schedule) prevBase(t time.Time) (time.Time, bool) {
+	b := s.cron.PrevAtOrBefore(t.In(s.loc))
+	return b, !b.IsZero()
+}
+
+// nextBase returns the earliest base instant after t.
+func (s *Schedule) nextBase(t time.Time) (time.Time, bool) {
+	b := s.cron.NextAfter(t.In(s.loc))
+	return b, !b.IsZero()
 }

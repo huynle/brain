@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -20,6 +21,12 @@ const (
 )
 
 // HandleListAutomationRuns handles GET /automation-runs.
+//
+// Without automation_id it is a plain newest-first listing. With automation_id
+// it reads the automation:<id> tag index first, which every audit written
+// since tagging carries. Only when that page is short does it fall back to a
+// bounded body scan, for legacy audits that predate the tag, and the two sets
+// are merged, de-duplicated, and sorted newest first.
 func (h *Handler) HandleListAutomationRuns(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit := 100
@@ -30,57 +37,93 @@ func (h *Handler) HandleListAutomationRuns(w http.ResponseWriter, r *http.Reques
 	}
 
 	automationID := q.Get("automation_id")
+	project := q.Get("project")
+	status := q.Get("status")
 
-	// automation_id is not a column — it lives in the run's markdown body —
-	// so it can only be matched after fetching. Fetching exactly `limit`
-	// rows and filtering afterwards therefore asked for the N most recent
-	// runs across ALL automations and then kept the few that matched. On a
-	// store where automation_run is ~95% of all entries, one automation's
-	// runs are almost never in that page, so a filtered query returned
-	// nothing while its runs existed in their thousands — indistinguishable
-	// from "this automation has never run".
-	//
-	// Over-fetch when filtering, then trim. Bounded deliberately: an
-	// unbounded scan of that table is its own problem.
-	fetchLimit := limit
-	if automationID != "" {
-		fetchLimit = limit * automationRunFilterOverfetch
-		if fetchLimit > automationRunFilterMaxScan {
-			fetchLimit = automationRunFilterMaxScan
+	if automationID == "" {
+		resp, err := h.brain.List(r.Context(), types.ListEntriesRequest{
+			Type:    "automation_run",
+			Project: project,
+			Status:  status,
+			Limit:   limit,
+		})
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+			return
 		}
+		WriteJSON(w, http.StatusOK, resp)
+		return
 	}
 
-	resp, err := h.brain.List(r.Context(), types.ListEntriesRequest{
-		Type:    "automation_run",
-		Project: q.Get("project"),
-		Status:  q.Get("status"),
-		Limit:   fetchLimit,
+	// Tag-indexed query. A full page is final: any run older than the
+	// newest `limit` tagged runs is not on this page either.
+	tagged, err := h.brain.List(r.Context(), types.ListEntriesRequest{
+		Type:      "automation_run",
+		Project:   project,
+		Status:    status,
+		Tags:      "automation:" + automationID,
+		SortBy:    "created",
+		SortOrder: "desc",
+		Limit:     limit,
 	})
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	entries := tagged.Entries
+	truncated := false
 
-	if automationID != "" {
-		scanned := len(resp.Entries)
-		filtered := make([]types.BrainEntry, 0, limit)
-		for _, entry := range resp.Entries {
+	// Legacy fallback. automation_id is not a column for audits written
+	// before the tag, so a short tagged page is completed by scanning
+	// bodies. Over-fetch, then trim. Bounded deliberately: an unbounded scan
+	// of that table is its own problem.
+	if len(entries) < limit {
+		fetchLimit := limit * automationRunFilterOverfetch
+		if fetchLimit > automationRunFilterMaxScan {
+			fetchLimit = automationRunFilterMaxScan
+		}
+		scan, err := h.brain.List(r.Context(), types.ListEntriesRequest{
+			Type:    "automation_run",
+			Project: project,
+			Status:  status,
+			Limit:   fetchLimit,
+		})
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+			return
+		}
+
+		seen := make(map[string]bool, len(entries))
+		for _, e := range entries {
+			seen[e.ID] = true
+		}
+		merged := append([]types.BrainEntry{}, entries...)
+		for _, entry := range scan.Entries {
+			if seen[entry.ID] {
+				continue
+			}
 			if automationRunContentField(entry.Content, "automation_id") == automationID {
-				filtered = append(filtered, entry)
-				if len(filtered) == limit {
-					break
-				}
+				merged = append(merged, entry)
 			}
 		}
-		resp.Entries = filtered
-		resp.Total = len(filtered)
+		sort.SliceStable(merged, func(i, j int) bool {
+			return merged[i].Created > merged[j].Created
+		})
+		if len(merged) > limit {
+			merged = merged[:limit]
+		}
+		entries = merged
+
 		// Say so when the scan window was exhausted without filling the
 		// page: "no more runs" and "older than the window" are different
 		// answers and the caller must be able to tell them apart.
-		resp.Truncated = len(filtered) < limit && scanned >= fetchLimit
+		truncated = len(entries) < limit && len(scan.Entries) >= fetchLimit
 	}
 
-	WriteJSON(w, http.StatusOK, resp)
+	tagged.Entries = entries
+	tagged.Total = len(entries)
+	tagged.Truncated = truncated
+	WriteJSON(w, http.StatusOK, tagged)
 }
 
 // HandleGetAutomationRun handles GET /automation-runs/{id}.

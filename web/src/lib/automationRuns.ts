@@ -27,6 +27,11 @@
  *   ### Generated Tasks
  *   - f9eskoor
  *
+ * Newer audits also carry structure the reader prefers: an `automation:<id>`
+ * tag, typed `scheduled_for` and `binding` fields, and a `binding:<id>` tag.
+ * Those win when present; the body above is the fallback for legacy audits
+ * written before them.
+ *
  * Pure and dependency-free so it stays unit-testable, and so both the
  * modal's Runs tab and the docked Runs pane read the audit exactly the
  * same way.
@@ -47,6 +52,10 @@ export interface AutomationRun {
   triggerEvent: string;
   sourceEventId: string;
   dedupKey: string;
+  /** The slot (RFC3339) this run was for; "" when unscheduled or legacy. */
+  scheduledFor: string;
+  /** The binding that applied to this run; "" when none. */
+  binding: string;
   startedAt: string;
   completedAt: string;
   /** undefined when the audit carried no (or an unparseable) duration. */
@@ -145,11 +154,23 @@ export function runTime(run: AutomationRun): string {
   return run.startedAt || run.created;
 }
 
+/** The value of the first `<prefix><value>` tag, or "" when none has one. */
+function tagValue(tags: readonly string[], prefix: string): string {
+  for (const tag of tags) {
+    if (tag.startsWith(prefix)) {
+      const value = tag.slice(prefix.length).trim();
+      if (value) return value;
+    }
+  }
+  return "";
+}
+
 export function parseAutomationRun(entry: BrainEntry): AutomationRun {
   const content = entry.content ?? "";
   const fields = new Map<string, string>();
   const payload: Array<{ key: string; value: string }> = [];
   const taskIds: string[] = [];
+  const tags = entry.tags ?? [];
 
   // Sections are delimited by "### " headings; the fields live in the
   // preamble, and the two lists each own a section. Tracking the section
@@ -208,13 +229,21 @@ export function parseAutomationRun(entry: BrainEntry): AutomationRun {
     path: entry.path ?? "",
     entryStatus: entry.status ?? "",
     created: entry.created ?? "",
-    automationId: fields.get("automation_id") ?? "",
+    // Structured first, then the legacy body line.
+    automationId:
+      tagValue(tags, "automation:") || (fields.get("automation_id") ?? ""),
     automationPath: fields.get("automation_path") ?? "",
     project: fields.get("project") ?? entry.project_id ?? "",
     triggerType: fields.get("trigger_type") ?? "",
     triggerEvent: fields.get("trigger_event") ?? "",
     sourceEventId: fields.get("source_event_id") ?? "",
     dedupKey: fields.get("dedup_key") ?? "",
+    scheduledFor:
+      entry.scheduled_for || (fields.get("scheduled_for") ?? ""),
+    binding:
+      entry.binding ||
+      tagValue(tags, "binding:") ||
+      (fields.get("binding") ?? ""),
     startedAt: fields.get("started_at") ?? "",
     completedAt: fields.get("completed_at") ?? "",
     durationMs,

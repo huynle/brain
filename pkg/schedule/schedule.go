@@ -187,24 +187,26 @@ func (s *Schedule) NextSlot(ctx context.Context, after time.Time, offset time.Du
 
 // prevBase returns the latest base instant at or before t.
 func (s *Schedule) prevBase(t time.Time) (time.Time, bool) {
-	if s.cron == nil {
-		if s.every.Calendar() {
-			return s.calendarPrev(t)
-		}
-		return time.Time{}, false
+	switch {
+	case s.cron != nil:
+		b := s.cron.PrevAtOrBefore(t.In(s.loc))
+		return b, !b.IsZero()
+	case s.every.Calendar():
+		return s.calendarPrev(t)
+	default:
+		return s.durationPrev(t)
 	}
-	b := s.cron.PrevAtOrBefore(t.In(s.loc))
-	return b, !b.IsZero()
 }
 
 // nextBase returns the earliest base instant after t.
 func (s *Schedule) nextBase(t time.Time) (time.Time, bool) {
-	if s.cron == nil {
-		if s.every.Calendar() {
-			return s.calendarNext(t)
-		}
-		return time.Time{}, false
+	switch {
+	case s.cron != nil:
+		b := s.cron.NextAfter(t.In(s.loc))
+		return b, !b.IsZero()
+	case s.every.Calendar():
+		return s.calendarNext(t)
+	default:
+		return s.durationNext(t)
 	}
-	b := s.cron.NextAfter(t.In(s.loc))
-	return b, !b.IsZero()
 }

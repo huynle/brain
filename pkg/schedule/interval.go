@@ -255,3 +255,37 @@ func (s *Schedule) calendarNext(t time.Time) (time.Time, bool) {
 	}
 	return time.Time{}, false
 }
+
+// seconds returns the absolute length of an m or h interval.
+func (i Interval) seconds() int64 {
+	if i.Unit == Hour {
+		return int64(i.N) * 3600
+	}
+	return int64(i.N) * 60
+}
+
+// durationSlot returns base slot k of an m or h interval: the anchor plus
+// k steps of absolute time. Arithmetic is in Unix seconds — exact, because
+// the anchor is whole seconds and steps whole minutes — so it cannot
+// overflow a time.Duration however far t is from the anchor.
+func (s *Schedule) durationSlot(k int64) time.Time {
+	return time.Unix(s.anchor.Unix()+k*s.every.seconds(), 0).In(s.loc)
+}
+
+// durationPrev returns the latest m/h base slot at or before t; none before
+// the anchor.
+func (s *Schedule) durationPrev(t time.Time) (time.Time, bool) {
+	if t.Before(s.anchor) {
+		return time.Time{}, false
+	}
+	return s.durationSlot((t.Unix() - s.anchor.Unix()) / s.every.seconds()), true
+}
+
+// durationNext returns the earliest m/h base slot after t; the anchor itself
+// when t is before it.
+func (s *Schedule) durationNext(t time.Time) (time.Time, bool) {
+	if t.Before(s.anchor) {
+		return s.durationSlot(0), true
+	}
+	return s.durationSlot((t.Unix()-s.anchor.Unix())/s.every.seconds() + 1), true
+}

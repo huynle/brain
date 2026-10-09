@@ -157,3 +157,91 @@ func TestEvery_Stagger(t *testing.T) {
 	got = mustLatest(t, s, local(newYork, 2026, 1, 10, 1, 0), 90*time.Minute)
 	assertSlot(t, "LatestSlot(At)", got, local(newYork, 2026, 1, 9, 23, 30), 90*time.Minute)
 }
+
+// Sub-day intervals add absolute durations to the anchor: slot k is
+// Anchor + k*N units for k >= 0, whatever the zone does.
+func TestEverySubDay(t *testing.T) {
+	anchor := utc(2026, 1, 5, 10, 0)
+	tests := []struct {
+		name       string
+		spec       Spec
+		now        time.Time
+		latestBase time.Time
+		nextBase   time.Time
+	}{
+		{"90m mid-interval", Spec{Every: "90m", Anchor: anchor},
+			utc(2026, 1, 5, 13, 15), utc(2026, 1, 5, 13, 0), utc(2026, 1, 5, 14, 30)},
+		{"90m exactly at a slot", Spec{Every: "90m", Anchor: anchor},
+			utc(2026, 1, 5, 14, 30), utc(2026, 1, 5, 14, 30), utc(2026, 1, 5, 16, 0)},
+		{"90m a nanosecond before a slot", Spec{Every: "90m", Anchor: anchor},
+			utc(2026, 1, 5, 14, 30).Add(-1), utc(2026, 1, 5, 13, 0), utc(2026, 1, 5, 14, 30)},
+		{"90m at the anchor", Spec{Every: "90m", Anchor: anchor},
+			anchor, anchor, utc(2026, 1, 5, 11, 30)},
+		{"90m days later", Spec{Every: "90m", Anchor: anchor},
+			utc(2026, 1, 9, 0, 59), utc(2026, 1, 8, 23, 30), utc(2026, 1, 9, 1, 0)},
+		{"6h", Spec{Every: "6h", Anchor: anchor},
+			utc(2026, 1, 6, 3, 0), utc(2026, 1, 5, 22, 0), utc(2026, 1, 6, 4, 0)},
+		{"anchor truncated to whole seconds", Spec{Every: "1m", Anchor: anchor.Add(1500 * time.Millisecond)},
+			anchor.Add(90 * time.Second), anchor.Add(61 * time.Second), anchor.Add(121 * time.Second)},
+		// Absolute stepping: across fall-back, every 1h shows 01:00 twice
+		// in New York; across spring-forward it never shows 02:00.
+		{"1h across fall-back", Spec{Every: "1h", Timezone: "America/New_York", Anchor: utc(2026, 10, 31, 0, 0)},
+			utc(2026, 11, 1, 6, 20), utc(2026, 11, 1, 6, 0), utc(2026, 11, 1, 7, 0)},
+		{"1h across spring-forward", Spec{Every: "1h", Timezone: "America/New_York", Anchor: utc(2026, 3, 7, 0, 0)},
+			utc(2026, 3, 8, 7, 20), utc(2026, 3, 8, 7, 0), utc(2026, 3, 8, 8, 0)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := mustCompile(t, tt.spec)
+			assertSlot(t, "LatestSlot", mustLatest(t, s, tt.now, 0), tt.latestBase, 0)
+			assertSlot(t, "NextSlot", mustNext(t, s, tt.now, 0), tt.nextBase, 0)
+		})
+	}
+}
+
+func TestEverySubDay_ConstantSpacingAcrossDST(t *testing.T) {
+	for _, every := range []string{"1h", "90m", "7h"} {
+		s := mustCompile(t, Spec{Every: every, Timezone: "America/New_York", Anchor: utc(2026, 3, 1, 0, 0)})
+		iv, _ := ParseEvery(every)
+		step := time.Duration(iv.N) * time.Minute
+		if iv.Unit == Hour {
+			step = time.Duration(iv.N) * time.Hour
+		}
+		slot := mustNext(t, s, utc(2026, 3, 1, 0, 0).Add(-1), 0)
+		for i := 0; slot.Base.Before(utc(2026, 11, 10, 0, 0)); i++ {
+			next := mustNext(t, s, slot.At, 0)
+			if d := next.Base.Sub(slot.Base); d != step {
+				t.Fatalf("every %s: slot %d at %v is %v after %v, want %v", every, i, next.Base, d, slot.Base, step)
+			}
+			if next.Base.Location().String() != "America/New_York" {
+				t.Fatalf("every %s: slot location %v, want America/New_York", every, next.Base.Location())
+			}
+			slot = next
+		}
+	}
+}
+
+func TestEverySubDay_NothingBeforeAnchor(t *testing.T) {
+	anchor := utc(2026, 1, 5, 10, 0)
+	s := mustCompile(t, Spec{Every: "90m", Anchor: anchor})
+	if slot, ok, err := s.LatestSlot(context.Background(), anchor.Add(-1), 0); ok || err != nil {
+		t.Errorf("LatestSlot before the anchor = %v, %v, %v; want no slot", slot, ok, err)
+	}
+	assertSlot(t, "NextSlot", mustNext(t, s, utc(1990, 1, 1, 0, 0), 0), anchor, 0)
+	// Centuries away the arithmetic must not overflow a time.Duration.
+	far := utc(2400, 6, 1, 0, 0)
+	got := mustLatest(t, s, far, 0)
+	// Checked in Unix seconds: a time.Duration saturates near 292 years.
+	if got.Base.After(far) || far.Unix()-got.Base.Unix() >= 90*60 || (got.Base.Unix()-anchor.Unix())%(90*60) != 0 {
+		t.Errorf("LatestSlot(%v) = %v, not the slot grid's latest", far, got.Base)
+	}
+}
+
+func TestEverySubDay_Stagger(t *testing.T) {
+	anchor := utc(2026, 1, 5, 10, 0)
+	s := mustCompile(t, Spec{Every: "90m", Anchor: anchor, Stagger: time.Hour})
+	off := 20 * time.Minute
+	// Base 13:00 is passed at 13:15 but its At (13:20) is not.
+	assertSlot(t, "LatestSlot", mustLatest(t, s, utc(2026, 1, 5, 13, 15), off), utc(2026, 1, 5, 11, 30), off)
+	assertSlot(t, "NextSlot", mustNext(t, s, utc(2026, 1, 5, 13, 15), off), utc(2026, 1, 5, 13, 0), off)
+}

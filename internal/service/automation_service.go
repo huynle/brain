@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -21,6 +22,9 @@ type AutomationService struct {
 	// now is the injected clock for lifecycle decisions; nil means
 	// types.TimeNowUTC (see clock).
 	now func() time.Time
+	// cacheMu guards the schedule caches (see automation_schedule.go).
+	cacheMu  sync.Mutex
+	compiled map[string]*compiledAutomationSchedule
 }
 
 type automationPauseChecker interface {

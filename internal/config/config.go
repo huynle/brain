@@ -49,6 +49,7 @@ type Config struct {
 	Embedding              EmbeddingConfig
 	Attachments            AttachmentConfig
 	Tenancy                TenancyConfig
+	Attention              AttentionConfig
 	loadErr                error
 
 	AttachmentExtraction AttachmentExtractionConfig
@@ -132,6 +133,7 @@ func Load() Config {
 		cfg.AttachmentExtraction = s.AttachmentExtraction
 		cfg.Assistant = s.Assistant
 		cfg.Tenancy = s.Tenancy
+		cfg.Attention = s.Attention
 	}
 
 	// Layer 3: Environment variable overrides (highest priority)

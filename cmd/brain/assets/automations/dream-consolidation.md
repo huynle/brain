@@ -10,6 +10,7 @@ tags:
 trigger:
   type: cron
   schedule: "0 3 * * *"
+  stagger: 2h
   filter:
     project: "*"
   cooldown: 24h
@@ -113,7 +114,7 @@ Periodically reads all knowledge in a project and synthesizes it into a single, 
 
 ### Behavior
 
-- Runs daily at 3:00 AM by default
+- Runs daily at 3:00 AM by default, with each project's run staggered by a stable offset of up to 2h
 - Uses automation-level guards to avoid overlapping or repeated runs (`cooldown: 24h`, `max_concurrent: 1`)
 - Performs Brain availability checks before doing work (at least 3 source entries/tasks)
 - Reads all entry types: decisions, patterns, learnings, summaries, plans, explorations, ideas, tasks

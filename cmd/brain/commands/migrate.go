@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/huynle/brain-api/internal/service"
 	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/pkg/frontmatter"
+	"github.com/mattn/go-isatty"
 )
 
 // =============================================================================
@@ -26,6 +28,7 @@ type MigrateFlags struct {
 	Force   bool   // --force (overwrite existing automation entries)
 	Format  string // --format (json, short)
 	Project string // --project (scope goal migration to a project)
+	Yes     bool   // --yes (confirm the dream stagger offer without a terminal)
 }
 
 // MigrateCommand implements the Command interface for migration operations.
@@ -37,6 +40,11 @@ type MigrateCommand struct {
 
 	// apiClient is injectable for testing; nil means create from config.
 	apiClient *runner.APIClient
+
+	// In and StdinIsTerminal default to the process's stdin; tests replace
+	// them to drive the stagger confirmation.
+	In              io.Reader
+	StdinIsTerminal func() bool
 }
 
 // Type returns the command type identifier.
@@ -179,9 +187,15 @@ func (c *MigrateCommand) executeAutomations(out io.Writer) error {
 		return err
 	}
 
-	// Step 4: Find and disable existing monitor tasks
+	// Step 4: Offer the dream stagger to an installed copy that lacks it.
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Step 4: Disable existing monitor tasks")
+	fmt.Fprintln(out, "Step 4: Offer dream stagger")
+	fmt.Fprintln(out)
+	c.offerDreamStagger(ctx, out, client, automationsDir)
+
+	// Step 5: Find and disable existing monitor tasks
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Step 5: Disable existing monitor tasks")
 	fmt.Fprintln(out)
 
 	// Search for tasks with monitor tags
@@ -974,4 +988,192 @@ func (c *MigrateCommand) existingBindingID(ctx context.Context, client *runner.A
 		}
 	}
 	return "", nil
+}
+
+// =============================================================================
+// Migrate: Dream stagger offer
+// =============================================================================
+
+// dreamStagger is the stagger the shipped dream template carries. Each project's
+// dream starts at a stable offset within it, so the projects do not all dream at
+// 03:00 at once.
+const dreamStagger = "2h"
+
+// dreamAssetFile is the installed file name of the dream template.
+const dreamAssetFile = "dream-consolidation.md"
+
+// stdinTerminal reports whether confirmation questions can be asked.
+func (c *MigrateCommand) stdinTerminal() bool {
+	if c.StdinIsTerminal != nil {
+		return c.StdinIsTerminal()
+	}
+	// A character-device check is not enough: /dev/null is one.
+	return isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
+}
+
+// confirmYesNo asks a y/N question on the command's input and reports a yes.
+func (c *MigrateCommand) confirmYesNo(out io.Writer, question string) bool {
+	fmt.Fprintf(out, "%s [y/N] ", question)
+	in := c.In
+	if in == nil {
+		in = os.Stdin
+	}
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && line == "" {
+		fmt.Fprintln(out)
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true
+	}
+	return false
+}
+
+// offerDreamStagger adds stagger to an installed dream automation that lacks it,
+// both in its file and in the live global entry. It asks y/N on a terminal,
+// applies with --yes, and otherwise changes nothing. Refusing is not an error:
+// the rest of the migration still runs.
+func (c *MigrateCommand) offerDreamStagger(ctx context.Context, out io.Writer, client *runner.APIClient, automationsDir string) {
+	path := filepath.Join(automationsDir, dreamAssetFile)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintln(out, "  Dream Consolidation is not installed as a file; nothing to stagger.")
+		return
+	}
+	doc, err := frontmatter.Parse(string(raw))
+	if err != nil || doc.Frontmatter.Trigger == nil {
+		fmt.Fprintf(out, "  ⚠️  Skipped stagger: cannot read the trigger of %s\n", path)
+		return
+	}
+	if doc.Frontmatter.Trigger.Stagger != "" {
+		fmt.Fprintf(out, "  Dream Consolidation already has stagger %s; nothing to do.\n", doc.Frontmatter.Trigger.Stagger)
+		return
+	}
+	updated, err := insertTriggerStagger(raw, dreamStagger)
+	if err != nil {
+		fmt.Fprintf(out, "  ⚠️  Skipped stagger for %s: %v\n", path, err)
+		return
+	}
+
+	dryRun := c.Flags != nil && c.Flags.DryRun
+	yes := c.Flags != nil && c.Flags.Yes
+	if dryRun {
+		fmt.Fprintf(out, "  DRY RUN: Would offer to add stagger: %s to %s\n", dreamStagger, path)
+		return
+	}
+	if !yes {
+		if !c.stdinTerminal() {
+			fmt.Fprintf(out, "  Not applying stagger: stdin is not a terminal. Re-run with --yes to add stagger: %s to %s.\n", dreamStagger, path)
+			return
+		}
+		question := fmt.Sprintf("Apply stagger: %s to %s and to the live Dream Consolidation automation?", dreamStagger, path)
+		if !c.confirmYesNo(out, question) {
+			fmt.Fprintln(out, "  Skipped stagger.")
+			return
+		}
+	}
+
+	if err := os.WriteFile(path, updated, 0644); err != nil {
+		fmt.Fprintf(out, "  ⚠️  Failed to write %s: %v\n", path, err)
+		return
+	}
+	fmt.Fprintf(out, "  ✅ Added stagger: %s to %s\n", dreamStagger, path)
+	c.applyDreamStaggerToLive(ctx, out, client)
+}
+
+// applyDreamStaggerToLive sets stagger on the one global Dream Consolidation
+// entry the scheduler runs. An ambiguous or unreachable API is reported, not
+// guessed at; the file change takes effect after the next index or restart.
+func (c *MigrateCommand) applyDreamStaggerToLive(ctx context.Context, out io.Writer, client *runner.APIClient) {
+	resp, err := client.ListEntries(ctx, map[string]string{"type": "automation", "global": "true", "limit": "1000"})
+	if err != nil {
+		fmt.Fprintf(out, "  ⚠️  Live automation not updated (API unavailable): %v\n", err)
+		return
+	}
+	var live []types.BrainEntry
+	for _, entry := range resp.Entries {
+		if entry.Title == dreamParentTitle && entry.Extends == "" {
+			live = append(live, entry)
+		}
+	}
+	if len(live) != 1 {
+		fmt.Fprintf(out, "  ⚠️  Live automation not updated: found %d global %q automations, want 1\n", len(live), dreamParentTitle)
+		return
+	}
+	entry := live[0]
+	trigger := types.TriggerConfig{}
+	if entry.Trigger != nil {
+		trigger = *entry.Trigger
+	}
+	if trigger.Stagger != "" {
+		fmt.Fprintf(out, "  Live automation %s already has stagger %s.\n", entry.ID, trigger.Stagger)
+		return
+	}
+	trigger.Stagger = dreamStagger
+	if _, err := client.UpdateEntry(ctx, entry.Path, map[string]interface{}{"trigger": trigger}); err != nil {
+		fmt.Fprintf(out, "  ⚠️  Failed to update live automation %s: %v\n", entry.ID, err)
+		return
+	}
+	fmt.Fprintf(out, "  ✅ Updated live automation %s (stagger %s)\n", entry.ID, dreamStagger)
+}
+
+// insertTriggerStagger returns the installed automation file with a stagger line
+// added as the first key of its block-style trigger. It re-parses the result and
+// fails rather than return a file whose stagger it cannot read back.
+func insertTriggerStagger(raw []byte, stagger string) ([]byte, error) {
+	lines := strings.SplitAfter(string(raw), "\n")
+	if len(lines) == 0 || strings.TrimRight(lines[0], "\r\n") != "---" {
+		return nil, fmt.Errorf("no frontmatter block")
+	}
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimRight(lines[i], "\r\n") == "---" {
+			end = i
+			break
+		}
+	}
+	if end < 0 {
+		return nil, fmt.Errorf("unterminated frontmatter block")
+	}
+	trig := -1
+	for i := 1; i < end; i++ {
+		if strings.TrimRight(lines[i], " \t\r\n") == "trigger:" {
+			trig = i
+			break
+		}
+	}
+	if trig < 0 {
+		return nil, fmt.Errorf("no block-style trigger: key")
+	}
+	indent := ""
+	for i := trig + 1; i < end; i++ {
+		line := strings.TrimRight(lines[i], "\r\n")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, " ") {
+			return nil, fmt.Errorf("trigger has no indented keys")
+		}
+		indent = line[:len(line)-len(strings.TrimLeft(line, " "))]
+		break
+	}
+	if indent == "" {
+		return nil, fmt.Errorf("trigger has no keys")
+	}
+
+	result := make([]string, 0, len(lines)+1)
+	result = append(result, lines[:trig+1]...)
+	result = append(result, indent+"stagger: "+stagger+"\n")
+	result = append(result, lines[trig+1:]...)
+	text := strings.Join(result, "")
+
+	doc, err := frontmatter.Parse(text)
+	if err != nil {
+		return nil, fmt.Errorf("re-parse with stagger: %w", err)
+	}
+	if doc.Frontmatter.Trigger == nil || doc.Frontmatter.Trigger.Stagger != stagger {
+		return nil, fmt.Errorf("stagger did not round-trip")
+	}
+	return []byte(text), nil
 }

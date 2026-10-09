@@ -21,9 +21,9 @@ import (
 // Anchor is set only for an every trigger: starts_at when present, else the
 // entry's created instant. Compile ignores the anchor for cron.
 //
-// Calendar day filters (trigger.calendar, skip_if_event, only_if_event) are
-// not translated yet, so the Spec alone does not describe a calendar-gated
-// automation.
+// The Spec carries no day filters. Callers attach them the same way: the
+// scheduler through AutomationService.dayFiltersFor, the timeline through its
+// pre-resolved day filter map, so both gate slots by the same calendar.
 func automationScheduleSpec(entry types.BrainEntry) (schedule.Spec, error) {
 	trigger := entry.Trigger
 	if trigger == nil {

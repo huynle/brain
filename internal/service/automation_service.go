@@ -928,6 +928,10 @@ type automationRunAudit struct {
 	// the run did nothing (see runOutcome in the PWA) — a success note
 	// there would misreport real work as a skip.
 	summary string
+	// scheduledFor is the slot this run was for; zero when unscheduled.
+	scheduledFor time.Time
+	// binding is the binding ID that applied to this run, if any.
+	binding string
 }
 
 func (s *AutomationService) createRunAudit(ctx context.Context, audit automationRunAudit) (string, error) {

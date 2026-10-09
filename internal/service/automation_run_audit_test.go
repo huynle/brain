@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -80,5 +81,28 @@ func TestCreateRunAudit_ZeroValuesAddNoStructuredFields(t *testing.T) {
 	}
 	if strings.Contains(entry.Content, "scheduled_for:") || strings.Contains(entry.Content, "binding:") {
 		t.Errorf("zero-value audit wrote structured body lines:\n%s", entry.Content)
+	}
+}
+
+// TestRunAuditScheduledFor pins the slot format: RFC3339 in UTC, and empty
+// for the zero time so unscheduled callers write nothing.
+func TestRunAuditScheduledFor(t *testing.T) {
+	slot := time.Date(2026, 10, 9, 5, 0, 0, 0, time.FixedZone("EDT", -4*3600))
+	if got := runAuditScheduledFor(slot); got != "2026-10-09T09:00:00Z" {
+		t.Errorf("runAuditScheduledFor(%v) = %q, want 2026-10-09T09:00:00Z", slot, got)
+	}
+	if got := runAuditScheduledFor(time.Time{}); got != "" {
+		t.Errorf("runAuditScheduledFor(zero) = %q, want empty", got)
+	}
+}
+
+// TestRunAuditBindingTag pins the binding tag: present only when a binding
+// applied.
+func TestRunAuditBindingTag(t *testing.T) {
+	if got := runAuditBindingTag("bind1"); got != "binding:bind1" {
+		t.Errorf("runAuditBindingTag(bind1) = %q, want binding:bind1", got)
+	}
+	if got := runAuditBindingTag(""); got != "" {
+		t.Errorf("runAuditBindingTag(empty) = %q, want empty", got)
 	}
 }

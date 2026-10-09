@@ -32,6 +32,7 @@ type Handler struct {
 	attention             AttentionService
 	timeline              TimelineService
 	automationRun         AutomationRunService
+	calendars             CalendarService
 	assistant             *AssistantService
 	placement             ProjectPlacementService
 	scheduler             SchedulerService
@@ -176,6 +177,13 @@ func WithTimelineService(ts TimelineService) HandlerOption {
 func WithAutomationRunService(ar AutomationRunService) HandlerOption {
 	return func(h *Handler) {
 		h.automationRun = ar
+	}
+}
+
+// WithCalendarService sets the calendar status service behind GET /calendars.
+func WithCalendarService(cs CalendarService) HandlerOption {
+	return func(h *Handler) {
+		h.calendars = cs
 	}
 }
 

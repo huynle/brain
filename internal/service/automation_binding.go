@@ -16,9 +16,11 @@ import (
 //
 // A binding is a project-owned automation with extends: <global automation id>.
 // It customizes or opts out of its parent for one project without copying the
-// parent. This file holds the pure parts: the overlay that produces a binding's
-// effective config, and the tag that makes bindings discoverable. Discovery,
-// target selection and evaluation live with the scheduler and the event path.
+// parent. This file holds the overlay that produces a binding's effective
+// config, the tag and save-time rules that keep bindings discoverable, and the
+// target selection the scheduler, the event path and manual runs share. The
+// evaluation itself stays with the scheduler (automation_schedule.go) and the
+// event path (automation_service.go).
 
 // bindingTagPrefix namespaces the tag that marks a binding's parent. Bindings
 // are found by this tag, so Save and Update keep it in sync with extends.
@@ -77,8 +79,8 @@ func bindingIsActive(binding types.BrainEntry) bool {
 // The effective ID stays the parent's, so history and dedup stay keyed to the
 // parent. ProjectID is the binding's project and Binding names the binding.
 // Modified is the later of the two writes, so the slot floor sees both. The
-// result shares no pointers with parent, so callers may not mutate it into the
-// parent.
+// result shares no mutable state with parent, so changing it leaves the parent
+// intact.
 func effectiveAutomation(parent, binding types.BrainEntry) types.BrainEntry {
 	eff := parent
 	eff.Trigger = copyTrigger(parent.Trigger)

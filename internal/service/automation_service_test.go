@@ -919,7 +919,17 @@ func TestAutomationService_StartConsumesEventHubEvents(t *testing.T) {
 
 	hub := realtime.NewEventHub()
 	automation := NewAutomationService(brain)
-	go automation.Start(ctx, hub)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		automation.Start(ctx, hub)
+	}()
+	// Stop the loop and wait for it before the temp dir is removed: it writes
+	// the generated task after the test body has seen it.
+	t.Cleanup(func() {
+		cancel()
+		<-stopped
+	})
 
 	hub.Publish(types.Event{
 		ID:        "evt-hub-1",
@@ -1920,6 +1930,7 @@ func TestAutomationService_CheckScheduledAppliesGuardsForCronAutomation(t *testi
 	now := created.Add(5 * time.Minute)
 	setTestNow(t, now)
 	automation := NewAutomationService(brain)
+	stampAutomationsModified(t, brain, created)
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled failed: %v", err)
 	}
@@ -1962,6 +1973,7 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 	}
 
 	automation := NewAutomationService(brain)
+	stampAutomationsModified(t, brain, now.Add(-time.Hour))
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled failed: %v", err)
 	}
@@ -1980,10 +1992,10 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 	if len(resp.Entries) != 1 {
 		t.Fatalf("expected one generated cron task, got %d", len(resp.Entries))
 	}
-	// The dedup key carries the project so one fan-out minute cannot collapse
-	// several projects' tasks into a single key.
-	expectedKey := "automation:cron:" + resp.Entries[0].GeneratedBy[len("automation:"):] +
-		":automation-cron-entry-test:202604291305"
+	// The dedup key names the automation, the project and the slot, so one slot
+	// of one project can never produce two tasks.
+	expectedKey := "sched:" + resp.Entries[0].GeneratedBy[len("automation:"):] +
+		":automation-cron-entry-test:2026-04-29T13:05:00Z"
 	if resp.Entries[0].GeneratedKey != expectedKey {
 		t.Fatalf("generated key = %q, want %q", resp.Entries[0].GeneratedKey, expectedKey)
 	}
@@ -2031,6 +2043,7 @@ func TestAutomationService_CheckScheduledCreatesScriptTaskWithoutForcedWorkdir(t
 	}
 
 	automation := NewAutomationService(brain)
+	stampAutomationsModified(t, brain, now.Add(-time.Hour))
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled failed: %v", err)
 	}
@@ -2084,6 +2097,7 @@ func TestAutomationService_CheckScheduledSkipsWhenAutomationsPaused(t *testing.T
 
 	automation := NewAutomationService(brain)
 	automation.SetPauseChecker(&fakeAutomationPauseChecker{paused: true})
+	stampAutomationsModified(t, brain, now.Add(-time.Hour))
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled failed: %v", err)
 	}
@@ -2151,6 +2165,7 @@ func TestAutomationService_CheckScheduledSkipsWhenProjectAutomationsPaused(t *te
 	automation := NewAutomationService(brain)
 	automation.SetPauseChecker(checker)
 
+	stampAutomationsModified(t, brain, now.Add(-time.Hour))
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled failed: %v", err)
 	}
@@ -2255,9 +2270,21 @@ func TestAutomationService_StartChecksScheduledAutomationsOnStartup(t *testing.T
 		t.Fatalf("Save automation failed: %v", err)
 	}
 
+	stampAutomationsModified(t, brain, time.Now().UTC().Add(-2*time.Minute))
 	hub := realtime.NewEventHub()
 	automation := NewAutomationService(brain)
-	go automation.Start(ctx, hub)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		automation.Start(ctx, hub)
+	}()
+	// The task appears before its run audit is written. Stop the scheduler and
+	// wait for it to return before the temp dir is removed, or cleanup races
+	// the audit write.
+	t.Cleanup(func() {
+		cancel()
+		<-stopped
+	})
 
 	task := waitForGeneratedTask(t, brain, "automation-start-cron-test")
 	if task.DirectPrompt != "Create the startup cron summary." {
@@ -2333,6 +2360,7 @@ func TestAutomationService_CheckScheduledHonorsTimezone(t *testing.T) {
 	}
 
 	automation := NewAutomationService(brain)
+	stampAutomationsModified(t, brain, now.Add(-time.Hour))
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled Denver failed: %v", err)
 	}
@@ -2383,6 +2411,7 @@ func TestAutomationService_CheckScheduledUTCTimezoneDoesNotMatchOffHour(t *testi
 	}
 
 	automation := NewAutomationService(brain)
+	stampAutomationsModified(t, brain, now.Add(-time.Hour))
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled UTC failed: %v", err)
 	}
@@ -2434,6 +2463,7 @@ func TestAutomationService_CheckScheduledEmptyTimezoneDefaultsToUTC(t *testing.T
 	}
 
 	automation := NewAutomationService(brain)
+	stampAutomationsModified(t, brain, now.Add(-time.Hour))
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled legacy failed: %v", err)
 	}

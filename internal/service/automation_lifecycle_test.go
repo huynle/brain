@@ -65,6 +65,7 @@ func TestAutomationLifecycle_NothingFiresBeforeStartsAt(t *testing.T) {
 	svc := NewAutomationService(brain)
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	svc.SetClock(func() time.Time { return now })
+	stampAutomationsModified(t, brain, slotUTC(2026, 10, 8, 0, 0, 0))
 	if err := svc.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled: %v", err)
 	}
@@ -85,6 +86,7 @@ func TestAutomationLifecycle_FiresAfterStartsAt(t *testing.T) {
 	svc := NewAutomationService(brain)
 	now := time.Date(2026, 10, 10, 0, 1, 0, 0, time.UTC)
 	svc.SetClock(func() time.Time { return now })
+	stampAutomationsModified(t, brain, slotUTC(2026, 10, 8, 0, 0, 0))
 	if err := svc.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled: %v", err)
 	}
@@ -106,6 +108,7 @@ func TestAutomationLifecycle_ExpiryCompletesOnceWithNote(t *testing.T) {
 	now := time.Date(2026, 10, 9, 6, 0, 0, 0, time.UTC)
 	svc.SetClock(func() time.Time { return now })
 	for i := 0; i < 2; i++ {
+		stampAutomationsModified(t, brain, slotUTC(2026, 10, 8, 0, 0, 0))
 		if err := svc.CheckScheduled(ctx, now); err != nil {
 			t.Fatalf("CheckScheduled sweep %d: %v", i, err)
 		}
@@ -136,6 +139,7 @@ func TestAutomationLifecycle_ClockIsInjected(t *testing.T) {
 	svc := NewAutomationService(brain)
 	fake := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
 	svc.SetClock(func() time.Time { return fake })
+	stampAutomationsModified(t, brain, slotUTC(2026, 10, 8, 0, 0, 0))
 	if err := svc.CheckScheduled(ctx, fake); err != nil {
 		t.Fatalf("CheckScheduled: %v", err)
 	}
@@ -156,6 +160,7 @@ func TestAutomationLifecycle_ExpirySweepCoversEveryTriggerType(t *testing.T) {
 	svc := NewAutomationService(brain)
 	now := time.Date(2026, 10, 9, 6, 0, 0, 0, time.UTC)
 	svc.SetClock(func() time.Time { return now })
+	stampAutomationsModified(t, brain, slotUTC(2026, 10, 8, 0, 0, 0))
 	if err := svc.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled: %v", err)
 	}
@@ -254,6 +259,7 @@ func TestAutomationLifecycle_MaxRunsCompletesProjectOwnedAutomation(t *testing.T
 	for i := 0; i < 3; i++ {
 		now := time.Date(2026, 10, 9, 12, i, 0, 0, time.UTC)
 		svc.SetClock(func() time.Time { return now })
+		stampAutomationsModified(t, brain, slotUTC(2026, 10, 8, 0, 0, 0))
 		if err := svc.CheckScheduled(ctx, now); err != nil {
 			t.Fatalf("tick %d: %v", i, err)
 		}
@@ -286,6 +292,7 @@ func TestAutomationLifecycle_MaxRunsIgnoresSkippedAndManualRuns(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		now := time.Date(2026, 10, 9, 13, i, 0, 0, time.UTC)
 		svc.SetClock(func() time.Time { return now })
+		stampAutomationsModified(t, brain, slotUTC(2026, 10, 8, 0, 0, 0))
 		if err := svc.CheckScheduled(ctx, now); err != nil {
 			t.Fatalf("tick %d: %v", i, err)
 		}
@@ -356,6 +363,7 @@ func TestAutomationLifecycle_ManualRunIgnoresLifecycleAndIsTagged(t *testing.T) 
 
 	// starts_at is still in the future, so this cron tick must not fire, even
 	// though the manual run happened.
+	stampAutomationsModified(t, brain, slotUTC(2026, 10, 8, 0, 0, 0))
 	if err := svc.CheckScheduled(ctx, time.Date(2026, 10, 9, 15, 1, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("CheckScheduled: %v", err)
 	}
@@ -393,6 +401,7 @@ func TestAutomationLifecycle_GlobalMaxRunsStopsOnlyThatProjectOnce(t *testing.T)
 		now := time.Date(2026, 10, 9, 16, i, 0, 0, time.UTC)
 		types.TimeNowUTC = func() time.Time { return now }
 		svc.SetClock(func() time.Time { return now })
+		stampAutomationsModified(t, brain, slotUTC(2026, 10, 8, 0, 0, 0))
 		if err := svc.CheckScheduled(ctx, now); err != nil {
 			t.Fatalf("tick %d: %v", i, err)
 		}
@@ -432,6 +441,7 @@ func TestAutomationLifecycle_MaxRunsZeroAndMinusOneAreUnlimited(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			now := time.Date(2026, 10, 9, 17, i, 0, 0, time.UTC)
 			svc.SetClock(func() time.Time { return now })
+			stampAutomationsModified(t, brain, slotUTC(2026, 10, 8, 0, 0, 0))
 			if err := svc.CheckScheduled(ctx, now); err != nil {
 				t.Fatalf("max_runs=%d tick %d: %v", limit, i, err)
 			}

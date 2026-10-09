@@ -34,6 +34,12 @@ func (s *AutomationService) clock() time.Time {
 // a not-yet-started automation writes nothing (the audit would repeat every
 // tick). Manual runs never reach this gate.
 func (s *AutomationService) lifecycleAllows(ctx context.Context, automation types.BrainEntry, project string) (bool, error) {
+	return s.lifecycleAllowsAt(ctx, automation, project, time.Time{})
+}
+
+// lifecycleAllowsAt is lifecycleAllows for one firing. A non-zero slot is the
+// scheduled instant being fired, and a max_runs skip records it.
+func (s *AutomationService) lifecycleAllowsAt(ctx context.Context, automation types.BrainEntry, project string, slot time.Time) (bool, error) {
 	expired, err := s.expireIfDue(ctx, automation)
 	if err != nil {
 		return false, err
@@ -44,7 +50,7 @@ func (s *AutomationService) lifecycleAllows(ctx context.Context, automation type
 	if automationNotStarted(automation, s.clock()) {
 		return false, nil
 	}
-	reached, err := s.maxRunsReached(ctx, automation, project)
+	reached, err := s.maxRunsReachedAt(ctx, automation, project, slot)
 	if err != nil {
 		return false, err
 	}
@@ -54,11 +60,12 @@ func (s *AutomationService) lifecycleAllows(ctx context.Context, automation type
 // maxRunsPageSize bounds each page read while counting run audits.
 const maxRunsPageSize = 200
 
-// maxRunsReached reports whether max_runs is exhausted for (automation,
+// maxRunsReachedAt reports whether max_runs is exhausted for (automation,
 // project). A project-owned automation is completed with a note. A global one
 // only stops for this project, which gets a single skip audit until the
-// project's latest audit changes.
-func (s *AutomationService) maxRunsReached(ctx context.Context, automation types.BrainEntry, project string) (bool, error) {
+// project's latest audit changes. slot is the scheduled instant being fired,
+// or zero.
+func (s *AutomationService) maxRunsReachedAt(ctx context.Context, automation types.BrainEntry, project string, slot time.Time) (bool, error) {
 	if automation.MaxRuns == nil || *automation.MaxRuns <= 0 {
 		return false, nil
 	}
@@ -73,7 +80,7 @@ func (s *AutomationService) maxRunsReached(ctx context.Context, automation types
 	if automation.ProjectID != "" {
 		return true, s.completeAtMaxRuns(ctx, automation.ID, limit, count)
 	}
-	return true, s.recordMaxRunsSkip(ctx, automation, project)
+	return true, s.recordMaxRunsSkip(ctx, automation, project, slot)
 }
 
 // runAuditLister is the read the run-audit counter needs. BrainServiceImpl
@@ -145,8 +152,9 @@ func (s *AutomationService) completeAtMaxRuns(ctx context.Context, id string, li
 }
 
 // recordMaxRunsSkip writes one max_runs skip audit for (automation, project),
-// unless the project's latest audit already is that skip.
-func (s *AutomationService) recordMaxRunsSkip(ctx context.Context, automation types.BrainEntry, project string) error {
+// unless the project's latest audit already is that skip. A scheduled slot is
+// recorded on the audit, so the skip also counts as that slot's handling.
+func (s *AutomationService) recordMaxRunsSkip(ctx context.Context, automation types.BrainEntry, project string, slot time.Time) error {
 	latest, err := s.listRunAudits(ctx, project, automation.ID, 1)
 	if err != nil {
 		return err
@@ -155,11 +163,12 @@ func (s *AutomationService) recordMaxRunsSkip(ctx context.Context, automation ty
 		return nil
 	}
 	_, err = s.createRunAudit(ctx, automationRunAudit{
-		automation: automation,
-		evt:        types.Event{ProjectID: project},
-		project:    project,
-		status:     "skipped",
-		skipReason: "max_runs",
+		automation:   automation,
+		evt:          types.Event{ProjectID: project},
+		project:      project,
+		status:       "skipped",
+		skipReason:   "max_runs",
+		scheduledFor: slot,
 	})
 	return err
 }

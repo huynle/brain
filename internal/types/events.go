@@ -344,6 +344,8 @@ func (tc *TriggerConfig) MatchesEvent(eventType string) bool {
 //   - "*"                  → matches any non-empty actual value.
 //   - "in:a,b,c"           → matches if actual is any of a, b, or c (OR-able set).
 //   - "has:x"              → matches if the comma-joined ACTUAL contains element x.
+//   - "re:<pattern>"       → RE2 match against actual; an invalid or oversized
+//     pattern matches nothing (limits and ValidateFilterValue: filter_regex.go).
 //   - "<value>" (default)  → exact match against actual.
 //
 // Whitespace around "in:" members is trimmed and empty members are ignored.
@@ -367,6 +369,9 @@ func MatchFilterValue(actual, filterExpr string) bool {
 	}
 	if want, ok := parseHasFilter(filterExpr); ok {
 		return containsElement(actual, want)
+	}
+	if pattern, ok := parseRegexFilter(filterExpr); ok {
+		return defaultFilterRegexCache.match(pattern, actual)
 	}
 	return actual == filterExpr
 }

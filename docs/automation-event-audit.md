@@ -575,14 +575,15 @@ advertises.
 ### 6.2 Filter value expressions (`trigger.filter`)
 
 Every value in the `filter` map is evaluated by `types.MatchFilterValue`
-(`internal/types/events.go`). There are **four** forms *(was three — `has:` was
-added after this audit)*:
+(`internal/types/events.go`). There are **five** forms *(was three — `has:` and
+then `re:` were added after this audit)*:
 
 | Expression | Semantics | Gotcha |
 |---|---|---|
 | `"*"` | `actual != ""` — i.e. **"field is present"**, not "any value" | `MatchFilterValue("", "*")` is **false**. This is why a global automation with `project: "*"` stops matching project-less events. |
 | `"in:a,b,c"` | `actual` equals any member. Whitespace around members is trimmed; empty members ignored. | `"in:P,Q"` in a `project`/`project_id` filter does **not** satisfy the project scope guard, which tests literal equality to `"*"` before the filter loop runs. |
 | `"has:x"` **(new)** | Splits the **actual** on commas and matches if any element equals `x` exactly. | Element-exact, **never substring**: `has:note` does *not* match an actual containing `supernote`. An empty operand (`"has:"`) fails **closed** — deliberately unlike `normalizeWebhookPath` (§5.4). |
+| `"re:<pattern>"` **(new)** | RE2 regular expression (Go `regexp`), unanchored unless the pattern uses `^`/`$`; flags such as `(?i)` work. | Limits (`internal/types/filter_regex.go`): pattern ≤ 512 characters; only the first 4 KiB of the actual is matched (`$` anchors at the cut); compile cache of 256. An empty, oversized or non-compiling pattern matches **nothing** and logs one warning — validate at save time with `types.ValidateFilterValue`. The pattern is taken verbatim (whitespace is significant). The prefix is case-sensitive: `RE:x` is an exact match. |
 | `"<value>"` | Exact string equality. | An unresolvable key yields `""`, and `"" == "<value>"` is false ⇒ the automation **silently never fires**. |
 
 `in:` and `has:` are duals and neither can express the other: `in:` ORs over the
@@ -591,9 +592,9 @@ a multi-valued **actual**. Before `has:` existed, comma-joined metadata such as
 `entry.created`'s `tags` was effectively unfilterable — an exact match required
 listing every tag in the same order.
 
-There is still **no** support for negation, prefix/suffix globs inside a value,
-numeric comparison, regex, or boolean composition. Filters are ANDed: every key
-must match.
+There is still **no** dedicated support for negation, numeric comparison, or
+boolean composition (prefix/suffix and alternation are expressible with `re:`).
+Filters are ANDed: every key must match.
 
 ### 6.3 The COMPLETE set of resolvable filter keys
 

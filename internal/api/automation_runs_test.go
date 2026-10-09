@@ -20,6 +20,11 @@ func TestHandleListAutomationRunsFiltersAndReturnsRuns(t *testing.T) {
 			if req.Project != "proj-a" {
 				t.Fatalf("List Project = %q, want proj-a", req.Project)
 			}
+			// These fixtures are legacy audits with no automation tag, so
+			// the tag-indexed query finds nothing and the body scan answers.
+			if req.Tags != "" {
+				return &types.ListEntriesResponse{}, nil
+			}
 			return &types.ListEntriesResponse{Entries: []types.BrainEntry{
 				{
 					ID:        "run1",
@@ -118,6 +123,10 @@ func TestListAutomationRuns_FilterFindsRunsBeyondThePage(t *testing.T) {
 
 	h := &Handler{brain: &mockBrainService{
 		listFunc: func(ctx context.Context, req types.ListEntriesRequest) (*types.ListEntriesResponse, error) {
+			// Legacy fixture: no entry carries the automation tag.
+			if req.Tags != "" {
+				return &types.ListEntriesResponse{}, nil
+			}
 			out := entries
 			if req.Limit > 0 && req.Limit < len(out) {
 				out = out[:req.Limit]

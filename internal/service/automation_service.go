@@ -33,6 +33,9 @@ type AutomationService struct {
 	// reported, by modification. Both are guarded by cacheMu.
 	targetState   map[scheduleKey]string
 	bindingWarned map[string]string
+	// calendarFired is each calendar-trigger occurrence this evaluator has
+	// handled, by dedup key (see automation_calendar.go). Guarded by tickMu.
+	calendarFired map[string]calendarOccurrenceState
 }
 
 type automationPauseChecker interface {
@@ -389,6 +392,10 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 			}
 		}
 	}
+	// Calendar triggers are evaluated on the same tick, after the cron loop.
+	if err := s.checkCalendarAutomations(ctx, automations.Entries, now); err != nil && firstErr == nil {
+		firstErr = err
+	}
 	s.forgetUnscheduled(scheduled)
 	return firstErr
 }
@@ -633,6 +640,12 @@ func matchAutomationFilters(filters map[string]string, evt types.Event) bool {
 }
 
 func (s *AutomationService) createTask(ctx context.Context, automation types.BrainEntry, evt types.Event, generatedKeyOverride string, slot time.Time) (string, error) {
+	return s.createTaskFrom(ctx, automation, evt, generatedKeyOverride, slot, nil)
+}
+
+// createTaskFrom is createTask for one firing. A non-nil firing is a calendar
+// occurrence; its event fields and captures render into the prompt or command.
+func (s *AutomationService) createTaskFrom(ctx context.Context, automation types.BrainEntry, evt types.Event, generatedKeyOverride string, slot time.Time, firing *calendarFiring) (string, error) {
 	project := automation.ProjectID
 	if project == "" {
 		project = evt.ProjectID
@@ -692,7 +705,10 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		}
 	}
 
-	prompt := renderAutomationTemplate(automation.Action.DirectPrompt, project, evt)
+	prompt := renderAutomationTemplate(automation.Action.DirectPrompt, project, evt, firing)
+	if firing != nil && usesEventFields(automation.Action.DirectPrompt) {
+		prompt = calendarFenceNotice + "\n" + prompt
+	}
 	agent := firstNonEmpty(automation.Agent, automation.Action.Agent)
 	model := firstNonEmpty(automation.Model, automation.Action.Model)
 	executor := firstNonEmpty(automation.Executor, automation.Action.Executor)
@@ -770,7 +786,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 	}
 
 	if types.NormalizeAutomationActionType(automation.Action.Type) == types.AutomationActionScript {
-		command := renderAutomationTemplate(automation.Action.Command, project, evt)
+		command := renderAutomationTemplate(automation.Action.Command, project, evt, firing)
 		req.Executor = "script"
 		req.Content = command
 		req.DirectPrompt = command
@@ -934,7 +950,11 @@ func automationCompleteOnIdle(value *bool) *bool {
 	return &defaultValue
 }
 
-func renderAutomationTemplate(input, project string, evt types.Event) string {
+// renderAutomationTemplate renders an automation's template for one firing. A
+// calendar firing (non-nil) supplies .Event (event fields, fenced; see
+// automation_calendar.go) and .Match (its title captures, fenced). Any other
+// firing has the zero .Event and an empty .Match.
+func renderAutomationTemplate(input, project string, evt types.Event, firing *calendarFiring) string {
 	if input == "" {
 		return ""
 	}
@@ -969,6 +989,8 @@ func renderAutomationTemplate(input, project string, evt types.Event) string {
 		ToStatus          string
 		DeliveryMode      string
 		MergeTargetBranch string
+		Event             calendarEventFields
+		Match             map[string]string
 	}{
 		Project:           project,
 		ProjectID:         project,
@@ -981,6 +1003,8 @@ func renderAutomationTemplate(input, project string, evt types.Event) string {
 		ToStatus:          evt.ToStatus,
 		DeliveryMode:      evt.Metadata["delivery_mode"],
 		MergeTargetBranch: evt.Metadata["merge_target_branch"],
+		Event:             firingEventFields(firing),
+		Match:             firingMatchFields(firing),
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

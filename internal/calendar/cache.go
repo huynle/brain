@@ -26,7 +26,10 @@ type snapshot struct {
 	// NotifiedEpisode is the stale-episode start already notified, so a
 	// restart never raises the same stale notice twice.
 	NotifiedEpisode time.Time
-	Occurrences     []Occurrence
+	// WindowEnd is where the occurrences' expansion window ends. It is set
+	// by the last full (200) fetch.
+	WindowEnd   time.Time
+	Occurrences []Occurrence
 }
 
 // snapshotNamePattern is the calendar name shape config accepts. Names become
@@ -45,6 +48,7 @@ type snapshotFile struct {
 	LastError       string           `json:"last_error,omitempty"`
 	Stale           bool             `json:"stale"`
 	NotifiedEpisode time.Time        `json:"notified_episode"`
+	WindowEnd       time.Time        `json:"window_end"`
 	Occurrences     []occurrenceFile `json:"occurrences"`
 }
 
@@ -164,6 +168,7 @@ func toSnapshotFile(snap snapshot) snapshotFile {
 		LastError:       snap.LastError,
 		Stale:           snap.Stale,
 		NotifiedEpisode: snap.NotifiedEpisode,
+		WindowEnd:       snap.WindowEnd,
 		Occurrences:     make([]occurrenceFile, 0, len(snap.Occurrences)),
 	}
 	for _, o := range snap.Occurrences {
@@ -193,6 +198,7 @@ func fromSnapshotFile(f snapshotFile) snapshot {
 		LastError:       f.LastError,
 		Stale:           f.Stale,
 		NotifiedEpisode: f.NotifiedEpisode,
+		WindowEnd:       f.WindowEnd,
 		Occurrences:     make([]Occurrence, 0, len(f.Occurrences)),
 	}
 	for _, o := range f.Occurrences {

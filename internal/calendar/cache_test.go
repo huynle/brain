@@ -17,6 +17,7 @@ func sampleSnapshot(name string, now time.Time) snapshot {
 		LastModified: "Fri, 09 Oct 2026 10:00:00 GMT",
 		LastError:    "",
 		Stale:        false,
+		WindowEnd:    now.Add(14 * 24 * time.Hour),
 		Occurrences: []Occurrence{{
 			UID:          "evt-1",
 			Calendar:     name,
@@ -50,6 +51,9 @@ func TestSnapshotRoundTripPreservesState(t *testing.T) {
 	}
 	if !got.LastSuccess.Equal(want.LastSuccess) || !got.LastFetch.Equal(want.LastFetch) || !got.FirstSeen.Equal(want.FirstSeen) {
 		t.Fatalf("times differ: got %+v want %+v", got, want)
+	}
+	if !got.WindowEnd.Equal(want.WindowEnd) {
+		t.Fatalf("window end differs: got %v want %v", got.WindowEnd, want.WindowEnd)
 	}
 	if len(got.Occurrences) != 1 {
 		t.Fatalf("occurrences: got %d want 1", len(got.Occurrences))

@@ -42,6 +42,12 @@ func (e *automationValidationError) ValidationDetail() types.ValidationDetail {
 	return types.ValidationDetail{Field: e.Field, Message: e.Message}
 }
 
+// The API maps any error with this method to a 400 that names the field
+// (internal/api fieldValidationError). This keeps the contract checked.
+var _ interface {
+	ValidationDetail() types.ValidationDetail
+} = (*automationValidationError)(nil)
+
 func invalidAutomationField(field, message string) error {
 	return &automationValidationError{Field: field, Message: message}
 }

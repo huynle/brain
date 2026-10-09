@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -33,6 +34,23 @@ func WriteValidationError(w http.ResponseWriter, details []types.ValidationDetai
 		Message: "Invalid request",
 		Details: details,
 	})
+}
+
+// fieldValidationError is implemented by service errors that reject one named
+// request field, such as an automation's trigger.schedule.
+type fieldValidationError interface {
+	ValidationDetail() types.ValidationDetail
+}
+
+// writeFieldValidationError answers 400 with the rejected field in the
+// validation details when err names one, and reports whether it did.
+func writeFieldValidationError(w http.ResponseWriter, err error) bool {
+	var fv fieldValidationError
+	if !errors.As(err, &fv) {
+		return false
+	}
+	WriteValidationError(w, []types.ValidationDetail{fv.ValidationDetail()})
+	return true
 }
 
 // NotFoundHandler returns a 404 JSON response for unknown routes.

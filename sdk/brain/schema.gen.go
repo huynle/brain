@@ -236,6 +236,7 @@ type AutomationAction struct {
 	ExecutionMode      *string `json:"execution_mode,omitempty"`
 	Executor           *string `json:"executor,omitempty"`
 	Model              *string `json:"model,omitempty"`
+	PromptAppend       *string `json:"prompt_append,omitempty"`
 	RequiresCapability *string `json:"requires_capability,omitempty"`
 	SessionMode        *string `json:"session_mode,omitempty"`
 	SetStatus          *string `json:"set_status,omitempty"`
@@ -288,6 +289,7 @@ type BrainEntry struct {
 	AttemptCount            *int                        `json:"attempt_count,omitempty"`
 	AutomationRunId         *string                     `json:"automation_run_id,omitempty"`
 	Backlinks               *[]BacklinkEntry            `json:"backlinks,omitempty"`
+	Binding                 *string                     `json:"binding,omitempty"`
 	CheckoutMode            *string                     `json:"checkout_mode,omitempty"`
 	CompleteOnIdle          *bool                       `json:"complete_on_idle,omitempty"`
 	CompletedAt             *string                     `json:"completed_at,omitempty"`
@@ -301,6 +303,7 @@ type BrainEntry struct {
 	ExecutionMode           *string                     `json:"execution_mode,omitempty"`
 	Executor                *string                     `json:"executor,omitempty"`
 	ExpiresAt               *string                     `json:"expires_at,omitempty"`
+	Extends                 *string                     `json:"extends,omitempty"`
 	Extensions              *[]string                   `json:"extensions,omitempty"`
 	FeatureDependsOn        *[]string                   `json:"feature_depends_on,omitempty"`
 	FeatureExpiresAt        *string                     `json:"feature_expires_at,omitempty"`
@@ -352,6 +355,7 @@ type BrainEntry struct {
 	Runs                    *[]CronRun                  `json:"runs,omitempty"`
 	Schedule                *string                     `json:"schedule,omitempty"`
 	ScheduleEnabled         *bool                       `json:"schedule_enabled,omitempty"`
+	ScheduledFor            *string                     `json:"scheduled_for,omitempty"`
 	SessionMode             *string                     `json:"session_mode,omitempty"`
 	Sessions                *map[string]SessionInfo     `json:"sessions,omitempty"`
 	StartsAt                *string                     `json:"starts_at,omitempty"`
@@ -445,6 +449,15 @@ type BulkUpdateResult struct {
 	Path   string  `json:"path"`
 	Status string  `json:"status"`
 	Title  string  `json:"title"`
+}
+
+// CalendarEventFilter defines model for CalendarEventFilter.
+type CalendarEventFilter struct {
+	AllDay      *string `json:"all_day,omitempty"`
+	Calendar    *string `json:"calendar,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Location    *string `json:"location,omitempty"`
+	Title       *string `json:"title,omitempty"`
 }
 
 // CancelChainResponse defines model for CancelChainResponse.
@@ -563,6 +576,7 @@ type CreateEntryRequest struct {
 	AssignmentIntent    *string                     `json:"assignment_intent,omitempty"`
 	Attachments         *[]AttachmentReference      `json:"attachments,omitempty"`
 	AutomationRunId     *string                     `json:"automation_run_id,omitempty"`
+	Binding             *string                     `json:"binding,omitempty"`
 	CheckoutMode        *string                     `json:"checkout_mode,omitempty"`
 	CompleteOnIdle      *bool                       `json:"complete_on_idle,omitempty"`
 	Content             string                      `json:"content"`
@@ -572,6 +586,7 @@ type CreateEntryRequest struct {
 	ExecutionMode       *string                     `json:"execution_mode,omitempty"`
 	Executor            *string                     `json:"executor,omitempty"`
 	ExpiresAt           *string                     `json:"expires_at,omitempty"`
+	Extends             *string                     `json:"extends,omitempty"`
 	Extensions          *[]string                   `json:"extensions,omitempty"`
 	FeatureDependsOn    *[]string                   `json:"feature_depends_on,omitempty"`
 	FeatureExpiresAt    *string                     `json:"feature_expires_at,omitempty"`
@@ -613,6 +628,7 @@ type CreateEntryRequest struct {
 	Runs                *[]CronRun                  `json:"runs,omitempty"`
 	Schedule            *string                     `json:"schedule,omitempty"`
 	ScheduleEnabled     *bool                       `json:"schedule_enabled,omitempty"`
+	ScheduledFor        *string                     `json:"scheduled_for,omitempty"`
 	SessionMode         *string                     `json:"session_mode,omitempty"`
 	StartsAt            *string                     `json:"starts_at,omitempty"`
 	Status              *string                     `json:"status,omitempty"`
@@ -2289,17 +2305,26 @@ type TimelineWarning struct {
 
 // TriggerConfig defines model for TriggerConfig.
 type TriggerConfig struct {
-	Cooldown               *string            `json:"cooldown,omitempty"`
-	Event                  *string            `json:"event,omitempty"`
-	Events                 *[]string          `json:"events,omitempty"`
-	Filter                 *map[string]string `json:"filter,omitempty"`
-	IgnoreAutomationEvents *bool              `json:"ignore_automation_events,omitempty"`
-	MaxConcurrent          *int               `json:"max_concurrent,omitempty"`
-	OncePer                *string            `json:"once_per,omitempty"`
-	Schedule               *string            `json:"schedule,omitempty"`
-	Timezone               *string            `json:"timezone,omitempty"`
-	Type                   *string            `json:"type,omitempty"`
-	Webhook                *string            `json:"webhook,omitempty"`
+	At                     *string              `json:"at,omitempty"`
+	Calendar               *string              `json:"calendar,omitempty"`
+	CatchUp                *string              `json:"catch_up,omitempty"`
+	Cooldown               *string              `json:"cooldown,omitempty"`
+	Event                  *string              `json:"event,omitempty"`
+	Events                 *[]string            `json:"events,omitempty"`
+	Every                  *string              `json:"every,omitempty"`
+	Filter                 *map[string]string   `json:"filter,omitempty"`
+	IgnoreAutomationEvents *bool                `json:"ignore_automation_events,omitempty"`
+	Match                  *map[string]string   `json:"match,omitempty"`
+	MaxConcurrent          *int                 `json:"max_concurrent,omitempty"`
+	Offset                 *string              `json:"offset,omitempty"`
+	OncePer                *string              `json:"once_per,omitempty"`
+	OnlyIfEvent            *CalendarEventFilter `json:"only_if_event,omitempty"`
+	Schedule               *string              `json:"schedule,omitempty"`
+	SkipIfEvent            *CalendarEventFilter `json:"skip_if_event,omitempty"`
+	Stagger                *string              `json:"stagger,omitempty"`
+	Timezone               *string              `json:"timezone,omitempty"`
+	Type                   *string              `json:"type,omitempty"`
+	Webhook                *string              `json:"webhook,omitempty"`
 }
 
 // TriggerResponse defines model for TriggerResponse.
@@ -2319,6 +2344,7 @@ type UpdateEntryRequest struct {
 	Append              *string                     `json:"append,omitempty"`
 	Attachments         *[]AttachmentReference      `json:"attachments,omitempty"`
 	AutomationRunId     *string                     `json:"automation_run_id,omitempty"`
+	Binding             *string                     `json:"binding,omitempty"`
 	CheckoutMode        *string                     `json:"checkout_mode,omitempty"`
 	CompleteOnIdle      *bool                       `json:"complete_on_idle,omitempty"`
 	Content             *string                     `json:"content,omitempty"`
@@ -2329,6 +2355,7 @@ type UpdateEntryRequest struct {
 	Executor            *string                     `json:"executor,omitempty"`
 	ExpectedRevision    *string                     `json:"expected_revision,omitempty"`
 	ExpiresAt           *string                     `json:"expires_at,omitempty"`
+	Extends             *string                     `json:"extends,omitempty"`
 	Extensions          *[]string                   `json:"extensions,omitempty"`
 	FeatureDependsOn    *[]string                   `json:"feature_depends_on,omitempty"`
 	FeatureExpiresAt    *string                     `json:"feature_expires_at,omitempty"`
@@ -2366,6 +2393,7 @@ type UpdateEntryRequest struct {
 	Runs                *[]CronRun                  `json:"runs,omitempty"`
 	Schedule            *string                     `json:"schedule,omitempty"`
 	ScheduleEnabled     *bool                       `json:"schedule_enabled,omitempty"`
+	ScheduledFor        *string                     `json:"scheduled_for,omitempty"`
 	Sessions            *map[string]SessionInfo     `json:"sessions,omitempty"`
 	StartsAt            *string                     `json:"starts_at,omitempty"`
 	Status              *string                     `json:"status,omitempty"`

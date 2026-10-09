@@ -3083,6 +3083,7 @@ export interface components {
             execution_mode?: string;
             executor?: string;
             model?: string;
+            prompt_append?: string;
             requires_capability?: string;
             session_mode?: string;
             set_status?: string;
@@ -3109,6 +3110,7 @@ export interface components {
             attempt_count?: number;
             automation_run_id?: string;
             backlinks?: components["schemas"]["BacklinkEntry"][] | null;
+            binding?: string;
             checkout_mode?: string;
             complete_on_idle?: boolean | null;
             completed_at?: string;
@@ -3122,6 +3124,7 @@ export interface components {
             execution_mode?: string;
             executor?: string;
             expires_at?: string;
+            extends?: string;
             extensions?: string[] | null;
             feature_depends_on?: string[] | null;
             feature_expires_at?: string;
@@ -3175,6 +3178,7 @@ export interface components {
             runs?: components["schemas"]["CronRun"][] | null;
             schedule?: string;
             schedule_enabled?: boolean | null;
+            scheduled_for?: string;
             session_mode?: string;
             sessions?: {
                 [key: string]: components["schemas"]["SessionInfo"];
@@ -3190,12 +3194,20 @@ export interface components {
             user_original_request?: string;
             workdir?: string;
         };
+        CalendarEventFilter: {
+            all_day?: string;
+            calendar?: string;
+            description?: string;
+            location?: string;
+            title?: string;
+        };
         CreateEntryRequest: {
             action?: components["schemas"]["AutomationAction"] | null;
             agent?: string;
             assignment_intent?: string;
             attachments?: components["schemas"]["AttachmentReference"][] | null;
             automation_run_id?: string;
+            binding?: string;
             checkout_mode?: string;
             complete_on_idle?: boolean | null;
             content: string;
@@ -3205,6 +3217,7 @@ export interface components {
             execution_mode?: string;
             executor?: string;
             expires_at?: string;
+            extends?: string;
             extensions?: string[] | null;
             feature_depends_on?: string[] | null;
             feature_expires_at?: string;
@@ -3248,6 +3261,7 @@ export interface components {
             runs?: components["schemas"]["CronRun"][] | null;
             schedule?: string;
             schedule_enabled?: boolean | null;
+            scheduled_for?: string;
             session_mode?: string;
             starts_at?: string;
             status?: string;
@@ -3535,16 +3549,27 @@ export interface components {
             waiting: number;
         };
         TriggerConfig: {
+            at?: string;
+            calendar?: string;
+            catch_up?: string;
             cooldown?: string;
             event?: string;
             events?: string[] | null;
+            every?: string;
             filter?: {
                 [key: string]: string;
             } | null;
             ignore_automation_events?: boolean | null;
+            match?: {
+                [key: string]: string;
+            } | null;
             max_concurrent?: number;
+            offset?: string;
             once_per?: string;
+            only_if_event?: components["schemas"]["CalendarEventFilter"] | null;
             schedule?: string;
+            skip_if_event?: components["schemas"]["CalendarEventFilter"] | null;
+            stagger?: string;
             timezone?: string;
             type?: string;
             webhook?: string;
@@ -3555,6 +3580,7 @@ export interface components {
             append?: string | null;
             attachments?: (components["schemas"]["AttachmentReference"][] | null) | null;
             automation_run_id?: string | null;
+            binding?: string | null;
             checkout_mode?: string | null;
             complete_on_idle?: boolean | null;
             content?: string | null;
@@ -3565,6 +3591,7 @@ export interface components {
             executor?: string | null;
             expected_revision?: string;
             expires_at?: string | null;
+            extends?: string | null;
             extensions?: (string[] | null) | null;
             feature_depends_on?: (string[] | null) | null;
             feature_expires_at?: string | null;
@@ -3604,6 +3631,7 @@ export interface components {
             runs?: components["schemas"]["CronRun"][] | null;
             schedule?: string | null;
             schedule_enabled?: boolean | null;
+            scheduled_for?: string | null;
             sessions?: {
                 [key: string]: components["schemas"]["SessionInfo"];
             } | null;

@@ -63,8 +63,38 @@ func (s *TimelineService) Timeline(ctx context.Context, from, to time.Time, proj
 	if err != nil {
 		return nil, fmt.Errorf("list timeline events: %w", err)
 	}
-	result := BuildTimeline(entries, events, TimelineProjectionOptions{From: from, To: to, Now: s.now()})
+	remaining, err := s.automationRunsRemaining(ctx, entries, project)
+	if err != nil {
+		return nil, err
+	}
+	result := BuildTimeline(entries, events, TimelineProjectionOptions{From: from, To: to, Now: s.now(), RunsRemaining: remaining})
 	return &result, nil
+}
+
+// automationRunsRemaining returns, per automation with a max_runs cap, how many
+// runs the cap still allows. Automations without a cap are left out.
+func (s *TimelineService) automationRunsRemaining(ctx context.Context, entries []types.BrainEntry, project string) (map[string]int, error) {
+	remaining := make(map[string]int)
+	for _, entry := range entries {
+		if entry.Type != "automation" || entry.MaxRuns == nil || *entry.MaxRuns <= 0 {
+			continue
+		}
+		owner := entry.ProjectID
+		if owner == "" {
+			owner = project
+		}
+		if owner == "" {
+			// A global automation with no project scope has no per-project
+			// run count to subtract, so it is projected uncapped.
+			continue
+		}
+		used, err := countAutomationRuns(ctx, s.entries, entry.ID, owner, *entry.MaxRuns)
+		if err != nil {
+			return nil, err
+		}
+		remaining[entry.ID] = max(0, *entry.MaxRuns-used)
+	}
+	return remaining, nil
 }
 
 func (s *TimelineService) listType(ctx context.Context, entryType, project string) ([]types.BrainEntry, error) {
@@ -91,6 +121,9 @@ type TimelineProjectionOptions struct {
 	Now                 time.Time
 	DenseDailyThreshold int
 	ExpansionBudget     int
+	// RunsRemaining caps projected runs per automation ID by the runs its
+	// max_runs still allows. Automations absent from the map are uncapped.
+	RunsRemaining map[string]int
 }
 
 type timelineBuilder struct {
@@ -236,7 +269,20 @@ func (b *timelineBuilder) projectAutomation(entry types.BrainEntry) {
 	if entry.Status != "active" || entry.Trigger == nil || entry.Trigger.Type != "cron" || entry.Trigger.Schedule == "" {
 		return
 	}
-	b.addCron(entry, "automation", entry.ID, entry.Trigger.Schedule, entry.Trigger.Timezone, b.projectionStart(), b.opts.To, b.remaining, "automation.projected")
+	// The window is the automation's own starts_at..expires_at, clipped to the
+	// requested range, so a run outside that lifecycle is never projected.
+	start, end, ok := b.sourceWindow(entry.StartsAt, entry.ExpiresAt, entry.Trigger.Timezone)
+	if !ok {
+		return
+	}
+	limit := b.remaining
+	if left, capped := b.opts.RunsRemaining[entry.ID]; capped {
+		limit = min(limit, left)
+	}
+	if limit <= 0 {
+		return
+	}
+	b.addCron(entry, "automation", entry.ID, entry.Trigger.Schedule, entry.Trigger.Timezone, start, end, limit, "automation.projected")
 }
 
 func reminderEligible(entry types.BrainEntry) bool {

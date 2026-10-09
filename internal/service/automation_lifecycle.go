@@ -63,7 +63,7 @@ func (s *AutomationService) maxRunsReached(ctx context.Context, automation types
 		return false, nil
 	}
 	limit := *automation.MaxRuns
-	count, err := s.countAutomationRuns(ctx, automation.ID, project, limit)
+	count, err := countAutomationRuns(ctx, s.brain, automation.ID, project, limit)
 	if err != nil {
 		return false, err
 	}
@@ -76,13 +76,19 @@ func (s *AutomationService) maxRunsReached(ctx context.Context, automation types
 	return true, s.recordMaxRunsSkip(ctx, automation, project)
 }
 
+// runAuditLister is the read the run-audit counter needs. BrainServiceImpl
+// and the timeline's entry lister both satisfy it.
+type runAuditLister interface {
+	List(context.Context, types.ListEntriesRequest) (*types.ListEntriesResponse, error)
+}
+
 // countAutomationRuns counts the run audits of (automation, project) that
 // created work, stopping once stopAt is reached. Skipped and manual audits
 // never count.
-func (s *AutomationService) countAutomationRuns(ctx context.Context, automationID, project string, stopAt int) (int, error) {
+func countAutomationRuns(ctx context.Context, lister runAuditLister, automationID, project string, stopAt int) (int, error) {
 	count := 0
 	for offset := 0; ; offset += maxRunsPageSize {
-		resp, err := s.brain.List(ctx, types.ListEntriesRequest{
+		resp, err := lister.List(ctx, types.ListEntriesRequest{
 			Type:    "automation_run",
 			Project: project,
 			Tags:    "automation:" + automationID,

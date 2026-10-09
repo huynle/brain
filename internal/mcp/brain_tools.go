@@ -55,6 +55,19 @@ func RegisterBrainTools(s *Server, client *APIClient) {
 // save
 // =============================================================================
 
+// triggerPropertyDescription documents the trigger object for both save and
+// update. The automation scheduling keys are durable frontmatter; nothing
+// evaluates them yet (automation scheduling task 1.2).
+const triggerPropertyDescription = "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. " +
+	"Supports type (event, cron, webhook, session, calendar), event, events, schedule, timezone, webhook, filter, once_per, cooldown, max_concurrent, ignore_automation_events. " +
+	"Filter values (and match / skip_if_event / only_if_event fields) accept exact, '*', 'in:a,b', 'has:x' and 're:<RE2 pattern>' forms. " +
+	"Automation scheduling keys (stored, not yet evaluated): every ('4d', '90m'; alternative to schedule), at ('HH:MM' with a day/week every on clock triggers; 'start' or 'end' on calendar triggers), " +
+	"stagger (duration spreading per-project runs), catch_up (max lateness duration, or 'none'), calendar (configured calendar name), " +
+	"skip_if_event / only_if_event ({calendar, title, description, location, all_day} day filters), match (calendar-trigger event selector: title, description, location, all_day), " +
+	"offset (signed duration such as '-15m' added to the calendar occurrence)."
+
+const extendsPropertyDescription = "Automation entries only: ID of the parent automation this entry binds to (a per-project binding). Ignored for other entry types."
+
 func registerBrainSave(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name: "save",
@@ -73,6 +86,7 @@ Entry types:
 Only type, title, and content are required. The remaining parameters apply conditionally:
 - Task options (depends_on, feature_*, schedule*, merge_*, executor, agent, model, direct_prompt, extensions, target_workdir, git_branch, execution_mode, complete_on_idle, checkout_mode, user_original_request) apply only when type is 'task' and are ignored for other types.
 - trigger applies to 'task' and 'automation' entries; action and retry apply to 'automation' entries only.
+- starts_at, expires_at, max_runs and timezone also apply to 'automation' entries; extends applies to 'automation' entries only.
 - checkout_mode ("ai" default, or "simple") selects the feature-checkout automation path for a feature's post-completion checkout: "ai" runs the feature-checkout skill via LLM, "simple" runs a deterministic script-based squash merge.
 
 Feature orchestration (tasks):
@@ -98,9 +112,10 @@ If project is omitted, the entry is saved to the project detected from your X-Br
 				"feature_id":            {Type: "string", Description: "Feature group ID for this task (e.g., 'auth-system', 'payment-flow'). Tasks with the same feature_id are grouped together for ordered execution."},
 				"feature_priority":      {Type: "string", Enum: types.Priorities, Description: "Priority level for the feature group. Determines execution order relative to other features."},
 				"feature_depends_on":    {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start. Use this for before-feature orchestration (e.g., feature 'main' depends on feature 'preflight')."},
-				"trigger":               {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type (event, cron, webhook, session), event, schedule, webhook, filter, once_per, cooldown, max_concurrent, ignore_automation_events."},
-				"action":                {Type: "object", Description: "Automation action config for automation entries. Common fields: type ('create_task' or 'script'), prompt_template, direct_prompt, command, agent, model, executor, target_workdir. Templates support Go syntax with {{.Project}}, {{.ProjectID}}, {{.EventProjectID}}, {{.FeatureID}}, {{.TaskID}}, {{.TaskPath}}, {{.TaskTitle}}, {{.FromStatus}}, {{.ToStatus}}."},
+				"trigger":               {Type: "object", Description: triggerPropertyDescription},
+				"action":                {Type: "object", Description: "Automation action config for automation entries. Common fields: type ('create_task' or 'script'), prompt_template, direct_prompt, command, agent, model, executor, target_workdir, prompt_append (text a binding - an automation with extends set - appends to its parent's prompt). Templates support Go syntax with {{.Project}}, {{.ProjectID}}, {{.EventProjectID}}, {{.FeatureID}}, {{.TaskID}}, {{.TaskPath}}, {{.TaskTitle}}, {{.FromStatus}}, {{.ToStatus}}."},
 				"retry":                 {Type: "object", Description: "Automation retry policy. ⚠ CURRENTLY INERT: max_attempts and backoff round-trip through storage but nothing in the task lifecycle reads them — there is no attempt counter — and 'timeout' is not a field at all, so it is dropped at decode. Setting this changes nothing. Tracked for deletion or implementation."},
+				"extends":               {Type: "string", Description: extendsPropertyDescription},
 				"direct_prompt":         {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow. The prompt is sent verbatim when the task runs."},
 				"agent":                 {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev', 'build')"},
 				"model":                 {Type: "string", Description: "Override model (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')"},
@@ -258,6 +273,14 @@ If project is omitted, the entry is saved to the project detected from your X-Br
 		if isAutomation {
 			body["action"] = args["action"]
 			body["retry"] = args["retry"]
+			// Lifecycle bounds and the binding parent are automation fields
+			// too; they used to be forwarded only for tasks and were dropped
+			// silently for automations.
+			body["extends"] = args["extends"]
+			body["starts_at"] = args["starts_at"]
+			body["expires_at"] = args["expires_at"]
+			body["max_runs"] = args["max_runs"]
+			body["timezone"] = args["timezone"]
 		}
 
 		var resp struct {
@@ -1246,9 +1269,10 @@ Note: as a guard against clients that autofill every optional field, when 3 or m
 				"feature_id":            {Type: "string", Description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')"},
 				"feature_priority":      {Type: "string", Enum: types.Priorities, Description: "Priority for this feature group"},
 				"feature_depends_on":    {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. Use this for feature-to-feature ordering."},
-				"trigger":               {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type (event, cron, webhook, session), event, schedule, webhook, filter, once_per, cooldown, max_concurrent, ignore_automation_events."},
-				"action":                {Type: "object", Description: "Automation action config for automation entries. Common fields: type, prompt_template, direct_prompt, command, agent, model, executor, target_workdir. Templates support Go syntax with {{.Project}}, {{.ProjectID}}, {{.EventProjectID}}, {{.FeatureID}}, {{.TaskID}}, {{.TaskPath}}, {{.TaskTitle}}, {{.FromStatus}}, {{.ToStatus}}."},
+				"trigger":               {Type: "object", Description: triggerPropertyDescription},
+				"action":                {Type: "object", Description: "Automation action config for automation entries. Common fields: type, prompt_template, direct_prompt, command, agent, model, executor, target_workdir, prompt_append (text a binding - an automation with extends set - appends to its parent's prompt). Templates support Go syntax with {{.Project}}, {{.ProjectID}}, {{.EventProjectID}}, {{.FeatureID}}, {{.TaskID}}, {{.TaskPath}}, {{.TaskTitle}}, {{.FromStatus}}, {{.ToStatus}}."},
 				"retry":                 {Type: "object", Description: "Automation retry policy. ⚠ CURRENTLY INERT: max_attempts and backoff round-trip through storage but nothing in the task lifecycle reads them — there is no attempt counter — and 'timeout' is not a field at all, so it is dropped at decode. Setting this changes nothing. Tracked for deletion or implementation."},
+				"extends":               {Type: "string", Description: extendsPropertyDescription},
 				"feature_schedule":      {Type: "string", Description: "Cron schedule for all tasks in this feature group (e.g., '0 2 * * *')"},
 				"feature_starts_at":     {Type: "string", Description: "RFC3339 timestamp for when the feature schedule becomes active"},
 				"feature_expires_at":    {Type: "string", Description: "RFC3339 timestamp for when the feature schedule expires"},
@@ -1277,7 +1301,7 @@ Note: as a guard against clients that autofill every optional field, when 3 or m
 			"schedule", "run_once_at", "timezone", "starts_at", "expires_at", "feature_id", "feature_priority",
 			"feature_schedule", "feature_starts_at", "feature_expires_at", "feature_run_once_at", "feature_timezone",
 			"direct_prompt", "user_original_request", "agent", "model", "executor", "checkout_mode",
-			"machine_affinity", "origin_machine_id", "origin_path",
+			"machine_affinity", "origin_machine_id", "origin_path", "extends",
 		)
 		addPresentUpdateFields(body, cleanArgs,
 			"depends_on", "tags", "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs",

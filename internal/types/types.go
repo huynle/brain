@@ -466,6 +466,14 @@ type BrainEntry struct {
 	GeneratedBy     string `json:"generated_by,omitempty"`
 	AutomationRunID string `json:"automation_run_id,omitempty"`
 
+	// Automation scheduling (durable frontmatter, not runtime metadata).
+	// Extends is the parent automation ID of a per-project binding;
+	// ScheduledFor is the slot (RFC3339) an automation_run audit handled;
+	// Binding is the binding ID applied to a generated task or run audit.
+	Extends      string `json:"extends,omitempty"`
+	ScheduledFor string `json:"scheduled_for,omitempty"`
+	Binding      string `json:"binding,omitempty"`
+
 	// Event trigger configuration
 	Trigger *TriggerConfig    `json:"trigger,omitempty"`
 	Action  *AutomationAction `json:"action,omitempty"`
@@ -821,6 +829,11 @@ type CreateEntryRequest struct {
 	GeneratedBy     string `json:"generated_by,omitempty"`
 	AutomationRunID string `json:"automation_run_id,omitempty"`
 
+	// Automation scheduling references (see BrainEntry).
+	Extends      string `json:"extends,omitempty"`
+	ScheduledFor string `json:"scheduled_for,omitempty"`
+	Binding      string `json:"binding,omitempty"`
+
 	Trigger  *TriggerConfig    `json:"trigger,omitempty"`
 	Action   *AutomationAction `json:"action,omitempty"`
 	Retry    *AutomationRetry  `json:"retry,omitempty"`
@@ -919,6 +932,11 @@ type UpdateEntryRequest struct {
 	GeneratedKey    *string `json:"generated_key,omitempty"`
 	GeneratedBy     *string `json:"generated_by,omitempty"`
 	AutomationRunID *string `json:"automation_run_id,omitempty"`
+
+	// Automation scheduling references (see BrainEntry).
+	Extends      *string `json:"extends,omitempty"`
+	ScheduledFor *string `json:"scheduled_for,omitempty"`
+	Binding      *string `json:"binding,omitempty"`
 
 	Trigger  *TriggerConfig    `json:"trigger,omitempty"`
 	Action   *AutomationAction `json:"action,omitempty"`

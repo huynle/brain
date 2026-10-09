@@ -322,9 +322,15 @@ func automationAssetCreateRequest(content []byte) (types.CreateEntryRequest, err
 		Status:  fm.Status,
 		Global:  &global,
 		MaxRuns: fm.MaxRuns,
-		Trigger: automationAssetTrigger(fm.Trigger),
-		Action:  automationAssetAction(fm.Action),
-		Retry:   automationAssetRetry(fm.Retry),
+		// Lifecycle bounds and the binding parent are automation fields;
+		// dropping them here would silently widen the synced entry.
+		StartsAt:  fm.StartsAt,
+		ExpiresAt: fm.ExpiresAt,
+		Timezone:  fm.Timezone,
+		Extends:   fm.Extends,
+		Trigger:   automationAssetTrigger(fm.Trigger),
+		Action:    automationAssetAction(fm.Action),
+		Retry:     automationAssetRetry(fm.Retry),
 	}, nil
 }
 
@@ -335,13 +341,37 @@ func automationAssetTrigger(t *frontmatter.TriggerConfig) *types.TriggerConfig {
 	return &types.TriggerConfig{
 		Type:                   t.Type,
 		Event:                  t.Event,
+		Events:                 t.Events,
 		Schedule:               t.Schedule,
+		Timezone:               t.Timezone,
+		Every:                  t.Every,
+		At:                     t.At,
+		Stagger:                t.Stagger,
+		CatchUp:                t.CatchUp,
+		Calendar:               t.Calendar,
+		SkipIfEvent:            automationAssetCalendarFilter(t.SkipIfEvent),
+		OnlyIfEvent:            automationAssetCalendarFilter(t.OnlyIfEvent),
+		Match:                  t.Match,
+		Offset:                 t.Offset,
 		Filter:                 t.Filter,
 		OncePer:                t.OncePer,
 		Webhook:                t.Webhook,
 		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
 		Cooldown:               t.Cooldown,
 		MaxConcurrent:          t.MaxConcurrent,
+	}
+}
+
+func automationAssetCalendarFilter(f *frontmatter.CalendarEventFilter) *types.CalendarEventFilter {
+	if f == nil {
+		return nil
+	}
+	return &types.CalendarEventFilter{
+		Calendar:    f.Calendar,
+		Title:       f.Title,
+		Description: f.Description,
+		Location:    f.Location,
+		AllDay:      f.AllDay,
 	}
 }
 
@@ -355,10 +385,15 @@ func automationAssetAction(a *frontmatter.AutomationAction) *types.AutomationAct
 		Command:            a.Command,
 		Agent:              a.Agent,
 		Model:              a.Model,
+		Executor:           a.Executor,
+		TargetWorkdir:      a.TargetWorkdir,
 		ExecutionMode:      a.ExecutionMode,
+		SessionMode:        a.SessionMode,
 		CompleteOnIdle:     a.CompleteOnIdle,
 		Timeout:            a.Timeout,
 		RequiresCapability: a.RequiresCapability,
+		SetStatus:          a.SetStatus,
+		PromptAppend:       a.PromptAppend,
 	}
 }
 

@@ -72,6 +72,10 @@ type AutomationAction struct {
 	// finished feature) instead of being a general write primitive reachable
 	// by anyone who can author an automation entry.
 	SetStatus string `json:"set_status,omitempty" yaml:"set_status,omitempty"`
+
+	// PromptAppend is text a binding (an automation with Extends set) appends
+	// to its parent's prompt, since a binding cannot replace DirectPrompt.
+	PromptAppend string `json:"prompt_append,omitempty" yaml:"prompt_append,omitempty"`
 }
 
 // AutomationRetry defines retry behavior for failed automation actions.

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -438,9 +439,18 @@ func triggerFromPayload(payload map[string]any) *types.TriggerConfig {
 		return nil
 	}
 	trigger := &types.TriggerConfig{
-		Type:     stringPayload(raw, "type", ""),
-		Event:    stringPayload(raw, "event", ""),
-		Schedule: stringPayload(raw, "schedule", ""),
+		Type:        stringPayload(raw, "type", ""),
+		Event:       stringPayload(raw, "event", ""),
+		Schedule:    stringPayload(raw, "schedule", ""),
+		Timezone:    stringPayload(raw, "timezone", ""),
+		Every:       stringPayload(raw, "every", ""),
+		At:          stringPayload(raw, "at", ""),
+		Stagger:     stringPayload(raw, "stagger", ""),
+		CatchUp:     stringPayload(raw, "catch_up", ""),
+		Calendar:    stringPayload(raw, "calendar", ""),
+		SkipIfEvent: calendarEventFilterFromPayload(raw, "skip_if_event"),
+		OnlyIfEvent: calendarEventFilterFromPayload(raw, "only_if_event"),
+		Offset:      stringPayload(raw, "offset", ""),
 	}
 	if filter, ok := raw["filter"].(map[string]any); ok {
 		trigger.Filter = map[string]string{}
@@ -450,7 +460,41 @@ func triggerFromPayload(payload map[string]any) *types.TriggerConfig {
 			}
 		}
 	}
+	if match, ok := raw["match"].(map[string]any); ok {
+		for k, v := range match {
+			if s, ok := v.(string); ok {
+				if trigger.Match == nil {
+					trigger.Match = map[string]string{}
+				}
+				trigger.Match[k] = s
+			}
+		}
+	}
 	return trigger
+}
+
+// calendarEventFilterFromPayload reads a skip_if_event / only_if_event
+// object. all_day may arrive as a JSON bool or a filter-form string. A
+// missing, malformed or empty object yields nil.
+func calendarEventFilterFromPayload(raw map[string]any, key string) *types.CalendarEventFilter {
+	obj, ok := raw[key].(map[string]any)
+	if !ok {
+		return nil
+	}
+	f := types.CalendarEventFilter{
+		Calendar:    stringPayload(obj, "calendar", ""),
+		Title:       stringPayload(obj, "title", ""),
+		Description: stringPayload(obj, "description", ""),
+		Location:    stringPayload(obj, "location", ""),
+		AllDay:      stringPayload(obj, "all_day", ""),
+	}
+	if b, ok := obj["all_day"].(bool); ok {
+		f.AllDay = strconv.FormatBool(b)
+	}
+	if f == (types.CalendarEventFilter{}) {
+		return nil
+	}
+	return &f
 }
 
 func actionFromPayload(payload map[string]any) *types.AutomationAction {
@@ -467,6 +511,7 @@ func actionFromPayload(payload map[string]any) *types.AutomationAction {
 		Executor:      stringPayload(raw, "executor", ""),
 		TargetWorkdir: stringPayload(raw, "target_workdir", ""),
 		ExecutionMode: stringPayload(raw, "execution_mode", ""),
+		PromptAppend:  stringPayload(raw, "prompt_append", ""),
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"reflect"
 	"sort"
@@ -1904,6 +1905,16 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 		Model:               strPtr(fm.Model),
 		Executor:            strPtr(fm.Executor),
 		Schedule:            strPtr(fm.Schedule),
+		// Lifecycle window: a raw edit must not drop these (they were once
+		// silently lost on every text/x-brain-full save).
+		StartsAt:  strPtr(fm.StartsAt),
+		ExpiresAt: strPtr(fm.ExpiresAt),
+		RunOnceAt: strPtr(fm.RunOnceAt),
+		Timezone:  strPtr(fm.Timezone),
+		// Automation scheduling references.
+		Extends:      strPtr(fm.Extends),
+		ScheduledFor: strPtr(fm.ScheduledFor),
+		Binding:      strPtr(fm.Binding),
 	}
 
 	// Body → Content
@@ -1994,12 +2005,36 @@ func fmTriggerConfigToType(t *frontmatter.TriggerConfig) *types.TriggerConfig {
 		Events:                 t.Events,
 		Schedule:               t.Schedule,
 		Timezone:               t.Timezone,
+		Every:                  t.Every,
+		At:                     t.At,
+		Stagger:                t.Stagger,
+		CatchUp:                t.CatchUp,
+		Calendar:               t.Calendar,
+		SkipIfEvent:            fmCalendarEventFilterToType(t.SkipIfEvent),
+		OnlyIfEvent:            fmCalendarEventFilterToType(t.OnlyIfEvent),
+		Match:                  maps.Clone(t.Match),
+		Offset:                 t.Offset,
 		Filter:                 t.Filter,
 		OncePer:                t.OncePer,
 		Webhook:                t.Webhook,
 		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
 		Cooldown:               t.Cooldown,
 		MaxConcurrent:          t.MaxConcurrent,
+	}
+}
+
+// fmCalendarEventFilterToType copies a frontmatter CalendarEventFilter into
+// a fresh domain value so the result never aliases the parsed frontmatter.
+func fmCalendarEventFilterToType(f *frontmatter.CalendarEventFilter) *types.CalendarEventFilter {
+	if f == nil {
+		return nil
+	}
+	return &types.CalendarEventFilter{
+		Calendar:    f.Calendar,
+		Title:       f.Title,
+		Description: f.Description,
+		Location:    f.Location,
+		AllDay:      f.AllDay,
 	}
 }
 
@@ -2023,6 +2058,7 @@ func fmAutomationActionToType(a *frontmatter.AutomationAction) *types.Automation
 		Timeout:            a.Timeout,
 		RequiresCapability: a.RequiresCapability,
 		SetStatus:          a.SetStatus,
+		PromptAppend:       a.PromptAppend,
 	}
 }
 

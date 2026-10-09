@@ -30,6 +30,7 @@ func automationActionToFM(a *types.AutomationAction) *frontmatter.AutomationActi
 		Timeout:            a.Timeout,
 		RequiresCapability: a.RequiresCapability,
 		SetStatus:          a.SetStatus,
+		PromptAppend:       a.PromptAppend,
 	}
 }
 

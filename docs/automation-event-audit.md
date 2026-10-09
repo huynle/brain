@@ -38,6 +38,36 @@ Events added since the audit and absent from the §3 inventory:
 `feature-review.md` asset that subscribes to it remains inert; events are not
 persisted; non-matches are logged nowhere.
 
+### 0.1 Run audits and scheduling added since the audit
+
+Added after the audited commit. Clock and calendar triggers are described in
+`docs/plans/2026-10-08-automation-scheduling-design.md`.
+
+- **Calendar-triggered runs.** `trigger.type: calendar` fires once per matching
+  occurrence. Its audit carries `dedup_key: cal:<automation>:<uid>:<start>` and
+  `scheduled_for` set to the occurrence's slot. Only prompt actions run; any other
+  action writes a `calendar_non_prompt_action` skip.
+- **`scheduled_for`.** RFC 3339 UTC instant of the slot, written on clock-slot and
+  calendar audits (for example `scheduled_for: 2026-10-09T09:00:00Z`). Event and
+  manual audits omit it. The newest value per (automation, project) is that
+  target's last handled slot.
+- **Tags.** Every audit carries `automation:<automation-id>`. A binding's audit also
+  carries `binding:<binding-id>`, and a `binding:` line names it in the body. A
+  manual run carries `manual`.
+- **Generated task key.** A clock slot's task has dedup key
+  `sched:<automation>:<project>:<slot>`, so one slot yields at most one task.
+- **Skip reasons** (`skip_reason:` in the body):
+
+  | `skip_reason` | Written when |
+  |---|---|
+  | `paused` | The automation is paused when the slot or occurrence is due. |
+  | `cooldown` | `trigger.cooldown` has not elapsed since the last generated task. |
+  | `max_concurrent` | Runnable generated tasks are at `trigger.max_concurrent`. |
+  | `dedup` | The dedup key already produced a task. |
+  | `max_runs` | `max_runs` is reached for this (automation, project). Written once until the latest audit changes. |
+  | `calendar_non_prompt_action` | A calendar trigger has a non-prompt action. |
+
+
 ---
 
 ## 1. Verdict

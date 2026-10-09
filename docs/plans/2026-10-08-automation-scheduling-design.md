@@ -394,3 +394,51 @@ defaults are chosen so implementation tasks do not have to guess.
     lands. Multi-tenant source-freeze deltas (`internal/p8inventory`,
     `internal/tenantfs`) are applied when the integration branch next merges main,
     not per task on main.
+
+## Implementation notes (2026-10-09)
+
+Where the build differs from, or refines, the design above and the addendum.
+
+- **Opt-out status.** Any non-active binding status opts a project out. The PWA
+  writes `archived`; `inactive` is not a valid entry status.
+- **Slot floor.** The floor uses the entry's modified time. An out-of-band touch of
+  the file can skip a slot that falls in the same minute.
+- **Bindings.**
+  - Found by the `extends:<parent>` tag. A hand-edited binding without the tag is
+    invisible until it is re-saved.
+  - Rejected outside the local tenant.
+  - Bindings of project-owned parents never run.
+  - A binding's `max_runs` writes a skip and never completes the parent.
+  - If a binding is removed while the server is down, the parent's latest missed
+    slot can fire once after restart.
+- **`max_runs`.**
+  - Counts audits that created work (`queued`, `success`, `failed`). Manual runs
+    (tagged `manual`) and skips do not count.
+  - Audits written before `scheduled_for` existed are counted too. The count
+    checks only the `automation:<id>` tag and status, not the write date.
+  - The count is not atomic across concurrent fires.
+- **Catch-up budget.** A skipped catch-up counts toward the one-catch-up-per-tick
+  budget.
+- **Skip reasons.** Besides `paused`, `cooldown`, `max_concurrent`, `max_runs` and
+  `calendar_non_prompt_action`, the build writes `dedup`, when a slot or occurrence
+  key already produced a task.
+- **ICS and day filters.**
+  - ICS sources have no per-source timezone; floating times are UTC.
+  - Snapshots cover [now − 1 day, now + 14 days].
+  - Without data, or outside the window, `skip_if_event` fails open and
+    `only_if_event` fails closed.
+- **Calendar triggers.**
+  - Accept only prompt actions. A script action could carry invite text into a
+    shell command.
+  - Fenced fields are `UID`, `Title`, `Description`, `Location`, `Calendar` and
+    match captures. `Start`, `End` and `AllDay` are not fenced. The design named
+    only `Description` and `Location`.
+  - Declined meetings still match.
+- **URL redaction.** The poller strips the URL path, query and fragment from every
+  error. Hostnames can still appear in DNS and TLS errors, because the provider may
+  place the secret in the path. A malformed but parseable feed reports success with
+  zero events.
+- **System notices.** They go to `server.attention.system_recipients`. Without that,
+  they go to users who already own attention items. Users known only by a push
+  device are not included yet. With neither, they are logged only.
+- **Deferred.** Phase 6 (runner scheduled tasks adopting `pkg/schedule`).

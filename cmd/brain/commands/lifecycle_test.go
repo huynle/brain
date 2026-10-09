@@ -608,3 +608,31 @@ func TestServerOptionsFromConfigCarriesCalendarsAndAttention(t *testing.T) {
 		t.Fatalf("opts.Attention.SystemRecipients = %v, want [ops]", got)
 	}
 }
+
+// `brain api` (APICommand) builds its options through the same mapping as
+// `brain api start`, so calendar sources and attention recipients reach it.
+func TestAPICommandExecuteCarriesCalendarsAndAttention(t *testing.T) {
+	oldServer := runAPIServer
+	t.Cleanup(func() { runAPIServer = oldServer })
+	var got apiserver.ServerOptions
+	runAPIServer = func(ctx context.Context, opts apiserver.ServerOptions) error {
+		got = opts
+		return nil
+	}
+
+	cfg := &UnifiedConfig{}
+	cfg.Server.Host, cfg.Server.Port = "127.0.0.1", 3399
+	cfg.Server.LogFile = filepath.Join(t.TempDir(), "brain-api.log")
+	cfg.Server.Calendars = map[string]config.CalendarConfig{"xnys": {Type: "builtin", Market: "XNYS"}}
+	cfg.Server.Attention = config.AttentionConfig{SystemRecipients: []string{"ops"}}
+
+	if err := (&APICommand{Config: cfg, Flags: &APIFlags{}}).Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got.Calendars["xnys"].Market != "XNYS" {
+		t.Fatalf("opts.Calendars = %+v, want xnys/XNYS", got.Calendars)
+	}
+	if r := got.Attention.SystemRecipients; len(r) != 1 || r[0] != "ops" {
+		t.Fatalf("opts.Attention.SystemRecipients = %v, want [ops]", r)
+	}
+}

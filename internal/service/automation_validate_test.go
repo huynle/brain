@@ -533,3 +533,35 @@ func TestValidateAutomationDefinition_BindingLookupFailureIsNotValidation(t *tes
 		t.Fatalf("an infrastructure failure must not be reported as invalid input: %v", err)
 	}
 }
+
+// A calendar trigger renders event text that invite senders control. Only a
+// prompt action fences that text as untrusted data; a script, HTTP or update
+// action would put it into a shell command or request unfenced, so those are
+// rejected on save.
+func TestValidateAutomationDefinition_CalendarTriggerRequiresPromptAction(t *testing.T) {
+	calendarTrigger := func(fm *frontmatter.Frontmatter) {
+		fm.Trigger = &frontmatter.TriggerConfig{Type: "calendar", Calendar: "work"}
+	}
+	for _, tc := range []struct {
+		actionType string
+		wantField  string
+	}{
+		{actionType: "prompt", wantField: ""},
+		{actionType: "", wantField: ""},
+		{actionType: "script", wantField: "action.type"},
+		{actionType: "http", wantField: "action.type"},
+		{actionType: "update", wantField: "action.type"},
+	} {
+		t.Run("action "+tc.actionType, func(t *testing.T) {
+			fm := baseAutomation(func(fm *frontmatter.Frontmatter) {
+				calendarTrigger(fm)
+				fm.Action.Type = tc.actionType
+				if tc.actionType == "script" {
+					fm.Action.Command = "echo {{.Event.Title}}"
+				}
+			})
+			err := validateAutomationDefinition(context.Background(), fm, "", noParents)
+			requireFieldError(t, err, tc.wantField)
+		})
+	}
+}

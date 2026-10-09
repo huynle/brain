@@ -786,7 +786,9 @@ func (s *AutomationService) createTaskFrom(ctx context.Context, automation types
 	}
 
 	if types.NormalizeAutomationActionType(automation.Action.Type) == types.AutomationActionScript {
-		command := renderAutomationTemplate(automation.Action.Command, project, evt, firing)
+		// Calendar event text is never rendered into a shell command, even if
+		// a calendar automation with a script action slipped past validation.
+		command := renderAutomationTemplate(automation.Action.Command, project, evt, nil)
 		req.Executor = "script"
 		req.Content = command
 		req.DirectPrompt = command

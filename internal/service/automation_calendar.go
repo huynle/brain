@@ -231,10 +231,23 @@ func (s *AutomationService) fireCalendarOccurrence(ctx context.Context, automati
 		return err
 	}
 
-	// An update action has no feature to act on for a calendar event, so it
-	// records why it did nothing, as it does for a cron slot.
-	if types.NormalizeAutomationActionType(automation.Action.Type) == types.AutomationActionUpdate {
-		return s.applyUpdateAction(ctx, automation, evt)
+	// Event text is untrusted, and only a prompt fences it. Save-time
+	// validation rejects any other action on a calendar trigger; this guard
+	// covers an entry that reached the index without it (a hand-edited file).
+	// The occurrence is recorded as skipped so it counts as handled.
+	if !calendarTriggerActionAllowed(automation.Action.Type) {
+		slog.Warn("calendar automation skipped: only prompt actions may receive event text",
+			"automation", automation.ID, "action_type", automation.Action.Type)
+		_, err := s.createRunAudit(ctx, automationRunAudit{
+			automation:   automation,
+			evt:          evt,
+			project:      project,
+			status:       "skipped",
+			skipReason:   "calendar_non_prompt_action",
+			generatedKey: key,
+			scheduledFor: slot,
+		})
+		return err
 	}
 
 	_, err = s.createTaskFrom(ctx, automation, evt, key, slot, firing)

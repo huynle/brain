@@ -183,10 +183,38 @@ func validateAutomationDefinition(ctx context.Context, fm *frontmatter.Frontmatt
 	if err := validateAutomationTrigger(fm.Trigger); err != nil {
 		return err
 	}
+	if err := validateCalendarTriggerAction(fm); err != nil {
+		return err
+	}
 	if err := validateAutomationLifecycle(fm); err != nil {
 		return err
 	}
 	return validateAutomationBinding(ctx, fm, selfID, parents)
+}
+
+// calendarTriggerActionAllowed reports whether a calendar-triggered automation
+// may run an action of this type. Event text comes from whoever sends the
+// invite; only a prompt action fences it as untrusted data, so a script, HTTP
+// or update action would carry it into a shell command or request unfenced.
+func calendarTriggerActionAllowed(actionType string) bool {
+	switch types.NormalizeAutomationActionType(actionType) {
+	case "", types.AutomationActionPrompt:
+		return true
+	default:
+		return false
+	}
+}
+
+// validateCalendarTriggerAction rejects a calendar trigger paired with any
+// action other than a prompt (see calendarTriggerActionAllowed).
+func validateCalendarTriggerAction(fm *frontmatter.Frontmatter) error {
+	if fm.Trigger == nil || fm.Trigger.Type != types.TriggerTypeCalendar || fm.Action == nil {
+		return nil
+	}
+	if !calendarTriggerActionAllowed(fm.Action.Type) {
+		return invalidAutomationField("action.type", "a calendar trigger supports only prompt actions: event text comes from invite senders and is fenced as untrusted data only inside prompts")
+	}
+	return nil
 }
 
 // validateAutomationBinding checks an automation that extends a parent. A

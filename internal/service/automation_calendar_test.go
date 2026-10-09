@@ -1,6 +1,9 @@
 package service
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -422,4 +425,36 @@ func TestCalendarTriggerWithoutASnapshotFiresNothing(t *testing.T) {
 
 	got := ranOnEach(t, f, "p", []string{auto.ID}, []time.Time{calTime(24, 10, 0)})[auto.ID]
 	assertInstants(t, got, nil)
+}
+
+// A calendar automation whose action is not a prompt never fires, even when
+// it reached the index without save-time validation (a hand-edited file):
+// event text must not reach a shell command.
+func TestCalendarTriggerNeverRunsANonPromptAction(t *testing.T) {
+	f := newSlotFixture(t, calTime(22, 0, 0), "p")
+	f.svc.SetCalendars(eventRegistry(t, healthySnapshot(calEvent("Standup; rm -rf ~", 23, 9))))
+	auto := f.saveCalendar(slotAutomation{project: "p", trigger: types.TriggerConfig{Calendar: "team"}})
+
+	absPath := filepath.Join(f.brain.config.BrainDir, auto.Path)
+	raw, err := os.ReadFile(absPath)
+	if err != nil {
+		t.Fatalf("read automation: %v", err)
+	}
+	edited := regexp.MustCompile(`(?m)^(\s+)type: prompt$`).ReplaceAllString(string(raw), "${1}type: script\n${1}command: echo {{.Event.Title}}")
+	if edited == string(raw) {
+		t.Fatalf("fixture has no prompt action to rewrite:\n%s", raw)
+	}
+	if err := os.WriteFile(absPath, []byte(edited), 0o644); err != nil {
+		t.Fatalf("write edited automation: %v", err)
+	}
+	if err := f.brain.indexer.IndexFile(auto.Path); err != nil {
+		t.Fatalf("re-index edited automation: %v", err)
+	}
+
+	for _, at := range []time.Time{calTime(23, 9, 0), calTime(23, 9, 1), calTime(23, 9, 30)} {
+		f.tick(at)
+	}
+	if n := allGeneratedTasks(t, f.brain, []string{"p"}, auto.ID); n != 0 {
+		t.Fatalf("calendar automation with a script action generated %d tasks, want 0", n)
+	}
 }

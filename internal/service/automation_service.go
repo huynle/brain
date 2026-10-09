@@ -11,7 +11,6 @@ import (
 
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/types"
-	"github.com/huynle/brain-api/pkg/cron"
 )
 
 // AutomationService evaluates automation entries against events.
@@ -25,6 +24,10 @@ type AutomationService struct {
 	// cacheMu guards the schedule caches (see automation_schedule.go).
 	cacheMu  sync.Mutex
 	compiled map[string]*compiledAutomationSchedule
+	// tickMu serializes CheckScheduled ticks. handled is each target's last
+	// handled slot, guarded by cacheMu.
+	tickMu  sync.Mutex
+	handled map[scheduleKey]time.Time
 }
 
 type automationPauseChecker interface {
@@ -117,7 +120,7 @@ func (s *AutomationService) RunAutomationNow(ctx context.Context, pathOrID, proj
 		// the event is what carries the scope — the same hand-off the cron
 		// fan-out makes.
 		key := fmt.Sprintf("automation:manual:%s:%s:%d", entry.ID, proj, time.Now().UTC().UnixNano())
-		taskID, err := s.createTask(ctx, *entry, evt, key)
+		taskID, err := s.createTask(ctx, *entry, evt, key, time.Time{})
 		if err != nil {
 			return nil, err
 		}
@@ -260,11 +263,22 @@ func (s *AutomationService) Start(ctx context.Context, hub *realtime.EventHub) {
 	}
 }
 
-// CheckScheduled evaluates cron automation entries at the provided time.
+// CheckScheduled fires the cron automations whose slot is due at now.
+//
+// A cron automation fires once per slot per target project. A slot is an
+// instant the schedule produces, shifted by the target's stable stagger offset
+// (see scheduledRunFor), so a fan-out spreads its runs across the stagger
+// window instead of firing every project in the same minute. Event, webhook and
+// session automations are evaluated by HandleEvent instead.
 func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) error {
 	if s == nil || s.brain == nil {
 		return nil
 	}
+	// Ticks never overlap. Two overlapping ticks would both see one slot as
+	// unhandled. The dedup key would stop the second task, but the lock keeps
+	// the second tick from attempting it at all.
+	s.tickMu.Lock()
+	defer s.tickMu.Unlock()
 
 	automations, err := s.brain.List(ctx, types.ListEntriesRequest{
 		Type:   "automation",
@@ -283,37 +297,24 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 			firstErr = err
 		}
 	}
+
+	scheduled := make(map[string]struct{})
 	for _, automation := range automations.Entries {
-		if automation.Trigger == nil || automation.Action == nil || automation.Trigger.Type != "cron" {
+		if !isScheduledCronAutomation(automation) {
 			continue
 		}
-		// Goal automations are driven exclusively by the goal reconcile loop
-		// (see automationMatchesEvent for the event-path guard). Without this
-		// a Goal!=nil entry carrying a cron trigger would double-dispatch:
-		// once through the reconcile engine and once through this generic
-		// task-generation path.
-		if isGoalAutomation(automation) {
-			continue
-		}
-		if automation.Trigger.Schedule == "" {
+		scheduled[automation.ID] = struct{}{}
+		// An entry that cannot be scheduled is skipped. compiledScheduleFor has
+		// already logged why, once for this modification.
+		compiled, ok := s.compiledScheduleFor(automation)
+		if !ok {
 			continue
 		}
 
-		schedule, err := cron.Parse(automation.Trigger.Schedule)
-		if err != nil {
-			continue
-		}
-		// Evaluate the cron schedule in the automation's configured timezone.
-		// Empty or invalid timezone falls back to UTC (see pkg/cron.LoadTimezone).
-		loc := cron.LoadTimezone(automation.Trigger.Timezone)
-		if !schedule.Matches(now.In(loc)) {
-			continue
-		}
-
-		// One cron automation can now fire for many projects. A failure
-		// resolving them is remembered, not returned: this loop is the
-		// only thing that runs EVERY cron automation, and letting one bad
-		// entry abort the sweep starves all the others on every tick.
+		// One cron automation can fire for many projects. A failure resolving
+		// them is remembered, not returned: this loop is the only thing that
+		// runs EVERY cron automation, and letting one bad entry abort the sweep
+		// starves all the others on every tick.
 		projects, err := s.scheduledTargetProjects(ctx, automation)
 		if err != nil {
 			if firstErr == nil {
@@ -322,58 +323,34 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 			continue
 		}
 
+		// At most one catch-up (late) slot per automation per tick. A late slot
+		// that finds the budget spent waits for a later tick. On-time slots are
+		// never held back: a deferred catch-up stays owed, and the next tick
+		// still sees it.
+		catchUpSpent := false
 		for _, project := range projects {
-			// The per-project event is what scopes everything downstream:
-			// the pause dial consulted, the project the generated task and
-			// its audit land in, and the {{.Project}} the prompt renders.
-			evt := types.Event{ProjectID: project}
-
-			// Lifecycle (starts_at, expires_at) gates the fire before the
-			// pause check, so an expired automation writes no audit.
-			if ok, err := s.lifecycleAllows(ctx, automation, project); err != nil {
+			run, due, err := s.scheduledRunFor(ctx, compiled, automation, project, now)
+			if err != nil {
 				if firstErr == nil {
 					firstErr = err
 				}
 				continue
-			} else if !ok {
+			}
+			if !due {
 				continue
 			}
-
-			// The pause gate is checked HERE, after the schedule match,
-			// and not before it. A paused automation whose gate ran first
-			// wrote a "skipped: paused" run audit on EVERY tick of the
-			// one-minute ticker, whether or not the cron was due — 1440
-			// audit entries a day per paused cron automation, which buried
-			// every real run in the history the PWA renders. Post-match, a
-			// skip audit is written only when the automation actually had
-			// work to do, which is the only case where "it was paused"
-			// tells the reader anything.
-			if s.isAutomationPaused(automation, evt) {
-				if _, err := s.createRunAudit(ctx, automationRunAudit{
-					automation: automation,
-					evt:        evt,
-					project:    project,
-					status:     "skipped",
-					skipReason: "paused",
-				}); err != nil && firstErr == nil {
-					firstErr = err
+			if !run.onTime {
+				if catchUpSpent {
+					continue
 				}
-				continue
+				catchUpSpent = true
 			}
-
-			// The project belongs in the dedup key even though
-			// generatedTaskExists already scopes its lookup by project:
-			// a fan-out generates N tasks for one (automation, minute),
-			// and a key that cannot tell them apart is one storage change
-			// away from collapsing them into one.
-			generatedKey := fmt.Sprintf("automation:cron:%s:%s:%s",
-				automation.ID, project, now.UTC().Format("200601021504"))
-			if _, err := s.createTask(ctx, automation, evt, generatedKey); err != nil && firstErr == nil {
+			if err := s.fireScheduledSlot(ctx, automation, project, run.slot); err != nil && firstErr == nil {
 				firstErr = err
 			}
 		}
 	}
-
+	s.forgetUnscheduled(scheduled)
 	return firstErr
 }
 
@@ -437,7 +414,7 @@ func (s *AutomationService) HandleEvent(ctx context.Context, evt types.Event) er
 			continue
 		}
 
-		if _, err := s.createTask(ctx, automation, evt, ""); err != nil {
+		if _, err := s.createTask(ctx, automation, evt, "", time.Time{}); err != nil {
 			return err
 		}
 	}
@@ -606,7 +583,7 @@ func matchAutomationFilters(filters map[string]string, evt types.Event) bool {
 	return true
 }
 
-func (s *AutomationService) createTask(ctx context.Context, automation types.BrainEntry, evt types.Event, generatedKeyOverride string) (string, error) {
+func (s *AutomationService) createTask(ctx context.Context, automation types.BrainEntry, evt types.Event, generatedKeyOverride string, slot time.Time) (string, error) {
 	project := automation.ProjectID
 	if project == "" {
 		project = evt.ProjectID
@@ -614,7 +591,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 	// Manual runs are explicit user overrides: they ignore lifecycle and are
 	// not counted. Every other firing is gated here as well.
 	if evt.Type != "manual" {
-		ok, err := s.lifecycleAllows(ctx, automation, project)
+		ok, err := s.lifecycleAllowsAt(ctx, automation, project, slot)
 		if err != nil {
 			return "", err
 		}
@@ -626,11 +603,12 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		return "", err
 	} else if skip {
 		_, err := s.createRunAudit(ctx, automationRunAudit{
-			automation: automation,
-			evt:        evt,
-			project:    project,
-			status:     "skipped",
-			skipReason: reason,
+			automation:   automation,
+			evt:          evt,
+			project:      project,
+			status:       "skipped",
+			skipReason:   reason,
+			scheduledFor: slot,
 		})
 		if err != nil {
 			return "", err
@@ -656,6 +634,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 				status:       "skipped",
 				generatedKey: generatedKey,
 				skipReason:   "dedup",
+				scheduledFor: slot,
 			})
 			if err != nil {
 				return "", err
@@ -772,6 +751,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		status:       "queued",
 		generatedKey: generatedKey,
 		taskIDs:      []string{taskResp.ID},
+		scheduledFor: slot,
 	})
 	if err != nil {
 		return "", err

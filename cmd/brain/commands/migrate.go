@@ -167,9 +167,21 @@ func (c *MigrateCommand) executeAutomations(out io.Writer) error {
 
 	apiCreatedCount, apiSkippedCount, apiAvailable := c.syncDefaultAutomationsToAPI(ctx, out, client, automationFiles)
 
-	// Step 3: Find and disable existing monitor tasks
+	// Step 3: Dream monitors become per-project bindings of the global parent.
+	// Runs before the disabling step so a dream monitor is only ever disabled
+	// once its binding exists (or already did).
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Step 3: Disable existing monitor tasks")
+	fmt.Fprintln(out, "Step 3: Migrate dream monitors to project bindings")
+	fmt.Fprintln(out)
+
+	dream, err := c.migrateDreamMonitorsToBindings(ctx, out, client)
+	if err != nil {
+		return err
+	}
+
+	// Step 4: Find and disable existing monitor tasks
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Step 4: Disable existing monitor tasks")
 	fmt.Fprintln(out)
 
 	// Search for tasks with monitor tags
@@ -192,11 +204,11 @@ func (c *MigrateCommand) executeAutomations(out io.Writer) error {
 	if len(resp.Entries) == 0 {
 		fmt.Fprintln(out, "  No existing monitor tasks found.")
 		fmt.Fprintln(out)
-		c.printSummary(out, createdCount, skippedCount, apiCreatedCount, apiSkippedCount, 0)
+		c.printSummary(out, createdCount, skippedCount, apiCreatedCount, apiSkippedCount, dream.disabled)
 		return nil
 	}
 
-	disabledCount := 0
+	disabledCount := dream.disabled
 	for _, entry := range resp.Entries {
 		// Check if this is a monitor task (has monitor:* tag)
 		var monitorTag string
@@ -207,6 +219,10 @@ func (c *MigrateCommand) executeAutomations(out io.Writer) error {
 			}
 		}
 		if monitorTag == "" {
+			continue
+		}
+		if dream.handled[entry.ID] {
+			fmt.Fprintf(out, "  ⏭  Handled by dream binding migration: %s (%s)\n", entry.Title, entry.ID)
 			continue
 		}
 
@@ -756,4 +772,206 @@ func (c *MigrateCommand) printGoalsSummary(out io.Writer, created, skipped, disa
 		fmt.Fprintf(out, "  Goals skipped (already migrated): %d\n", skipped)
 	}
 	fmt.Fprintf(out, "  Legacy entries disabled:         %d\n", disabled)
+}
+
+// =============================================================================
+// Migrate: Dream monitors → per-project bindings
+// =============================================================================
+
+// dreamTemplateID is the monitor template whose tasks become dream bindings.
+const dreamTemplateID = "dream"
+
+// dreamParentTitle is the title of the global automation that dream bindings extend.
+const dreamParentTitle = "Dream Consolidation"
+
+// dreamMigration reports what the dream step did. handled holds every monitor
+// ID the step owns (migrated, planned, or kept because its binding failed), so
+// the monitor-disabling step leaves those alone.
+type dreamMigration struct {
+	disabled int
+	handled  map[string]bool
+}
+
+// dreamProjectOfMonitor returns the project of a project-scoped dream monitor
+// (monitor:dream:project:<P>). Other scopes and templates return false.
+func dreamProjectOfMonitor(entry types.BrainEntry) (string, bool) {
+	for _, tag := range entry.Tags {
+		parsed := service.ParseMonitorTag(tag)
+		if parsed == nil || parsed.TemplateID != dreamTemplateID {
+			continue
+		}
+		if parsed.Scope.Type != "project" || parsed.Scope.Project == "" {
+			continue
+		}
+		return parsed.Scope.Project, true
+	}
+	return "", false
+}
+
+// bindingProjectOf returns the project a binding belongs to: its stored project,
+// or the project segment of its path when the stored one is missing.
+func bindingProjectOf(entry types.BrainEntry) string {
+	if entry.ProjectID != "" {
+		return entry.ProjectID
+	}
+	parts := strings.Split(entry.Path, "/")
+	if len(parts) >= 2 && parts[0] == "projects" {
+		return parts[1]
+	}
+	return ""
+}
+
+// dreamParentID finds the single global Dream Consolidation automation. None or
+// several is an error: bindings must extend exactly one parent.
+func (c *MigrateCommand) dreamParentID(ctx context.Context, client *runner.APIClient) (string, error) {
+	resp, err := client.ListEntries(ctx, map[string]string{"type": "automation", "global": "true", "limit": "1000"})
+	if err != nil {
+		return "", fmt.Errorf("list global automations: %w", err)
+	}
+	var matches []types.BrainEntry
+	for _, entry := range resp.Entries {
+		if entry.Title == dreamParentTitle && entry.Extends == "" {
+			matches = append(matches, entry)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("no global %q automation found; run the deploy step (or `brain init`) so it exists, then re-run `brain migrate automations`", dreamParentTitle)
+	case 1:
+		return matches[0].ID, nil
+	default:
+		ids := make([]string, 0, len(matches))
+		for _, m := range matches {
+			ids = append(ids, m.ID)
+		}
+		return "", fmt.Errorf("found %d global %q automations (%s); remove the duplicates (--force installs can create them) before migrating", len(matches), dreamParentTitle, strings.Join(ids, ", "))
+	}
+}
+
+// dreamBindingRequest is the binding a dream monitor becomes. It carries only
+// the fields the monitor actually sets, so anything unset inherits the parent.
+// trigger.type and action.type stay empty: a binding may not set them.
+func dreamBindingRequest(parentID, project string, monitor types.BrainEntry) types.CreateEntryRequest {
+	global := false
+	req := types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   dreamParentTitle + " (" + project + ")",
+		Content: fmt.Sprintf("Per-project binding of the global %s automation, migrated from monitor task %s by `brain migrate automations`.", dreamParentTitle, monitor.ID),
+		Tags:    []string{"automation", "dream"},
+		Status:  "active",
+		Project: project,
+		Global:  &global,
+		Extends: parentID,
+		Agent:   monitor.Agent,
+		Model:   monitor.Model,
+	}
+	req.Timezone = monitor.Timezone
+	if monitor.Schedule != "" || monitor.Timezone != "" {
+		req.Trigger = &types.TriggerConfig{Schedule: monitor.Schedule, Timezone: monitor.Timezone}
+	}
+	return req
+}
+
+// migrateDreamMonitorsToBindings converts each enabled project dream monitor
+// into a binding of the global Dream Consolidation automation, then disables
+// the monitor's schedule. A project that already has a binding gets no second
+// one; its monitor is still disabled. A monitor is disabled only after its
+// binding exists, so a failed create leaves that project's dream running.
+func (c *MigrateCommand) migrateDreamMonitorsToBindings(ctx context.Context, out io.Writer, client *runner.APIClient) (dreamMigration, error) {
+	res := dreamMigration{handled: make(map[string]bool)}
+
+	resp, err := client.ListEntries(ctx, map[string]string{"type": "task", "tags": "monitor"})
+	if err != nil {
+		// The monitor-disabling step reports the outage.
+		return res, nil
+	}
+
+	type target struct {
+		monitor types.BrainEntry
+		project string
+	}
+	var targets []target
+	for _, entry := range resp.Entries {
+		project, ok := dreamProjectOfMonitor(entry)
+		if !ok {
+			continue
+		}
+		if entry.ScheduleEnabled != nil && !*entry.ScheduleEnabled {
+			continue
+		}
+		targets = append(targets, target{monitor: entry, project: project})
+	}
+	if len(targets) == 0 {
+		fmt.Fprintln(out, "  No enabled dream monitor tasks to migrate.")
+		return res, nil
+	}
+
+	dryRun := c.Flags != nil && c.Flags.DryRun
+
+	parentID, err := c.dreamParentID(ctx, client)
+	if err != nil {
+		return res, err
+	}
+
+	for _, t := range targets {
+		res.handled[t.monitor.ID] = true
+
+		bindingID, err := c.existingBindingID(ctx, client, parentID, t.project)
+		if err != nil {
+			return res, err
+		}
+
+		if bindingID != "" {
+			fmt.Fprintf(out, "  ⏭  Binding already exists for project %s (%s)\n", t.project, bindingID)
+		} else {
+			req := dreamBindingRequest(parentID, t.project, t.monitor)
+			if dryRun {
+				fmt.Fprintf(out, "  DRY RUN: Would create binding in project %s extending %s (schedule %q, timezone %q, agent %q, model %q)\n",
+					t.project, parentID, t.monitor.Schedule, t.monitor.Timezone, t.monitor.Agent, t.monitor.Model)
+				bindingID = "<new binding>"
+			} else {
+				created, err := client.CreateEntry(ctx, req)
+				if err != nil {
+					fmt.Fprintf(out, "  ⚠️  Failed to create binding for project %s: %v (monitor %s left enabled)\n", t.project, err, t.monitor.ID)
+					continue
+				}
+				bindingID = created.ID
+				fmt.Fprintf(out, "  ✅ Created binding for project %s (%s)\n", t.project, bindingID)
+			}
+		}
+
+		note := fmt.Sprintf("Migrated to binding %s of %s by `brain migrate automations`. Schedule disabled; the binding runs this project's dream.", bindingID, dreamParentTitle)
+		if dryRun {
+			fmt.Fprintf(out, "  DRY RUN: Would disable monitor %s (%s), pointing at its binding\n", t.monitor.Title, t.monitor.ID)
+			res.disabled++
+			continue
+		}
+		updates := map[string]interface{}{
+			"schedule_enabled": false,
+			"append":           note,
+		}
+		if _, err := client.UpdateEntry(ctx, t.monitor.Path, updates); err != nil {
+			fmt.Fprintf(out, "  ⚠️  Failed to disable monitor %s (%s): %v\n", t.monitor.Title, t.monitor.ID, err)
+			continue
+		}
+		res.disabled++
+		fmt.Fprintf(out, "  ✅ Disabled monitor %s (%s)\n", t.monitor.Title, t.monitor.ID)
+	}
+
+	return res, nil
+}
+
+// existingBindingID returns the ID of the binding that project already has for
+// parentID, or "" when it has none.
+func (c *MigrateCommand) existingBindingID(ctx context.Context, client *runner.APIClient, parentID, project string) (string, error) {
+	resp, err := client.ListEntries(ctx, map[string]string{"type": "automation", "tags": "extends:" + parentID})
+	if err != nil {
+		return "", fmt.Errorf("list bindings of %s: %w", parentID, err)
+	}
+	for _, entry := range resp.Entries {
+		if entry.Extends == parentID && bindingProjectOf(entry) == project {
+			return entry.ID, nil
+		}
+	}
+	return "", nil
 }

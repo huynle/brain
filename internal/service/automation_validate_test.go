@@ -372,3 +372,164 @@ func TestValidateAutomationDefinition_LifecycleRules(t *testing.T) {
 		})
 	}
 }
+
+// bindingAutomation is a valid binding of parent: no trigger of its own and
+// only a prompt suffix. Each case mutates it.
+func bindingAutomation(parent string, mutate func(fm *frontmatter.Frontmatter)) *frontmatter.Frontmatter {
+	return baseAutomation(func(fm *frontmatter.Frontmatter) {
+		fm.Trigger = nil
+		fm.Action = &frontmatter.AutomationAction{PromptAppend: "Also check the inbox."}
+		fm.Extends = parent
+		if mutate != nil {
+			mutate(fm)
+		}
+	})
+}
+
+// bindingParents is the set of parent entries the binding cases resolve.
+func bindingParents() map[string]*types.BrainEntry {
+	return map[string]*types.BrainEntry{
+		"cron1": {
+			ID: "cron1", Type: "automation",
+			Trigger: &types.TriggerConfig{Type: "cron", Schedule: "0 9 * * *"},
+			Action:  &types.AutomationAction{Type: "prompt", DirectPrompt: "base prompt"},
+		},
+		"legacy1": {
+			ID: "legacy1", Type: "automation",
+			Trigger: &types.TriggerConfig{Event: "task.completed"},
+		},
+		"task1":    {ID: "task1", Type: "task"},
+		"binding1": {ID: "binding1", Type: "automation", Extends: "cron1"},
+		"goal1":    {ID: "goal1", Type: "automation", Goal: &types.GoalConfig{ID: "g1"}},
+		"goal2":    {ID: "goal2", Type: "automation", GeneratedBy: "brain-goal"},
+		"cal1": {
+			ID: "cal1", Type: "automation",
+			Trigger: &types.TriggerConfig{Type: "calendar", Calendar: "work", At: "start"},
+		},
+	}
+}
+
+func bindingLookup(parents map[string]*types.BrainEntry) automationParentLookup {
+	return func(_ context.Context, id string) (*types.BrainEntry, error) {
+		return parents[id], nil
+	}
+}
+
+func TestValidateAutomationDefinition_BindingRules(t *testing.T) {
+	parents := bindingParents()
+	tests := []struct {
+		name      string
+		fm        *frontmatter.Frontmatter
+		selfID    string
+		wantField string
+	}{
+		{name: "binding with prompt suffix accepted", fm: bindingAutomation("cron1", nil)},
+		{
+			name: "binding that reschedules its parent accepted",
+			fm: bindingAutomation("cron1", func(fm *frontmatter.Frontmatter) {
+				fm.Trigger = &frontmatter.TriggerConfig{Type: "cron", Schedule: "0 17 * * *"}
+			}),
+		},
+		{
+			name: "binding repeating the parent trigger type accepted",
+			fm: bindingAutomation("cron1", func(fm *frontmatter.Frontmatter) {
+				fm.Trigger = &frontmatter.TriggerConfig{Type: "cron"}
+			}),
+		},
+		{
+			name: "binding naming event for a legacy event parent accepted",
+			fm: bindingAutomation("legacy1", func(fm *frontmatter.Frontmatter) {
+				fm.Trigger = &frontmatter.TriggerConfig{Type: "event"}
+			}),
+		},
+		{
+			name:      "unknown parent rejected",
+			fm:        bindingAutomation("missing1", nil),
+			wantField: "extends",
+		},
+		{
+			name:      "parent that is not an automation rejected",
+			fm:        bindingAutomation("task1", nil),
+			wantField: "extends",
+		},
+		{
+			name:      "parent that is itself a binding rejected",
+			fm:        bindingAutomation("binding1", nil),
+			wantField: "extends",
+		},
+		{
+			name:      "goal automation parent rejected",
+			fm:        bindingAutomation("goal1", nil),
+			wantField: "extends",
+		},
+		{
+			name:      "brain-goal generated parent rejected",
+			fm:        bindingAutomation("goal2", nil),
+			wantField: "extends",
+		},
+		{
+			name:      "calendar-type parent rejected",
+			fm:        bindingAutomation("cal1", nil),
+			wantField: "extends",
+		},
+		{
+			name:      "self-extension rejected",
+			fm:        bindingAutomation("cron1", nil),
+			selfID:    "cron1",
+			wantField: "extends",
+		},
+		{
+			name: "trigger type different from parent rejected",
+			fm: bindingAutomation("cron1", func(fm *frontmatter.Frontmatter) {
+				fm.Trigger = &frontmatter.TriggerConfig{Type: "event", Event: "task.completed"}
+			}),
+			wantField: "trigger.type",
+		},
+		{
+			name: "calendar trigger type on cron parent rejected",
+			fm: bindingAutomation("cron1", func(fm *frontmatter.Frontmatter) {
+				fm.Trigger = &frontmatter.TriggerConfig{Type: "calendar", Calendar: "work", At: "start"}
+			}),
+			wantField: "trigger.type",
+		},
+		{
+			name: "action type rejected",
+			fm: bindingAutomation("cron1", func(fm *frontmatter.Frontmatter) {
+				fm.Action = &frontmatter.AutomationAction{Type: "script", Command: "echo hi"}
+			}),
+			wantField: "action.type",
+		},
+		{
+			name: "action direct_prompt rejected",
+			fm: bindingAutomation("cron1", func(fm *frontmatter.Frontmatter) {
+				fm.Action = &frontmatter.AutomationAction{DirectPrompt: "replace the prompt"}
+			}),
+			wantField: "action.direct_prompt",
+		},
+		{
+			name: "filter project rejected",
+			fm: bindingAutomation("cron1", func(fm *frontmatter.Frontmatter) {
+				fm.Trigger = &frontmatter.TriggerConfig{Filter: map[string]string{"project": "brain"}}
+			}),
+			wantField: "trigger.filter.project",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateAutomationDefinition(context.Background(), tt.fm, tt.selfID, bindingLookup(parents))
+			requireFieldError(t, err, tt.wantField)
+		})
+	}
+}
+
+func TestValidateAutomationDefinition_BindingLookupFailureIsNotValidation(t *testing.T) {
+	boom := errors.New("storage unavailable")
+	lookup := func(context.Context, string) (*types.BrainEntry, error) { return nil, boom }
+	err := validateAutomationDefinition(context.Background(), bindingAutomation("cron1", nil), "", lookup)
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected the lookup failure to propagate, got %v", err)
+	}
+	if errors.Is(err, api.ErrInvalidInput) {
+		t.Fatalf("an infrastructure failure must not be reported as invalid input: %v", err)
+	}
+}

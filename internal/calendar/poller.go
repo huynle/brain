@@ -26,6 +26,10 @@ const (
 	// windowBefore and windowAfter bound the expanded window around the poll.
 	windowBefore = 24 * time.Hour
 	windowAfter  = 14 * 24 * time.Hour
+	// minWindowLead is how far past now the cached window must still reach
+	// for a poll to stay conditional. Inside that lead the poll fetches in
+	// full, so events entering the window are never frozen out by a 304.
+	minWindowLead = 24 * time.Hour
 	// maxRedirects is how many redirects one fetch may follow.
 	maxRedirects = 5
 	// defaultFetchTimeout bounds one fetch when PollerOptions.Timeout is zero.
@@ -204,6 +208,7 @@ func (p *Poller) Poll(ctx context.Context, name string) {
 		snap.LastSuccess = now
 		if !outcome.notModified {
 			snap.Occurrences = outcome.occurrences
+			snap.WindowEnd = outcome.windowEnd
 			snap.ETag = outcome.etag
 			snap.LastModified = outcome.lastModified
 		}
@@ -275,6 +280,7 @@ func PollInterval(c config.CalendarConfig) time.Duration {
 type fetchOutcome struct {
 	notModified  bool
 	occurrences  []Occurrence
+	windowEnd    time.Time
 	etag         string
 	lastModified string
 }
@@ -294,10 +300,14 @@ func (p *Poller) fetch(ctx context.Context, name, feedURL string, snap snapshot,
 		return fetchOutcome{}, errors.New("could not build the feed request")
 	}
 	req.Header.Set("Accept", "text/calendar, */*;q=0.1")
-	if snap.ETag != "" {
+	// A 304 keeps the cached occurrences, which are only correct while the
+	// window they were expanded for still reaches ahead of now. Past that
+	// point the fetch is unconditional so the window moves forward.
+	conditional := !snap.WindowEnd.IsZero() && now.Add(minWindowLead).Before(snap.WindowEnd)
+	if conditional && snap.ETag != "" {
 		req.Header.Set("If-None-Match", snap.ETag)
 	}
-	if snap.LastModified != "" {
+	if conditional && snap.LastModified != "" {
 		req.Header.Set("If-Modified-Since", snap.LastModified)
 	}
 
@@ -310,8 +320,8 @@ func (p *Poller) fetch(ctx context.Context, name, feedURL string, snap snapshot,
 	switch {
 	case resp.StatusCode == http.StatusNotModified:
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		if snap.LastSuccess.IsZero() {
-			return fetchOutcome{}, errors.New("HTTP 304 without a cached feed")
+		if !conditional || snap.LastSuccess.IsZero() {
+			return fetchOutcome{}, errors.New("HTTP 304 without a cached feed to keep")
 		}
 		return fetchOutcome{notModified: true}, nil
 	case resp.StatusCode != http.StatusOK:
@@ -339,6 +349,7 @@ func (p *Poller) fetch(ctx context.Context, name, feedURL string, snap snapshot,
 	}
 	return fetchOutcome{
 		occurrences:  occ,
+		windowEnd:    now.Add(windowAfter),
 		etag:         resp.Header.Get("ETag"),
 		lastModified: resp.Header.Get("Last-Modified"),
 	}, nil

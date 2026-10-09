@@ -717,3 +717,95 @@ func assertNoSecret(t *testing.T, secret string, texts ...string) {
 		}
 	}
 }
+
+// TestWindowDriftForcesFullFetchSoLaterEventsEnter guards the window drift
+// bug: a 304 keeps the occurrences of the last 200, which were expanded for
+// the window that was current then. Once the clock moves toward that window's
+// end, the poll must fetch in full so events entering the window appear.
+func TestWindowDriftForcesFullFetchSoLaterEventsEnter(t *testing.T) {
+	t0 := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	clock := &fakeClock{t: t0}
+	later := t0.Add(14*24*time.Hour + 12*time.Hour) // outside [t0-1d, t0+14d)
+	srv := newFeedServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") == `"v1"` {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", `"v1"`)
+		_, _ = w.Write(icsFeed(icsEvent{uid: "later", title: "joins later", start: later}))
+	})
+	t.Setenv("CAL_TEAM_URL", srv.srv.URL+"/feed/tok/cal.ics")
+	h := newPollHarness(t, t.TempDir(), clock, srv.transport(), 0, true)
+
+	h.poller.Poll(context.Background(), "team")
+	if n := len(h.occurrences()); n != 0 {
+		t.Fatalf("event beyond the first window already present: %d", n)
+	}
+
+	// Now is t0+13d: the cached window ends at t0+14d, under the 24h lead, so
+	// the poll must not be conditional and must receive the full feed.
+	clock.Advance(13 * 24 * time.Hour)
+	h.poller.Poll(context.Background(), "team")
+	if inm := srv.lastHeader().Get("If-None-Match"); inm != "" {
+		t.Fatalf("poll near the window end was conditional (If-None-Match=%q); a 304 would freeze the window", inm)
+	}
+	occ := h.occurrences()
+	if len(occ) != 1 || occ[0].Title != "joins later" {
+		t.Fatalf("event entering the window never appeared: %+v", occ)
+	}
+}
+
+// TestConditionalPollKeepsWindowWhileFarFromEnd checks the other side of the
+// rule: well inside the window, polls stay conditional and use the 304 path.
+func TestConditionalPollKeepsWindowWhileFarFromEnd(t *testing.T) {
+	t0 := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	clock := &fakeClock{t: t0}
+	srv := newFeedServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") == `"v1"` {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", `"v1"`)
+		_, _ = w.Write(icsFeed(icsEvent{uid: "soon", title: "soon", start: t0.Add(2 * time.Hour)}))
+	})
+	t.Setenv("CAL_TEAM_URL", srv.srv.URL+"/feed/tok/cal.ics")
+	h := newPollHarness(t, t.TempDir(), clock, srv.transport(), 0, true)
+
+	h.poller.Poll(context.Background(), "team")
+	clock.Advance(time.Hour)
+	h.poller.Poll(context.Background(), "team")
+	if inm := srv.lastHeader().Get("If-None-Match"); inm != `"v1"` {
+		t.Fatalf("poll well inside the window was not conditional: If-None-Match=%q", inm)
+	}
+	if n := len(h.occurrences()); n != 1 {
+		t.Fatalf("304 dropped the cached window: %d occurrences", n)
+	}
+}
+
+// TestUnexpected304WithoutConditionalRequestIsAnError: a 304 is only valid
+// answer to a conditional request. Accepting one otherwise would silently keep
+// stale occurrences.
+func TestUnexpected304WithoutConditionalRequestIsAnError(t *testing.T) {
+	t0 := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	clock := &fakeClock{t: t0}
+	var served atomic.Int32
+	srv := newFeedServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if served.Add(1) > 1 {
+			// Misbehaving server: 304 with no conditional request from us.
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", `"v1"`)
+		_, _ = w.Write(icsFeed(icsEvent{uid: "a", title: "a", start: t0.Add(time.Hour)}))
+	})
+	t.Setenv("CAL_TEAM_URL", srv.srv.URL+"/feed/tok/cal.ics")
+	h := newPollHarness(t, t.TempDir(), clock, srv.transport(), 0, true)
+	h.poller.Poll(context.Background(), "team")
+
+	// Far enough that no conditional header is sent, yet the server answers 304.
+	clock.Advance(13 * 24 * time.Hour)
+	h.poller.Poll(context.Background(), "team")
+	if s := h.status(); s.LastError == "" {
+		t.Fatalf("unsolicited 304 accepted as success: %+v", s)
+	}
+}

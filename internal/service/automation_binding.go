@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -91,7 +93,7 @@ func effectiveAutomation(parent, binding types.BrainEntry) types.BrainEntry {
 	if eff.Action == nil {
 		eff.Action = &types.AutomationAction{}
 	}
-	eff.ProjectID = binding.ProjectID
+	eff.ProjectID = bindingProject(binding)
 	eff.Binding = binding.ID
 	eff.Extends = ""
 
@@ -305,4 +307,224 @@ func bindingProject(binding types.BrainEntry) string {
 		return binding.ProjectID
 	}
 	return extractProjectFromPath(binding.Path)
+}
+
+// Target selection.
+//
+// A global automation fires for the projects its filter selects, plus each
+// project with an active binding (opt in), minus each project whose binding is
+// not active (opt out). A project-owned automation fires only for its project,
+// and its bindings are never consulted.
+
+// Target states name what a project's schedule was built from. A change of
+// state (a binding added, edited, opted out or removed) moves the project's
+// handled cursor to now, so the change never fires a slot that predates it.
+const (
+	targetStateParent = "parent"
+	targetStateAbsent = "-"
+)
+
+// automationTarget is one project one cron automation fires for on a tick.
+// entry is the config that project runs under: the parent's own, or the
+// parent with its binding applied.
+type automationTarget struct {
+	project string
+	entry   types.BrainEntry
+	state   string
+}
+
+// boundTarget is the target a binding produces for its project.
+func boundTarget(parent, binding types.BrainEntry) automationTarget {
+	project := bindingProject(binding)
+	eff := effectiveAutomation(parent, binding)
+	eff.ProjectID = project
+	return automationTarget{
+		project: project,
+		entry:   eff,
+		state:   "binding:" + binding.ID + "@" + binding.Modified,
+	}
+}
+
+// resolveScheduledTargets lists the projects one cron automation fires for,
+// each with the config it runs under. Bindings are found by their extends tag
+// and read in every status, so an inactive binding opts its project out.
+func (s *AutomationService) resolveScheduledTargets(ctx context.Context, automation types.BrainEntry) ([]automationTarget, error) {
+	if automation.ProjectID != "" {
+		return []automationTarget{{project: automation.ProjectID, entry: automation, state: targetStateParent}}, nil
+	}
+	base, err := s.filteredTargetProjects(ctx, automation)
+	if err != nil {
+		return nil, err
+	}
+	winners, err := s.bindingWinnersOf(ctx, automation.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list bindings of automation %s: %w", automation.ID, err)
+	}
+
+	targets := make([]automationTarget, 0, len(base)+len(winners))
+	seen := make(map[string]struct{}, len(base))
+	for _, project := range base {
+		seen[project] = struct{}{}
+		binding, bound := winners[project]
+		if !bound {
+			targets = append(targets, automationTarget{project: project, entry: automation, state: targetStateParent})
+			continue
+		}
+		if !bindingIsActive(binding) {
+			continue // opted out
+		}
+		targets = append(targets, boundTarget(automation, binding))
+	}
+
+	optIns := make([]string, 0, len(winners))
+	for project, binding := range winners {
+		if _, inFilter := seen[project]; inFilter || !bindingIsActive(binding) {
+			continue
+		}
+		optIns = append(optIns, project)
+	}
+	sort.Strings(optIns)
+	for _, project := range optIns {
+		targets = append(targets, boundTarget(automation, winners[project]))
+	}
+	return targets, nil
+}
+
+// scheduledTargetProjects is the project list resolveScheduledTargets yields.
+// The timeline and the manual-run fan-out read it through the same rules the
+// scheduler uses.
+func (s *AutomationService) scheduledTargetProjects(ctx context.Context, automation types.BrainEntry) ([]string, error) {
+	targets, err := s.resolveScheduledTargets(ctx, automation)
+	if err != nil {
+		return nil, err
+	}
+	projects := make([]string, 0, len(targets))
+	for _, target := range targets {
+		projects = append(projects, target.project)
+	}
+	return projects, nil
+}
+
+// bindingWinnersOf returns the one binding that governs each project of a
+// parent. It is empty when bindings are not served here (tenant mode).
+func (s *AutomationService) bindingWinnersOf(ctx context.Context, parentID string) (map[string]types.BrainEntry, error) {
+	if s == nil || s.brain == nil || !s.brain.bindingsSupported() {
+		return map[string]types.BrainEntry{}, nil
+	}
+	bindings, err := s.brain.bindingsOfParent(ctx, parentID)
+	if err != nil {
+		return nil, err
+	}
+	winners, losers := pickBindingWinners(bindings)
+	s.warnBindingLosers(losers)
+	return winners, nil
+}
+
+// pickBindingWinners chooses, for each project, the one binding that governs
+// it. Two bindings for one (parent, project) can exist when concurrent saves
+// race past the save-time check. The oldest wins (created, then ID), and the
+// others are returned as losers so they can be reported.
+func pickBindingWinners(bindings []types.BrainEntry) (map[string]types.BrainEntry, []types.BrainEntry) {
+	byProject := make(map[string][]types.BrainEntry)
+	for _, binding := range bindings {
+		if project := bindingProject(binding); project != "" {
+			byProject[project] = append(byProject[project], binding)
+		}
+	}
+	projects := make([]string, 0, len(byProject))
+	for project := range byProject {
+		projects = append(projects, project)
+	}
+	sort.Strings(projects)
+
+	winners := make(map[string]types.BrainEntry, len(byProject))
+	var losers []types.BrainEntry
+	for _, project := range projects {
+		group := byProject[project]
+		sort.SliceStable(group, func(i, j int) bool { return bindingOlder(group[i], group[j]) })
+		winners[project] = group[0]
+		losers = append(losers, group[1:]...)
+	}
+	return winners, losers
+}
+
+// bindingOlder orders bindings by creation instant, then by ID. An unparseable
+// creation instant sorts last.
+func bindingOlder(a, b types.BrainEntry) bool {
+	ca, cb := bindingCreated(a), bindingCreated(b)
+	if !ca.Equal(cb) {
+		return ca.Before(cb)
+	}
+	return a.ID < b.ID
+}
+
+func bindingCreated(binding types.BrainEntry) time.Time {
+	created, err := time.Parse(time.RFC3339, binding.Created)
+	if err != nil {
+		return time.Date(9999, time.December, 31, 23, 59, 59, 0, time.UTC)
+	}
+	return created
+}
+
+// warnBindingLosers logs each ignored duplicate once per modification of that
+// binding, not on every tick.
+func (s *AutomationService) warnBindingLosers(losers []types.BrainEntry) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	if s.bindingWarned == nil {
+		s.bindingWarned = make(map[string]string)
+	}
+	for _, loser := range losers {
+		if s.bindingWarned[loser.ID] == loser.Modified {
+			continue
+		}
+		s.bindingWarned[loser.ID] = loser.Modified
+		slog.Warn("duplicate automation binding ignored: an older binding for this project wins",
+			"binding", loser.ID, "parent", loser.Extends, "project", bindingProject(loser))
+	}
+}
+
+// eventTargetFor decides whether one active automation fires for one event,
+// and the config it fires under. A binding is never evaluated on its own. For
+// a global parent, an event carrying a project consults that project's binding:
+// an inactive one opts the project out, and an active one opts it in, so the
+// parent's project filter does not gate it.
+func (s *AutomationService) eventTargetFor(ctx context.Context, parent types.BrainEntry, evt types.Event) (types.BrainEntry, bool, error) {
+	if parent.Extends != "" {
+		return parent, false, nil
+	}
+	if parent.ProjectID != "" || evt.ProjectID == "" {
+		return parent, automationMatchesEvent(parent, evt), nil
+	}
+	winners, err := s.bindingWinnersOf(ctx, parent.ID)
+	if err != nil {
+		return types.BrainEntry{}, false, fmt.Errorf("list bindings of automation %s: %w", parent.ID, err)
+	}
+	binding, bound := winners[evt.ProjectID]
+	if !bound {
+		return parent, automationMatchesEvent(parent, evt), nil
+	}
+	if !bindingIsActive(binding) {
+		return parent, false, nil
+	}
+	target := boundTarget(parent, binding)
+	return target.entry, automationMatchesEvent(withoutProjectFilter(target.entry), evt), nil
+}
+
+// withoutProjectFilter returns a copy of entry whose trigger no longer
+// filters on project. An opted-in binding has already chosen its project.
+func withoutProjectFilter(entry types.BrainEntry) types.BrainEntry {
+	if entry.Trigger == nil {
+		return entry
+	}
+	trigger := *entry.Trigger
+	trigger.Filter = make(map[string]string, len(entry.Trigger.Filter))
+	for key, value := range entry.Trigger.Filter {
+		if key == "project" || key == "project_id" {
+			continue
+		}
+		trigger.Filter[key] = value
+	}
+	entry.Trigger = &trigger
+	return entry
 }

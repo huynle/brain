@@ -150,6 +150,24 @@ re-indexes it.
   writes a file, and it silently skipped indexing until 2026-08-26.
 - **Boot indexes once.** `internal/apiserver/server.go` runs `IndexChanged` in
   a background goroutine at startup, then never scans again.
+- **Writers win over a running scan.** The boot scan overlaps live writes
+  (REST saves, the built-in automation `Ensure*` calls right after it starts,
+  the watcher). Its disk walk and its row snapshot are taken at different
+  times, so on a large store it used to delete rows indexed during the walk
+  (built-ins lost → duplicated on the next boot), overwrite fresher rows with
+  stale parses, and hit `duplicate path` on concurrent inserts (task
+  `0zr1gmn2`). Now one indexer mutex serializes `IndexFile`/`RemoveFile` with
+  each per-path step of `IndexChanged`, and every path a writer touches while
+  a scan runs is recorded and left alone by that scan (never inserted,
+  updated or deleted by it). `RebuildAll` holds the mutex for its whole run.
+  A file or directory that vanishes mid-scan (deleted/moved by a writer, or
+  removed out of band) is treated as gone, in both the discovery walk and the
+  per-file step: it is skipped and its stale row deleted, never aborting the
+  scan. "Vanished" means `ErrNotExist` AND `Lstat` finds nothing; every other
+  per-file failure (permission, dangling symlink, registry) keeps its
+  fail-closed handling and aborts the scan visibly. Guard tests:
+  `internal/indexer/scan_race_test.go`, `internal/indexer/scan_vanish_test.go`,
+  `internal/apiserver/boot_index_race_test.go`.
 - **Content-root policy:** discovery (`IndexChanged`, `RebuildAll`, `GetHealth`)
   and watcher startup/new-directory walks use exact first-component roots
   `projects/` and `global/` under the supplied `brainDir`. All siblings, including

@@ -309,6 +309,7 @@ func TestAutomationIsolation_CronTaskLandsInOwnProject(t *testing.T) {
 	}
 	svc := NewAutomationService(brain)
 
+	stampAutomationsModified(t, brain, slotUTC(2025, 12, 31, 0, 0, 0))
 	if err := svc.CheckScheduled(ctx, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("CheckScheduled: %v", err)
 	}
@@ -338,6 +339,7 @@ func TestAutomationIsolation_CronPerProjectDoesNotCrossOver(t *testing.T) {
 	}
 	svc := NewAutomationService(brain)
 
+	stampAutomationsModified(t, brain, slotUTC(2025, 12, 31, 0, 0, 0))
 	if err := svc.CheckScheduled(ctx, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("CheckScheduled: %v", err)
 	}

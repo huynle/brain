@@ -29,3 +29,12 @@ func (s AutomationsService) Runs(ctx context.Context, p *AutomationsRunsParams) 
 func (s AutomationsService) GetRun(ctx context.Context, id string) (*BrainEntry, error) {
 	return result[BrainEntry](s.c, ctx, "GET", "/automation-runs/"+url.PathEscape(id), nil, nil, RequestOptions{})
 }
+
+// Effective returns the config project runs automation id under, with the
+// binding overlaid, and whether the scheduler targets the project. project is
+// required by the server, and id is escaped as one path segment.
+func (s AutomationsService) Effective(ctx context.Context, id, project string) (*AutomationEffective, error) {
+	q := url.Values{}
+	q.Set("project", project)
+	return result[AutomationEffective](s.c, ctx, "GET", "/automations/"+url.PathEscape(id)+"/effective", nil, q, RequestOptions{})
+}

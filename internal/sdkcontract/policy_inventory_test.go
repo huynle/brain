@@ -63,7 +63,7 @@ func TestOperationPolicyInventoryIsCompleteAndUnavailable(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 146 || len(policy.Operations) != len(seen) {
+	if len(seen) != 148 || len(policy.Operations) != len(seen) {
 		t.Fatalf("contract coverage=%d policy=%d", len(seen), len(policy.Operations))
 	}
 	matrix, err := os.ReadFile("../../docs/sdk-operation-matrix.md")
@@ -87,7 +87,7 @@ func TestOperationPolicyInventoryIsCompleteAndUnavailable(t *testing.T) {
 			t.Errorf("legacy scope differs from reviewed matrix for %s: %s != %s", id, got, want)
 		}
 	}
-	if matched != 146 {
+	if matched != 148 {
 		t.Fatalf("policy/matrix coverage=%d", matched)
 	}
 	// Guard read-shaped effects and legacy scopes: scope is not an effect class.

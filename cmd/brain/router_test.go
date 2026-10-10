@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -806,5 +808,32 @@ func TestRoute_APIUnknownWordIsUsageError(t *testing.T) {
 		if !errors.As(err, &ue) || !strings.Contains(ue.Message, "bogus") || !strings.Contains(ue.Message, "brain help api") {
 			t.Errorf("brain %v: err = %v, want usage error naming the word and 'brain help api'", args, err)
 		}
+	}
+}
+
+// server.calendars and server.attention must survive the CLI's config copies
+// (unified config -> router config -> commands config); a server started by
+// `brain api` otherwise runs with no calendar sources and no alert recipients.
+func TestDefaultConfig_ThreadsCalendarsAndAttentionToCommands(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	if err := os.MkdirAll(filepath.Join(xdg, "brain"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "server:\n  attention:\n    system_recipients: [ops]\n  calendars:\n    xnys:\n      type: builtin\n      market: XNYS\n"
+	if err := os.WriteFile(filepath.Join(xdg, "brain", "config.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := defaultConfig()
+	if got := cfg.Server.Calendars["xnys"].Market; got != "XNYS" {
+		t.Fatalf("router config calendars = %+v, want xnys/XNYS", cfg.Server.Calendars)
+	}
+	cmdCfg := convertToCommandsConfig(cfg)
+	if got := cmdCfg.Server.Calendars["xnys"].Type; got != "builtin" {
+		t.Fatalf("commands config calendars = %+v, want xnys builtin", cmdCfg.Server.Calendars)
+	}
+	if got := cmdCfg.Server.Attention.SystemRecipients; len(got) != 1 || got[0] != "ops" {
+		t.Fatalf("commands config attention recipients = %v, want [ops]", got)
 	}
 }

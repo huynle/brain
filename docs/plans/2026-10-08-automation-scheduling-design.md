@@ -394,3 +394,84 @@ defaults are chosen so implementation tasks do not have to guess.
     lands. Multi-tenant source-freeze deltas (`internal/p8inventory`,
     `internal/tenantfs`) are applied when the integration branch next merges main,
     not per task on main.
+
+## Implementation notes (2026-10-09)
+
+Where the build differs from, or refines, the design above and the addendum.
+
+- **Opt-out status.** Any non-active binding status opts a project out. The PWA
+  writes `archived`; `inactive` is not a valid entry status.
+- **Slot floor.** The floor uses the entry's modified time. An out-of-band touch of
+  the file can skip a slot that falls in the same minute.
+- **Bindings.**
+  - Found by the `extends:<parent>` tag. A hand-edited binding without the tag is
+    invisible until it is re-saved.
+  - Rejected outside the local tenant.
+  - Bindings of project-owned parents never run.
+  - A binding's `max_runs` writes a skip and never completes the parent.
+  - If a binding is removed while the server is down, the parent's latest missed
+    slot can fire once after restart.
+- **`max_runs`.**
+  - Counts audits that created work (`queued`, `success`, `failed`). Manual runs
+    (tagged `manual`) and skips do not count.
+  - Audits written before `scheduled_for` existed are counted too. The count
+    checks only the `automation:<id>` tag and status, not the write date.
+  - The count is not atomic across concurrent fires.
+- **Catch-up budget.** A skipped catch-up counts toward the one-catch-up-per-tick
+  budget.
+- **Skip reasons.** Besides `paused`, `cooldown`, `max_concurrent`, `max_runs` and
+  `calendar_non_prompt_action`, the build writes `dedup`, when a slot or occurrence
+  key already produced a task.
+- **ICS and day filters.**
+  - ICS sources have no per-source timezone; floating times are UTC.
+  - Snapshots cover [now − 1 day, now + 14 days].
+  - Without data, or outside the window, `skip_if_event` fails open and
+    `only_if_event` fails closed.
+- **Calendar triggers.**
+  - Accept only prompt actions. A script action could carry invite text into a
+    shell command.
+  - Fenced fields are `UID`, `Title`, `Description`, `Location`, `Calendar` and
+    match captures. `Start`, `End` and `AllDay` are not fenced. The design named
+    only `Description` and `Location`.
+  - Declined meetings still match.
+- **URL redaction.** The poller strips the URL path, query and fragment from every
+  error. Hostnames can still appear in DNS and TLS errors, because the provider may
+  place the secret in the path. A malformed but parseable feed reports success with
+  zero events.
+- **System notices.** They go to `server.attention.system_recipients`. Without that,
+  they go to users who already own attention items. Users known only by a push
+  device are not included yet. With neither, they are logged only.
+- **Deferred.** Phase 6 (runner scheduled tasks adopting `pkg/schedule`).
+
+## Verification and late fixes (2026-10-09)
+
+- Every task was merged into `automation-scheduling` only after its own tests,
+  `go vet` and golangci-lint passed, then re-verified on the integration branch.
+- An independent adversarial review of the ICS poller passed all eight checks
+  (no secret in errors, logs, status, snapshots or notices; https-only and
+  redirect rules; size and time limits; 0600/0700 files; rotation; stale
+  episodes; `-race`; tenant isolation).
+- A live end-to-end run against an isolated server (temporary HOME and brain
+  dir, port 3399) used Google's public US-holidays iCal feed:
+  - `GET /calendars` listed the ICS source (fetched, 1 event in window) and
+    `xnys`; the secret URL path appeared in neither the server log nor the
+    snapshot (0600 file, 0700 directory).
+  - A `type: calendar` automation matching `re:(?i)^(?P<name>columbus) day$`
+    fired exactly once at its slot, with the title and capture fenced as
+    untrusted data and dedup key `cal:<id>:<uid>:<occurrence start>`.
+  - A global dream with `stagger: 2h` projected different per-project times;
+    a binding moved one project to `every: 2d` at 01:00 with agent `explore`;
+    an `archived` binding opted a project out.
+  - `calendar: xnys` at 09:30 New York skipped Thanksgiving and the weekend.
+  - A calendar trigger with a script action and an unknown calendar name were
+    rejected with 400 on the named field.
+- Bugs found late and fixed:
+  - Calendar triggers with script actions could render invite text into a shell
+    command. Calendar triggers now accept only prompt actions (save-time and
+    runtime), and script commands never receive event data.
+  - `server.calendars` and `server.attention` never reached a running server:
+    the CLI copies server settings through four structs field by field and
+    none carried them. Both are threaded through, with a test per hop.
+- Existing behaviour worth knowing: wildcard and selector fan-out only reaches
+  projects that have a `task/` directory (`TaskServiceImpl.ListProjects`);
+  note-only projects are not dreamed until they have a task.

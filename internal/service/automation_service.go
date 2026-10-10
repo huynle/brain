@@ -5,12 +5,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/types"
-	"github.com/huynle/brain-api/pkg/cron"
 )
 
 // AutomationService evaluates automation entries against events.
@@ -18,6 +18,24 @@ type AutomationService struct {
 	brain        *BrainServiceImpl
 	projects     automationProjectLister
 	pauseChecker automationPauseChecker
+	// now is the injected clock for lifecycle decisions; nil means
+	// types.TimeNowUTC (see clock).
+	now func() time.Time
+	// cacheMu guards the schedule caches (see automation_schedule.go).
+	cacheMu  sync.Mutex
+	compiled map[scheduleKey]*compiledAutomationSchedule
+	// tickMu serializes CheckScheduled ticks. handled is each target's last
+	// handled slot, guarded by cacheMu.
+	tickMu  sync.Mutex
+	handled map[scheduleKey]time.Time
+	// targetState is the state each target was last evaluated in (see
+	// noteTargetStates). bindingWarned records duplicate bindings already
+	// reported, by modification. Both are guarded by cacheMu.
+	targetState   map[scheduleKey]string
+	bindingWarned map[string]string
+	// calendarFired is each calendar-trigger occurrence this evaluator has
+	// handled, by dedup key (see automation_calendar.go). Guarded by tickMu.
+	calendarFired map[string]calendarOccurrenceState
 }
 
 type automationPauseChecker interface {
@@ -69,10 +87,24 @@ func (s *AutomationService) RunAutomationNow(ctx context.Context, pathOrID, proj
 	if entry.Type != "automation" {
 		return nil, fmt.Errorf("entry %s is not an automation (type %q)", pathOrID, entry.Type)
 	}
-	if entry.Action == nil {
-		return nil, fmt.Errorf("automation %s has no action", entry.ID)
+
+	// A binding has no action of its own. It runs through its parent, for the
+	// binding's project, so the parent is what the checks below apply to.
+	parent := *entry
+	if entry.Extends != "" {
+		owner, err := s.brain.Recall(ctx, entry.Extends)
+		if err != nil {
+			return nil, fmt.Errorf("binding %s: parent automation %s: %w", entry.ID, entry.Extends, err)
+		}
+		if owner.Type != "automation" {
+			return nil, fmt.Errorf("binding %s: parent %s is not an automation", entry.ID, entry.Extends)
+		}
+		parent = *owner
 	}
-	if types.NormalizeAutomationActionType(entry.Action.Type) ==
+	if parent.Action == nil {
+		return nil, fmt.Errorf("automation %s has no action", parent.ID)
+	}
+	if types.NormalizeAutomationActionType(parent.Action.Type) ==
 		types.AutomationActionUpdate {
 		// A manual run of an update automation has no event to scope it,
 		// and an unscoped bulk write is the one thing this action must
@@ -80,37 +112,52 @@ func (s *AutomationService) RunAutomationNow(ctx context.Context, pathOrID, proj
 		return nil, fmt.Errorf(
 			"automation %s has an update action: it applies to the feature its "+
 				"trigger names, so there is nothing for a manual run to act on",
-			entry.ID,
+			parent.ID,
 		)
 	}
 
-	var projects []string
+	var targets []automationTarget
 	switch {
-	case entry.ProjectID != "":
+	case entry.Extends != "":
+		targets = []automationTarget{boundTarget(parent, *entry)}
+	case parent.ProjectID != "":
 		// The entry owns a project; a caller-supplied one cannot override it.
-		projects = []string{entry.ProjectID}
+		targets = []automationTarget{{project: parent.ProjectID, entry: parent, state: targetStateParent}}
 	case project != "":
-		projects = []string{project}
+		// A named project runs under its binding when it has one. An opted-out
+		// project still runs here: a manual run is an explicit request.
+		config := parent
+		winners, err := s.bindingWinnersOf(ctx, parent.ID)
+		if err != nil {
+			return nil, err
+		}
+		if binding, bound := winners[project]; bound {
+			config = boundTarget(parent, binding).entry
+		}
+		targets = []automationTarget{{project: project, entry: config, state: targetStateParent}}
 	default:
-		projects, err = s.scheduledTargetProjects(ctx, *entry)
+		// No project named: the same targets the scheduler would fire for.
+		targets, err = s.resolveScheduledTargets(ctx, parent)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	taskIDs := make([]string, 0, len(projects))
-	for _, proj := range projects {
+	taskIDs := make([]string, 0, len(targets))
+	for _, target := range targets {
+		// A global automation reaches createTask with an empty ProjectID, so
+		// the event is what carries the scope — the same hand-off the cron
+		// fan-out makes.
 		evt := types.Event{
 			Type:      "manual",
 			Source:    "api",
 			Timestamp: time.Now().UTC(),
-			ProjectID: proj,
+			ProjectID: target.project,
 		}
-		// A global automation reaches createTask with an empty ProjectID, so
-		// the event is what carries the scope — the same hand-off the cron
-		// fan-out makes.
-		key := fmt.Sprintf("automation:manual:%s:%s:%d", entry.ID, proj, time.Now().UTC().UnixNano())
-		taskID, err := s.createTask(ctx, *entry, evt, key)
+		// The dedup key is uniquified per invocation, so repeated manual runs
+		// are never deduped against each other.
+		key := fmt.Sprintf("automation:manual:%s:%s:%d", parent.ID, target.project, time.Now().UTC().UnixNano())
+		taskID, err := s.createTask(ctx, target.entry, evt, key, time.Time{})
 		if err != nil {
 			return nil, err
 		}
@@ -139,8 +186,8 @@ func (s *AutomationService) SetProjectLister(lister automationProjectLister) {
 	s.projects = lister
 }
 
-// scheduledTargetProjects resolves which projects one cron automation fires
-// for on this tick.
+// filteredTargetProjects resolves the projects a cron automation's filter
+// selects, before any binding opts a project in or out.
 //
 // The trigger's project filter is the selector, and it is matched with the
 // SAME types.MatchFilterValue the event path uses — so `"*"` means every
@@ -158,7 +205,7 @@ func (s *AutomationService) SetProjectLister(lister automationProjectLister) {
 // shouldSkipTaskGeneration lists generated tasks per project: `max_concurrent:
 // 1` means one in flight PER PROJECT, not one across all of them, which is
 // what a per-project automation wants.
-func (s *AutomationService) scheduledTargetProjects(ctx context.Context, automation types.BrainEntry) ([]string, error) {
+func (s *AutomationService) filteredTargetProjects(ctx context.Context, automation types.BrainEntry) ([]string, error) {
 	// An automation that owns a project is scoped to it, selector or not.
 	if automation.ProjectID != "" {
 		return []string{automation.ProjectID}, nil
@@ -221,7 +268,7 @@ func (s *AutomationService) Start(ctx context.Context, hub *realtime.EventHub) {
 	defer unsub()
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
-	_ = s.CheckScheduled(ctx, time.Now().UTC())
+	_ = s.CheckScheduled(ctx, s.clock())
 
 	seen := make(map[string]struct{})
 	process := func(evt types.Event) {
@@ -253,11 +300,22 @@ func (s *AutomationService) Start(ctx context.Context, hub *realtime.EventHub) {
 	}
 }
 
-// CheckScheduled evaluates cron automation entries at the provided time.
+// CheckScheduled fires the cron automations whose slot is due at now.
+//
+// A cron automation fires once per slot per target project. A slot is an
+// instant the schedule produces, shifted by the target's stable stagger offset
+// (see scheduledRunFor), so a fan-out spreads its runs across the stagger
+// window instead of firing every project in the same minute. Event, webhook and
+// session automations are evaluated by HandleEvent instead.
 func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) error {
 	if s == nil || s.brain == nil {
 		return nil
 	}
+	// Ticks never overlap. Two overlapping ticks would both see one slot as
+	// unhandled. The dedup key would stop the second task, but the lock keeps
+	// the second tick from attempting it at all.
+	s.tickMu.Lock()
+	defer s.tickMu.Unlock()
 
 	automations, err := s.brain.List(ctx, types.ListEntriesRequest{
 		Type:   "automation",
@@ -269,86 +327,76 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 	}
 
 	var firstErr error
+	// Expiry applies to every trigger type, so it is swept here before the
+	// cron-only loop below.
 	for _, automation := range automations.Entries {
-		if automation.Trigger == nil || automation.Action == nil || automation.Trigger.Type != "cron" {
+		if _, err := s.expireIfDue(ctx, automation); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	scheduled := make(map[string]struct{})
+	for _, automation := range automations.Entries {
+		if !isScheduledCronAutomation(automation) {
 			continue
 		}
-		// Goal automations are driven exclusively by the goal reconcile loop
-		// (see automationMatchesEvent for the event-path guard). Without this
-		// a Goal!=nil entry carrying a cron trigger would double-dispatch:
-		// once through the reconcile engine and once through this generic
-		// task-generation path.
-		if isGoalAutomation(automation) {
-			continue
-		}
-		if automation.Trigger.Schedule == "" {
+		scheduled[automation.ID] = struct{}{}
+		// An entry that cannot be scheduled is skipped. compiledScheduleFor has
+		// already logged why, once for this modification.
+		if _, ok := s.compiledScheduleFor(automation); !ok {
 			continue
 		}
 
-		schedule, err := cron.Parse(automation.Trigger.Schedule)
-		if err != nil {
-			continue
-		}
-		// Evaluate the cron schedule in the automation's configured timezone.
-		// Empty or invalid timezone falls back to UTC (see pkg/cron.LoadTimezone).
-		loc := cron.LoadTimezone(automation.Trigger.Timezone)
-		if !schedule.Matches(now.In(loc)) {
-			continue
-		}
-
-		// One cron automation can now fire for many projects. A failure
-		// resolving them is remembered, not returned: this loop is the
-		// only thing that runs EVERY cron automation, and letting one bad
-		// entry abort the sweep starves all the others on every tick.
-		projects, err := s.scheduledTargetProjects(ctx, automation)
+		// One cron automation can fire for many projects. A failure resolving
+		// them is remembered, not returned: this loop is the only thing that
+		// runs EVERY cron automation, and letting one bad entry abort the sweep
+		// starves all the others on every tick.
+		targets, err := s.resolveScheduledTargets(ctx, automation)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
 			continue
 		}
+		s.noteTargetStates(automation.ID, targets, now)
 
-		for _, project := range projects {
-			// The per-project event is what scopes everything downstream:
-			// the pause dial consulted, the project the generated task and
-			// its audit land in, and the {{.Project}} the prompt renders.
-			evt := types.Event{ProjectID: project}
-
-			// The pause gate is checked HERE, after the schedule match,
-			// and not before it. A paused automation whose gate ran first
-			// wrote a "skipped: paused" run audit on EVERY tick of the
-			// one-minute ticker, whether or not the cron was due — 1440
-			// audit entries a day per paused cron automation, which buried
-			// every real run in the history the PWA renders. Post-match, a
-			// skip audit is written only when the automation actually had
-			// work to do, which is the only case where "it was paused"
-			// tells the reader anything.
-			if s.isAutomationPaused(automation, evt) {
-				if _, err := s.createRunAudit(ctx, automationRunAudit{
-					automation: automation,
-					evt:        evt,
-					project:    project,
-					status:     "skipped",
-					skipReason: "paused",
-				}); err != nil && firstErr == nil {
+		// At most one catch-up (late) slot per automation per tick. A late slot
+		// that finds the budget spent waits for a later tick. On-time slots are
+		// never held back: a deferred catch-up stays owed, and the next tick
+		// still sees it.
+		catchUpSpent := false
+		for _, target := range targets {
+			key := scheduleKey{automationID: automation.ID, project: target.project}
+			compiled, ok := s.compiledScheduleForTarget(key, target.entry)
+			if !ok {
+				continue
+			}
+			run, due, err := s.scheduledRunFor(ctx, compiled, target.entry, target.project, now)
+			if err != nil {
+				if firstErr == nil {
 					firstErr = err
 				}
 				continue
 			}
-
-			// The project belongs in the dedup key even though
-			// generatedTaskExists already scopes its lookup by project:
-			// a fan-out generates N tasks for one (automation, minute),
-			// and a key that cannot tell them apart is one storage change
-			// away from collapsing them into one.
-			generatedKey := fmt.Sprintf("automation:cron:%s:%s:%s",
-				automation.ID, project, now.UTC().Format("200601021504"))
-			if _, err := s.createTask(ctx, automation, evt, generatedKey); err != nil && firstErr == nil {
+			if !due {
+				continue
+			}
+			if !run.onTime {
+				if catchUpSpent {
+					continue
+				}
+				catchUpSpent = true
+			}
+			if err := s.fireScheduledSlot(ctx, target.entry, target.project, run.slot); err != nil && firstErr == nil {
 				firstErr = err
 			}
 		}
 	}
-
+	// Calendar triggers are evaluated on the same tick, after the cron loop.
+	if err := s.checkCalendarAutomations(ctx, automations.Entries, now); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	s.forgetUnscheduled(scheduled)
 	return firstErr
 }
 
@@ -367,8 +415,23 @@ func (s *AutomationService) HandleEvent(ctx context.Context, evt types.Event) er
 		return fmt.Errorf("list active automations: %w", err)
 	}
 
-	for _, automation := range automations.Entries {
-		if !automationMatchesEvent(automation, evt) {
+	for _, parent := range automations.Entries {
+		// Bindings are never evaluated alone. A parent resolves the config of
+		// the event's project, which may be a binding's.
+		automation, matched, err := s.eventTargetFor(ctx, parent, evt)
+		if err != nil {
+			return err
+		}
+		if !matched {
+			continue
+		}
+		gateProject := automation.ProjectID
+		if gateProject == "" {
+			gateProject = evt.ProjectID
+		}
+		if ok, err := s.lifecycleAllows(ctx, automation, gateProject); err != nil {
+			return err
+		} else if !ok {
 			continue
 		}
 		if s.isAutomationPaused(automation, evt) {
@@ -403,7 +466,7 @@ func (s *AutomationService) HandleEvent(ctx context.Context, evt types.Event) er
 			continue
 		}
 
-		if _, err := s.createTask(ctx, automation, evt, ""); err != nil {
+		if _, err := s.createTask(ctx, automation, evt, "", time.Time{}); err != nil {
 			return err
 		}
 	}
@@ -433,6 +496,10 @@ func (s *AutomationService) isAutomationPaused(automation types.BrainEntry, evt 
 }
 
 func automationMatchesEvent(automation types.BrainEntry, evt types.Event) bool {
+	// A binding is evaluated only through its parent (see eventTargetFor).
+	if automation.Extends != "" {
+		return false
+	}
 	if automation.Trigger == nil || automation.Action == nil {
 		return false
 	}
@@ -572,20 +639,38 @@ func matchAutomationFilters(filters map[string]string, evt types.Event) bool {
 	return true
 }
 
-func (s *AutomationService) createTask(ctx context.Context, automation types.BrainEntry, evt types.Event, generatedKeyOverride string) (string, error) {
+func (s *AutomationService) createTask(ctx context.Context, automation types.BrainEntry, evt types.Event, generatedKeyOverride string, slot time.Time) (string, error) {
+	return s.createTaskFrom(ctx, automation, evt, generatedKeyOverride, slot, nil)
+}
+
+// createTaskFrom is createTask for one firing. A non-nil firing is a calendar
+// occurrence; its event fields and captures render into the prompt or command.
+func (s *AutomationService) createTaskFrom(ctx context.Context, automation types.BrainEntry, evt types.Event, generatedKeyOverride string, slot time.Time, firing *calendarFiring) (string, error) {
 	project := automation.ProjectID
 	if project == "" {
 		project = evt.ProjectID
+	}
+	// Manual runs are explicit user overrides: they ignore lifecycle and are
+	// not counted. Every other firing is gated here as well.
+	if evt.Type != "manual" {
+		ok, err := s.lifecycleAllowsAt(ctx, automation, project, slot)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", nil
+		}
 	}
 	if skip, reason, err := s.shouldSkipTaskGeneration(ctx, project, automation); err != nil {
 		return "", err
 	} else if skip {
 		_, err := s.createRunAudit(ctx, automationRunAudit{
-			automation: automation,
-			evt:        evt,
-			project:    project,
-			status:     "skipped",
-			skipReason: reason,
+			automation:   automation,
+			evt:          evt,
+			project:      project,
+			status:       "skipped",
+			skipReason:   reason,
+			scheduledFor: slot,
 		})
 		if err != nil {
 			return "", err
@@ -611,6 +696,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 				status:       "skipped",
 				generatedKey: generatedKey,
 				skipReason:   "dedup",
+				scheduledFor: slot,
 			})
 			if err != nil {
 				return "", err
@@ -619,7 +705,10 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		}
 	}
 
-	prompt := renderAutomationTemplate(automation.Action.DirectPrompt, project, evt)
+	prompt := renderAutomationTemplate(automation.Action.DirectPrompt, project, evt, firing)
+	if firing != nil && usesEventFields(automation.Action.DirectPrompt) {
+		prompt = calendarFenceNotice + "\n" + prompt
+	}
 	agent := firstNonEmpty(automation.Agent, automation.Action.Agent)
 	model := firstNonEmpty(automation.Model, automation.Action.Model)
 	executor := firstNonEmpty(automation.Executor, automation.Action.Executor)
@@ -685,6 +774,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		// land. Anything left unset on the automation stays unset here and
 		// falls back to task_defaults downstream, as before.
 		Workdir:            workdir,
+		Binding:            automation.Binding,
 		GitRemote:          gitRemote,
 		MergeTargetBranch:  automation.MergeTargetBranch,
 		MergePolicy:        automation.MergePolicy,
@@ -696,7 +786,9 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 	}
 
 	if types.NormalizeAutomationActionType(automation.Action.Type) == types.AutomationActionScript {
-		command := renderAutomationTemplate(automation.Action.Command, project, evt)
+		// Calendar event text is never rendered into a shell command, even if
+		// a calendar automation with a script action slipped past validation.
+		command := renderAutomationTemplate(automation.Action.Command, project, evt, nil)
 		req.Executor = "script"
 		req.Content = command
 		req.DirectPrompt = command
@@ -727,6 +819,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		status:       "queued",
 		generatedKey: generatedKey,
 		taskIDs:      []string{taskResp.ID},
+		scheduledFor: slot,
 	})
 	if err != nil {
 		return "", err
@@ -859,7 +952,11 @@ func automationCompleteOnIdle(value *bool) *bool {
 	return &defaultValue
 }
 
-func renderAutomationTemplate(input, project string, evt types.Event) string {
+// renderAutomationTemplate renders an automation's template for one firing. A
+// calendar firing (non-nil) supplies .Event (event fields, fenced; see
+// automation_calendar.go) and .Match (its title captures, fenced). Any other
+// firing has the zero .Event and an empty .Match.
+func renderAutomationTemplate(input, project string, evt types.Event, firing *calendarFiring) string {
 	if input == "" {
 		return ""
 	}
@@ -894,6 +991,8 @@ func renderAutomationTemplate(input, project string, evt types.Event) string {
 		ToStatus          string
 		DeliveryMode      string
 		MergeTargetBranch string
+		Event             calendarEventFields
+		Match             map[string]string
 	}{
 		Project:           project,
 		ProjectID:         project,
@@ -906,6 +1005,8 @@ func renderAutomationTemplate(input, project string, evt types.Event) string {
 		ToStatus:          evt.ToStatus,
 		DeliveryMode:      evt.Metadata["delivery_mode"],
 		MergeTargetBranch: evt.Metadata["merge_target_branch"],
+		Event:             firingEventFields(firing),
+		Match:             firingMatchFields(firing),
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
@@ -928,13 +1029,23 @@ type automationRunAudit struct {
 	// the run did nothing (see runOutcome in the PWA) — a success note
 	// there would misreport real work as a skip.
 	summary string
+	// scheduledFor is the slot this run was for; zero when unscheduled.
+	scheduledFor time.Time
+	// binding is the binding ID that applied to this run, if any.
+	binding string
 }
 
 func (s *AutomationService) createRunAudit(ctx context.Context, audit automationRunAudit) (string, error) {
 	if s == nil || s.brain == nil {
 		return "", nil
 	}
-	started := types.TimeNowUTC().UTC()
+	started := s.clock().UTC()
+	// An audit for an effective (per-project) config names its binding even
+	// when the caller did not set it.
+	binding := audit.binding
+	if binding == "" {
+		binding = audit.automation.Binding
+	}
 	triggerType := "manual"
 	triggerEvent := audit.evt.Type
 	if audit.automation.Trigger != nil {
@@ -971,6 +1082,13 @@ func (s *AutomationService) createRunAudit(ctx context.Context, audit automation
 	if audit.generatedKey != "" {
 		fmt.Fprintf(&content, "dedup_key: %s\n", audit.generatedKey)
 	}
+	scheduledFor := runAuditScheduledFor(audit.scheduledFor)
+	if scheduledFor != "" {
+		fmt.Fprintf(&content, "scheduled_for: %s\n", scheduledFor)
+	}
+	if binding != "" {
+		fmt.Fprintf(&content, "binding: %s\n", binding)
+	}
 	fmt.Fprintf(&content, "started_at: %s\n", started.Format(time.RFC3339))
 	fmt.Fprintf(&content, "completed_at: %s\n", started.Format(time.RFC3339))
 	content.WriteString("duration_ms: 0\n")
@@ -994,12 +1112,27 @@ func (s *AutomationService) createRunAudit(ctx context.Context, audit automation
 		}
 	}
 
+	var tags []string
+	if audit.automation.ID != "" {
+		tags = append(tags, "automation:"+audit.automation.ID)
+	}
+	if tag := runAuditBindingTag(binding); tag != "" {
+		tags = append(tags, tag)
+	}
+	// Manual runs are tagged so max_runs never counts them.
+	if audit.evt.Type == "manual" {
+		tags = append(tags, runAuditManualTag)
+	}
+
 	resp, err := s.brain.Save(ctx, types.CreateEntryRequest{
-		Type:    "automation_run",
-		Title:   fmt.Sprintf("Automation Run: %s", audit.automation.ID),
-		Content: content.String(),
-		Status:  audit.status,
-		Project: audit.project,
+		Type:         "automation_run",
+		Title:        fmt.Sprintf("Automation Run: %s", audit.automation.ID),
+		Content:      content.String(),
+		Tags:         tags,
+		Status:       audit.status,
+		Project:      audit.project,
+		ScheduledFor: scheduledFor,
+		Binding:      binding,
 	})
 	if err != nil {
 		return "", fmt.Errorf("create automation run audit: %w", err)
@@ -1052,7 +1185,7 @@ func (s *AutomationService) shouldSkipTaskGeneration(ctx context.Context, projec
 		return true, "max_concurrent", nil
 	}
 
-	if automation.Trigger.Cooldown != "" && cooldownActive(tasks, automation.Trigger.Cooldown, types.TimeNowUTC()) {
+	if automation.Trigger.Cooldown != "" && cooldownActive(tasks, automation.Trigger.Cooldown, s.clock()) {
 		return true, "cooldown", nil
 	}
 

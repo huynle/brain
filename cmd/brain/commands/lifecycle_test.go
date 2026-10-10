@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/huynle/brain-api/internal/apiserver"
+	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/lifecycle"
 	"github.com/huynle/brain-api/internal/runner"
 	"github.com/huynle/brain-api/internal/runnercli"
@@ -589,5 +590,49 @@ func TestDevCommand_ForegroundDebug(t *testing.T) {
 	}
 	if api.Flags.Daemon || api.Flags.Port != 4321 || api.Flags.Host != "localhost" {
 		t.Errorf("flags = %+v, want foreground on the configured host/port", api.Flags)
+	}
+}
+
+// The foreground server options carry calendar sources and attention
+// recipients from the config, like every other server setting.
+func TestServerOptionsFromConfigCarriesCalendarsAndAttention(t *testing.T) {
+	cfg := &UnifiedConfig{}
+	cfg.Server.Calendars = map[string]config.CalendarConfig{"xnys": {Type: "builtin", Market: "XNYS"}}
+	cfg.Server.Attention = config.AttentionConfig{SystemRecipients: []string{"ops"}}
+
+	opts := serverOptionsFromConfig(cfg)
+	if got := opts.Calendars["xnys"].Market; got != "XNYS" {
+		t.Fatalf("opts.Calendars = %+v, want xnys/XNYS", opts.Calendars)
+	}
+	if got := opts.Attention.SystemRecipients; len(got) != 1 || got[0] != "ops" {
+		t.Fatalf("opts.Attention.SystemRecipients = %v, want [ops]", got)
+	}
+}
+
+// `brain api` (APICommand) builds its options through the same mapping as
+// `brain api start`, so calendar sources and attention recipients reach it.
+func TestAPICommandExecuteCarriesCalendarsAndAttention(t *testing.T) {
+	oldServer := runAPIServer
+	t.Cleanup(func() { runAPIServer = oldServer })
+	var got apiserver.ServerOptions
+	runAPIServer = func(ctx context.Context, opts apiserver.ServerOptions) error {
+		got = opts
+		return nil
+	}
+
+	cfg := &UnifiedConfig{}
+	cfg.Server.Host, cfg.Server.Port = "127.0.0.1", 3399
+	cfg.Server.LogFile = filepath.Join(t.TempDir(), "brain-api.log")
+	cfg.Server.Calendars = map[string]config.CalendarConfig{"xnys": {Type: "builtin", Market: "XNYS"}}
+	cfg.Server.Attention = config.AttentionConfig{SystemRecipients: []string{"ops"}}
+
+	if err := (&APICommand{Config: cfg, Flags: &APIFlags{}}).Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got.Calendars["xnys"].Market != "XNYS" {
+		t.Fatalf("opts.Calendars = %+v, want xnys/XNYS", got.Calendars)
+	}
+	if r := got.Attention.SystemRecipients; len(r) != 1 || r[0] != "ops" {
+		t.Fatalf("opts.Attention.SystemRecipients = %v, want [ops]", r)
 	}
 }

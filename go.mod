@@ -6,6 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/coder/websocket v1.8.14
+	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/glebarez/go-sqlite v1.22.0
 	github.com/go-chi/chi/v5 v5.2.1
@@ -13,13 +14,13 @@ require (
 	github.com/mattn/go-isatty v0.0.20
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/stretchr/testify v1.11.1
+	github.com/teambition/rrule-go v1.8.2
 	golang.org/x/crypto v0.36.0
 	golang.org/x/sys v0.46.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
-	github.com/SherClockHolmes/webpush-go v1.4.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect

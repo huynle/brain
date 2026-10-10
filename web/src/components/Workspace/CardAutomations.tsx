@@ -9,9 +9,15 @@
  * newest audit's outcome glyph and age, or "never run" when an enabled
  * automation has no audit at all, which is itself the finding. Clicking
  * it opens the automation on its Runs tab.
- * The leading glyph doubles as the enable/pause toggle -- clicking it
- * flips `status` between "active" and "archived" without needing a
- * separate button. Body click still opens the automation modal.
+ *
+ * The leading glyph doubles as the enable/pause toggle, and it means
+ * different things by row:
+ *   - a project-owned automation: flips its own status between "active"
+ *     and "archived", as before;
+ *   - a GLOBAL automation (shared by every project): flips this project's
+ *     binding only. Turning it off here never archives the global entry and
+ *     never affects another project. The glyph reads the server's effective
+ *     view, so it shows whether the scheduler targets this project.
  *
  * Verbs come from `lib/actions/automationActions` via `useRowActions`,
  * so right-click, long-press and keyboard offer the identical set —
@@ -19,17 +25,28 @@
  * glyph toggle and Run button remain as one-click shortcuts to the
  * same context effects.
  */
+import * as React from "react";
+import { useMemo } from "react";
+
 import { useAutomations } from "../../hooks/useAutomations";
 import { useAutomationRuns } from "../../hooks/useAutomationRuns";
-import { useMemo } from "react";
 import { useAutomationActionContext } from "../../hooks/useAutomationActionContext";
+import { useEffectiveAutomation } from "../../hooks/useEffectiveAutomation";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useActionRunner } from "../../hooks/useActionRunner";
 import { useWorkspace } from "../../store/workspace";
 import {
   buildAutomationActions,
-  isEnabledAutomation,
+  isEnabledHere,
+  isGlobalAutomation,
+  type AutomationActionContext,
+  type ProjectScope,
 } from "../../lib/actions/automationActions";
+import {
+  bindingFor,
+  brokenMessage,
+} from "../../lib/automationBindings";
+import type { BrainEntry } from "../../lib/types";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
 import { relativeTime } from "../../lib/format";
@@ -47,10 +64,18 @@ export interface CardAutomationsProps {
   projectId: string;
 }
 
+type LastRunOf = ReturnType<typeof latestRunByAutomation> extends Map<
+  string,
+  infer R
+>
+  ? R
+  : never;
+
 export function CardAutomations({
   projectId,
 }: CardAutomationsProps): JSX.Element {
-  const { automations, isLoading, error, refetch } = useAutomations(projectId);
+  const { automations, bindings, isLoading, error, refetch } =
+    useAutomations(projectId);
   // One project-wide run query for the whole card, folded to the newest
   // run per automation. Deliberately NOT one query per row: a project
   // with a dozen automations would otherwise issue a dozen over-fetch
@@ -65,13 +90,13 @@ export function CardAutomations({
   // Reuse, don't stack: the detail pane is a viewer onto whichever row
   // you activated, so clicking through six automations moves one pane
   // six times instead of leaving six tabs behind.
+  const openOrReuseInSidebar = useWorkspace((s) => s.openOrReuseInSidebar);
   const openDetail = (automationId: string, name: string) =>
     openOrReuseInSidebar(
       "automation-detail",
       { projectId, automationId },
       name,
     );
-  const openOrReuseInSidebar = useWorkspace((s) => s.openOrReuseInSidebar);
   const ctx = useAutomationActionContext(projectId);
   const { rowProps, overlays } = useRowActions();
   const runner = useActionRunner();
@@ -88,99 +113,185 @@ export function CardAutomations({
 
   return (
     <div>
-      {automations.map((a) => {
-        const enabled = isEnabledAutomation(a);
-        const errored = a.status === "blocked";
-        const name = a.title || a.id;
-        const actions = buildAutomationActions(a, ctx);
-        const byId = new Map(actions.map((act) => [act.id, act]));
-        // The glyph is a one-click shortcut for the state pair: pause
-        // when enabled (or errored — stops the retry loop), enable
-        // when paused. Routing through the runner keeps toasts and
-        // error handling identical to the menu's.
-        const toggleAction =
-          enabled || errored ? byId.get("pause") : byId.get("enable");
-        const runAction = byId.get("run");
-
-        // Glyph legend:
-        //   ✓ (green .ok)   = active / click to pause
-        //   ○ (muted)       = archived / paused / click to enable
-        //   ✕ (red .blk)    = errored — clicking pauses to stop the
-        //                     retry loop; re-enable from the menu (or
-        //                     click again) after fixing the cause.
-        const glyph = enabled ? "✓" : errored ? "✕" : "○";
-        const glyphKind = enabled ? "ok" : errored ? "blk" : "";
-        const glyphTitle = enabled
-          ? "Enabled — click to pause (sets status to archived; triggers stop firing)"
-          : errored
-            ? "Errored — click to pause and stop retries; re-enable after fixing the underlying issue"
-            : "Paused — click to re-enable (sets status back to active)";
-
-        return (
-          <div
-            key={a.id}
-            className="trow auto-row"
-            {...rowProps(actions, name, () => openDetail(a.id, name))}
-            onClick={(e) => {
-              if ((e.target as HTMLElement).closest("button")) return;
-              openDetail(a.id, name);
-            }}
-            title={a.title}
-            style={enabled ? undefined : { opacity: 0.55 }}
-          >
-            <button
-              type="button"
-              className={`glyph ${glyphKind}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (toggleAction) runner.run(toggleAction);
-              }}
-              title={glyphTitle}
-              aria-pressed={enabled}
-              aria-label={enabled ? "Pause automation" : "Enable automation"}
-              style={{
-                background: "transparent",
-                border: 0,
-                padding: 0,
-                cursor: "pointer",
-                font: "inherit",
-                color: "inherit",
-              }}
-            >
-              {glyph}
-            </button>
-            <span className="name">{name}</span>
-            <LastRun
-              run={lastRuns.get(a.id)}
-              enabled={enabled}
-              inconclusive={windowFull}
-              window={runWindow}
-              onOpen={(e) => {
-                e.stopPropagation();
-                // Same destination as the row: the docked view leads with
-                // the run history, so there is no second surface to route
-                // to and no tab to preselect.
-                openDetail(a.id, name);
-              }}
-            />
-            <NextRun trigger={a.trigger} enabled={enabled} />
-            <span className="status">{a.trigger?.type || "manual"}</span>
-            <button
-              className="id"
-              style={{ padding: "0 4px", fontSize: 10 }}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (runAction) runner.run(runAction);
-              }}
-              title="Run now"
-            >
-              Run
-            </button>
-          </div>
-        );
-      })}
+      {automations.map((a) => (
+        <AutomationRow
+          key={a.id}
+          automation={a}
+          projectId={projectId}
+          binding={
+            isGlobalAutomation(a) ? bindingFor(bindings, a.id, projectId) : null
+          }
+          lastRun={lastRuns.get(a.id)}
+          windowFull={windowFull}
+          runWindow={runWindow}
+          ctx={ctx}
+          rowProps={rowProps}
+          runner={runner}
+          onOpen={() => openDetail(a.id, a.title || a.id)}
+        />
+      ))}
       {overlays}
       {runner.dialog}
+    </div>
+  );
+}
+
+interface AutomationRowProps {
+  automation: BrainEntry;
+  projectId: string;
+  /** This project's binding of a global automation, or null. */
+  binding: BrainEntry | null;
+  lastRun: LastRunOf | undefined;
+  windowFull: boolean;
+  runWindow: number;
+  ctx: AutomationActionContext;
+  rowProps: ReturnType<typeof useRowActions>["rowProps"];
+  runner: ReturnType<typeof useActionRunner>;
+  onOpen: () => void;
+}
+
+/**
+ * One automation row. A global automation asks the server for its effective
+ * view here, so the glyph shows whether it runs in this project. That is one
+ * small query per global row, and react-query shares it with the detail pane.
+ */
+function AutomationRow({
+  automation: a,
+  projectId,
+  binding,
+  lastRun,
+  windowFull,
+  runWindow,
+  ctx,
+  rowProps,
+  runner,
+  onOpen,
+}: AutomationRowProps): JSX.Element {
+  const isGlobal = isGlobalAutomation(a);
+  const eff = useEffectiveAutomation(isGlobal ? a.id : "", projectId);
+  const scope: ProjectScope = {
+    projectId,
+    binding,
+    targeted: eff.effective?.targeted ?? false,
+  };
+  // Until a global row's state is known, its toggle must not act: it could
+  // write a binding for a state we have not read.
+  const known = !isGlobal || eff.effective !== null;
+  const enabled = known && isEnabledHere(a, scope);
+  const broken = !!eff.effective?.broken;
+  const errored = !isGlobal && a.status === "blocked";
+  const name = a.title || a.id;
+  const actions = buildAutomationActions(a, ctx, isGlobal ? scope : undefined);
+  const byId = new Map(actions.map((act) => [act.id, act]));
+  // The glyph is a one-click shortcut for the state pair: pause
+  // when enabled (or errored — stops the retry loop), enable
+  // when paused. Routing through the runner keeps toasts and
+  // error handling identical to the menu's.
+  const toggleAction =
+    enabled || errored ? byId.get("pause") : byId.get("enable");
+  const runAction = byId.get("run");
+
+  // Glyph legend:
+  //   ✓ (green .ok)   = active / click to pause
+  //   ○ (muted)       = archived / paused / click to enable
+  //   ✕ (red .blk)    = errored — clicking pauses to stop the
+  //                     retry loop; re-enable from the menu (or
+  //                     click again) after fixing the cause.
+  //   · (muted)       = global automation, state here not read yet
+  //   ⚠ (red .blk)    = global automation, the server cannot vouch for
+  //                     this project's binding
+  let glyph: string;
+  let glyphKind: string;
+  let glyphTitle: string;
+  if (isGlobal) {
+    glyph = !known ? "·" : broken ? "⚠" : enabled ? "✓" : "○";
+    glyphKind = !known ? "" : broken ? "blk" : enabled ? "ok" : "";
+    glyphTitle = !known
+      ? eff.error
+        ? "Could not read this project's state for this automation. Open it to retry."
+        : "Checking this project's state…"
+      : broken
+        ? brokenMessage(eff.effective?.broken_reason)
+        : enabled
+          ? "On in this project — click to turn off here. Only this project's binding changes; the global automation keeps running elsewhere."
+          : "Off in this project — click to turn on here.";
+  } else {
+    glyph = enabled ? "✓" : errored ? "✕" : "○";
+    glyphKind = enabled ? "ok" : errored ? "blk" : "";
+    glyphTitle = enabled
+      ? "Enabled — click to pause (sets status to archived; triggers stop firing)"
+      : errored
+        ? "Errored — click to pause and stop retries; re-enable after fixing the underlying issue"
+        : "Paused — click to re-enable (sets status back to active)";
+  }
+
+  return (
+    <div
+      className="trow auto-row"
+      {...rowProps(actions, name, onOpen)}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest("button")) return;
+        onOpen();
+      }}
+      title={a.title}
+      style={enabled ? undefined : { opacity: 0.55 }}
+    >
+      <button
+        type="button"
+        className={`glyph ${glyphKind}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (toggleAction && known) runner.run(toggleAction);
+        }}
+        title={glyphTitle}
+        aria-pressed={enabled}
+        aria-label={
+          isGlobal
+            ? enabled
+              ? "Turn off in this project"
+              : "Turn on in this project"
+            : enabled
+              ? "Pause automation"
+              : "Enable automation"
+        }
+        style={{
+          background: "transparent",
+          border: 0,
+          padding: 0,
+          cursor: "pointer",
+          font: "inherit",
+          color: "inherit",
+        }}
+      >
+        {glyph}
+      </button>
+      <span className="name">{name}</span>
+      <LastRun
+        run={lastRun}
+        enabled={enabled}
+        inconclusive={windowFull}
+        window={runWindow}
+        onOpen={(e) => {
+          e.stopPropagation();
+          // Same destination as the row: the docked view leads with
+          // the run history, so there is no second surface to route
+          // to and no tab to preselect.
+          onOpen();
+        }}
+      />
+      <NextRun trigger={a.trigger} enabled={enabled} />
+      <span className="status">{a.trigger?.type || "manual"}</span>
+      <button
+        className="id"
+        style={{ padding: "0 4px", fontSize: 10 }}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (runAction) runner.run(runAction);
+        }}
+        title="Run now"
+      >
+        Run
+      </button>
     </div>
   );
 }
@@ -286,9 +397,7 @@ function LastRun({
   window: runWindow,
   onOpen,
 }: {
-  run?: ReturnType<typeof latestRunByAutomation> extends Map<string, infer R>
-    ? R
-    : never;
+  run?: LastRunOf;
   enabled: boolean;
   inconclusive: boolean;
   window: number;

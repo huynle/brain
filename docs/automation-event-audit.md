@@ -38,6 +38,36 @@ Events added since the audit and absent from the §3 inventory:
 `feature-review.md` asset that subscribes to it remains inert; events are not
 persisted; non-matches are logged nowhere.
 
+### 0.1 Run audits and scheduling added since the audit
+
+Added after the audited commit. Clock and calendar triggers are described in
+`docs/plans/2026-10-08-automation-scheduling-design.md`.
+
+- **Calendar-triggered runs.** `trigger.type: calendar` fires once per matching
+  occurrence. Its audit carries `dedup_key: cal:<automation>:<uid>:<start>` and
+  `scheduled_for` set to the occurrence's slot. Only prompt actions run; any other
+  action writes a `calendar_non_prompt_action` skip.
+- **`scheduled_for`.** RFC 3339 UTC instant of the slot, written on clock-slot and
+  calendar audits (for example `scheduled_for: 2026-10-09T09:00:00Z`). Event and
+  manual audits omit it. The newest value per (automation, project) is that
+  target's last handled slot.
+- **Tags.** Every audit carries `automation:<automation-id>`. A binding's audit also
+  carries `binding:<binding-id>`, and a `binding:` line names it in the body. A
+  manual run carries `manual`.
+- **Generated task key.** A clock slot's task has dedup key
+  `sched:<automation>:<project>:<slot>`, so one slot yields at most one task.
+- **Skip reasons** (`skip_reason:` in the body):
+
+  | `skip_reason` | Written when |
+  |---|---|
+  | `paused` | The automation is paused when the slot or occurrence is due. |
+  | `cooldown` | `trigger.cooldown` has not elapsed since the last generated task. |
+  | `max_concurrent` | Runnable generated tasks are at `trigger.max_concurrent`. |
+  | `dedup` | The dedup key already produced a task. |
+  | `max_runs` | `max_runs` is reached for this (automation, project). Written once until the latest audit changes. |
+  | `calendar_non_prompt_action` | A calendar trigger has a non-prompt action. |
+
+
 ---
 
 ## 1. Verdict
@@ -575,14 +605,15 @@ advertises.
 ### 6.2 Filter value expressions (`trigger.filter`)
 
 Every value in the `filter` map is evaluated by `types.MatchFilterValue`
-(`internal/types/events.go`). There are **four** forms *(was three — `has:` was
-added after this audit)*:
+(`internal/types/events.go`). There are **five** forms *(was three — `has:` and
+then `re:` were added after this audit)*:
 
 | Expression | Semantics | Gotcha |
 |---|---|---|
 | `"*"` | `actual != ""` — i.e. **"field is present"**, not "any value" | `MatchFilterValue("", "*")` is **false**. This is why a global automation with `project: "*"` stops matching project-less events. |
 | `"in:a,b,c"` | `actual` equals any member. Whitespace around members is trimmed; empty members ignored. | `"in:P,Q"` in a `project`/`project_id` filter does **not** satisfy the project scope guard, which tests literal equality to `"*"` before the filter loop runs. |
 | `"has:x"` **(new)** | Splits the **actual** on commas and matches if any element equals `x` exactly. | Element-exact, **never substring**: `has:note` does *not* match an actual containing `supernote`. An empty operand (`"has:"`) fails **closed** — deliberately unlike `normalizeWebhookPath` (§5.4). |
+| `"re:<pattern>"` **(new)** | RE2 regular expression (Go `regexp`), unanchored unless the pattern uses `^`/`$`; flags such as `(?i)` work. | Limits (`internal/types/filter_regex.go`): pattern ≤ 512 characters; only the first 4 KiB of the actual is matched (`$` anchors at the cut); compile cache of 256. An empty, oversized or non-compiling pattern matches **nothing** and logs one warning — validate at save time with `types.ValidateFilterValue`. The pattern is taken verbatim (whitespace is significant). The prefix is case-sensitive: `RE:x` is an exact match. |
 | `"<value>"` | Exact string equality. | An unresolvable key yields `""`, and `"" == "<value>"` is false ⇒ the automation **silently never fires**. |
 
 `in:` and `has:` are duals and neither can express the other: `in:` ORs over the
@@ -591,9 +622,9 @@ a multi-valued **actual**. Before `has:` existed, comma-joined metadata such as
 `entry.created`'s `tags` was effectively unfilterable — an exact match required
 listing every tag in the same order.
 
-There is still **no** support for negation, prefix/suffix globs inside a value,
-numeric comparison, regex, or boolean composition. Filters are ANDed: every key
-must match.
+There is still **no** dedicated support for negation, numeric comparison, or
+boolean composition (prefix/suffix and alternation are expressible with `re:`).
+Filters are ANDed: every key must match.
 
 ### 6.3 The COMPLETE set of resolvable filter keys
 

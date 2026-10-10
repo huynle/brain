@@ -171,9 +171,33 @@ type ServerConfig struct {
 	Tenancy                TenancyConfig         `yaml:"tenancy"`
 	Embedding              EmbeddingConfig       `yaml:"embedding"`
 	Attachments            AttachmentConfig      `yaml:"attachments"`
+	Attention              AttentionConfig       `yaml:"attention"`
+	// Calendars names the calendar sources that automation triggers refer to
+	// (trigger.calendar, skip_if_event, only_if_event). Keys are the names.
+	Calendars map[string]CalendarConfig `yaml:"calendars,omitempty"`
 
 	AttachmentExtraction AttachmentExtractionConfig `yaml:"attachment_extraction"`
 	Assistant            AssistantConfig            `yaml:"assistant"`
+}
+
+// AttentionConfig controls system-generated attention notices.
+type AttentionConfig struct {
+	// SystemRecipients lists token names that receive system notices.
+	SystemRecipients []string `yaml:"system_recipients"`
+}
+
+// CalendarConfig describes one named calendar source. Type is "builtin" (a
+// market day calendar; Market must be "XNYS") or "ics" (an iCalendar feed read
+// from the environment variable URLEnv or the file URLFile; a literal URL is
+// never configured here). Poll, ics only, is how often the feed is re-read.
+type CalendarConfig struct {
+	Type        string   `yaml:"type"`
+	URLEnv      string   `yaml:"url_env,omitempty"`
+	URLFile     string   `yaml:"url_file,omitempty"`
+	Poll        string   `yaml:"poll,omitempty"`
+	Market      string   `yaml:"market,omitempty"`
+	ExtraClosed []string `yaml:"extra_closed,omitempty"`
+	ExtraOpen   []string `yaml:"extra_open,omitempty"`
 }
 
 const MaxPasswordSessionTTLDays = 36500
@@ -334,6 +358,23 @@ func (c *UnifiedConfig) Validate() error {
 	if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
 		errs = append(errs, "server.tls_cert and server.tls_key must both be set or both empty")
 	}
+	// Attention system recipients are token names: each must be non-blank and
+	// listed once (compared after trimming).
+	seenRecipients := make(map[string]bool, len(c.Server.Attention.SystemRecipients))
+	for i, name := range c.Server.Attention.SystemRecipients {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			errs = append(errs, fmt.Sprintf("server.attention.system_recipients[%d] must not be blank", i))
+			continue
+		}
+		if seenRecipients[trimmed] {
+			errs = append(errs, fmt.Sprintf("server.attention.system_recipients lists %q more than once", trimmed))
+			continue
+		}
+		seenRecipients[trimmed] = true
+	}
+
+	errs = append(errs, validateCalendars(c.Server.Calendars)...)
 
 	// Task defaults enums.
 	if c.Server.TaskDefaults.ExecutionMode != "" {

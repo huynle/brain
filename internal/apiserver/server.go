@@ -20,6 +20,7 @@ import (
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/attentionstore"
 	"github.com/huynle/brain-api/internal/auth"
+	"github.com/huynle/brain-api/internal/calendar"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	mcppkg "github.com/huynle/brain-api/internal/mcp"
@@ -59,6 +60,8 @@ type ServerOptions struct {
 
 	AttachmentExtraction config.AttachmentExtractionConfig
 	Assistant            config.AssistantConfig
+	Attention            config.AttentionConfig
+	Calendars            map[string]config.CalendarConfig
 
 	// TLSCert / TLSKey, when both set, cause the server to run TLS via
 	// ListenAndServeTLS. Go's net/http auto-enables HTTP/2 on TLS servers
@@ -277,6 +280,22 @@ func validateBindAuth(opts ServerOptions) error {
 	return fmt.Errorf("refusing unauthenticated non-loopback bind to %q: set ENABLE_AUTH=true or explicitly accept the risk with %s=true", opts.Host, escape)
 }
 
+// graphConfigFromOptions is the graph's configuration for a server started
+// with opts. Every server setting must be carried here: a field left out is
+// silently ignored by a running server (calendar sources and attention
+// recipients once were).
+func graphConfigFromOptions(opts ServerOptions, attachments config.AttachmentConfig) config.Config {
+	return config.Config{
+		BrainDir: opts.BrainDir, Host: opts.Host, Port: opts.Port,
+		EnableAuth: opts.EnableAuth, CORSOrigin: opts.CORSOrigin,
+		OAuthPIN: opts.OAuthPIN, JWTSecret: opts.JWTSecret,
+		TaskDefaults: opts.TaskDefaults, FeatureCheckout: opts.FeatureCheckout, FeatureDelivery: opts.FeatureDelivery,
+		Tenancy: opts.Tenancy, Embedding: opts.Embedding, Attachments: attachments,
+		AttachmentExtraction: opts.AttachmentExtraction, Assistant: opts.Assistant,
+		Attention: opts.Attention, Calendars: opts.Calendars,
+	}
+}
+
 func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, string, func(), error) {
 	// Also guard direct in-process assembly BEFORE migration, mkdir or storage.
 	var err error
@@ -327,14 +346,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	if opts.PasswordRefreshTokenTTL != nil {
 		passwordRefreshTTL = *opts.PasswordRefreshTokenTTL
 	}
-	graph, err := newTenantGraph(ctx, store, roots, config.Config{
-		BrainDir: opts.BrainDir, Host: opts.Host, Port: opts.Port,
-		EnableAuth: opts.EnableAuth, CORSOrigin: opts.CORSOrigin,
-		OAuthPIN: opts.OAuthPIN, JWTSecret: opts.JWTSecret,
-		TaskDefaults: opts.TaskDefaults, FeatureCheckout: opts.FeatureCheckout, FeatureDelivery: opts.FeatureDelivery,
-		Tenancy: opts.Tenancy, Embedding: opts.Embedding, Attachments: attachments,
-		AttachmentExtraction: opts.AttachmentExtraction, Assistant: opts.Assistant,
-	}, graphIdentity{tokens: views.tokens, verifier: credVerifier, passwords: control, passwordTTL: passwordRefreshTTL, passwordTTLSet: true, assistantMCPURL: assistantMCPBaseURL(opts)})
+	graph, err := newTenantGraph(ctx, store, roots, graphConfigFromOptions(opts, attachments), graphIdentity{tokens: views.tokens, verifier: credVerifier, passwords: control, passwordTTL: passwordRefreshTTL, passwordTTLSet: true, assistantMCPURL: assistantMCPBaseURL(opts)})
 	if err != nil {
 		cleanup()
 		return nil, "", nil, err
@@ -478,6 +490,15 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		cleanup()
 		return nil, "", nil, fmt.Errorf("failed to ensure built-in feature delivery automation: %w", err)
 	}
+	// ICS calendar poller (single mode). It is built over the graph's registry
+	// and this deployment's data directory, which holds the cached snapshots.
+	// Its stale notices are bound below, once the attention service exists.
+	calendarPoller, err := calendar.NewPoller(graph.calendars, cfg.Calendars, dataDir, calendar.PollerOptions{})
+	if err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("start calendar poller: %w", err)
+	}
+	graph.calendarPoller = calendarPoller
 	// Workers remain boot-owned and joined before the graph/shared owner.
 	stopWorkers := startSingleGraphWorkers(ctx, graph)
 	graphCleanup := cleanup
@@ -528,6 +549,11 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// keypair, retries, and the service-worker handler.
 	attentionDispatcher := service.NewAttentionDispatcher(graph.eventHub, attentionStore, pushSvc)
 	go attentionDispatcher.Start(ctx)
+	// System notices: publish the notifier on the attention service for later
+	// consumers, and run the one-shot startup scheduling report after the boot
+	// index scan (scanDone) so it never reads a partial index.
+	systemNotifier := wireSystemNotices(ctx, attentionSvc, cfg, brainSvc, scanDone)
+	calendarPoller.SetNotifier(calendarNotices(systemNotifier))
 
 	// ─── Rate Limiting ─────────────────────────────────────────────
 	var rateLimiter *api.RateLimiter

@@ -1655,6 +1655,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/automations/{id}/effective": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Effective config of one automation for one project, with its targeting and broken state
+         * @description Read-only. Resolves the parent with the project's binding overlaid, the same way the scheduler does, and reports whether the scheduler targets the project. A broken view is returned with 200 and broken_reason set.
+         */
+        get: operations["automations.effective"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/calendars": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Status of every configured calendar source
+         * @description Read-only. Lists each configured calendar source. A builtin source carries only its name and kind. An ics source reports when it was last fetched and last succeeded, its event count, its last error, and whether it is stale. Feed URLs and file paths are never returned.
+         */
+        get: operations["calendars.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/runner/status": {
         parameters: {
             query?: never;
@@ -2955,6 +2997,44 @@ export interface components {
         TaskSelectionResponse: {
             tasks: components["schemas"]["ResolvedTask"][] | null;
         };
+        AutomationEffective: {
+            id: string;
+            project: string;
+            automation?: components["schemas"]["AutomationEffectiveConfig"];
+            fields: {
+                [key: string]: "inherited" | "overridden";
+            };
+            binding_id?: string;
+            binding_status?: string;
+            targeted: boolean;
+            broken: boolean;
+            /** @enum {string} */
+            broken_reason?: "duplicate_binding" | "parent_missing" | "parent_not_automation";
+        };
+        AutomationEffectiveConfig: {
+            id: string;
+            trigger?: components["schemas"]["TriggerConfig"];
+            action?: components["schemas"]["AutomationAction"];
+            timezone?: string;
+            starts_at?: string;
+            expires_at?: string;
+            max_runs?: number;
+        };
+        CalendarsResponse: {
+            calendars: components["schemas"]["CalendarStatus"][];
+        };
+        CalendarStatus: {
+            name: string;
+            /** @enum {string} */
+            kind: "builtin" | "ics";
+            /** Format: date-time */
+            last_fetch?: string;
+            /** Format: date-time */
+            last_success?: string;
+            event_count?: number;
+            last_error?: string;
+            stale?: boolean;
+        };
         RunAutomationRequest: {
             path: string;
             project?: string;
@@ -3083,6 +3163,7 @@ export interface components {
             execution_mode?: string;
             executor?: string;
             model?: string;
+            prompt_append?: string;
             requires_capability?: string;
             session_mode?: string;
             set_status?: string;
@@ -3109,6 +3190,7 @@ export interface components {
             attempt_count?: number;
             automation_run_id?: string;
             backlinks?: components["schemas"]["BacklinkEntry"][] | null;
+            binding?: string;
             checkout_mode?: string;
             complete_on_idle?: boolean | null;
             completed_at?: string;
@@ -3122,6 +3204,7 @@ export interface components {
             execution_mode?: string;
             executor?: string;
             expires_at?: string;
+            extends?: string;
             extensions?: string[] | null;
             feature_depends_on?: string[] | null;
             feature_expires_at?: string;
@@ -3175,6 +3258,7 @@ export interface components {
             runs?: components["schemas"]["CronRun"][] | null;
             schedule?: string;
             schedule_enabled?: boolean | null;
+            scheduled_for?: string;
             session_mode?: string;
             sessions?: {
                 [key: string]: components["schemas"]["SessionInfo"];
@@ -3190,12 +3274,20 @@ export interface components {
             user_original_request?: string;
             workdir?: string;
         };
+        CalendarEventFilter: {
+            all_day?: string;
+            calendar?: string;
+            description?: string;
+            location?: string;
+            title?: string;
+        };
         CreateEntryRequest: {
             action?: components["schemas"]["AutomationAction"] | null;
             agent?: string;
             assignment_intent?: string;
             attachments?: components["schemas"]["AttachmentReference"][] | null;
             automation_run_id?: string;
+            binding?: string;
             checkout_mode?: string;
             complete_on_idle?: boolean | null;
             content: string;
@@ -3205,6 +3297,7 @@ export interface components {
             execution_mode?: string;
             executor?: string;
             expires_at?: string;
+            extends?: string;
             extensions?: string[] | null;
             feature_depends_on?: string[] | null;
             feature_expires_at?: string;
@@ -3248,6 +3341,7 @@ export interface components {
             runs?: components["schemas"]["CronRun"][] | null;
             schedule?: string;
             schedule_enabled?: boolean | null;
+            scheduled_for?: string;
             session_mode?: string;
             starts_at?: string;
             status?: string;
@@ -3535,16 +3629,27 @@ export interface components {
             waiting: number;
         };
         TriggerConfig: {
+            at?: string;
+            calendar?: string;
+            catch_up?: string;
             cooldown?: string;
             event?: string;
             events?: string[] | null;
+            every?: string;
             filter?: {
                 [key: string]: string;
             } | null;
             ignore_automation_events?: boolean | null;
+            match?: {
+                [key: string]: string;
+            } | null;
             max_concurrent?: number;
+            offset?: string;
             once_per?: string;
+            only_if_event?: components["schemas"]["CalendarEventFilter"] | null;
             schedule?: string;
+            skip_if_event?: components["schemas"]["CalendarEventFilter"] | null;
+            stagger?: string;
             timezone?: string;
             type?: string;
             webhook?: string;
@@ -3555,6 +3660,7 @@ export interface components {
             append?: string | null;
             attachments?: (components["schemas"]["AttachmentReference"][] | null) | null;
             automation_run_id?: string | null;
+            binding?: string | null;
             checkout_mode?: string | null;
             complete_on_idle?: boolean | null;
             content?: string | null;
@@ -3565,6 +3671,7 @@ export interface components {
             executor?: string | null;
             expected_revision?: string;
             expires_at?: string | null;
+            extends?: string | null;
             extensions?: (string[] | null) | null;
             feature_depends_on?: (string[] | null) | null;
             feature_expires_at?: string | null;
@@ -3604,6 +3711,7 @@ export interface components {
             runs?: components["schemas"]["CronRun"][] | null;
             schedule?: string | null;
             schedule_enabled?: boolean | null;
+            scheduled_for?: string | null;
             sessions?: {
                 [key: string]: components["schemas"]["SessionInfo"];
             } | null;
@@ -8039,6 +8147,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BrainEntry"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "automations.effective": {
+        parameters: {
+            query: {
+                project: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Effective view */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationEffective"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "calendars.list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Calendar source statuses */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarsResponse"];
                 };
             };
             /** @description Legacy error */

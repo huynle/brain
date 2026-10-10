@@ -66,6 +66,24 @@ test("automation namespace routes",async t=>{
  assert.deepEqual(seen,["POST /api/v1/automations/run","GET /api/v1/automation-runs?automation_id=a&limit=10&project=p","GET /api/v1/automation-runs/r"]);
 });
 
+test("automation effective route",async t=>{
+ const seen=[];const baseUrl=await server(t,async(req,res)=>{for await(const _ of req){};seen.push(req.method+" "+req.url);res.end(JSON.stringify({id:"a",project:"p q",fields:{"action.agent":"overridden"},targeted:true,broken:false}));});
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());
+ const view=await c.automations.effective("a","p q");
+ assert.equal(view.id,"a");assert.equal(view.targeted,true);assert.equal(view.broken,false);
+ await c.automations.effective("global/dream.md","p");
+ assert.deepEqual(seen,["GET /api/v1/automations/a/effective?project=p+q","GET /api/v1/automations/global%2Fdream.md/effective?project=p"]);
+});
+
+test("calendar status route",async t=>{
+ const seen=[];const baseUrl=await server(t,async(req,res)=>{for await(const _ of req){};seen.push(req.method+" "+req.url);res.end(JSON.stringify({calendars:[{name:"team",kind:"ics",event_count:2,stale:false,last_error:"HTTP 503"},{name:"xnys",kind:"builtin"}]}));});
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());
+ const out=await c.calendars.list();
+ assert.equal(out.calendars.length,2);assert.equal(out.calendars[0].kind,"ics");assert.equal(out.calendars[0].event_count,2);
+ assert.equal(out.calendars[1].kind,"builtin");assert.equal(out.calendars[1].event_count,undefined);
+ assert.deepEqual(seen,["GET /api/v1/calendars"]);
+});
+
 test("reminder and attention namespace routes",async t=>{
  const seen=[];const baseUrl=await server(t,async(req,res)=>{for await(const _ of req){};seen.push(req.method+" "+req.url);res.end("{}");});
  const c=new BrainClient({baseUrl});t.after(()=>c.close());

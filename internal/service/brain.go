@@ -15,6 +15,7 @@ import (
 
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/brainpath"
+	"github.com/huynle/brain-api/internal/calendar"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/indexer"
@@ -39,6 +40,10 @@ type BrainServiceImpl struct {
 
 	embedWork  asyncWork // owns detached embedding work, never the store
 	embedLocks sync.Map  // path → *sync.Mutex; serializes refreshes per entry
+
+	// calendars names the configured calendar sources for automation gates. Set once
+	// at wiring (SetCalendars); nil means none are configured.
+	calendars *calendar.Registry
 }
 
 // NewBrainService creates a new BrainServiceImpl.
@@ -165,12 +170,30 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		}
 	}
 
+	if req.Type == "automation" && req.Extends != "" {
+		// Placement and the single-tenant gate run before the parent lookup, so
+		// a refused binding never reads another tenant's parent.
+		if err := s.validateBindingWrite(ctx, "", req.Project, req.Global != nil && *req.Global, frontmatter.SanitizeSimpleValue(req.Extends)); err != nil {
+			return nil, err
+		}
+	}
+	if req.Type == "automation" {
+		if err := s.validateAutomation(ctx, automationFrontmatterFromRequest(req), ""); err != nil {
+			return nil, err
+		}
+	}
+
 	// Sanitize inputs
 	title := frontmatter.SanitizeTitle(req.Title)
 
 	// Compose once and reuse for both the file and the response, so callers
 	// (notably the entry.created emitter) see the tags actually persisted.
 	sanitizedTags := frontmatter.ComposeEntryTags(req.Tags, req.Type)
+	if req.Type == "automation" {
+		// A binding is found by its extends tag, so the tag always mirrors
+		// the parent the entry names.
+		sanitizedTags = syncExtendsTag(sanitizedTags, frontmatter.SanitizeSimpleValue(req.Extends))
+	}
 
 	var sanitizedDeps []string
 	for _, dep := range req.DependsOn {
@@ -256,6 +279,9 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		GeneratedKey:        req.GeneratedKey,
 		GeneratedBy:         req.GeneratedBy,
 		AutomationRunID:     req.AutomationRunID,
+		Extends:             frontmatter.SanitizeSimpleValue(req.Extends),
+		ScheduledFor:        frontmatter.SanitizeSimpleValue(req.ScheduledFor),
+		Binding:             frontmatter.SanitizeSimpleValue(req.Binding),
 		Trigger:             fmTriggerFromTypes(req.Trigger),
 		Action:              automationActionToFM(req.Action),
 		Retry:               automationRetryToFM(req.Retry),
@@ -621,6 +647,18 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["timezone"].(string); ok {
 			fm.Timezone = v
 		}
+		if v, ok := metaInt(meta, "max_runs"); ok {
+			fm.MaxRuns = &v
+		}
+		if v, ok := meta["extends"].(string); ok {
+			fm.Extends = v
+		}
+		if v, ok := meta["scheduled_for"].(string); ok {
+			fm.ScheduledFor = v
+		}
+		if v, ok := meta["binding"].(string); ok {
+			fm.Binding = v
+		}
 
 		// Automation fields (nested maps from metadata JSON)
 		if v, ok := meta["trigger"]; ok {
@@ -902,6 +940,20 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		fm.Timezone = *req.Timezone
 	}
 
+	// Automation scheduling references (an explicit "" clears the key).
+	if req.Extends != nil {
+		fm.Extends = frontmatter.SanitizeSimpleValue(*req.Extends)
+	}
+	if fm.Type == "automation" {
+		fm.Tags = syncExtendsTag(fm.Tags, fm.Extends)
+	}
+	if req.ScheduledFor != nil {
+		fm.ScheduledFor = frontmatter.SanitizeSimpleValue(*req.ScheduledFor)
+	}
+	if req.Binding != nil {
+		fm.Binding = frontmatter.SanitizeSimpleValue(*req.Binding)
+	}
+
 	// Git/execution fields
 	if req.TargetWorkdir != nil {
 		fm.TargetWorkdir = frontmatter.SanitizeSimpleValue(*req.TargetWorkdir)
@@ -1112,6 +1164,21 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		now := types.TimeNowUTC().Format(time.RFC3339)
 		noteText := fmt.Sprintf("\n\n---\n*Status changed to **%s** on %s*\n\n%s", statusStr, now, *req.Note)
 		body = body + noteText
+	}
+
+	// Validate the merged definition, but only when this update touches a field
+	// the scheduling rules read. Status, tag, content and note changes must keep
+	// working on an automation whose stored definition is already invalid.
+	if fm.Type == "automation" && req.Extends != nil && fm.Extends != "" {
+		global := strings.HasPrefix(filepath.ToSlash(row.Path), "global/")
+		if err := s.validateBindingWrite(ctx, row.ShortID, extractProjectFromPath(row.Path), global, fm.Extends); err != nil {
+			return nil, err
+		}
+	}
+	if fm.Type == "automation" && automationUpdateTouchesDefinition(req) {
+		if err := s.validateAutomation(ctx, fm, row.ShortID); err != nil {
+			return nil, err
+		}
 	}
 
 	// Serialize updated frontmatter and write back
@@ -1782,6 +1849,14 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 
 	if !retirementMetadata(fields) {
 		if err := validateMetadataGitRemote(ctx, s.storage, row, fields); err != nil {
+			return nil, err
+		}
+	}
+
+	// An automation's lifecycle or prompt write must pass the same checks that
+	// Update applies, because this path writes the DB directly.
+	if row.Type != nil && *row.Type == "automation" && automationMetadataTouchesDefinition(fields) {
+		if err := s.validateAutomationMetadata(ctx, row, fields); err != nil {
 			return nil, err
 		}
 	}
@@ -3577,11 +3652,35 @@ func fmTriggerFromTypes(t *types.TriggerConfig) *frontmatter.TriggerConfig {
 		Events:                 t.Events,
 		Schedule:               t.Schedule,
 		Timezone:               t.Timezone,
+		Every:                  t.Every,
+		At:                     t.At,
+		Stagger:                t.Stagger,
+		CatchUp:                t.CatchUp,
+		Calendar:               t.Calendar,
+		SkipIfEvent:            fmCalendarEventFilterFromTypes(t.SkipIfEvent),
+		OnlyIfEvent:            fmCalendarEventFilterFromTypes(t.OnlyIfEvent),
+		Match:                  t.Match,
+		Offset:                 t.Offset,
 		Filter:                 t.Filter,
 		OncePer:                t.OncePer,
 		Webhook:                t.Webhook,
 		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
 		Cooldown:               t.Cooldown,
 		MaxConcurrent:          t.MaxConcurrent,
+	}
+}
+
+// fmCalendarEventFilterFromTypes converts a calendar-event guard to its
+// on-disk mirror.
+func fmCalendarEventFilterFromTypes(f *types.CalendarEventFilter) *frontmatter.CalendarEventFilter {
+	if f == nil {
+		return nil
+	}
+	return &frontmatter.CalendarEventFilter{
+		Calendar:    f.Calendar,
+		Title:       f.Title,
+		Description: f.Description,
+		Location:    f.Location,
+		AllDay:      f.AllDay,
 	}
 }

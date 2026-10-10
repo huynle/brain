@@ -410,7 +410,7 @@ func TestParse_DayOfWeek_Sunday_Both0And7(t *testing.T) {
 
 // A schedule whose only matching hour falls inside a spring-forward gap used
 // to hang NextAfter: time.Date normalizes the missing 02:00 BACKWARD to
-// 01:00, advanceCandidate then selects hour 2 again and returns the same
+// 01:00, the old search then selected hour 2 again and returned the same
 // instant, so the candidate never moved and the search burned all 527,040
 // iterations before returning the zero time.
 //
@@ -443,8 +443,8 @@ func TestNextAfter_SpringForwardGap(t *testing.T) {
 }
 
 // The repeated hour is the opposite case: 01:00 happens twice on the
-// fall-back date. Either instant is defensible; what must not happen is a
-// hang or a zero time.
+// fall-back date. The run must neither hang nor return the zero time, and
+// it resolves to the FIRST occurrence (01:30 MDT), never the repeat.
 func TestNextAfter_FallBackRepeatedHour(t *testing.T) {
 	loc, err := time.LoadLocation("America/Denver")
 	if err != nil {
@@ -463,6 +463,9 @@ func TestNextAfter_FallBackRepeatedHour(t *testing.T) {
 	}
 	if got.Hour() != 1 || got.Minute() != 30 {
 		t.Errorf("NextAfter = %v, want a 01:30 local time", got)
+	}
+	if want := time.Date(2026, 11, 1, 7, 30, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("NextAfter = %v, want the first occurrence %v", got, want.In(loc))
 	}
 	if !got.After(from) {
 		t.Errorf("NextAfter = %v, must be strictly after %v", got, from)

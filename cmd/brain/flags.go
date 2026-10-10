@@ -278,6 +278,8 @@ type UnifiedConfig struct {
 
 		AttachmentExtraction uconfig.AttachmentExtractionConfig
 		Assistant            uconfig.AssistantConfig
+		Attention            uconfig.AttentionConfig
+		Calendars            map[string]uconfig.CalendarConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {
@@ -1432,6 +1434,7 @@ type MigrateFlags struct {
 	Force   bool
 	Format  string
 	Project string
+	Yes     bool
 }
 
 // ParseMigrateFlags parses migrate command flags from args.
@@ -1455,6 +1458,8 @@ func ParseMigrateFlags(args []string) (*MigrateFlags, error) {
 				flags.Project = args[i+1]
 				i++
 			}
+		case "--yes", "-y":
+			flags.Yes = true
 		}
 	}
 
@@ -1468,6 +1473,7 @@ func convertToCommandsMigrateFlags(flags *MigrateFlags) *commands.MigrateFlags {
 		Force:   flags.Force,
 		Format:  flags.Format,
 		Project: flags.Project,
+		Yes:     flags.Yes,
 	}
 }
 

@@ -87,6 +87,7 @@ func TestCheckScheduled_WildcardCronFansOutPerProject(t *testing.T) {
 	svc.SetProjectLister(&stubProjectLister{projects: []string{"hindsight", "brain-api"}})
 
 	now := time.Date(2026, 9, 6, 3, 0, 0, 0, time.UTC)
+	stampAutomationsModified(t, brain, slotUTC(2026, 9, 5, 0, 0, 0))
 	if err := svc.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled: %v", err)
 	}
@@ -124,6 +125,7 @@ func TestCheckScheduled_WildcardFanOutIsDedupedPerProject(t *testing.T) {
 
 	now := time.Date(2026, 9, 6, 3, 0, 0, 0, time.UTC)
 	for i := 0; i < 2; i++ {
+		stampAutomationsModified(t, brain, slotUTC(2026, 9, 5, 0, 0, 0))
 		if err := svc.CheckScheduled(ctx, now); err != nil {
 			t.Fatalf("CheckScheduled run %d: %v", i, err)
 		}
@@ -162,6 +164,7 @@ func TestCheckScheduled_ProjectScopedAutomationIgnoresWildcard(t *testing.T) {
 	svc := NewAutomationService(brain)
 	svc.SetProjectLister(lister)
 
+	stampAutomationsModified(t, brain, slotUTC(2026, 9, 5, 0, 0, 0))
 	if err := svc.CheckScheduled(ctx, time.Date(2026, 9, 6, 3, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("CheckScheduled: %v", err)
 	}
@@ -195,6 +198,7 @@ func TestCheckScheduled_GlobalAutomationWithoutWildcardKeepsSingleRun(t *testing
 	svc := NewAutomationService(brain)
 	svc.SetProjectLister(lister)
 
+	stampAutomationsModified(t, brain, slotUTC(2026, 9, 5, 0, 0, 0))
 	if err := svc.CheckScheduled(ctx, time.Date(2026, 9, 6, 3, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("CheckScheduled: %v", err)
 	}
@@ -214,6 +218,7 @@ func TestCheckScheduled_WildcardWithoutListerErrors(t *testing.T) {
 	auto := saveWildcardCronAutomation(t, brain, "* * * * *")
 
 	svc := NewAutomationService(brain)
+	stampAutomationsModified(t, brain, slotUTC(2026, 9, 5, 0, 0, 0))
 	err := svc.CheckScheduled(ctx, time.Date(2026, 9, 6, 3, 0, 0, 0, time.UTC))
 	if err == nil || !strings.Contains(err.Error(), "no project lister") {
 		t.Fatalf("err = %v, want a wired-lister complaint", err)
@@ -238,7 +243,8 @@ func TestCheckScheduled_PausedAutomationIsNotAuditedWhenNotDue(t *testing.T) {
 
 	// Ten ticks across a window where the cron is never due.
 	for i := 0; i < 10; i++ {
-		at := time.Date(2026, 9, 6, 11, 20+i, 8, 0, time.UTC)
+		at := time.Date(2026, 9, 5, 11, 20+i, 8, 0, time.UTC)
+		stampAutomationsModified(t, brain, slotUTC(2026, 9, 5, 0, 0, 0))
 		if err := svc.CheckScheduled(ctx, at); err != nil {
 			t.Fatalf("CheckScheduled at %s: %v", at, err)
 		}
@@ -412,6 +418,7 @@ func TestCheckScheduled_ProjectFilterNarrowsTheFanOut(t *testing.T) {
 		"hindsight", "supernote", "brain-api", "hindsight-v2", "pwa", "default",
 	}})
 
+	stampAutomationsModified(t, brain, slotUTC(2026, 9, 5, 0, 0, 0))
 	if err := svc.CheckScheduled(ctx, time.Date(2026, 9, 6, 3, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("CheckScheduled: %v", err)
 	}
@@ -438,6 +445,7 @@ func TestCheckScheduled_SingleProjectFilterSelectsOne(t *testing.T) {
 	svc := NewAutomationService(brain)
 	svc.SetProjectLister(&stubProjectLister{projects: []string{"hindsight", "pwa"}})
 
+	stampAutomationsModified(t, brain, slotUTC(2026, 9, 5, 0, 0, 0))
 	if err := svc.CheckScheduled(ctx, time.Date(2026, 9, 6, 3, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("CheckScheduled: %v", err)
 	}
@@ -460,6 +468,7 @@ func TestCheckScheduled_EmptyProjectFilterIsNotAWildcard(t *testing.T) {
 	svc := NewAutomationService(brain)
 	svc.SetProjectLister(lister)
 
+	stampAutomationsModified(t, brain, slotUTC(2026, 9, 5, 0, 0, 0))
 	if err := svc.CheckScheduled(ctx, time.Date(2026, 9, 6, 3, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("CheckScheduled: %v", err)
 	}

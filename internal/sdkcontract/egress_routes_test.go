@@ -338,7 +338,7 @@ func TestSchedulerStatusCutIsSound(t *testing.T) {
 	}
 }
 
-// reviewedNonSDKRoutes: every router handler outside the 146-operation
+// reviewedNonSDKRoutes: every router handler outside the 148-operation
 // contract that reaches a provider sink, with its exact derived tokens.
 var reviewedNonSDKRoutes = map[string]string{
 	"(*" + pkgAPI + ".Handler).HandleAssistantChat":                "embedding_background+embedding_sync",
@@ -399,8 +399,8 @@ func TestOperationProviderEffectsDerivedFromCallGraph(t *testing.T) {
 	}
 	g := sharedEgressGraph(t)
 	handlers, chi := operationHandlers(t, g)
-	if len(handlers) != 146 {
-		t.Fatalf("resolved %d operation handlers, want 146", len(handlers))
+	if len(handlers) != 148 {
+		t.Fatalf("resolved %d operation handlers, want 148", len(handlers))
 	}
 	d := deriveEgress(g, handlers, chi, reviewedCuts)
 	justified := map[string]map[string]bool{}

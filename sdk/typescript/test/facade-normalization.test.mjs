@@ -33,13 +33,15 @@ const hostedStep3 = ['monitors.create','monitors.deleteByScope',
   'control.sessionTail','control.sessionDescendants',
   'supervision.capabilities','supervision.snapshot','supervision.dispatchPreview','supervision.submitOperation','supervision.getOperation',
   'supervision.checkpoints','supervision.updateCheckpoint','supervision.budget','supervision.updateBudget'];
-const unsupported = new Set(['entries.iterate','events.stream','attachments.upload','attachments.download',...runnerControl,...hostedStep3]);
+// automations.effective and calendars.list are reads, but x-brain-script is
+// false: no script mapping exists for them, so the facade must reject them as unsupported.
+const unsupported = new Set(['entries.iterate','events.stream','attachments.upload','attachments.download','automations.effective','calendars.list',...runnerControl,...hostedStep3]);
 const operation = name => ({health:'health.get',search:'search.query',inject:'search.inject'})[name] ?? name;
 const plain = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 const fixedError = code => e => e.code===code && e.message===code && Object.getPrototypeOf(e)===null;
 
 test('pure facade maps each actual SDK positional argument and default without dispatch', () => {
-  assert.equal(signatures.size,146);
+  assert.equal(signatures.size,148);
   for (const name of [...runnerControl,...hostedStep3]) assert.ok(signatures.has(name),`public SDK lacks ${name}`);
   assert.equal(hostedStep3.length,20);
   for (const [name,parameters] of signatures) {

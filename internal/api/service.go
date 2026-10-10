@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/huynle/brain-api/internal/calendar"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -420,6 +421,12 @@ type AutomationRunService interface {
 	// project, matching the cron path. Returns the created task ids, empty
 	// when generation was skipped (concurrency guard).
 	RunAutomationNow(ctx context.Context, pathOrID, project string) ([]string, error)
+
+	// EffectiveAutomation reports the config `project` runs automation pathOrID
+	// under, and whether the scheduler targets it there (see types.AutomationEffective).
+	// Unknown or non-automation entries wrap ErrNotFound; a missing, invalid or
+	// non-owning project wraps ErrInvalidInput.
+	EffectiveAutomation(ctx context.Context, pathOrID, project string) (*types.AutomationEffective, error)
 }
 
 // GoalService defines the interface for goal automation operations exposed over
@@ -648,4 +655,10 @@ type WebhookService interface {
 	// and returns the delivery result. Unlike Deliver, this targets a single webhook
 	// by ID and waits for the result.
 	TestDeliver(ctx context.Context, webhookID string, event types.Event) (*types.WebhookDeliveryResponse, error)
+}
+
+// CalendarService reports the state of the configured calendar sources. The
+// statuses never carry a feed URL or file path.
+type CalendarService interface {
+	Statuses() []calendar.Status
 }

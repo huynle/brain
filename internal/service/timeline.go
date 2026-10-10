@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/huynle/brain-api/internal/types"
 	braincron "github.com/huynle/brain-api/pkg/cron"
+	"github.com/huynle/brain-api/pkg/schedule"
 )
 
 const (
@@ -24,9 +26,17 @@ type timelineEventReader interface {
 	Recent(context.Context, int, map[string]string) ([]types.Event, error)
 }
 
+// automationTargetResolver is the one AutomationService method the timeline
+// borrows. scheduledTargetProjects decides which projects a cron automation
+// fires for, so the projection cannot disagree with the scheduler about them.
+type automationTargetResolver interface {
+	scheduledTargetProjects(ctx context.Context, automation types.BrainEntry) ([]string, error)
+}
+
 type TimelineService struct {
 	entries timelineEntryLister
 	events  timelineEventReader
+	targets automationTargetResolver
 	now     func() time.Time
 }
 
@@ -36,8 +46,19 @@ func WithTimelineClock(now func() time.Time) TimelineServiceOption {
 	return func(service *TimelineService) { service.now = now }
 }
 
+// WithTimelineTargets wires the scheduler's project resolution for cron
+// automations that select projects with a filter. Without it such an
+// automation is reported as a warning and not projected.
+func WithTimelineTargets(resolver automationTargetResolver) TimelineServiceOption {
+	return func(service *TimelineService) {
+		if resolver != nil {
+			service.targets = resolver
+		}
+	}
+}
+
 func NewTimelineService(entries timelineEntryLister, events timelineEventReader, options ...TimelineServiceOption) *TimelineService {
-	service := &TimelineService{entries: entries, events: events, now: time.Now}
+	service := &TimelineService{entries: entries, events: events, targets: &AutomationService{}, now: time.Now}
 	for _, option := range options {
 		option(service)
 	}
@@ -63,8 +84,160 @@ func (s *TimelineService) Timeline(ctx context.Context, from, to time.Time, proj
 	if err != nil {
 		return nil, fmt.Errorf("list timeline events: %w", err)
 	}
-	result := BuildTimeline(entries, events, TimelineProjectionOptions{From: from, To: to, Now: s.now()})
+	targets := s.automationTargets(ctx, entries, project)
+	remaining, err := s.automationRunsRemaining(ctx, entries, targets)
+	if err != nil {
+		return nil, err
+	}
+	result := BuildTimeline(entries, events, TimelineProjectionOptions{
+		From: from, To: to, Now: s.now(), RunsRemaining: remaining, AutomationTargets: targets,
+		DayFilters: s.dayFilters(entries),
+	})
 	return &result, nil
+}
+
+// automationTargetSet is one cron automation's resolved fan-out: the projects
+// it fires for, or the error that stopped resolution.
+type automationTargetSet struct {
+	Projects []string
+	Err      error
+	// Effective is the config each bound project runs under, keyed by project.
+	// A project absent from it runs the parent's own config.
+	Effective map[string]types.BrainEntry
+	// EffectiveDayFilters holds the day filters of each bound project whose
+	// effective config names a calendar, resolved by the scheduler's own
+	// dayFiltersFor so the projection gates the same days the scheduler does.
+	EffectiveDayFilters map[string][]schedule.DayFilter
+}
+
+// automationTargetDetailer is the optional richer resolver: it yields each
+// target with its effective config, which the timeline needs to project a
+// binding's own schedule. AutomationService implements it.
+type automationTargetDetailer interface {
+	resolveScheduledTargets(ctx context.Context, automation types.BrainEntry) ([]automationTarget, error)
+}
+
+// automationProjectKey identifies one automation's runs for one target project.
+type automationProjectKey struct {
+	AutomationID string
+	Project      string
+}
+
+// automationTargets resolves, for every cron automation the timeline may
+// project, the projects it fires for. A project-scoped timeline keeps only
+// that project's runs and the unscoped run, as before.
+func (s *TimelineService) automationTargets(ctx context.Context, entries []types.BrainEntry, project string) map[string]automationTargetSet {
+	targets := make(map[string]automationTargetSet)
+	for _, entry := range entries {
+		if !cronProjectionCandidate(entry) {
+			continue
+		}
+		set := s.resolveTargets(ctx, entry)
+		if set.Err == nil && project != "" {
+			set.Projects = scopeTargetsToProject(set.Projects, project)
+		}
+		targets[entry.ID] = set
+	}
+	return targets
+}
+
+// dayFilters resolves, for every cron automation that names a calendar, the day
+// filters the scheduler applies to it. The timeline uses the scheduler's own
+// filters, so a calendar-gated projection cannot disagree with the scheduler.
+func (s *TimelineService) dayFilters(entries []types.BrainEntry) map[string][]schedule.DayFilter {
+	source, ok := s.targets.(automationDayFilterSource)
+	if !ok {
+		source = &AutomationService{}
+	}
+	filters := make(map[string][]schedule.DayFilter)
+	for _, entry := range entries {
+		if !cronProjectionCandidate(entry) || !hasDayFilters(entry.Trigger) {
+			continue
+		}
+		filters[entry.ID] = source.dayFiltersFor(entry)
+	}
+	return filters
+}
+
+// resolveTargets resolves one cron automation's targets. With a detailed
+// resolver it keeps the effective config of each bound project, so the
+// timeline projects a binding's schedule and cap, not the parent's.
+func (s *TimelineService) resolveTargets(ctx context.Context, entry types.BrainEntry) automationTargetSet {
+	detailed, ok := s.targets.(automationTargetDetailer)
+	if !ok {
+		projects, err := s.targets.scheduledTargetProjects(ctx, entry)
+		return automationTargetSet{Projects: projects, Err: err}
+	}
+	resolved, err := detailed.resolveScheduledTargets(ctx, entry)
+	if err != nil {
+		return automationTargetSet{Err: err}
+	}
+	set := automationTargetSet{Projects: make([]string, 0, len(resolved))}
+	for _, target := range resolved {
+		set.Projects = append(set.Projects, target.project)
+		if target.entry.Binding == "" {
+			continue
+		}
+		if set.Effective == nil {
+			set.Effective = make(map[string]types.BrainEntry)
+		}
+		set.Effective[target.project] = target.entry
+		if hasDayFilters(target.entry.Trigger) {
+			if source, ok := s.targets.(automationDayFilterSource); ok {
+				if set.EffectiveDayFilters == nil {
+					set.EffectiveDayFilters = make(map[string][]schedule.DayFilter)
+				}
+				set.EffectiveDayFilters[target.project] = source.dayFiltersFor(target.entry)
+			}
+		}
+	}
+	return set
+}
+
+// scopeTargetsToProject keeps the targets a project-scoped timeline shows: that
+// project, and the unscoped run (project "").
+func scopeTargetsToProject(projects []string, project string) []string {
+	var kept []string
+	for _, target := range projects {
+		if target == project || target == "" {
+			kept = append(kept, target)
+		}
+	}
+	return kept
+}
+
+// automationRunsRemaining returns, for each capped cron automation and each of
+// its target projects, how many runs that project's max_runs still allows. Each
+// count is the scheduler's own (countAutomationRuns for that project), so the
+// projection stops where the scheduler stops.
+func (s *TimelineService) automationRunsRemaining(ctx context.Context, entries []types.BrainEntry, targets map[string]automationTargetSet) (map[automationProjectKey]int, error) {
+	remaining := make(map[automationProjectKey]int)
+	for _, entry := range entries {
+		if entry.Type != "automation" {
+			continue
+		}
+		resolved, ok := targets[entry.ID]
+		if !ok || resolved.Err != nil {
+			continue
+		}
+		for _, project := range resolved.Projects {
+			// A binding may set its own max_runs; that project's cap is the
+			// one its effective config carries.
+			maxRuns := entry.MaxRuns
+			if effective, bound := resolved.Effective[project]; bound {
+				maxRuns = effective.MaxRuns
+			}
+			if maxRuns == nil || *maxRuns <= 0 {
+				continue
+			}
+			used, err := countAutomationRuns(ctx, s.entries, entry.ID, project, *maxRuns)
+			if err != nil {
+				return nil, err
+			}
+			remaining[automationProjectKey{AutomationID: entry.ID, Project: project}] = max(0, *maxRuns-used)
+		}
+	}
+	return remaining, nil
 }
 
 func (s *TimelineService) listType(ctx context.Context, entryType, project string) ([]types.BrainEntry, error) {
@@ -91,6 +264,19 @@ type TimelineProjectionOptions struct {
 	Now                 time.Time
 	DenseDailyThreshold int
 	ExpansionBudget     int
+	// RunsRemaining caps projected runs per automation and target project by
+	// the runs that project's max_runs still allows. Pairs absent from the map
+	// are uncapped.
+	RunsRemaining map[automationProjectKey]int
+	// AutomationTargets maps a cron automation's ID to the projects it fires
+	// for. An automation absent from the map is resolved without a project
+	// lister: an unfiltered one fires once for its own project (or unscoped),
+	// and a filtered one is reported as unresolved.
+	AutomationTargets map[string]automationTargetSet
+	// DayFilters maps a cron automation's ID to the day filters its slots must
+	// pass (see AutomationService.dayFiltersFor). A calendar-gated automation
+	// absent from the map is not projected: the projection fails closed.
+	DayFilters map[string][]schedule.DayFilter
 }
 
 type timelineBuilder struct {
@@ -232,11 +418,114 @@ func (b *timelineBuilder) projectFeature(entry types.BrainEntry) {
 	}
 }
 
+// cronProjectionCandidate reports whether an automation is clock-driven the way
+// the scheduler evaluates it: active, cron-typed with a schedule or an every
+// interval, and not a goal (goals are driven by the goal loop).
+func cronProjectionCandidate(entry types.BrainEntry) bool {
+	// A binding is projected only through its parent's targets.
+	return entry.Type == "automation" && entry.Extends == "" && entry.Status == "active" && entry.Trigger != nil &&
+		entry.Trigger.Type == "cron" && (entry.Trigger.Schedule != "" || entry.Trigger.Every != "") &&
+		!isGoalAutomation(entry)
+}
+
 func (b *timelineBuilder) projectAutomation(entry types.BrainEntry) {
-	if entry.Status != "active" || entry.Trigger == nil || entry.Trigger.Type != "cron" || entry.Trigger.Schedule == "" {
+	if !cronProjectionCandidate(entry) {
 		return
 	}
-	b.addCron(entry, "automation", entry.ID, entry.Trigger.Schedule, entry.Trigger.Timezone, b.projectionStart(), b.opts.To, b.remaining, "automation.projected")
+	// The window is the automation's own starts_at..expires_at, clipped to the
+	// requested range, so a run outside that lifecycle is never projected.
+	start, end, ok := b.sourceWindow(entry.StartsAt, entry.ExpiresAt, entry.Trigger.Timezone)
+	if !ok {
+		return
+	}
+	spec, err := automationScheduleSpec(entry)
+	if err != nil {
+		b.warn(entry.ID, err)
+		return
+	}
+	if hasDayFilters(entry.Trigger) {
+		filters, ok := b.opts.DayFilters[entry.ID]
+		if !ok {
+			b.warn(entry.ID, errors.New("calendar day filter unavailable; not projected"))
+			return
+		}
+		spec.DayFilters = filters
+	}
+	sched, err := schedule.Compile(spec)
+	if err != nil {
+		b.warn(entry.ID, err)
+		return
+	}
+	resolved := b.automationTargetsFor(entry)
+	if resolved.Err != nil {
+		b.warn(entry.ID, resolved.Err)
+		return
+	}
+	rule := automationProjectionRule(entry)
+	for _, project := range resolved.Projects {
+		// A project with a binding is projected under the binding's effective
+		// config: its own window, schedule and stagger. Everything else runs the
+		// parent's, as before.
+		projEntry, projStart, projEnd, projSched, projRule := entry, start, end, sched, rule
+		if effective, bound := resolved.Effective[project]; bound {
+			effStart, effEnd, ok := b.sourceWindow(effective.StartsAt, effective.ExpiresAt, effective.Trigger.Timezone)
+			if !ok {
+				continue
+			}
+			effSpec, err := automationScheduleSpec(effective)
+			if err != nil {
+				b.warn(entry.ID, err)
+				continue
+			}
+			if hasDayFilters(effective.Trigger) {
+				filters, ok := resolved.EffectiveDayFilters[project]
+				if !ok {
+					b.warn(entry.ID, errors.New("calendar day filter unavailable for project "+project+"; not projected"))
+					continue
+				}
+				effSpec.DayFilters = filters
+			}
+			effSched, err := schedule.Compile(effSpec)
+			if err != nil {
+				b.warn(entry.ID, err)
+				continue
+			}
+			projEntry, projStart, projEnd, projSched = effective, effStart, effEnd, effSched
+			projRule = automationProjectionRule(effective)
+		}
+		limit := b.remaining
+		if left, capped := b.opts.RunsRemaining[automationProjectKey{AutomationID: entry.ID, Project: project}]; capped {
+			limit = min(limit, left)
+		}
+		if limit <= 0 {
+			continue
+		}
+		target := projEntry
+		target.ProjectID = project
+		b.addSchedule(target, projSched, projSched.Offset(entry.ID, project), projRule, projEntry.Trigger.Timezone, projStart, projEnd, limit)
+	}
+}
+
+// automationTargetsFor returns the resolved targets of one cron automation,
+// resolving it without a project lister when the caller pre-resolved nothing.
+func (b *timelineBuilder) automationTargetsFor(entry types.BrainEntry) automationTargetSet {
+	if resolved, ok := b.opts.AutomationTargets[entry.ID]; ok {
+		return resolved
+	}
+	projects, err := (&AutomationService{}).scheduledTargetProjects(context.Background(), entry)
+	return automationTargetSet{Projects: projects, Err: err}
+}
+
+// automationProjectionRule is the rule a projection carries: the cron
+// expression, or the every interval with its time of day.
+func automationProjectionRule(entry types.BrainEntry) string {
+	if entry.Trigger.Schedule != "" {
+		return entry.Trigger.Schedule
+	}
+	if entry.Trigger.At != "" {
+		return "every " + entry.Trigger.Every + " at " + entry.Trigger.At
+	}
+	return "every " + entry.Trigger.Every
 }
 
 func reminderEligible(entry types.BrainEntry) bool {
@@ -313,8 +602,38 @@ func (b *timelineBuilder) sourceWindow(startsAt, expiresAt, timezone string) (ti
 	return start, end, start.Before(end)
 }
 
+// addSchedule appends one target's runs of a compiled schedule, from start
+// (inclusive) to end (exclusive), at most limit of them. Each instant is
+// NextSlot's own, so a projected run lands exactly when the scheduler's slot
+// does.
+func (b *timelineBuilder) addSchedule(entry types.BrainEntry, sched *schedule.Schedule, offset time.Duration, rule, timezone string, start, end time.Time, limit int) {
+	ctx := context.Background()
+	budgetLimited := limit >= b.remaining
+	cursor := start.Add(-time.Nanosecond)
+	for emitted := 0; emitted < limit; emitted++ {
+		slot, ok, err := sched.NextSlot(ctx, cursor, offset)
+		if err != nil {
+			b.warn(entry.ID, err)
+			return
+		}
+		if !ok || !slot.At.Before(end) {
+			return
+		}
+		if !b.appendProjection(entry, "automation", entry.ID, slot.At, types.TimelineKindExecution, "automation.projected", rule, timezone) {
+			return
+		}
+		cursor = slot.At
+	}
+	if budgetLimited {
+		slot, ok, err := sched.NextSlot(ctx, cursor, offset)
+		if err == nil && ok && slot.At.Before(end) {
+			b.truncated = true
+		}
+	}
+}
+
 func (b *timelineBuilder) addCron(entry types.BrainEntry, sourceKind, sourceID, expression, timezone string, start, end time.Time, limit int, eventType string) {
-	schedule, err := braincron.Parse(expression)
+	parsed, err := braincron.Parse(expression)
 	if err != nil {
 		b.warn(sourceID, err)
 		return
@@ -323,7 +642,7 @@ func (b *timelineBuilder) addCron(entry types.BrainEntry, sourceKind, sourceID, 
 	cursor := start.In(loc).Add(-time.Nanosecond)
 	budgetLimited := limit >= b.remaining
 	for emitted := 0; emitted < limit; emitted++ {
-		next := schedule.NextAfter(cursor)
+		next := parsed.NextAfter(cursor)
 		if next.IsZero() || !next.Before(end) {
 			return
 		}
@@ -333,7 +652,7 @@ func (b *timelineBuilder) addCron(entry types.BrainEntry, sourceKind, sourceID, 
 		cursor = next
 	}
 	if budgetLimited {
-		next := schedule.NextAfter(cursor)
+		next := parsed.NextAfter(cursor)
 		if !next.IsZero() && next.Before(end) {
 			b.truncated = true
 		}
@@ -380,8 +699,14 @@ func (b *timelineBuilder) appendProjection(entry types.BrainEntry, sourceKind, s
 	if sourceKind == "feature" {
 		featureID = sourceID
 	}
+	id := fmt.Sprintf("projection:%s:%s:%s:%d", sourceKind, sourceID, kind, at.Unix())
+	if sourceKind == "automation" && entry.ProjectID != "" {
+		// Fan-out runs of one automation share instants across projects; the
+		// project keeps their IDs distinct.
+		id += ":" + entry.ProjectID
+	}
 	b.items = append(b.items, types.TimelineItem{
-		ID:   fmt.Sprintf("projection:%s:%s:%s:%d", sourceKind, sourceID, kind, at.Unix()),
+		ID:   id,
 		Type: eventType, Source: "forecast", Timestamp: at.UTC(), ProjectID: entry.ProjectID,
 		TaskID: taskID, TaskPath: entry.Path, TaskTitle: entry.Title, FeatureID: featureID,
 		Summary: entry.Title, TemporalState: types.TimelineStateProjected, TemporalKind: kind,
@@ -408,7 +733,9 @@ func (b *timelineBuilder) aggregateDenseDays() {
 		}
 		loc := braincron.LoadTimezone(item.Timezone)
 		day := item.Timestamp.In(loc).Format("2006-01-02")
-		key := item.SourceKind + "\x00" + item.SourceID + "\x00" + item.TemporalKind + "\x00" + day
+		// Runs for different projects are different runs, so the project is
+		// part of the group key.
+		key := item.SourceKind + "\x00" + item.SourceID + "\x00" + item.ProjectID + "\x00" + item.TemporalKind + "\x00" + day
 		if groups[key] == nil {
 			groups[key] = &group{loc: loc}
 		}

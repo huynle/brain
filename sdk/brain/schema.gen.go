@@ -8,6 +8,63 @@ import (
 	"time"
 )
 
+// Defines values for AutomationEffectiveBrokenReason.
+const (
+	DuplicateBinding    AutomationEffectiveBrokenReason = "duplicate_binding"
+	ParentMissing       AutomationEffectiveBrokenReason = "parent_missing"
+	ParentNotAutomation AutomationEffectiveBrokenReason = "parent_not_automation"
+)
+
+// Valid indicates whether the value is a known member of the AutomationEffectiveBrokenReason enum.
+func (e AutomationEffectiveBrokenReason) Valid() bool {
+	switch e {
+	case DuplicateBinding:
+		return true
+	case ParentMissing:
+		return true
+	case ParentNotAutomation:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AutomationEffectiveFields.
+const (
+	Inherited  AutomationEffectiveFields = "inherited"
+	Overridden AutomationEffectiveFields = "overridden"
+)
+
+// Valid indicates whether the value is a known member of the AutomationEffectiveFields enum.
+func (e AutomationEffectiveFields) Valid() bool {
+	switch e {
+	case Inherited:
+		return true
+	case Overridden:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CalendarStatusKind.
+const (
+	Builtin CalendarStatusKind = "builtin"
+	Ics     CalendarStatusKind = "ics"
+)
+
+// Valid indicates whether the value is a known member of the CalendarStatusKind enum.
+func (e CalendarStatusKind) Valid() bool {
+	switch e {
+	case Builtin:
+		return true
+	case Ics:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ControlPermissionRequestResponse.
 const (
 	PermissionAlways ControlPermissionRequestResponse = "always"
@@ -236,12 +293,43 @@ type AutomationAction struct {
 	ExecutionMode      *string `json:"execution_mode,omitempty"`
 	Executor           *string `json:"executor,omitempty"`
 	Model              *string `json:"model,omitempty"`
+	PromptAppend       *string `json:"prompt_append,omitempty"`
 	RequiresCapability *string `json:"requires_capability,omitempty"`
 	SessionMode        *string `json:"session_mode,omitempty"`
 	SetStatus          *string `json:"set_status,omitempty"`
 	TargetWorkdir      *string `json:"target_workdir,omitempty"`
 	Timeout            *string `json:"timeout,omitempty"`
 	Type               string  `json:"type"`
+}
+
+// AutomationEffective defines model for AutomationEffective.
+type AutomationEffective struct {
+	Automation    *AutomationEffectiveConfig           `json:"automation,omitempty"`
+	BindingId     *string                              `json:"binding_id,omitempty"`
+	BindingStatus *string                              `json:"binding_status,omitempty"`
+	Broken        bool                                 `json:"broken"`
+	BrokenReason  *AutomationEffectiveBrokenReason     `json:"broken_reason,omitempty"`
+	Fields        map[string]AutomationEffectiveFields `json:"fields"`
+	Id            string                               `json:"id"`
+	Project       string                               `json:"project"`
+	Targeted      bool                                 `json:"targeted"`
+}
+
+// AutomationEffectiveBrokenReason defines model for AutomationEffective.BrokenReason.
+type AutomationEffectiveBrokenReason string
+
+// AutomationEffectiveFields defines model for AutomationEffective.Fields.
+type AutomationEffectiveFields string
+
+// AutomationEffectiveConfig defines model for AutomationEffectiveConfig.
+type AutomationEffectiveConfig struct {
+	Action    *AutomationAction `json:"action,omitempty"`
+	ExpiresAt *string           `json:"expires_at,omitempty"`
+	Id        string            `json:"id"`
+	MaxRuns   *int              `json:"max_runs,omitempty"`
+	StartsAt  *string           `json:"starts_at,omitempty"`
+	Timezone  *string           `json:"timezone,omitempty"`
+	Trigger   *TriggerConfig    `json:"trigger,omitempty"`
 }
 
 // AutomationRetry defines model for AutomationRetry.
@@ -288,6 +376,7 @@ type BrainEntry struct {
 	AttemptCount            *int                        `json:"attempt_count,omitempty"`
 	AutomationRunId         *string                     `json:"automation_run_id,omitempty"`
 	Backlinks               *[]BacklinkEntry            `json:"backlinks,omitempty"`
+	Binding                 *string                     `json:"binding,omitempty"`
 	CheckoutMode            *string                     `json:"checkout_mode,omitempty"`
 	CompleteOnIdle          *bool                       `json:"complete_on_idle,omitempty"`
 	CompletedAt             *string                     `json:"completed_at,omitempty"`
@@ -301,6 +390,7 @@ type BrainEntry struct {
 	ExecutionMode           *string                     `json:"execution_mode,omitempty"`
 	Executor                *string                     `json:"executor,omitempty"`
 	ExpiresAt               *string                     `json:"expires_at,omitempty"`
+	Extends                 *string                     `json:"extends,omitempty"`
 	Extensions              *[]string                   `json:"extensions,omitempty"`
 	FeatureDependsOn        *[]string                   `json:"feature_depends_on,omitempty"`
 	FeatureExpiresAt        *string                     `json:"feature_expires_at,omitempty"`
@@ -352,6 +442,7 @@ type BrainEntry struct {
 	Runs                    *[]CronRun                  `json:"runs,omitempty"`
 	Schedule                *string                     `json:"schedule,omitempty"`
 	ScheduleEnabled         *bool                       `json:"schedule_enabled,omitempty"`
+	ScheduledFor            *string                     `json:"scheduled_for,omitempty"`
 	SessionMode             *string                     `json:"session_mode,omitempty"`
 	Sessions                *map[string]SessionInfo     `json:"sessions,omitempty"`
 	StartsAt                *string                     `json:"starts_at,omitempty"`
@@ -445,6 +536,34 @@ type BulkUpdateResult struct {
 	Path   string  `json:"path"`
 	Status string  `json:"status"`
 	Title  string  `json:"title"`
+}
+
+// CalendarEventFilter defines model for CalendarEventFilter.
+type CalendarEventFilter struct {
+	AllDay      *string `json:"all_day,omitempty"`
+	Calendar    *string `json:"calendar,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Location    *string `json:"location,omitempty"`
+	Title       *string `json:"title,omitempty"`
+}
+
+// CalendarStatus defines model for CalendarStatus.
+type CalendarStatus struct {
+	EventCount  *int               `json:"event_count,omitempty"`
+	Kind        CalendarStatusKind `json:"kind"`
+	LastError   *string            `json:"last_error,omitempty"`
+	LastFetch   *time.Time         `json:"last_fetch,omitempty"`
+	LastSuccess *time.Time         `json:"last_success,omitempty"`
+	Name        string             `json:"name"`
+	Stale       *bool              `json:"stale,omitempty"`
+}
+
+// CalendarStatusKind defines model for CalendarStatus.Kind.
+type CalendarStatusKind string
+
+// CalendarsResponse defines model for CalendarsResponse.
+type CalendarsResponse struct {
+	Calendars []CalendarStatus `json:"calendars"`
 }
 
 // CancelChainResponse defines model for CancelChainResponse.
@@ -563,6 +682,7 @@ type CreateEntryRequest struct {
 	AssignmentIntent    *string                     `json:"assignment_intent,omitempty"`
 	Attachments         *[]AttachmentReference      `json:"attachments,omitempty"`
 	AutomationRunId     *string                     `json:"automation_run_id,omitempty"`
+	Binding             *string                     `json:"binding,omitempty"`
 	CheckoutMode        *string                     `json:"checkout_mode,omitempty"`
 	CompleteOnIdle      *bool                       `json:"complete_on_idle,omitempty"`
 	Content             string                      `json:"content"`
@@ -572,6 +692,7 @@ type CreateEntryRequest struct {
 	ExecutionMode       *string                     `json:"execution_mode,omitempty"`
 	Executor            *string                     `json:"executor,omitempty"`
 	ExpiresAt           *string                     `json:"expires_at,omitempty"`
+	Extends             *string                     `json:"extends,omitempty"`
 	Extensions          *[]string                   `json:"extensions,omitempty"`
 	FeatureDependsOn    *[]string                   `json:"feature_depends_on,omitempty"`
 	FeatureExpiresAt    *string                     `json:"feature_expires_at,omitempty"`
@@ -613,6 +734,7 @@ type CreateEntryRequest struct {
 	Runs                *[]CronRun                  `json:"runs,omitempty"`
 	Schedule            *string                     `json:"schedule,omitempty"`
 	ScheduleEnabled     *bool                       `json:"schedule_enabled,omitempty"`
+	ScheduledFor        *string                     `json:"scheduled_for,omitempty"`
 	SessionMode         *string                     `json:"session_mode,omitempty"`
 	StartsAt            *string                     `json:"starts_at,omitempty"`
 	Status              *string                     `json:"status,omitempty"`
@@ -2289,17 +2411,26 @@ type TimelineWarning struct {
 
 // TriggerConfig defines model for TriggerConfig.
 type TriggerConfig struct {
-	Cooldown               *string            `json:"cooldown,omitempty"`
-	Event                  *string            `json:"event,omitempty"`
-	Events                 *[]string          `json:"events,omitempty"`
-	Filter                 *map[string]string `json:"filter,omitempty"`
-	IgnoreAutomationEvents *bool              `json:"ignore_automation_events,omitempty"`
-	MaxConcurrent          *int               `json:"max_concurrent,omitempty"`
-	OncePer                *string            `json:"once_per,omitempty"`
-	Schedule               *string            `json:"schedule,omitempty"`
-	Timezone               *string            `json:"timezone,omitempty"`
-	Type                   *string            `json:"type,omitempty"`
-	Webhook                *string            `json:"webhook,omitempty"`
+	At                     *string              `json:"at,omitempty"`
+	Calendar               *string              `json:"calendar,omitempty"`
+	CatchUp                *string              `json:"catch_up,omitempty"`
+	Cooldown               *string              `json:"cooldown,omitempty"`
+	Event                  *string              `json:"event,omitempty"`
+	Events                 *[]string            `json:"events,omitempty"`
+	Every                  *string              `json:"every,omitempty"`
+	Filter                 *map[string]string   `json:"filter,omitempty"`
+	IgnoreAutomationEvents *bool                `json:"ignore_automation_events,omitempty"`
+	Match                  *map[string]string   `json:"match,omitempty"`
+	MaxConcurrent          *int                 `json:"max_concurrent,omitempty"`
+	Offset                 *string              `json:"offset,omitempty"`
+	OncePer                *string              `json:"once_per,omitempty"`
+	OnlyIfEvent            *CalendarEventFilter `json:"only_if_event,omitempty"`
+	Schedule               *string              `json:"schedule,omitempty"`
+	SkipIfEvent            *CalendarEventFilter `json:"skip_if_event,omitempty"`
+	Stagger                *string              `json:"stagger,omitempty"`
+	Timezone               *string              `json:"timezone,omitempty"`
+	Type                   *string              `json:"type,omitempty"`
+	Webhook                *string              `json:"webhook,omitempty"`
 }
 
 // TriggerResponse defines model for TriggerResponse.
@@ -2319,6 +2450,7 @@ type UpdateEntryRequest struct {
 	Append              *string                     `json:"append,omitempty"`
 	Attachments         *[]AttachmentReference      `json:"attachments,omitempty"`
 	AutomationRunId     *string                     `json:"automation_run_id,omitempty"`
+	Binding             *string                     `json:"binding,omitempty"`
 	CheckoutMode        *string                     `json:"checkout_mode,omitempty"`
 	CompleteOnIdle      *bool                       `json:"complete_on_idle,omitempty"`
 	Content             *string                     `json:"content,omitempty"`
@@ -2329,6 +2461,7 @@ type UpdateEntryRequest struct {
 	Executor            *string                     `json:"executor,omitempty"`
 	ExpectedRevision    *string                     `json:"expected_revision,omitempty"`
 	ExpiresAt           *string                     `json:"expires_at,omitempty"`
+	Extends             *string                     `json:"extends,omitempty"`
 	Extensions          *[]string                   `json:"extensions,omitempty"`
 	FeatureDependsOn    *[]string                   `json:"feature_depends_on,omitempty"`
 	FeatureExpiresAt    *string                     `json:"feature_expires_at,omitempty"`
@@ -2366,6 +2499,7 @@ type UpdateEntryRequest struct {
 	Runs                *[]CronRun                  `json:"runs,omitempty"`
 	Schedule            *string                     `json:"schedule,omitempty"`
 	ScheduleEnabled     *bool                       `json:"schedule_enabled,omitempty"`
+	ScheduledFor        *string                     `json:"scheduled_for,omitempty"`
 	Sessions            *map[string]SessionInfo     `json:"sessions,omitempty"`
 	StartsAt            *string                     `json:"starts_at,omitempty"`
 	Status              *string                     `json:"status,omitempty"`
@@ -2519,6 +2653,11 @@ type AutomationsRunsParams struct {
 	Status       *string `form:"status,omitempty" json:"status,omitempty"`
 	AutomationId *string `form:"automation_id,omitempty" json:"automation_id,omitempty"`
 	Limit        *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// AutomationsEffectiveParams defines parameters for AutomationsEffective.
+type AutomationsEffectiveParams struct {
+	Project string `form:"project" json:"project"`
 }
 
 // ControlSessionDescendantsParams defines parameters for ControlSessionDescendants.

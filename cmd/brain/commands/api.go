@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/huynle/brain-api/internal/apiserver"
 	"github.com/huynle/brain-api/internal/config"
@@ -48,6 +47,8 @@ type UnifiedConfig struct {
 
 		AttachmentExtraction config.AttachmentExtractionConfig
 		Assistant            config.AssistantConfig
+		Attention            config.AttentionConfig
+		Calendars            map[string]config.CalendarConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {
@@ -86,31 +87,8 @@ func (c *APICommand) Type() string {
 
 // Execute starts the Brain API server.
 func (c *APICommand) Execute() error {
-	passwordRefreshTTL := time.Duration(c.Config.Server.PasswordSessionTTLDays) * 24 * time.Hour
-	// Build options from config + flags
-	opts := apiserver.ServerOptions{
-		Port:                    c.Config.Server.Port,
-		Host:                    c.Config.Server.Host,
-		BrainDir:                c.Config.Server.BrainDir,
-		EnableAuth:              c.Config.Server.EnableAuth,
-		LogLevel:                c.Config.Server.LogLevel,
-		CORSOrigin:              c.Config.Server.CORSOrigin,
-		OAuthPIN:                c.Config.Server.OAuthPIN,
-		JWTSecret:               c.Config.Server.JWTSecret,
-		PasswordRefreshTokenTTL: &passwordRefreshTTL,
-		TaskDefaults:            c.Config.Server.TaskDefaults,
-		FeatureCheckout:         c.Config.Server.FeatureCheckout,
-		FeatureDelivery:         c.Config.Server.FeatureDelivery,
-		IndexWatch:              c.Config.Server.IndexWatch,
-		Embedding:               c.Config.Server.Embedding,
-		Attachments:             c.Config.Server.Attachments,
-
-		AttachmentExtraction: c.Config.Server.AttachmentExtraction,
-		Assistant:            c.Config.Server.Assistant,
-
-		TLSCert: c.Config.Server.TLS.CertPath,
-		TLSKey:  c.Config.Server.TLS.KeyPath,
-	}
+	// Build options from config (one mapping shared with `brain api start`) + flags
+	opts := serverOptionsFromConfig(c.Config)
 
 	// Flags override config
 	if c.Flags.Port != 0 {

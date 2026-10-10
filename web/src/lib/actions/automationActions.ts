@@ -17,8 +17,22 @@
  * invalidates the ["v2", "automations", project] query afterwards
  * (see hooks/useAutomationActionContext).
  */
+import { bindingProjectOf, type BindingOverrides } from "../automationBindings";
 import type { BrainEntry } from "../types";
 import type { ActionDescriptor } from "./types";
+
+/**
+ * Where an action is being offered from. A global automation viewed inside
+ * a project turns on or off for that project only, so its toggles write the
+ * project's binding and never the global entry.
+ */
+export interface ProjectScope {
+  projectId: string;
+  /** The binding that governs this project, or null when none does. */
+  binding: BrainEntry | null;
+  /** Whether the scheduler fires this automation for projectId (effective view). */
+  targeted: boolean;
+}
 
 /**
  * Effects an automation action can perform. The component supplies
@@ -39,6 +53,16 @@ export interface AutomationActionContext {
   openHistory: (a: BrainEntry) => void;
   /** Opens the project's dockable runs pane, filtered to this one. */
   openRunsPane: (a: BrainEntry) => void;
+  /** Project scope, global automation: opt this project out. Writes the binding only. */
+  turnOffHere: (a: BrainEntry, scope: ProjectScope) => Promise<void>;
+  /** Project scope, global automation: opt this project in, or drop its opt-out. */
+  turnOnHere: (a: BrainEntry, scope: ProjectScope) => Promise<void>;
+  /** Project scope, global automation: save the binding's overrides (creates one if needed). */
+  saveOverrides: (
+    a: BrainEntry,
+    scope: ProjectScope,
+    overrides: BindingOverrides,
+  ) => Promise<void>;
 }
 
 export function automationName(a: BrainEntry): string {
@@ -48,6 +72,20 @@ export function automationName(a: BrainEntry): string {
 /** Only "active" automations fire on their trigger. */
 export function isEnabledAutomation(a: BrainEntry): boolean {
   return a.status === "active";
+}
+
+/** A global automation has no owning project; it is shared by every project. */
+export function isGlobalAutomation(a: BrainEntry): boolean {
+  return bindingProjectOf(a) === "";
+}
+
+/**
+ * Whether the automation is on for the scope's project. A global automation
+ * is on here when the scheduler targets this project; anything else uses its
+ * own status.
+ */
+export function isEnabledHere(a: BrainEntry, scope: ProjectScope): boolean {
+  return isGlobalAutomation(a) ? scope.targeted : isEnabledAutomation(a);
 }
 
 /** Built-ins carry the server reconciler's marker. */
@@ -67,6 +105,19 @@ export function enableAutomationBlockedReason(a: BrainEntry): string {
   return "";
 }
 
+/**
+ * Why a global automation cannot be turned on in this project, or "" when it
+ * can. Turning on does nothing while the global entry is not active.
+ */
+function turnOnHereBlockedReason(a: BrainEntry, scope: ProjectScope): string {
+  if (scope.targeted) return "Already on in this project";
+  if (a.status !== "active") {
+    const state = a.status === "blocked" ? "errored" : "paused";
+    return `Automation is ${state} everywhere, so it cannot be turned on here. Enable it globally first.`;
+  }
+  return "";
+}
+
 /** Why the automation cannot be deleted, or "" when it can. */
 export function deleteAutomationBlockedReason(a: BrainEntry): string {
   if (isBuiltinAutomation(a)) {
@@ -82,9 +133,11 @@ export function deleteAutomationBlockedReason(a: BrainEntry): string {
 export function buildAutomationActions(
   a: BrainEntry,
   ctx: AutomationActionContext,
+  scope?: ProjectScope,
 ): ActionDescriptor[] {
   const name = automationName(a);
   const actions: ActionDescriptor[] = [];
+  const here = scope && isGlobalAutomation(a) ? scope : undefined;
 
   // ─── run ────────────────────────────────────────────────────────
   actions.push({
@@ -98,27 +151,48 @@ export function buildAutomationActions(
   });
 
   // ─── state ──────────────────────────────────────────────────────
-  actions.push({
-    id: "enable",
-    label:
-      a.status === "blocked" ? "Re-enable automation" : "Enable automation",
-    group: "state",
-    key: "r",
-    disabledReason: enableAutomationBlockedReason(a),
-    run: () => ctx.enableAutomation(a),
-  });
+  if (here) {
+    // A global automation in a project tab. The verbs act on this project's
+    // binding only. The global status is never written from here.
+    actions.push({
+      id: "enable",
+      label: "Turn on here",
+      group: "state",
+      key: "r",
+      disabledReason: turnOnHereBlockedReason(a, here),
+      run: () => ctx.turnOnHere(a, here),
+    });
+    actions.push({
+      id: "pause",
+      label: "Turn off here",
+      group: "state",
+      key: "p",
+      disabledReason: here.targeted ? "" : "Already off in this project",
+      run: () => ctx.turnOffHere(a, here),
+    });
+  } else {
+    actions.push({
+      id: "enable",
+      label:
+        a.status === "blocked" ? "Re-enable automation" : "Enable automation",
+      group: "state",
+      key: "r",
+      disabledReason: enableAutomationBlockedReason(a),
+      run: () => ctx.enableAutomation(a),
+    });
 
-  actions.push({
-    id: "pause",
-    label:
-      a.status === "blocked"
-        ? "Pause automation (stop retries)"
-        : "Pause automation",
-    group: "state",
-    key: "p",
-    disabledReason: pauseAutomationBlockedReason(a),
-    run: () => ctx.pauseAutomation(a),
-  });
+    actions.push({
+      id: "pause",
+      label:
+        a.status === "blocked"
+          ? "Pause automation (stop retries)"
+          : "Pause automation",
+      group: "state",
+      key: "p",
+      disabledReason: pauseAutomationBlockedReason(a),
+      run: () => ctx.pauseAutomation(a),
+    });
+  }
 
   // ─── navigate ───────────────────────────────────────────────────
   actions.push({

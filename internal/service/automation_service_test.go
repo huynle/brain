@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -916,7 +919,17 @@ func TestAutomationService_StartConsumesEventHubEvents(t *testing.T) {
 
 	hub := realtime.NewEventHub()
 	automation := NewAutomationService(brain)
-	go automation.Start(ctx, hub)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		automation.Start(ctx, hub)
+	}()
+	// Stop the loop and wait for it before the temp dir is removed: it writes
+	// the generated task after the test body has seen it.
+	t.Cleanup(func() {
+		cancel()
+		<-stopped
+	})
 
 	hub.Publish(types.Event{
 		ID:        "evt-hub-1",
@@ -1356,7 +1369,7 @@ func TestAutomationService_HandleEventAllowsGenerationAfterCooldownElapsed(t *te
 }
 
 func TestAutomationService_HandleEventTreatsInvalidCooldownAsNoCooldown(t *testing.T) {
-	brain, _, _ := newTestBrainService(t)
+	brain, _, brainDir := newTestBrainService(t)
 	ctx := context.Background()
 	created := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 	setTestNow(t, created)
@@ -1370,7 +1383,7 @@ func TestAutomationService_HandleEventTreatsInvalidCooldownAsNoCooldown(t *testi
 		Trigger: &types.TriggerConfig{
 			Type:     "event",
 			Event:    types.EventTaskCompleted,
-			Cooldown: "not-a-duration",
+			Cooldown: "5m",
 		},
 		Action: &types.AutomationAction{
 			Type:         "prompt",
@@ -1379,6 +1392,23 @@ func TestAutomationService_HandleEventTreatsInvalidCooldownAsNoCooldown(t *testi
 	})
 	if err != nil {
 		t.Fatalf("Save automation failed: %v", err)
+	}
+	// Save now rejects an invalid cooldown, so store one out-of-band and
+	// re-index, as a pre-validation or hand-edited entry would be.
+	absPath := filepath.Join(brainDir, automationResp.Path)
+	raw, err := os.ReadFile(absPath)
+	if err != nil {
+		t.Fatalf("read automation: %v", err)
+	}
+	corrupted := regexp.MustCompile(`(?m)^(\s*)cooldown:.*$`).ReplaceAllString(string(raw), "${1}cooldown: not-a-duration")
+	if corrupted == string(raw) {
+		t.Fatalf("fixture has no cooldown line to corrupt:\n%s", raw)
+	}
+	if err := os.WriteFile(absPath, []byte(corrupted), 0o644); err != nil {
+		t.Fatalf("write corrupted automation: %v", err)
+	}
+	if err := brain.indexer.IndexFile(automationResp.Path); err != nil {
+		t.Fatalf("re-index corrupted automation: %v", err)
 	}
 
 	generated := true
@@ -1900,6 +1930,7 @@ func TestAutomationService_CheckScheduledAppliesGuardsForCronAutomation(t *testi
 	now := created.Add(5 * time.Minute)
 	setTestNow(t, now)
 	automation := NewAutomationService(brain)
+	stampAutomationsModified(t, brain, created)
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled failed: %v", err)
 	}
@@ -1942,6 +1973,7 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 	}
 
 	automation := NewAutomationService(brain)
+	stampAutomationsModified(t, brain, now.Add(-time.Hour))
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled failed: %v", err)
 	}
@@ -1960,10 +1992,10 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 	if len(resp.Entries) != 1 {
 		t.Fatalf("expected one generated cron task, got %d", len(resp.Entries))
 	}
-	// The dedup key carries the project so one fan-out minute cannot collapse
-	// several projects' tasks into a single key.
-	expectedKey := "automation:cron:" + resp.Entries[0].GeneratedBy[len("automation:"):] +
-		":automation-cron-entry-test:202604291305"
+	// The dedup key names the automation, the project and the slot, so one slot
+	// of one project can never produce two tasks.
+	expectedKey := "sched:" + resp.Entries[0].GeneratedBy[len("automation:"):] +
+		":automation-cron-entry-test:2026-04-29T13:05:00Z"
 	if resp.Entries[0].GeneratedKey != expectedKey {
 		t.Fatalf("generated key = %q, want %q", resp.Entries[0].GeneratedKey, expectedKey)
 	}
@@ -2011,6 +2043,7 @@ func TestAutomationService_CheckScheduledCreatesScriptTaskWithoutForcedWorkdir(t
 	}
 
 	automation := NewAutomationService(brain)
+	stampAutomationsModified(t, brain, now.Add(-time.Hour))
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled failed: %v", err)
 	}
@@ -2064,6 +2097,7 @@ func TestAutomationService_CheckScheduledSkipsWhenAutomationsPaused(t *testing.T
 
 	automation := NewAutomationService(brain)
 	automation.SetPauseChecker(&fakeAutomationPauseChecker{paused: true})
+	stampAutomationsModified(t, brain, now.Add(-time.Hour))
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled failed: %v", err)
 	}
@@ -2131,6 +2165,7 @@ func TestAutomationService_CheckScheduledSkipsWhenProjectAutomationsPaused(t *te
 	automation := NewAutomationService(brain)
 	automation.SetPauseChecker(checker)
 
+	stampAutomationsModified(t, brain, now.Add(-time.Hour))
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled failed: %v", err)
 	}
@@ -2235,9 +2270,21 @@ func TestAutomationService_StartChecksScheduledAutomationsOnStartup(t *testing.T
 		t.Fatalf("Save automation failed: %v", err)
 	}
 
+	stampAutomationsModified(t, brain, time.Now().UTC().Add(-2*time.Minute))
 	hub := realtime.NewEventHub()
 	automation := NewAutomationService(brain)
-	go automation.Start(ctx, hub)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		automation.Start(ctx, hub)
+	}()
+	// The task appears before its run audit is written. Stop the scheduler and
+	// wait for it to return before the temp dir is removed, or cleanup races
+	// the audit write.
+	t.Cleanup(func() {
+		cancel()
+		<-stopped
+	})
 
 	task := waitForGeneratedTask(t, brain, "automation-start-cron-test")
 	if task.DirectPrompt != "Create the startup cron summary." {
@@ -2313,6 +2360,7 @@ func TestAutomationService_CheckScheduledHonorsTimezone(t *testing.T) {
 	}
 
 	automation := NewAutomationService(brain)
+	stampAutomationsModified(t, brain, now.Add(-time.Hour))
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled Denver failed: %v", err)
 	}
@@ -2363,6 +2411,7 @@ func TestAutomationService_CheckScheduledUTCTimezoneDoesNotMatchOffHour(t *testi
 	}
 
 	automation := NewAutomationService(brain)
+	stampAutomationsModified(t, brain, now.Add(-time.Hour))
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled UTC failed: %v", err)
 	}
@@ -2414,6 +2463,7 @@ func TestAutomationService_CheckScheduledEmptyTimezoneDefaultsToUTC(t *testing.T
 	}
 
 	automation := NewAutomationService(brain)
+	stampAutomationsModified(t, brain, now.Add(-time.Hour))
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled legacy failed: %v", err)
 	}
@@ -2434,11 +2484,11 @@ func TestAutomationService_CheckScheduledEmptyTimezoneDefaultsToUTC(t *testing.T
 // TestAutomationService_CheckScheduledInvalidTimezoneDefaultsToUTC verifies
 // that a malformed timezone string does not break scheduling: it falls back
 // to UTC (with a warn log emitted by pkg/cron.LoadTimezone).
-func TestAutomationService_CheckScheduledInvalidTimezoneDefaultsToUTC(t *testing.T) {
+// An unknown trigger.timezone is rejected on save, naming the field, so it
+// can never reach the scheduler and silently run in UTC.
+func TestAutomationService_CheckScheduledInvalidTimezoneRejectedOnSave(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx := context.Background()
-	// 07:00 UTC on Tuesday.
-	now := time.Date(2026, 7, 7, 7, 0, 0, 0, time.UTC)
 
 	_, err := brain.Save(ctx, types.CreateEntryRequest{
 		Type:     "automation",
@@ -2456,28 +2506,11 @@ func TestAutomationService_CheckScheduledInvalidTimezoneDefaultsToUTC(t *testing
 		},
 		Action: &types.AutomationAction{
 			Type:         "prompt",
-			DirectPrompt: "Should still fire in UTC fallback.",
+			DirectPrompt: "Should never be saved.",
 			Agent:        "assistant",
 		},
 	})
-	if err != nil {
-		t.Fatalf("Save bad-tz automation failed: %v", err)
-	}
-
-	automation := NewAutomationService(brain)
-	if err := automation.CheckScheduled(ctx, now); err != nil {
-		t.Fatalf("CheckScheduled bad-tz failed: %v", err)
-	}
-
-	resp, err := brain.List(ctx, types.ListEntriesRequest{
-		Type:    "task",
-		Project: "automation-cron-tz-bad",
-		Limit:   10,
-	})
-	if err != nil {
-		t.Fatalf("List bad-tz tasks failed: %v", err)
-	}
-	if len(resp.Entries) != 1 {
-		t.Fatalf("expected 1 generated task for invalid-timezone automation (UTC fallback) at 07:00 UTC, got %d", len(resp.Entries))
+	if got := fieldOfValidationError(err); got != "trigger.timezone" {
+		t.Fatalf("Save validation field = %q, want trigger.timezone (err: %v)", got, err)
 	}
 }

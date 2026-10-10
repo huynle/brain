@@ -947,6 +947,7 @@ USAGE:
 FLAGS:
   --dry-run                      Show what would be done without making changes
   --force                        Overwrite existing automation entry files
+  --yes, -y                      Confirm the dream stagger change without a terminal
   -h, --help                     Show this help
 
 DESCRIPTION:
@@ -954,7 +955,13 @@ DESCRIPTION:
   global/automation/ and installs the default built-in automations.
 
   Step 1: Deploys default automation entry files to global/automation/
-  Step 2: Finds existing monitor tasks and disables their schedules
+  Step 2: Syncs the automation entries to the Brain API
+  Step 3: Converts each enabled project dream monitor into a binding of the
+          global Dream Consolidation automation, then disables that monitor.
+          Aborts before any write if there is not exactly one global parent.
+  Step 4: Adds stagger: 2h to an installed Dream Consolidation that lacks it.
+          Asks y/N on a terminal; --yes applies it; without either it is not applied.
+  Step 5: Finds other existing monitor tasks and disables their schedules
 
   Existing monitor tasks are preserved but disabled — they are NOT deleted.
   The new automation entries will be picked up by the AutomationMatcher

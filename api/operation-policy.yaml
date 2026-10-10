@@ -94,6 +94,8 @@ operations:
   automations.run: [write, automation_submit_and_effect_delegation, direct_run_validation, work_and_provider, embedding_sync+embedding_background+downstream_executor]
   automations.runs: [read, execution_and_output_sources, filters_limit_offset, read, none]
   automations.getRun: [read, execution_and_output_sources, run_id, read, none]
+  automations.effective: [read, project_scoped_automation_view, automation_id_and_project, read, none]
+  calendars.list: [read, configured_calendar_status, none, read, none]
   reminders.list: [read, visible_reminders, filters_limit_offset, read, none]
   reminders.get: [read, reminder_read, reminder_id, read, none]
   reminders.create: [admin, reminder_edit_and_action_authority, service_validation, content_work_notice, embedding_sync+embedding_background+web_push+downstream_action]

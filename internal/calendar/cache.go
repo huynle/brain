@@ -196,3 +196,16 @@ func fromSnapshotFile(f snapshotFile) snapshot {
 	}
 	return snap
 }
+
+// remove deletes a calendar's cached snapshot. A missing file is not an
+// error, so removing a source is safe to repeat.
+func (s *snapshotStore) remove(name string) error {
+	target, err := s.path(name)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(target); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove calendar snapshot %q: %w", name, err)
+	}
+	return nil
+}

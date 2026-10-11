@@ -27,6 +27,11 @@ func NewCalendarReferenceFinder(lister BrainLister) calendar.ReferenceFinder {
 		if lister == nil {
 			return nil, errors.New("calendar reference finder has no entry lister")
 		}
+		if name == "" {
+			// No source has an empty name, and a blank filter calendar means
+			// "unset", not a reference.
+			return nil, nil
+		}
 		var refs []calendar.Reference
 		for offset := 0; ; offset += calendarReferencePageSize {
 			resp, err := lister.List(ctx, types.ListEntriesRequest{

@@ -131,3 +131,16 @@ func TestCalendarReferencesNilListerIsAnError(t *testing.T) {
 		t.Fatal("nil lister returned no error; removal would silently skip the reference check")
 	}
 }
+
+// An empty name is never a source; automations with no calendar must not match
+// it, or a blank removal would report every trigger.
+func TestCalendarReferencesEmptyNameMatchesNothing(t *testing.T) {
+	lister := &fakeAutomationLister{entries: []types.BrainEntry{
+		automationWith("bare", "active", &types.TriggerConfig{Type: types.TriggerTypeCron}),
+		automationWith("empty-filter", "active", &types.TriggerConfig{SkipIfEvent: &types.CalendarEventFilter{Title: "x"}}),
+	}}
+	refs, err := NewCalendarReferenceFinder(lister)(context.Background(), "")
+	if err != nil || len(refs) != 0 {
+		t.Fatalf("references for empty name = %+v, %v; want none", refs, err)
+	}
+}

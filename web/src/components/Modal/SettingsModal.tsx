@@ -30,6 +30,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Modal } from "../common/Modal";
 import { PhoneNotifications } from "../PhoneNotifications";
+import { CalendarsSettings } from "./CalendarsSettings";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
 import { useModal } from "../../store/modal";
@@ -404,7 +405,10 @@ export function SettingsModal(): JSX.Element {
             <h3>{activeMeta.label}</h3>
             <p>{activeMeta.description}</p>
           </header>
-          <div className="settings-category-content">{serverContent}</div>
+          <div className="settings-category-content">
+            {activeCategory === "advanced" && <CalendarsSettings />}
+            {serverContent}
+          </div>
         </section>
       </div>
     </Modal>

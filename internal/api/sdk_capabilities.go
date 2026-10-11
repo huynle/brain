@@ -56,6 +56,9 @@ func sdkOperations(h *Handler) []string {
 	add(h.webhooks != nil, `webhooks.list webhooks.create webhooks.get webhooks.update webhooks.delete webhooks.deliveries webhooks.test`)
 	add(h.automationRun != nil, `automations.run automations.runs automations.getRun automations.effective`)
 	add(h.calendars != nil, `calendars.list`)
+	// Runtime source writes exist only with the manager (single mode). Their
+	// address is a secret, so they are admin-only and never script-reachable.
+	add(h.calendarManager != nil, `calendars.create calendars.update calendars.delete`)
 	add(h.runner != nil, `runners.status dispatch.pauseAll dispatch.resumeAll dispatch.pauseProject dispatch.resumeProject dispatch.pauseFeature dispatch.resumeFeature dispatch.pauseProjectAutomations dispatch.resumeProjectAutomations`)
 	add(h.runnerRegistry != nil, `runners.list runners.get runners.instances runners.allInstances`)
 	add(h.schedulerViews != nil, `tasks.dispatchLease tasks.placementReasons`)

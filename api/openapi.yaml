@@ -2264,6 +2264,69 @@ paths:
       responses:
         default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
         '200': {description: Calendar source statuses, content: {application/json: {schema: {$ref: '#/components/schemas/CalendarsResponse'}}}}
+    post:
+      operationId: calendars.create
+      summary: Add a runtime ICS calendar source
+      description: >-
+        Admin only. The address is a secret. It is validated with one synchronous fetch and parse,
+        then saved privately on the server, so the source has events at once. Only public https
+        addresses are accepted. The address is never returned, logged or read back.
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCalendarRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '201': {description: Created calendar source (never the address), content: {application/json: {schema: {$ref: '#/components/schemas/CalendarStatus'}}}}
+  /calendars/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      operationId: calendars.update
+      summary: Replace a runtime calendar source's address or poll interval
+      description: >-
+        Admin only. Sets a new secret address, validated before anything changes, and/or a new poll
+        interval. Config sources are defined in server config and cannot be changed here.
+      x-brain-effect: provider
+      x-brain-profile: single
+      x-brain-script: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCalendarRequest'
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200': {description: Updated calendar source (never the address), content: {application/json: {schema: {$ref: '#/components/schemas/CalendarStatus'}}}}
+    delete:
+      operationId: calendars.delete
+      summary: Remove a runtime calendar source
+      description: >-
+        Admin only. A source that automations still reference is refused with 409 and the references,
+        unless force=true. A removal stops polling and deletes the stored address and its cached snapshot.
+      x-brain-effect: write
+      x-brain-profile: single
+      x-brain-script: false
+      parameters:
+        - name: force
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        default: {description: Legacy error, content: {application/json: {schema: {$ref: '#/components/schemas/LegacyErrorResponse'}}}}
+        '200': {description: Removed calendar source and the references it had, content: {application/json: {schema: {$ref: '#/components/schemas/RemoveCalendarResponse'}}}}
+        '409': {description: 'Config source, or referenced without force (references listed)', content: {application/json: {schema: {$ref: '#/components/schemas/CalendarReferenceConflict'}}}}
   /tasks/runner/status:
     get:
       operationId: runners.status
@@ -3543,6 +3606,43 @@ components:
         event_count: {type: integer}
         last_error: {type: string}
         stale: {type: boolean}
+        origin: {type: string, enum: [config, runtime], x-enum-varnames: [OriginConfig, OriginRuntime]}
+        poll: {type: string, description: 'Go duration, ICS sources only, e.g. 5m'}
+    CreateCalendarRequest:
+      type: object
+      required: [name, url]
+      properties:
+        name: {type: string, description: 'Matches ^[a-z0-9][a-z0-9_-]{0,63}$ and must not collide with any source.'}
+        url: {type: string, description: 'Secret iCal address. Public https only, at most 2048 characters. Never returned.'}
+        poll: {type: string, description: 'Go duration, at least 1m. Defaults to 5m.'}
+    UpdateCalendarRequest:
+      type: object
+      description: At least one of url or poll is required.
+      properties:
+        url: {type: string, description: 'Replacement secret iCal address. Never returned.'}
+        poll: {type: string, description: 'Go duration, at least 1m.'}
+    CalendarReference:
+      type: object
+      required: [id, path, title, field]
+      properties:
+        id: {type: string}
+        path: {type: string}
+        title: {type: string}
+        field: {type: string, enum: [trigger.calendar, trigger.skip_if_event, trigger.only_if_event]}
+    RemoveCalendarResponse:
+      type: object
+      required: [name, removed, references]
+      properties:
+        name: {type: string}
+        removed: {type: boolean}
+        references: {type: array, items: {$ref: '#/components/schemas/CalendarReference'}}
+    CalendarReferenceConflict:
+      type: object
+      required: [error, message, references]
+      properties:
+        error: {type: string}
+        message: {type: string}
+        references: {type: array, items: {$ref: '#/components/schemas/CalendarReference'}}
     RunAutomationRequest:
       type: object
       required: [path]

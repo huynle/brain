@@ -87,7 +87,15 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := api.NewHandler(svc, api.WithCalendarService(calendars), api.WithHub(runnerHub), api.WithTaskService(tasks), api.WithRunnerService(runnerDials), api.WithRunnerRegistryService(registry), api.WithSchedulerService(scheduler), api.WithSchedulerVisibilityService(store), api.WithBridgeService(bridgeHub), api.WithAttachmentService(attachments), api.WithGoalService(goals), api.WithReminderService(reminders), api.WithAttentionService(attention), api.WithWebhookService(webhooks), api.WithAutomationRunService(service.NewAutomationService(svc)), api.WithProjectPlacementService(placement), api.WithRunTaskService(scheduler), api.WithRunFeatureService(scheduler), api.WithRunProjectService(scheduler), api.WithDependentChainService(scheduler), api.WithLogBuffer(logbuffer.New(100)), api.WithEventService(events), api.WithTimelineService(timeline),
+	calendarPoller, err := calendar.NewPoller(calendars, nil, t.TempDir(), calendar.PollerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calendarManager, err := calendar.NewManager(calendars, calendarPoller, t.TempDir(), calendar.ManagerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := api.NewHandler(svc, api.WithCalendarService(calendars), api.WithCalendarManager(calendarManager), api.WithHub(runnerHub), api.WithTaskService(tasks), api.WithRunnerService(runnerDials), api.WithRunnerRegistryService(registry), api.WithSchedulerService(scheduler), api.WithSchedulerVisibilityService(store), api.WithBridgeService(bridgeHub), api.WithAttachmentService(attachments), api.WithGoalService(goals), api.WithReminderService(reminders), api.WithAttentionService(attention), api.WithWebhookService(webhooks), api.WithAutomationRunService(service.NewAutomationService(svc)), api.WithProjectPlacementService(placement), api.WithRunTaskService(scheduler), api.WithRunFeatureService(scheduler), api.WithRunProjectService(scheduler), api.WithDependentChainService(scheduler), api.WithLogBuffer(logbuffer.New(100)), api.WithEventService(events), api.WithTimelineService(timeline),
 		api.WithMonitorService(service.NewMonitorService(svc)), api.WithClientContextService(service.NewClientContextService(store)),
 		api.WithSupervisorOperations(store), api.WithSupervisorCheckpoints(store), api.WithExecutionBudgets(store))
 	srv := httptest.NewServer(api.NewRouter(cfg, api.WithHandler(h), api.WithTokenValidator(control)))
@@ -106,7 +114,7 @@ func TestExternalClientsAgainstAuthenticatedRealHandler(t *testing.T) {
 	}
 	defer authed.Close()
 	manifest, err := authed.Capabilities(context.Background())
-	if err != nil || manifest == nil || len(manifest.Operations) != 148 || manifest.Scripts.Available {
+	if err != nil || manifest == nil || len(manifest.Operations) != 151 || manifest.Scripts.Available {
 		t.Fatalf("fully composed discovery: %+v, %v", manifest, err)
 	}
 	if _, err := c.Capabilities(context.Background()); err == nil {

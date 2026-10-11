@@ -718,3 +718,38 @@ func TestSecretTokenNeverLeaks(t *testing.T) {
 }
 
 func ptrString(s string) *string { return &s }
+
+// TestUpdateWhileRunPollsUsesTheNewAddress covers the write path the other
+// run-time tests skip: an address change and a poll change applied while Run
+// has live poll loops. The loops wait a full interval, so the new address is
+// checked with a direct poll, which races the loops under -race.
+func TestUpdateWhileRunPollsUsesTheNewAddress(t *testing.T) {
+	env := newMgrEnv(t, mgrConfigs(), ManagerOptions{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { env.poller.Run(ctx); close(done) }()
+
+	env.add("personal", env.addr("/feed/OLD-TOKEN/cal.ics"))
+	newAddr := env.addr("/feed/NEW-TOKEN/cal.ics")
+	if _, err := env.mgr.Update(ctx, "personal", UpdateRequest{URL: &newAddr}, "huy"); err != nil {
+		t.Fatalf("Update url while running: %v", err)
+	}
+	env.poller.Poll(ctx, "personal")
+	if got := env.srv.lastPath(); got != "/feed/NEW-TOKEN/cal.ics" {
+		t.Fatalf("poll after address change used %q", got)
+	}
+	poll := 2 * time.Minute
+	if st, err := env.mgr.Update(ctx, "personal", UpdateRequest{Poll: &poll}, "huy"); err != nil || st.Poll != 2*time.Minute {
+		t.Fatalf("Update poll while running: st=%+v err=%v", st, err)
+	}
+	if _, err := env.mgr.Remove(ctx, "personal", false, "huy"); err != nil {
+		t.Fatalf("Remove while running: %v", err)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+}

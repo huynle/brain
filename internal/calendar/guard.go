@@ -42,6 +42,8 @@ var nonPublicPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("240.0.0.0/4"),    // reserved, includes broadcast
 	netip.MustParsePrefix("::/96"),          // unspecified, loopback, IPv4-compatible
 	netip.MustParsePrefix("100::/64"),       // discard
+	netip.MustParsePrefix("2001::/32"),      // Teredo tunnel (embeds an IPv4 address)
+	netip.MustParsePrefix("2002::/16"),      // 6to4 tunnel (embeds an IPv4 address)
 	netip.MustParsePrefix("fc00::/7"),       // unique-local
 	netip.MustParsePrefix("fe80::/10"),      // link-local
 	netip.MustParsePrefix("fec0::/10"),      // site-local (deprecated)

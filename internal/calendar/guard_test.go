@@ -67,6 +67,10 @@ func TestPublicAddressRefusesEveryBlockedRange(t *testing.T) {
 		"64:ff9b::a00:1", "64:ff9b::c0a8:101",
 		// zone-scoped link-local
 		"fe80::1%en0",
+		// 6to4 (2002::/16) and Teredo (2001::/32) tunnel addresses: a relay
+		// decapsulates them to an embedded IPv4 address, possibly private.
+		"2002:a00:1::1", "2002:7f00:1::", "2002:c0a8:101::1", "2002:808:808::1",
+		"2001::1", "2001:0:4136:e378:8000:63bf:3fff:fdd2",
 	}
 	for _, s := range blocked {
 		if publicAddress(mustAddr(t, s), nil) {
@@ -78,7 +82,7 @@ func TestPublicAddressRefusesEveryBlockedRange(t *testing.T) {
 func TestPublicAddressAcceptsPublicAddresses(t *testing.T) {
 	public := []string{
 		"8.8.8.8", "142.250.80.46", "100.63.255.255", "100.128.0.1",
-		"2606:4700:4700::1111", "2a00:1450:4001::200e",
+		"2606:4700:4700::1111", "2a00:1450:4001::200e", "2001:4860:4860::8888", /* Google DNS: 2001:4860::/32 is not Teredo */
 		"::ffff:8.8.8.8",
 		"64:ff9b::808:808",
 	}

@@ -380,3 +380,37 @@ func TestSSEGetTasksError(t *testing.T) {
 		t.Errorf("event[0] = %q, want %q", events[0].Event, "connected")
 	}
 }
+
+// Project directories may contain spaces ("Yard Work" in production). One such
+// name in the PWA's list used to fail the whole multiplexed stream with 400, so
+// live updates broke for every project. The list accepts exactly the names a
+// project directory can have and still rejects path tricks.
+func TestMultiSSEAcceptsEveryValidProjectDirectoryName(t *testing.T) {
+	router := newSSETestRouter(&mockTaskService{}, realtime.NewHub())
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	status := func(rawQuery string) int {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/tasks/stream?projects="+rawQuery, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request %q failed: %v", rawQuery, err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	for _, ok := range []string{"Yard%20Work,brain-api", "Caf%C3%A9%20notes", "a.b_c-d"} {
+		if got := status(ok); got != http.StatusOK {
+			t.Errorf("projects=%s: status %d, want 200", ok, got)
+		}
+	}
+	for _, bad := range []string{"..", "a%2Fb", "a%5Cb", "x%2F..%2Fy", "a%00b", "a%0Ab", strings.Repeat("a", 129)} {
+		if got := status(bad + ",brain-api"); got != http.StatusBadRequest {
+			t.Errorf("projects=%s: status %d, want 400", bad, got)
+		}
+	}
+}

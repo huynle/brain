@@ -1690,8 +1690,38 @@ export interface paths {
          */
         get: operations["calendars.list"];
         put?: never;
-        post?: never;
+        /**
+         * Add a runtime ICS calendar source
+         * @description Admin only. The address is a secret. It is validated with one synchronous fetch and parse, then saved privately on the server, so the source has events at once. Only public https addresses are accepted. The address is never returned, logged or read back.
+         */
+        post: operations["calendars.create"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/calendars/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace a runtime calendar source's address or poll interval
+         * @description Admin only. Sets a new secret address, validated before anything changes, and/or a new poll interval. Config sources are defined in server config and cannot be changed here.
+         */
+        put: operations["calendars.update"];
+        post?: never;
+        /**
+         * Remove a runtime calendar source
+         * @description Admin only. A source that automations still reference is refused with 409 and the references, unless force=true. A removal stops polling and deletes the stored address and its cached snapshot.
+         */
+        delete: operations["calendars.delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3034,6 +3064,42 @@ export interface components {
             event_count?: number;
             last_error?: string;
             stale?: boolean;
+            /** @enum {string} */
+            origin?: "config" | "runtime";
+            /** @description Go duration, ICS sources only, e.g. 5m */
+            poll?: string;
+        };
+        CreateCalendarRequest: {
+            /** @description Matches ^[a-z0-9][a-z0-9_-]{0,63}$ and must not collide with any source. */
+            name: string;
+            /** @description Secret iCal address. Public https only, at most 2048 characters. Never returned. */
+            url: string;
+            /** @description Go duration, at least 1m. Defaults to 5m. */
+            poll?: string;
+        };
+        /** @description At least one of url or poll is required. */
+        UpdateCalendarRequest: {
+            /** @description Replacement secret iCal address. Never returned. */
+            url?: string;
+            /** @description Go duration, at least 1m. */
+            poll?: string;
+        };
+        CalendarReference: {
+            id: string;
+            path: string;
+            title: string;
+            /** @enum {string} */
+            field: "trigger.calendar" | "trigger.skip_if_event" | "trigger.only_if_event";
+        };
+        RemoveCalendarResponse: {
+            name: string;
+            removed: boolean;
+            references: components["schemas"]["CalendarReference"][];
+        };
+        CalendarReferenceConflict: {
+            error: string;
+            message: string;
+            references: components["schemas"]["CalendarReference"][];
         };
         RunAutomationRequest: {
             path: string;
@@ -8209,6 +8275,116 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CalendarsResponse"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "calendars.create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCalendarRequest"];
+            };
+        };
+        responses: {
+            /** @description Created calendar source (never the address) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarStatus"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "calendars.update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCalendarRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated calendar source (never the address) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarStatus"];
+                };
+            };
+            /** @description Legacy error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyErrorResponse"];
+                };
+            };
+        };
+    };
+    "calendars.delete": {
+        parameters: {
+            query?: {
+                force?: boolean;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed calendar source and the references it had */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemoveCalendarResponse"];
+                };
+            };
+            /** @description Config source, or referenced without force (references listed) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarReferenceConflict"];
                 };
             };
             /** @description Legacy error */

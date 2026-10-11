@@ -168,3 +168,25 @@ func TestHTTPHandlerToolsListIncludesProjectTools(t *testing.T) {
 		}
 	}
 }
+
+// The hosted MCP endpoint serves the calendar source tools, so a client can
+// read sources and manage runtime ones. Each name is checked in tools/list.
+func TestHTTPHandlerToolsListIncludesCalendarTools(t *testing.T) {
+	handler := NewHTTPHandler(NewAPIClient("http://127.0.0.1"))
+
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tools/list status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	for _, want := range []string{`"calendars_list"`, `"calendar_add"`, `"calendar_update"`, `"calendar_remove"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("tools/list response missing %s", want)
+		}
+	}
+}

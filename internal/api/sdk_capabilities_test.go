@@ -72,7 +72,7 @@ type previewingRunTask struct {
 
 func TestSDKCapabilitiesInventory(t *testing.T) {
 	// Discovery may inspect service presence, never call it or enumerate resources.
-	h := &Handler{brain: syncReportingBrain{}, tasks: struct{ TaskService }{}, monitor: struct{ MonitorService }{}, clientContext: struct{ ClientContextService }{}, supervisorOperations: struct{ SupervisorOperationStore }{}, supervisorCheckpoints: struct{ SupervisorCheckpointStore }{}, executionBudgets: struct{ ExecutionBudgetStore }{}, attachments: struct{ AttachmentService }{}, goalService: struct{ GoalService }{}, reminders: struct{ ReminderService }{}, attention: struct{ AttentionService }{}, webhooks: struct{ WebhookService }{}, automationRun: struct{ AutomationRunService }{}, calendars: struct{ CalendarService }{}, placement: struct{ ProjectPlacementService }{}, runTask: previewingRunTask{}, runFeature: struct{ RunFeatureService }{}, runProject: struct{ RunProjectService }{}, depChains: struct{ DependentChainService }{}, events: struct{ EventService }{}, timeline: struct{ TimelineService }{}, runner: struct{ RunnerService }{}, runnerRegistry: struct{ RunnerRegistryService }{}, schedulerViews: struct{ SchedulerVisibilityService }{}, scheduler: struct{ SchedulerService }{}, bridge: struct{ BridgeService }{}}
+	h := &Handler{brain: syncReportingBrain{}, tasks: struct{ TaskService }{}, monitor: struct{ MonitorService }{}, clientContext: struct{ ClientContextService }{}, supervisorOperations: struct{ SupervisorOperationStore }{}, supervisorCheckpoints: struct{ SupervisorCheckpointStore }{}, executionBudgets: struct{ ExecutionBudgetStore }{}, attachments: struct{ AttachmentService }{}, goalService: struct{ GoalService }{}, reminders: struct{ ReminderService }{}, attention: struct{ AttentionService }{}, webhooks: struct{ WebhookService }{}, automationRun: struct{ AutomationRunService }{}, calendars: struct{ CalendarService }{}, calendarManager: struct{ CalendarManager }{}, placement: struct{ ProjectPlacementService }{}, runTask: previewingRunTask{}, runFeature: struct{ RunFeatureService }{}, runProject: struct{ RunProjectService }{}, depChains: struct{ DependentChainService }{}, events: struct{ EventService }{}, timeline: struct{ TimelineService }{}, runner: struct{ RunnerService }{}, runnerRegistry: struct{ RunnerRegistryService }{}, schedulerViews: struct{ SchedulerVisibilityService }{}, scheduler: struct{ SchedulerService }{}, bridge: struct{ BridgeService }{}}
 	read := func(h *Handler) []string {
 		t.Helper()
 		w := httptest.NewRecorder()
@@ -129,6 +129,13 @@ func TestSDKCapabilitiesInventory(t *testing.T) {
 	got = read(h)
 	if slices.Contains(got, "calendars.list") {
 		t.Fatal("unwired calendar status operation advertised")
+	}
+	h.calendarManager = nil
+	got = read(h)
+	for _, id := range []string{"calendars.create", "calendars.update", "calendars.delete"} {
+		if slices.Contains(got, id) {
+			t.Errorf("calendar write advertised without a manager (tenant mode): %s", id)
+		}
 	}
 	for _, id := range []string{"control.sendPrompt", "control.spawnInstance", "control.killInstance", "dispatch.pauseAll", "runners.status"} {
 		if slices.Contains(got, id) {

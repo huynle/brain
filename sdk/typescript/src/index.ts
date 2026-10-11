@@ -383,6 +383,9 @@ export class BrainClient {
   });
   readonly calendars = Object.freeze({
     list: (options?: RequestOptions): Promise<Schema["CalendarsResponse"]> => this.#request("GET","/calendars",undefined,undefined,options),
+    create: (request: Schema["CreateCalendarRequest"],options?: RequestOptions): Promise<Schema["CalendarStatus"]> => this.#request("POST","/calendars",request,undefined,options),
+    update: (name: string,request: Schema["UpdateCalendarRequest"],options?: RequestOptions): Promise<Schema["CalendarStatus"]> => this.#request("PUT",`/calendars/${encodeURIComponent(name)}`,request,undefined,options),
+    delete: (name: string,force = false,options?: RequestOptions): Promise<Schema["RemoveCalendarResponse"]> => this.#request("DELETE",`/calendars/${encodeURIComponent(name)}`,undefined,force ? {force:true} : undefined,options),
   });
   readonly reminders = Object.freeze({
     list: (query?: NonNullable<operations["reminders.list"]["parameters"]["query"]>,options?: RequestOptions): Promise<Schema["ReminderListResponse"]> => this.#request("GET","/reminders",undefined,query,options),

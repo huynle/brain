@@ -80,6 +80,9 @@ var reviewedProviderEffects = map[string]string{
 	"automations.getRun":         "none",
 	"automations.effective":      "none",
 	"calendars.list":             "none",
+	"calendars.create":           "calendar_http",
+	"calendars.update":           "calendar_http",
+	"calendars.delete":           "none",
 	"reminders.list":             "none",
 	"reminders.get":              "none",
 	"reminders.create":           "embedding_sync+embedding_background+web_push+downstream_action",
@@ -178,6 +181,7 @@ var providerTokens = map[string]bool{
 	"embedding_for_semantic_hybrid": true, "embedding_requires_review": true,
 	"extraction_provider": true, "web_push": true, "webhook_http": true,
 	"external_delivery_verification": true, "downstream_executor": true,
+	"calendar_http":     true,
 	"downstream_action": true, "downstream_if_runnable": true,
 }
 
@@ -196,8 +200,8 @@ func TestOperationPolicyProviderEffectsArePinned(t *testing.T) {
 	if strings.Join(policy.EventFanout, ",") != "webhook_http_for_subscribed_events,event_triggered_automations" {
 		t.Errorf("event_fanout must declare webhook and automation fan-out, got %v", policy.EventFanout)
 	}
-	if len(reviewedProviderEffects) != 148 || len(policy.Operations) != 148 {
-		t.Fatalf("pinned=%d policy=%d, want 148", len(reviewedProviderEffects), len(policy.Operations))
+	if len(reviewedProviderEffects) != 151 || len(policy.Operations) != 151 {
+		t.Fatalf("pinned=%d policy=%d, want 151", len(reviewedProviderEffects), len(policy.Operations))
 	}
 	for op, want := range reviewedProviderEffects {
 		row := policy.Operations[op]

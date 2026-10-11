@@ -25,6 +25,8 @@ evidence: docs/sdk-operation-matrix.md
 # callback roots and startup entry points. reminders.ack's single exception is
 # one reviewed call edge (AckReminder -> UpdateReminder, status-only).
 #   webhook_http / extraction_provider / external_delivery_verification: direct calls
+#   calendar_http         direct guarded fetch of a runtime calendar source's address
+#                         (create, and update when the address changes); pinned, not derived
 #   downstream_*          may cause runnable work whose executor reaches providers
 # Every event-emitting operation may additionally reach subscribed webhooks and
 # event-triggered automations; that cross-cutting fan-out is declared once here.
@@ -96,6 +98,9 @@ operations:
   automations.getRun: [read, execution_and_output_sources, run_id, read, none]
   automations.effective: [read, project_scoped_automation_view, automation_id_and_project, read, none]
   calendars.list: [read, configured_calendar_status, none, read, none]
+  calendars.create: [admin, calendar_source_admin_and_secret_address, name_poll_and_public_address_validation, source_state_and_outbound_fetch, calendar_http]
+  calendars.update: [admin, calendar_source_admin_and_secret_address, optional_fields_and_public_address_validation, source_state_and_outbound_fetch, calendar_http]
+  calendars.delete: [admin, calendar_source_delete_and_reference_check, name_and_force, source_state, none]
   reminders.list: [read, visible_reminders, filters_limit_offset, read, none]
   reminders.get: [read, reminder_read, reminder_id, read, none]
   reminders.create: [admin, reminder_edit_and_action_authority, service_validation, content_work_notice, embedding_sync+embedding_background+web_push+downstream_action]

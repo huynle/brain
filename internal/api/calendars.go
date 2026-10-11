@@ -14,6 +14,8 @@ import (
 type calendarStatusView struct {
 	Name        string     `json:"name"`
 	Kind        string     `json:"kind"`
+	Origin      string     `json:"origin,omitempty"`
+	Poll        string     `json:"poll,omitempty"`
 	LastFetch   *time.Time `json:"last_fetch,omitempty"`
 	LastSuccess *time.Time `json:"last_success,omitempty"`
 	EventCount  *int       `json:"event_count,omitempty"`
@@ -44,9 +46,12 @@ func (h *Handler) HandleCalendars(w http.ResponseWriter, r *http.Request) {
 
 // viewOfCalendar maps a registry status onto the response shape.
 func viewOfCalendar(s calendar.Status) calendarStatusView {
-	v := calendarStatusView{Name: s.Name, Kind: s.Kind}
+	v := calendarStatusView{Name: s.Name, Kind: s.Kind, Origin: s.Origin}
 	if s.Kind != calendar.KindICS {
 		return v
+	}
+	if s.Poll > 0 {
+		v.Poll = formatPoll(s.Poll)
 	}
 	count := s.EventCount
 	stale := s.Stale

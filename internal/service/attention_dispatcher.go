@@ -3,11 +3,13 @@ package service
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/huynle/brain-api/internal/attentionstore"
 	phonepush "github.com/huynle/brain-api/internal/phonepush"
 	"github.com/huynle/brain-api/internal/realtime"
+	"github.com/huynle/brain-api/internal/tenant"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -82,9 +84,33 @@ func (d *AttentionDispatcher) deliver(ctx context.Context, evt types.Event) {
 		URL:   "/?attention=" + item.ID,
 		Tag:   "attention:" + item.ID,
 	}
-	if err := d.push.Enqueue(recipient, "attention", "attention:"+item.ID, time.Now(), msg); err != nil {
-		slog.Warn("attention push enqueue failed", "attention_id", id, "error", err)
+	for _, owner := range attentionPushOwners(recipient) {
+		if err := d.push.Enqueue(owner, "attention", "attention:"+item.ID, time.Now(), msg); err != nil {
+			slog.Warn("attention push enqueue failed", "attention_id", id, "error", err)
+		}
 	}
+}
+
+// attentionAuthTypes are the AuthResult types a device owner can carry (see
+// api.AuthResult.Type).
+var attentionAuthTypes = []string{"api_token", "jwt", "local", "oauth"}
+
+// attentionPushOwners maps an attention recipient to the phonepush device
+// owners it covers. Devices are registered under the caller's full principal,
+// "<tenant>:<auth type>:<name>" (api.jobOwner), while attention items are
+// addressed to the bare name (api.attentionRecipient), the same name the
+// inbox is listed by. A bare name therefore covers that name under every auth
+// type in the local tenant, the only tenant attention serves. A recipient
+// that already contains ":" is taken to be a full principal and used as is.
+func attentionPushOwners(recipient string) []string {
+	if strings.Contains(recipient, ":") {
+		return []string{recipient}
+	}
+	owners := make([]string, 0, len(attentionAuthTypes))
+	for _, authType := range attentionAuthTypes {
+		owners = append(owners, tenant.Local.String()+":"+authType+":"+recipient)
+	}
+	return owners
 }
 
 // attentionPushBody renders a compact lock-screen body: the item body if

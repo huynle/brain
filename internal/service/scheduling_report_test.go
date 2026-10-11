@@ -105,13 +105,15 @@ func TestSchedulingReportFlagsDayFieldsBothRestricted(t *testing.T) {
 }
 
 func TestSchedulingReportFlagsEnforcedLifecycleFieldsOnAutomationsOnly(t *testing.T) {
-	three, zero := 3, 0
+	three, zero, unlimited := 3, 0, -1
 	lister := &fakeEntryLister{byType: map[string][]types.BrainEntry{
 		"automation": {
 			{Path: "projects/canis/automation/life.md", Title: "Life", Type: "automation", Status: "active",
 				StartsAt: "2026-11-01T00:00:00Z", ExpiresAt: "2027-01-01T00:00:00Z", MaxRuns: &three},
 			{Path: "projects/canis/automation/maxonly.md", Title: "Max", Type: "automation", Status: "active",
 				MaxRuns: &zero},
+			{Path: "projects/canis/automation/unlimited.md", Title: "Unlimited", Type: "automation", Status: "active",
+				MaxRuns: &unlimited},
 			{Path: "projects/canis/automation/plain.md", Title: "Plain", Type: "automation", Status: "active"},
 		},
 		"task": {
@@ -132,8 +134,13 @@ func TestSchedulingReportFlagsEnforcedLifecycleFieldsOnAutomationsOnly(t *testin
 			t.Errorf("lifecycle finding %q missing %q", life, want)
 		}
 	}
-	if line := findingLine(body, "projects/canis/automation/maxonly.md"); !strings.Contains(line, "max_runs") {
-		t.Errorf("max_runs: 0 is still a set value and must be flagged, got %q", line)
+	// max_runs 0 and -1 both mean unlimited: nothing new is enforced, so
+	// flagging them only alarms the reader (production flagged the Dream
+	// Consolidation's max_runs 0 on 2026-10-10).
+	for _, path := range []string{"projects/canis/automation/maxonly.md", "projects/canis/automation/unlimited.md"} {
+		if line := findingLine(body, path); line != "" {
+			t.Errorf("unlimited max_runs flagged as enforced: %q", line)
+		}
 	}
 	if line := findingLine(body, "projects/canis/automation/plain.md"); line != "" {
 		t.Errorf("automation without lifecycle fields flagged: %q", line)

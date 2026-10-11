@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"reflect"
-	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/realtime"
@@ -24,9 +26,30 @@ var DefaultHeartbeatInterval = 15 * time.Second
 // on one connection.
 const multiStreamMaxProjects = 200
 
-// projectIDRe matches the same charset used elsewhere for project IDs
-// (see validatePathParam). Keeps the ?projects= parser strict.
-var projectIDRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
+// maxStreamProjectIDLen caps one ?projects= entry, in characters.
+const maxStreamProjectIDLen = 128
+
+// validStreamProjectID reports whether p can name a project directory: the
+// rules service.validateProjectID enforces (no path separators, not "." or
+// "..", no "..", unchanged by path cleaning), plus no control characters and
+// at most maxStreamProjectIDLen characters. Spaces and non-ASCII letters are
+// allowed because project directories may contain them ("Yard Work"); the
+// stricter validatePathParam charset rejected such a name and, with it, the
+// PWA's whole multiplexed stream.
+func validStreamProjectID(p string) bool {
+	if p == "" || utf8.RuneCountInString(p) > maxStreamProjectIDLen || !utf8.ValidString(p) {
+		return false
+	}
+	if p == "." || p == ".." || strings.Contains(p, "..") || strings.ContainsAny(p, `/\`) {
+		return false
+	}
+	for _, r := range p {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return filepath.Clean(p) == p
+}
 
 // HandleSSEStream handles GET /tasks/{projectId}/stream — SSE event stream.
 func (h *Handler) HandleSSEStream(w http.ResponseWriter, r *http.Request) {
@@ -178,7 +201,7 @@ func (h *Handler) HandleMultiSSEStream(w http.ResponseWriter, r *http.Request) {
 			if p == "" {
 				continue
 			}
-			if !projectIDRe.MatchString(p) {
+			if !validStreamProjectID(p) {
 				WriteError(w, http.StatusBadRequest, "Bad Request", "invalid project id in list")
 				return
 			}

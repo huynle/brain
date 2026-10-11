@@ -237,7 +237,8 @@ func schedulingDayFieldsBothRestricted(expr string) bool {
 }
 
 // schedulingLifecycleLine describes the lifecycle fields an automation carries.
-// It returns "" when it carries none. A max_runs of 0 is still a set value.
+// It returns "" when it carries none. max_runs 0 and -1 both mean unlimited, so
+// only a positive cap is a newly enforced field.
 func schedulingLifecycleLine(a types.BrainEntry) string {
 	var fields []string
 	if a.StartsAt != "" {
@@ -246,7 +247,7 @@ func schedulingLifecycleLine(a types.BrainEntry) string {
 	if a.ExpiresAt != "" {
 		fields = append(fields, fmt.Sprintf("expires_at %q", a.ExpiresAt))
 	}
-	if a.MaxRuns != nil {
+	if a.MaxRuns != nil && *a.MaxRuns > 0 {
 		fields = append(fields, fmt.Sprintf("max_runs %d", *a.MaxRuns))
 	}
 	if len(fields) == 0 {

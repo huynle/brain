@@ -93,6 +93,10 @@ export function CalendarRow({
       </div>
       <dl className="calendar-facts">
         <div>
+          <dt>Origin</dt>
+          <dd>{runtime ? "Added at runtime" : "Server config"}</dd>
+        </div>
+        <div>
           <dt>Source</dt>
           <dd>{isIcs ? "ICS feed" : "Built in"}</dd>
         </div>

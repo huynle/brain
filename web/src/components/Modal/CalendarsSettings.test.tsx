@@ -88,6 +88,11 @@ test("status reads healthy, stale, never fetched and error with the server's mes
   assert.match(failed, /fetch failed: HTTP 404/);
 });
 
+test("each row states its origin: server config or added at runtime", () => {
+  assert.match(rowHtml(CONFIG_ICS), /<dt>Origin<\/dt><dd>Server config<\/dd>/);
+  assert.match(rowHtml(runtime(), ACTIONS), /<dt>Origin<\/dt><dd>Added at runtime<\/dd>/);
+});
+
 test("a row shows the poll interval and event count for an ICS source", () => {
   const html = rowHtml(runtime(), ACTIONS);
   assert.match(html, /5m/);

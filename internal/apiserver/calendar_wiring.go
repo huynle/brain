@@ -24,3 +24,19 @@ func calendarNotices(n service.SystemNotifier) calendar.Notifier {
 		})
 	}
 }
+
+// calendarTestSeam, when a test sets it, routes runtime calendar sources to a
+// loopback test feed. Production leaves it nil, so the public-address guard
+// applies to every runtime source.
+var calendarTestSeam *calendar.TestSeam
+
+// newCalendarManager builds the runtime calendar manager over the graph's
+// registry and poller. It loads the sources saved under dataDir and answers
+// removal checks from the automations that lister returns.
+func newCalendarManager(reg *calendar.Registry, poller *calendar.Poller, dataDir string, lister service.BrainLister) (*calendar.Manager, error) {
+	opts := calendar.ManagerOptions{References: service.NewCalendarReferenceFinder(lister)}
+	if calendarTestSeam != nil {
+		opts = opts.WithTestSeam(*calendarTestSeam)
+	}
+	return calendar.NewManager(reg, poller, dataDir, opts)
+}

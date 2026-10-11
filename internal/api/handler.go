@@ -33,6 +33,7 @@ type Handler struct {
 	timeline              TimelineService
 	automationRun         AutomationRunService
 	calendars             CalendarService
+	calendarManager       CalendarManager
 	assistant             *AssistantService
 	placement             ProjectPlacementService
 	scheduler             SchedulerService

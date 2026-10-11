@@ -5135,3 +5135,21 @@ body[data-theme="light"] .assistant-msg.assistant .assistant-msg-body { color: #
 .assistant-speech-controls label { display: flex; align-items: center; gap: 6px; min-height: 32px; }
 .assistant-speech-controls span { flex-basis: 100%; }
 .assistant-read-aloud { align-self: flex-start; font-size: 11px; padding: 4px 8px; }
+
+/* Settings → Calendars */
+.calendar-list { display: grid; gap: 8px; }
+.calendar-row { border: 1px solid #222a31; border-radius: 6px; padding: 10px 12px; min-width: 0; }
+.calendar-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.calendar-row-name { font-size: 12px; overflow-wrap: anywhere; }
+.calendar-status { font-size: 11px; }
+.calendar-status-detail { color: #8a949c; font-size: 10px; overflow-wrap: anywhere; }
+.calendar-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 4px 12px; margin: 8px 0; font-size: 11px; }
+.calendar-facts > div { display: flex; gap: 6px; min-width: 0; }
+.calendar-facts dt { color: #6b757e; }
+.calendar-facts dd { margin: 0; }
+.calendar-form, .calendar-removal { margin-top: 10px; padding: 10px 12px; border: 1px solid #222a31; border-radius: 6px; display: grid; gap: 8px; min-width: 0; }
+.calendar-removal { border-color: #d9606055; }
+.calendar-form h5, .calendar-removal h5 { margin: 0; font-size: 12px; }
+body.mobile .calendar-form .settings-actions button,
+body.mobile .calendar-removal .settings-actions button { flex: 1 1 auto; min-height: 40px; }
+body.mobile .calendar-facts { grid-template-columns: 1fr; }

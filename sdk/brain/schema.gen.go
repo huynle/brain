@@ -47,6 +47,27 @@ func (e AutomationEffectiveFields) Valid() bool {
 	}
 }
 
+// Defines values for CalendarReferenceField.
+const (
+	TriggerCalendar    CalendarReferenceField = "trigger.calendar"
+	TriggerOnlyIfEvent CalendarReferenceField = "trigger.only_if_event"
+	TriggerSkipIfEvent CalendarReferenceField = "trigger.skip_if_event"
+)
+
+// Valid indicates whether the value is a known member of the CalendarReferenceField enum.
+func (e CalendarReferenceField) Valid() bool {
+	switch e {
+	case TriggerCalendar:
+		return true
+	case TriggerOnlyIfEvent:
+		return true
+	case TriggerSkipIfEvent:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CalendarStatusKind.
 const (
 	Builtin CalendarStatusKind = "builtin"
@@ -59,6 +80,24 @@ func (e CalendarStatusKind) Valid() bool {
 	case Builtin:
 		return true
 	case Ics:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CalendarStatusOrigin.
+const (
+	OriginConfig  CalendarStatusOrigin = "config"
+	OriginRuntime CalendarStatusOrigin = "runtime"
+)
+
+// Valid indicates whether the value is a known member of the CalendarStatusOrigin enum.
+func (e CalendarStatusOrigin) Valid() bool {
+	switch e {
+	case OriginConfig:
+		return true
+	case OriginRuntime:
 		return true
 	default:
 		return false
@@ -547,19 +586,44 @@ type CalendarEventFilter struct {
 	Title       *string `json:"title,omitempty"`
 }
 
+// CalendarReference defines model for CalendarReference.
+type CalendarReference struct {
+	Field CalendarReferenceField `json:"field"`
+	Id    string                 `json:"id"`
+	Path  string                 `json:"path"`
+	Title string                 `json:"title"`
+}
+
+// CalendarReferenceField defines model for CalendarReference.Field.
+type CalendarReferenceField string
+
+// CalendarReferenceConflict defines model for CalendarReferenceConflict.
+type CalendarReferenceConflict struct {
+	Error      string              `json:"error"`
+	Message    string              `json:"message"`
+	References []CalendarReference `json:"references"`
+}
+
 // CalendarStatus defines model for CalendarStatus.
 type CalendarStatus struct {
-	EventCount  *int               `json:"event_count,omitempty"`
-	Kind        CalendarStatusKind `json:"kind"`
-	LastError   *string            `json:"last_error,omitempty"`
-	LastFetch   *time.Time         `json:"last_fetch,omitempty"`
-	LastSuccess *time.Time         `json:"last_success,omitempty"`
-	Name        string             `json:"name"`
-	Stale       *bool              `json:"stale,omitempty"`
+	EventCount  *int                  `json:"event_count,omitempty"`
+	Kind        CalendarStatusKind    `json:"kind"`
+	LastError   *string               `json:"last_error,omitempty"`
+	LastFetch   *time.Time            `json:"last_fetch,omitempty"`
+	LastSuccess *time.Time            `json:"last_success,omitempty"`
+	Name        string                `json:"name"`
+	Origin      *CalendarStatusOrigin `json:"origin,omitempty"`
+
+	// Poll Go duration, ICS sources only, e.g. 5m
+	Poll  *string `json:"poll,omitempty"`
+	Stale *bool   `json:"stale,omitempty"`
 }
 
 // CalendarStatusKind defines model for CalendarStatus.Kind.
 type CalendarStatusKind string
+
+// CalendarStatusOrigin defines model for CalendarStatus.Origin.
+type CalendarStatusOrigin string
 
 // CalendarsResponse defines model for CalendarsResponse.
 type CalendarsResponse struct {
@@ -673,6 +737,18 @@ type CreateAttentionRequest struct {
 	SourceType *string            `json:"source_type,omitempty"`
 	TaskId     *string            `json:"task_id,omitempty"`
 	Title      string             `json:"title"`
+}
+
+// CreateCalendarRequest defines model for CreateCalendarRequest.
+type CreateCalendarRequest struct {
+	// Name Matches ^[a-z0-9][a-z0-9_-]{0,63}$ and must not collide with any source.
+	Name string `json:"name"`
+
+	// Poll Go duration, at least 1m. Defaults to 5m.
+	Poll *string `json:"poll,omitempty"`
+
+	// Url Secret iCal address. Public https only, at most 2048 characters. Never returned.
+	Url string `json:"url"`
 }
 
 // CreateEntryRequest defines model for CreateEntryRequest.
@@ -1514,6 +1590,13 @@ type ReminderSummary struct {
 	Status          string  `json:"status"`
 	Timezone        *string `json:"timezone,omitempty"`
 	Title           string  `json:"title"`
+}
+
+// RemoveCalendarResponse defines model for RemoveCalendarResponse.
+type RemoveCalendarResponse struct {
+	Name       string              `json:"name"`
+	References []CalendarReference `json:"references"`
+	Removed    bool                `json:"removed"`
 }
 
 // ResolveClientContextRequest defines model for ResolveClientContextRequest.
@@ -2443,6 +2526,15 @@ type TriggerResponse struct {
 	Triggered bool    `json:"triggered"`
 }
 
+// UpdateCalendarRequest At least one of url or poll is required.
+type UpdateCalendarRequest struct {
+	// Poll Go duration, at least 1m.
+	Poll *string `json:"poll,omitempty"`
+
+	// Url Replacement secret iCal address. Never returned.
+	Url *string `json:"url,omitempty"`
+}
+
 // UpdateEntryRequest defines model for UpdateEntryRequest.
 type UpdateEntryRequest struct {
 	Action              *AutomationAction           `json:"action,omitempty"`
@@ -2658,6 +2750,11 @@ type AutomationsRunsParams struct {
 // AutomationsEffectiveParams defines parameters for AutomationsEffective.
 type AutomationsEffectiveParams struct {
 	Project string `form:"project" json:"project"`
+}
+
+// CalendarsDeleteParams defines parameters for CalendarsDelete.
+type CalendarsDeleteParams struct {
+	Force *bool `form:"force,omitempty" json:"force,omitempty"`
 }
 
 // ControlSessionDescendantsParams defines parameters for ControlSessionDescendants.
@@ -2896,6 +2993,12 @@ type AttentionSnoozeJSONRequestBody = SnoozeAttentionRequest
 
 // AutomationsRunJSONRequestBody defines body for AutomationsRun for application/json ContentType.
 type AutomationsRunJSONRequestBody = RunAutomationRequest
+
+// CalendarsCreateJSONRequestBody defines body for CalendarsCreate for application/json ContentType.
+type CalendarsCreateJSONRequestBody = CreateCalendarRequest
+
+// CalendarsUpdateJSONRequestBody defines body for CalendarsUpdate for application/json ContentType.
+type CalendarsUpdateJSONRequestBody = UpdateCalendarRequest
 
 // ClientContextResolveJSONRequestBody defines body for ClientContextResolve for application/json ContentType.
 type ClientContextResolveJSONRequestBody = ResolveClientContextRequest

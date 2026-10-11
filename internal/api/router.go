@@ -360,6 +360,20 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				}
 			})
 
+			// ─── Calendar source writes (admin:*; address is a secret) ───
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*"))
+				if o.handler != nil {
+					r.Post("/calendars", o.handler.HandleCreateCalendar)
+					r.Put("/calendars/{name}", o.handler.HandleUpdateCalendar)
+					r.Delete("/calendars/{name}", o.handler.HandleDeleteCalendar)
+				} else {
+					r.Post("/calendars", notImplemented)
+					r.Put("/calendars/{name}", notImplemented)
+					r.Delete("/calendars/{name}", notImplemented)
+				}
+			})
+
 			// ─── Automations (manual run) ────────────────────────
 			r.Group(func(r chi.Router) {
 				r.Use(RequireScope("admin:*", "runner:*"))

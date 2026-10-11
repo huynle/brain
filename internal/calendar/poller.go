@@ -36,6 +36,9 @@ const (
 	defaultFetchTimeout = 30 * time.Second
 	// minPollInterval is the shortest interval a source may be polled at.
 	minPollInterval = time.Minute
+	// defaultRuntimePoll is the poll interval of a runtime source saved
+	// without one.
+	defaultRuntimePoll = 5 * time.Minute
 	// staleKind and staleSeverity describe the stale notice.
 	staleKind     = "calendar_stale"
 	staleSeverity = "warning"
@@ -62,8 +65,9 @@ type Notifier func(ctx context.Context, n Notice) error
 type PollerOptions struct {
 	// Clock returns the current time. Nil means time.Now.
 	Clock func() time.Time
-	// Transport carries the HTTPS requests. Nil means the default transport.
-	// Tests inject a TLS test server's transport here.
+	// Transport carries the HTTPS requests of config sources. Nil means the
+	// default transport. Tests inject a TLS test server's transport here.
+	// Runtime sources never use it: they have their own guarded client.
 	Transport http.RoundTripper
 	// Timeout bounds one fetch. Zero means 30 seconds.
 	Timeout time.Duration
@@ -75,33 +79,65 @@ type PollerOptions struct {
 	Logger *slog.Logger
 }
 
-// Poller re-reads every ics source of a registry on its own schedule and
-// publishes each result as a snapshot. The feed URL is resolved from the
-// environment or a file on every poll and is never stored or reported.
+// Poller re-reads every ics source on its own schedule and publishes each
+// result as a snapshot. A config source's feed URL is resolved from the
+// environment or a file on every poll. A runtime source's address is held in
+// memory and resolved on every poll too. Neither is stored in a snapshot or
+// reported.
+//
+// Sources can be attached and detached while Run is active. Each source has
+// its own poll loop, started under the Run context and stopped by detach.
 type Poller struct {
 	reg     *Registry
 	store   *snapshotStore
-	sources map[string]config.CalendarConfig
-	states  map[string]*sourceState
 	clock   func() time.Time
-	client  *http.Client
 	logger  *slog.Logger
+	client  *http.Client // config sources
+	timeout time.Duration
+
+	// smu guards states, loops, runCtx and managed.
+	smu     sync.Mutex
+	states  map[string]*sourceState
+	loops   map[string]*sourceLoop
+	runCtx  context.Context
+	managed bool
 
 	mu     sync.Mutex // guards notify
 	notify Notifier
 }
 
-// sourceState is one ics source's snapshot. mu serializes polls of that source.
+// sourceState is one ics source: its snapshot and, for a runtime source, its
+// address and poll interval. mu serializes polls of that source and guards
+// every field below it.
 type sourceState struct {
-	mu   sync.Mutex
-	snap snapshot
+	name    string
+	mu      sync.Mutex
+	snap    snapshot
+	removed bool
+	client  *http.Client
+
+	// cfg is set for config sources.
+	cfg config.CalendarConfig
+
+	// runtime marks a source added through the API. address is its feed
+	// address, which is secret, and poll its interval.
+	runtime bool
+	address string
+	poll    time.Duration
 }
 
-// NewPoller binds a poller to the registry's ics sources (sources holds their
-// configuration) and loads each cached snapshot from <dataDir>/calendars, so
-// cached data is served from the first moment. A corrupt snapshot is logged
-// and that source starts fresh. A source name that is not a safe file name is
-// an error.
+// sourceLoop is the goroutine that polls one source. done closes when it
+// has returned.
+type sourceLoop struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// NewPoller binds a poller to the registry's config ics sources (sources
+// holds their configuration) and loads each cached snapshot from
+// <dataDir>/calendars, so cached data is served from the first moment. A
+// corrupt snapshot is logged and that source starts fresh. A source name that
+// is not a safe file name is an error.
 func NewPoller(reg *Registry, sources map[string]config.CalendarConfig, dataDir string, opts PollerOptions) (*Poller, error) {
 	if reg == nil {
 		return nil, errors.New("calendar poller requires a registry")
@@ -121,10 +157,11 @@ func NewPoller(reg *Registry, sources map[string]config.CalendarConfig, dataDir 
 	p := &Poller{
 		reg:     reg,
 		store:   newSnapshotStore(dataDir),
-		sources: make(map[string]config.CalendarConfig),
-		states:  make(map[string]*sourceState),
 		clock:   clock,
 		logger:  logger,
+		timeout: timeout,
+		states:  make(map[string]*sourceState),
+		loops:   make(map[string]*sourceLoop),
 		notify:  opts.Notify,
 		client: &http.Client{
 			Transport:     opts.Transport,
@@ -139,16 +176,17 @@ func NewPoller(reg *Registry, sources map[string]config.CalendarConfig, dataDir 
 		if _, err := p.store.path(name); err != nil {
 			return nil, fmt.Errorf("calendar %q: %w", name, err)
 		}
-		p.sources[name] = c
+		p.states[name] = &sourceState{name: name, cfg: c, client: p.client}
 	}
 
-	names := make([]string, 0, len(p.sources))
-	for name := range p.sources {
+	names := make([]string, 0, len(p.states))
+	for name := range p.states {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	now := clock()
 	for _, name := range names {
+		st := p.states[name]
 		snap, found, err := p.store.load(name)
 		if err != nil {
 			logger.Warn("calendar snapshot unreadable; starting fresh", "calendar", name, "error", redactErr(err, ""))
@@ -161,10 +199,19 @@ func NewPoller(reg *Registry, sources map[string]config.CalendarConfig, dataDir 
 		if snap.FirstSeen.IsZero() {
 			snap.FirstSeen = now
 		}
-		p.states[name] = &sourceState{snap: snap}
+		st.snap = snap
 		reg.setSnapshot(snap)
 	}
 	return p, nil
+}
+
+// markManaged records that a manager owns runtime sources. A managed poller's
+// Run waits for its context even when no source exists yet, because sources
+// may be added later.
+func (p *Poller) markManaged() {
+	p.smu.Lock()
+	defer p.smu.Unlock()
+	p.managed = true
 }
 
 // SetNotifier wires or replaces the stale-notice sink.
@@ -180,25 +227,40 @@ func (p *Poller) currentNotifier() Notifier {
 	return p.notify
 }
 
+// lookup returns the state of a polled source, or nil.
+func (p *Poller) lookup(name string) *sourceState {
+	p.smu.Lock()
+	defer p.smu.Unlock()
+	return p.states[name]
+}
+
 // Poll runs one fetch cycle for a named ics source and publishes the result.
 // Errors are recorded in the source's status and logged; Poll never panics on
-// a bad feed.
+// a bad feed. A name that is not polled is a no-op.
 func (p *Poller) Poll(ctx context.Context, name string) {
-	st, ok := p.states[name]
-	if !ok {
-		return
+	if st := p.lookup(name); st != nil {
+		p.pollState(ctx, st)
 	}
+}
+
+// pollState runs one fetch cycle for a source. It holds the source's lock, so
+// a poll never overlaps another poll or a detach of the same source.
+func (p *Poller) pollState(ctx context.Context, st *sourceState) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	if st.removed {
+		return
+	}
+	name := st.name
 
 	now := p.clock()
 	snap := st.snap
 	snap.LastFetch = now
 
-	feedURL, err := resolveFeedURL(name, p.sources[name])
+	feedURL, err := st.feedURL()
 	var outcome fetchOutcome
 	if err == nil {
-		outcome, err = p.fetch(ctx, name, feedURL, snap, now)
+		outcome, err = p.fetch(ctx, st.client, name, feedURL, snap, now)
 	}
 	if err != nil {
 		snap.LastError = redactErr(err, feedURL)
@@ -216,33 +278,95 @@ func (p *Poller) Poll(ctx context.Context, name string) {
 	}
 
 	p.updateStale(ctx, name, &snap, now)
+	p.publish(st, snap)
+}
+
+// publish stores a source's snapshot and publishes it to the registry. The
+// caller holds the source's lock, or the source is not yet visible to others.
+func (p *Poller) publish(st *sourceState, snap snapshot) {
 	st.snap = snap
 	if err := p.store.save(snap); err != nil {
-		p.logger.Warn("calendar snapshot not persisted", "calendar", name, "error", redactErr(err, feedURL))
+		p.logger.Warn("calendar snapshot not persisted", "calendar", st.name, "error", redactErr(err, ""))
 	}
 	p.reg.setSnapshot(snap)
 }
 
-// Run polls every ics source on its own interval until ctx is cancelled, then
-// returns after all source loops have stopped. With no ics sources it returns
-// at once.
-func (p *Poller) Run(ctx context.Context) {
-	var wg sync.WaitGroup
-	for name := range p.states {
-		wg.Add(1)
-		go func(name string) {
-			defer wg.Done()
-			p.runSource(ctx, name)
-		}(name)
+// feedURL returns the address a poll fetches now. The caller holds the lock.
+func (st *sourceState) feedURL() (string, error) {
+	if st.runtime {
+		if st.address == "" {
+			return "", fmt.Errorf("calendar %q: no address", st.name)
+		}
+		return st.address, nil
 	}
-	wg.Wait()
+	return resolveFeedURL(st.name, st.cfg)
 }
 
-// runSource polls one source immediately, then every interval plus a small
+// interval is how often the source is re-read: its poll, never below one
+// minute. Config sources use their configured poll.
+func (st *sourceState) interval() time.Duration {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if !st.runtime {
+		return PollInterval(st.cfg)
+	}
+	d := st.poll
+	if d == 0 {
+		d = defaultRuntimePoll
+	}
+	if d < minPollInterval {
+		d = minPollInterval
+	}
+	return d
+}
+
+// Run polls every ics source on its own interval until ctx is cancelled, then
+// returns after all source loops have stopped. With no ics sources and no
+// manager it returns at once. A managed poller waits for ctx even with no
+// sources, because sources may be attached later.
+func (p *Poller) Run(ctx context.Context) {
+	p.smu.Lock()
+	if len(p.states) == 0 && !p.managed {
+		p.smu.Unlock()
+		return
+	}
+	p.runCtx = ctx
+	for name, st := range p.states {
+		p.startLoopLocked(name, st, 0)
+	}
+	p.smu.Unlock()
+
+	<-ctx.Done()
+
+	p.smu.Lock()
+	p.runCtx = nil
+	loops := p.loops
+	p.loops = make(map[string]*sourceLoop)
+	for _, l := range loops {
+		l.cancel()
+	}
+	p.smu.Unlock()
+	for _, l := range loops {
+		<-l.done
+	}
+}
+
+// startLoopLocked starts the poll loop of one source under the Run context.
+// The caller holds smu and has checked that Run is active.
+func (p *Poller) startLoopLocked(name string, st *sourceState, first time.Duration) {
+	lctx, cancel := context.WithCancel(p.runCtx)
+	l := &sourceLoop{cancel: cancel, done: make(chan struct{})}
+	p.loops[name] = l
+	go func() {
+		defer close(l.done)
+		p.runSource(lctx, st, first)
+	}()
+}
+
+// runSource polls one source after first, then every interval plus a small
 // per-source offset, so sources do not all fire together.
-func (p *Poller) runSource(ctx context.Context, name string) {
-	interval := PollInterval(p.sources[name])
-	timer := time.NewTimer(0)
+func (p *Poller) runSource(ctx context.Context, st *sourceState, first time.Duration) {
+	timer := time.NewTimer(first)
 	defer timer.Stop()
 	for {
 		select {
@@ -250,30 +374,108 @@ func (p *Poller) runSource(ctx context.Context, name string) {
 			return
 		case <-timer.C:
 		}
-		p.Poll(ctx, name)
-		timer.Reset(interval + jitterFor(name, interval))
+		p.pollState(ctx, st)
+		interval := st.interval()
+		timer.Reset(interval + jitterFor(st.name, interval))
 	}
 }
 
-// jitterFor is a fixed offset in [0, interval/10) derived from the name.
-func jitterFor(name string, interval time.Duration) time.Duration {
-	span := interval / 10
-	if span <= 0 {
-		return 0
+// attachRuntime starts polling a runtime source. snap is its first snapshot:
+// it is stored and published before polling starts. firstPoll is the delay
+// before the first loop poll when Run is already active. The registry must
+// already know the name. client is the source's own guarded client.
+func (p *Poller) attachRuntime(name, address string, poll time.Duration, client *http.Client, snap snapshot, firstPoll time.Duration) error {
+	if p.lookup(name) != nil {
+		return fmt.Errorf("calendar %q is already polled", name)
 	}
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(name))
-	return time.Duration(h.Sum32()) % span
+	if _, err := p.store.path(name); err != nil {
+		return fmt.Errorf("calendar %q: %w", name, err)
+	}
+	snap.Name = name
+	if snap.FirstSeen.IsZero() {
+		snap.FirstSeen = p.clock()
+	}
+	st := &sourceState{
+		name:    name,
+		client:  client,
+		runtime: true,
+		address: address,
+		poll:    poll,
+	}
+	p.publish(st, snap)
+
+	p.smu.Lock()
+	defer p.smu.Unlock()
+	if _, exists := p.states[name]; exists {
+		return fmt.Errorf("calendar %q is already polled", name)
+	}
+	p.states[name] = st
+	if p.runCtx != nil {
+		p.startLoopLocked(name, st, firstPoll)
+	}
+	return nil
 }
 
-// PollInterval is how often an ics source is re-read: its configured poll,
-// defaulting to five minutes and never below one minute.
-func PollInterval(c config.CalendarConfig) time.Duration {
-	d := c.PollInterval()
-	if d < minPollInterval {
-		d = minPollInterval
+// detach stops polling a source and forgets it. It cancels the source's poll
+// loop and waits for the loop to end, so no fetch or snapshot write for the
+// source happens after detach returns. Detaching an unknown name is a no-op.
+func (p *Poller) detach(name string) {
+	p.smu.Lock()
+	st, ok := p.states[name]
+	if !ok {
+		p.smu.Unlock()
+		return
 	}
-	return d
+	delete(p.states, name)
+	l := p.loops[name]
+	delete(p.loops, name)
+	p.smu.Unlock()
+
+	if l != nil {
+		l.cancel()
+		<-l.done
+	}
+	st.mu.Lock()
+	st.removed = true
+	st.mu.Unlock()
+	st.client.CloseIdleConnections()
+}
+
+// setAddress replaces a runtime source's address. The next poll uses it. snap
+// is the snapshot fetched from the new address during validation, and it
+// replaces the cached one so no data from the old feed remains.
+func (p *Poller) setAddress(name, address string, snap snapshot) error {
+	st := p.lookup(name)
+	if st == nil {
+		return errors.New("calendar is not polled")
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.removed || !st.runtime {
+		return errors.New("calendar is not a runtime source")
+	}
+	st.address = address
+	snap.Name = name
+	if snap.FirstSeen.IsZero() {
+		snap.FirstSeen = st.snap.FirstSeen
+	}
+	p.publish(st, snap)
+	return nil
+}
+
+// setRuntimePoll changes a runtime source's interval. The next cycle uses it.
+func (p *Poller) setRuntimePoll(name string, poll time.Duration) error {
+	st := p.lookup(name)
+	if st == nil {
+		return errors.New("calendar is not polled")
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.removed || !st.runtime {
+		return errors.New("calendar is not a runtime source")
+	}
+	st.poll = poll
+	return nil
 }
 
 // fetchOutcome is the result of one successful HTTP exchange.
@@ -285,9 +487,10 @@ type fetchOutcome struct {
 	lastModified string
 }
 
-// fetch performs one conditional GET and expands the body. Every error it
-// returns may contain the feed URL, so callers must pass it through redactErr.
-func (p *Poller) fetch(ctx context.Context, name, feedURL string, snap snapshot, now time.Time) (fetchOutcome, error) {
+// fetch performs one conditional GET with client and expands the body. Every
+// error it returns may contain the feed URL, so callers must pass it through
+// redactErr.
+func (p *Poller) fetch(ctx context.Context, client *http.Client, name, feedURL string, snap snapshot, now time.Time) (fetchOutcome, error) {
 	u, err := url.Parse(feedURL)
 	if err != nil || u.Host == "" {
 		return fetchOutcome{}, errors.New("url is not a valid absolute URL")
@@ -311,7 +514,7 @@ func (p *Poller) fetch(ctx context.Context, name, feedURL string, snap snapshot,
 		req.Header.Set("If-Modified-Since", snap.LastModified)
 	}
 
-	resp, err := p.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fetchOutcome{}, err
 	}
@@ -393,7 +596,28 @@ func (p *Poller) updateStale(ctx context.Context, name string, snap *snapshot, n
 	snap.NotifiedEpisode = episode
 }
 
-// resolveFeedURL reads the feed URL for a source now, so rotating the
+// jitterFor is a fixed offset in [0, interval/10) derived from the name.
+func jitterFor(name string, interval time.Duration) time.Duration {
+	span := interval / 10
+	if span <= 0 {
+		return 0
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	return time.Duration(h.Sum32()) % span
+}
+
+// PollInterval is how often a config ics source is re-read: its configured
+// poll, defaulting to five minutes and never below one minute.
+func PollInterval(c config.CalendarConfig) time.Duration {
+	d := c.PollInterval()
+	if d < minPollInterval {
+		d = minPollInterval
+	}
+	return d
+}
+
+// resolveFeedURL reads the feed URL for a config source now, so rotating the
 // environment variable or url_file takes effect on the next poll. Its errors
 // name the calendar and the setting, never the URL or the file contents.
 func resolveFeedURL(name string, c config.CalendarConfig) (string, error) {

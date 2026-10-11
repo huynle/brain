@@ -84,6 +84,26 @@ test("calendar status route",async t=>{
  assert.deepEqual(seen,["GET /api/v1/calendars"]);
 });
 
+test("calendar write routes",async t=>{
+ const seen=[];const baseUrl=await server(t,async(req,res)=>{let body="";for await(const c of req){body+=c};seen.push({method:req.method,url:req.url,body});res.setHeader("content-type","application/json");if(req.method==="DELETE"){res.end(JSON.stringify({name:"personal",removed:true,references:[]}));return;}res.end(JSON.stringify({name:"personal",kind:"ics",origin:"runtime",poll:"10m"}));});
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());
+ const created=await c.calendars.create({name:"personal",url:"https://calendar.example.test/private/x.ics"});
+ await c.calendars.update("personal",{poll:"10m"});
+ const removed=await c.calendars.delete("personal",true);
+ assert.equal(created.origin,"runtime");assert.equal(removed.removed,true);
+ assert.deepEqual(seen.map(s=>s.method+" "+s.url),["POST /api/v1/calendars","PUT /api/v1/calendars/personal","DELETE /api/v1/calendars/personal?force=true"]);
+ assert.equal(JSON.parse(seen[0].body).url,"https://calendar.example.test/private/x.ics");
+ assert.equal(JSON.parse(seen[1].body).url,undefined,"a poll-only update must not resend the address");
+ await c.calendars.delete("personal");
+ assert.equal(seen[3].url,"/api/v1/calendars/personal");
+});
+
+test("calendar write rejection does not echo the address",async t=>{
+ const baseUrl=await server(t,async(req,res)=>{for await(const _ of req){};res.statusCode=422;res.setHeader("content-type","application/json");res.end(JSON.stringify({error:"Unprocessable Entity",message:"calendar address rejected: feed host resolves to a non-public address"}));});
+ const c=new BrainClient({baseUrl});t.after(()=>c.close());
+ await assert.rejects(c.calendars.create({name:"personal",url:"https://calendar.example.test/private/s3cret-token-ts/x.ics"}),e=>!String(e&&e.message).includes("s3cret-token-ts")&&!JSON.stringify(e).includes("s3cret-token-ts"));
+});
+
 test("reminder and attention namespace routes",async t=>{
  const seen=[];const baseUrl=await server(t,async(req,res)=>{for await(const _ of req){};seen.push(req.method+" "+req.url);res.end("{}");});
  const c=new BrainClient({baseUrl});t.after(()=>c.close());

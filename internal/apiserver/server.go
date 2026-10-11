@@ -499,6 +499,16 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		return nil, "", nil, fmt.Errorf("start calendar poller: %w", err)
 	}
 	graph.calendarPoller = calendarPoller
+	// Runtime calendar sources: the manager owns the registry, the poller and
+	// the private source store. It loads the sources saved under dataDir, so a
+	// restart keeps them, and it serves the admin write routes. Its removal
+	// check reads the automations through brainSvc.
+	calendarManager, err := newCalendarManager(graph.calendars, calendarPoller, dataDir, brainSvc)
+	if err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("start calendar sources: %w", err)
+	}
+	api.WithCalendarManager(calendarManager)(graph.handler)
 	// Workers remain boot-owned and joined before the graph/shared owner.
 	stopWorkers := startSingleGraphWorkers(ctx, graph)
 	graphCleanup := cleanup

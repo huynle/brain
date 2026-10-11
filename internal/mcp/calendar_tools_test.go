@@ -19,7 +19,6 @@ const calendarSecret = "https://calendar.example.test/private/s3cret-token-mcp/b
 // body. The recorded body is the request body, so tests can check what was
 // sent.
 type calendarServer struct {
-	t        *testing.T
 	status   int
 	response string
 	seen     []string

@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -35,6 +38,9 @@ jobs:
 
       - name: Download dependencies
         run: go mod download
+
+      - name: Release workflow contract
+        run: scripts/test-release-workflow.sh
 
       - name: Set up just
         uses: extractions/setup-just@v3
@@ -96,3 +102,19 @@ jobs:
           # Keep it that way: `just lint` is the same command with the same
           # pinned version, so a clean local run means a clean CI run.
           only-new-issues: false
+
+  release:
+    name: Publish immutable container
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, lint]
+    permissions:
+      contents: read
+      packages: write
+    uses: huynle/.github/.github/workflows/container-release.yml@v1
+    with:
+      image: ghcr.io/huynle/brain-api
+      runner: ubuntu-latest
+      build-args-json: >-
+        {"VERSION":"sha-${{ github.sha }}","COMMIT":"${{ github.sha }}"}
+      provenance: true
+      sbom: true

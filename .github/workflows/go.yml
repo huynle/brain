@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   build:
@@ -39,6 +38,9 @@ jobs:
 
       - name: Download dependencies
         run: go mod download
+
+      - name: Release workflow contract
+        run: scripts/test-release-workflow.sh
 
       - name: Set up just
         uses: extractions/setup-just@v3
@@ -105,6 +107,9 @@ jobs:
     name: Publish immutable container
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [build, lint]
+    permissions:
+      contents: read
+      packages: write
     uses: huynle/.github/.github/workflows/container-release.yml@v1
     with:
       image: ghcr.io/huynle/brain-api

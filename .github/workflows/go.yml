@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -96,3 +100,16 @@ jobs:
           # Keep it that way: `just lint` is the same command with the same
           # pinned version, so a clean local run means a clean CI run.
           only-new-issues: false
+
+  release:
+    name: Publish immutable container
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, lint]
+    uses: huynle/.github/.github/workflows/container-release.yml@v1
+    with:
+      image: ghcr.io/huynle/brain-api
+      runner: ubuntu-latest
+      build-args-json: >-
+        {"VERSION":"sha-${{ github.sha }}","COMMIT":"${{ github.sha }}"}
+      provenance: true
+      sbom: true

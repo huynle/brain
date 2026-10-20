@@ -507,6 +507,13 @@ func RequireScope(allowed ...string) func(http.Handler) http.Handler {
 				return
 			}
 
+			// Temporary write:* bridge (P6.6 content-write class; see
+			// ScopeWriteBridge): content reads and marked content writes.
+			if auth.Scope == ScopeWriteBridge && writeBridgeSatisfies(allowedSet) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			WriteError(w, http.StatusForbidden, "Forbidden",
 				fmt.Sprintf("Token scope %q insufficient; requires one of: %s",
 					auth.Scope, scopeList(allowed)))
@@ -545,6 +552,8 @@ func oauthScopeSatisfies(grantedStr string, allowed map[string]bool) bool {
 					return true
 				}
 			}
+		case ScopeWriteBridge:
+			// API-token-only bridge scope: never an OAuth authority.
 		default:
 			if allowed[g] {
 				return true

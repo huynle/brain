@@ -51,12 +51,15 @@ var ValidScopes = map[string]bool{
 	"runner:*":   true, // Runner operations: claim/release/heartbeat, task read
 	"read:*":     true, // Read-only access to entries and tasks
 	ScopeControl: true, // Remote control: attach to / spawn OpenCode instances
+	// Content reads + content writes, no administration/control. Temporary
+	// bridge until the P6.6 route classes merge (see ScopeWriteBridge).
+	ScopeWriteBridge: true,
 }
 
 // createTokenRequest is the request body for POST /tokens.
 type createTokenRequest struct {
 	Name  string `json:"name"`
-	Scope string `json:"scope,omitempty"` // "admin:*", "runner:*", or "read:*"; defaults to "admin:*"
+	Scope string `json:"scope,omitempty"` // one of ValidScopes; defaults to "admin:*"
 }
 
 // createTokenResponse is the response for POST /tokens.
@@ -174,7 +177,7 @@ func (h *Handler) HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 	if req.Scope != "" && !ValidScopes[req.Scope] {
 		details = append(details, types.ValidationDetail{
 			Field:   "scope",
-			Message: fmt.Sprintf("invalid scope %q; must be one of: admin:*, runner:*, read:*", req.Scope),
+			Message: fmt.Sprintf("invalid scope %q; must be one of: admin:*, runner:*, read:*, write:*, control:*", req.Scope),
 		})
 	}
 	if len(details) > 0 {

@@ -28,7 +28,7 @@ type TokenCommand struct {
 // TokenFlags holds token command flags.
 type TokenFlags struct {
 	Name  string
-	Scope string // "admin:*", "runner:*", or "read:*"; defaults to "admin:*"
+	Scope string // "admin:*", "runner:*", "read:*", "write:*" or "control:*"; defaults to "admin:*"
 }
 
 // Type returns the command type identifier.

@@ -101,15 +101,16 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 
 				// Attachment write operations — admin:* scope
 				r.Group(func(r chi.Router) {
-					r.Use(RequireScope("admin:*"))
+					// write:* bridge: P6.6 content-write class (e48ffe22); see ScopeWriteBridge.
+					r.Use(RequireScope("admin:*", ScopeWriteBridge))
 					if o.handler != nil && o.handler.attachments != nil {
 						r.Post("/", o.handler.HandleCreateAttachment)
-						r.Post("/backfill/extraction", o.handler.HandleBackfillAttachmentExtraction)
+						r.With(RequireScope("admin:*")).Post("/backfill/extraction", o.handler.HandleBackfillAttachmentExtraction) // maintenance: administration
 						r.Post("/{attachmentID}/extract", o.handler.HandleExtractAttachment)
 						r.Delete("/{attachmentID}", o.handler.HandleDeleteAttachment)
 					} else {
 						r.Post("/", notImplemented)
-						r.Post("/backfill/extraction", notImplemented)
+						r.With(RequireScope("admin:*")).Post("/backfill/extraction", notImplemented)
 						r.Post("/{attachmentID}/extract", notImplemented)
 						r.Delete("/{attachmentID}", notImplemented)
 					}
@@ -155,7 +156,8 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 
 			// ─── Link generation (admin:* scope) ────────────────
 			r.Group(func(r chi.Router) {
-				r.Use(RequireScope("admin:*"))
+				// write:* bridge: P6.6 content-write class (e48ffe22); see ScopeWriteBridge.
+				r.Use(RequireScope("admin:*", ScopeWriteBridge))
 				if o.handler != nil {
 					r.Post("/link", o.handler.HandleGenerateLink)
 				} else {
@@ -165,7 +167,8 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 
 			// Durable bulk jobs are administrative entry mutations and their audit trail.
 			r.Group(func(r chi.Router) {
-				r.Use(RequireScope("admin:*"))
+				// write:* bridge: P6.6 content-write class (e48ffe22); see ScopeWriteBridge.
+				r.Use(RequireScope("admin:*", ScopeWriteBridge))
 				if o.handler != nil && o.handler.bulkJobs != nil {
 					r.Post("/bulk-jobs", o.handler.HandleCreateBulkJob)
 					r.Get("/bulk-jobs", o.handler.HandleListBulkJobs)
@@ -206,7 +209,8 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				}
 			})
 			r.Group(func(r chi.Router) {
-				r.Use(RequireScope("admin:*"))
+				// write:* bridge: P6.6 content-write class (e48ffe22); see ScopeWriteBridge.
+				r.Use(RequireScope("admin:*", ScopeWriteBridge))
 				if o.handler != nil {
 					r.Post("/sync/entries", o.handler.HandleEntrySyncMutation)
 					r.Get("/sync/devices", o.handler.HandleSyncDevices)
@@ -264,7 +268,8 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 
 				// Write operations — admin:* scope only
 				r.Group(func(r chi.Router) {
-					r.Use(RequireScope("admin:*"))
+					// write:* bridge: P6.6 content-write class (e48ffe22); see ScopeWriteBridge.
+					r.Use(RequireScope("admin:*", ScopeWriteBridge))
 					if o.handler != nil {
 						r.Post("/", o.handler.HandleCreateEntry)
 						r.Post("/bulk-update", o.handler.HandleBulkUpdate)
@@ -293,13 +298,14 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 			// ─── Events ──────────────────────────────────────────
 			r.Route("/events", func(r chi.Router) {
 				if o.handler != nil && o.handler.events != nil {
-					r.Post("/", o.handler.HandleIngestEvents)
+					// P6.6 classifies ingest as administration; refuse the write:* bridge.
+					r.With(RefuseWriteBridge).Post("/", o.handler.HandleIngestEvents)
 					r.Get("/stream", o.handler.HandleEventStream)
 					r.Get("/recent", o.handler.HandleRecentEvents)
 					r.With(RequireScope("admin:*", "runner:*", "read:*")).Get("/wait", o.handler.HandleEventWait)
 					r.With(RequireScope("admin:*", "runner:*", "read:*")).Get("/resource-health", o.handler.HandleResourceHealth)
 				} else {
-					r.Post("/", notImplemented)
+					r.With(RefuseWriteBridge).Post("/", notImplemented)
 					r.Get("/stream", notImplemented)
 					r.Get("/recent", notImplemented)
 				}
@@ -463,7 +469,8 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				// reminder with action=task schedules an agent, so creating
 				// one under read:* would be a privilege escalation.
 				r.Group(func(r chi.Router) {
-					r.Use(RequireScope("admin:*"))
+					// write:* bridge: P6.6 content-write class (e48ffe22); see ScopeWriteBridge.
+					r.Use(RequireScope("admin:*", ScopeWriteBridge))
 					if o.handler != nil && o.handler.reminders != nil {
 						r.Post("/", o.handler.HandleCreateReminder)
 						r.Patch("/{reminderId}", o.handler.HandleUpdateReminder)
@@ -733,11 +740,13 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 
 					// Admin task operations — admin:* scope
 					r.Group(func(r chi.Router) {
-						r.Use(RequireScope("admin:*"))
+						// write:* bridge: P6.6 content-write class (e48ffe22); see ScopeWriteBridge.
+						// Checkout and runner assignment stay administration.
+						r.Use(RequireScope("admin:*", ScopeWriteBridge))
 						if o.handler != nil && o.handler.tasks != nil {
-							r.Post("/features/{featureId}/checkout", o.handler.HandleCheckoutFeature)
-							r.Put("/features/{featureId}/assignment", o.handler.HandleAssignFeatureToRunner)
-							r.Post("/features/{featureId}/assignment/clear", o.handler.HandleClearFeatureAssignment)
+							r.With(RequireScope("admin:*")).Post("/features/{featureId}/checkout", o.handler.HandleCheckoutFeature)        // merge/delivery automation: administration
+							r.With(RequireScope("admin:*")).Put("/features/{featureId}/assignment", o.handler.HandleAssignFeatureToRunner) // runner placement: administration
+							r.With(RequireScope("admin:*")).Post("/features/{featureId}/assignment/clear", o.handler.HandleClearFeatureAssignment)
 							r.Post("/features/{featureId}/run", o.handler.HandleRunFeature)
 							r.Delete("/features/{featureId}/run", o.handler.HandleCancelDependentChain)
 							r.Post("/features/{featureId}/resume", o.handler.HandleResumeFeature)
@@ -751,16 +760,18 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/{taskId}/delivery", o.handler.HandleDeliveryVerification)
 							r.Post("/{taskId}/resume", o.handler.HandleResumeTask)
 							r.Post("/{taskId}/resume-with-context", o.handler.HandleResumeWithContext)
-							r.Put("/{taskId}/assignment", o.handler.HandleAssignTaskToRunner)
-							r.Post("/{taskId}/assignment/clear", o.handler.HandleClearTaskAssignment)
+							r.With(RequireScope("admin:*")).Put("/{taskId}/assignment", o.handler.HandleAssignTaskToRunner)
+							r.With(RequireScope("admin:*")).Post("/{taskId}/assignment/clear", o.handler.HandleClearTaskAssignment)
 							// Project wipe. Lives on the tasks tree because
 							// that is where a project is addressed by name,
 							// but it erases every entry type, not just tasks.
-							r.Delete("/", o.handler.HandleDeleteProject)
+							// Stricter than P6.6: erasing a whole project stays administration
+							// for the write:* bridge (runner tasks never need it).
+							r.With(RequireScope("admin:*")).Delete("/", o.handler.HandleDeleteProject)
 						} else {
-							r.Post("/features/{featureId}/checkout", notImplemented)
-							r.Put("/features/{featureId}/assignment", notImplemented)
-							r.Post("/features/{featureId}/assignment/clear", notImplemented)
+							r.With(RequireScope("admin:*")).Post("/features/{featureId}/checkout", notImplemented)
+							r.With(RequireScope("admin:*")).Put("/features/{featureId}/assignment", notImplemented)
+							r.With(RequireScope("admin:*")).Post("/features/{featureId}/assignment/clear", notImplemented)
 							r.Post("/features/{featureId}/run", notImplemented)
 							r.Delete("/features/{featureId}/run", notImplemented)
 							r.Post("/features/{featureId}/resume", notImplemented)
@@ -771,7 +782,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/{taskId}/run", notImplemented)
 							r.Post("/{taskId}/resume", notImplemented)
 							r.Post("/{taskId}/resume-with-context", notImplemented)
-							r.Delete("/", notImplemented)
+							r.With(RequireScope("admin:*")).Delete("/", notImplemented)
 						}
 					})
 				})
@@ -803,6 +814,9 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 
 			// ─── Webhooks ────────────────────────────────────────
 			r.Route("/webhooks", func(r chi.Router) {
+				// Administration under P6.6 (outbound effects, exposed
+				// targets); refuse the write:* bridge. Other scopes unchanged.
+				r.Use(RefuseWriteBridge)
 				if o.handler != nil && o.handler.webhooks != nil {
 					r.Post("/", o.handler.HandleCreateWebhook)
 					r.Get("/", o.handler.HandleListWebhooks)

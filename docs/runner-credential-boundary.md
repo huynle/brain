@@ -102,7 +102,10 @@ constitute the live P7 authorization tests below.
 ## P7 exit/release gate: `ewavusmp`
 
 Current `read:*` / `runner:*` scopes cannot perform queue entry writes without
-admin. Do not solve that by injecting admin, building a broker here, or inventing
+admin. (Interim: the `write:*` API-token scope — decision `nezg1ru5`, P6.6
+content-write class, no administration/control — is a temporary bridge for task
+agents writing content via `/mcp`. It is installation-wide, not claim/task-bound,
+so it does not satisfy the gate below.) Do not solve that by injecting admin, building a broker here, or inventing
 new authentication. Queue skill needs: assigned-task read, append notes, task
 status writes, and resume logs. It does **not** need admin, runner control,
 credential minting, or settings access.

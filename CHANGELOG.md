@@ -8,6 +8,22 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`write:*` API-token scope (temporary bridge).** A token created with
+  `--scope write:*` reaches everything `read:*` does plus the content-write
+  route class P6.6 defined for OAuth `mcp:write` (commit `e48ffe22`): entry,
+  attachment, link, bulk-job and entry-sync writes, reminders, and task/feature
+  run, dispatch, trigger, resume and cancel. Unlike P6.6 it never erases a whole
+  project (`DELETE /tasks/{projectId}` stays `admin:*`). It never reaches
+  administration (tokens, config, webhooks, event ingest, goals, monitors,
+  supervision writes, runner and dispatch control, placement, assignment,
+  checkout, assistant, backfills, calendars) or `control:*`. Because `/mcp`
+  forwards the caller's token, runner task agents can save and update Brain
+  content through MCP without `admin:*`. `TestWriteBridgeRouteInventory` pins
+  the reach on the real composition. Webhooks and `POST /events`, which have no
+  route scope on main, refuse `write:*` explicitly; other scopes are unchanged.
+  Decision `nezg1ru5`; to be folded into the P6.6 route classes when the
+  multi-tenant line merges.
+
 - **Hosted MCP caller headers.** `/mcp` reads `X-Brain-Host-Id`,
   `X-Brain-Client-Id`, `X-Brain-Workdir` and optional `X-Brain-Home`. Tasks
   created through it are stamped `origin_machine_id`/`origin_client_id`/

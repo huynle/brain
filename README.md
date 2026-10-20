@@ -522,6 +522,25 @@ Brain API supports OAuth 2.1 with PKCE for secure MCP client authentication. Thi
 
 **Supported Scopes:** `mcp`, `mcp:read`, `mcp:write`
 
+### API token scopes
+
+`brain token create --scope <scope>` / `POST /api/v1/tokens` accept:
+
+| Scope | Reach |
+|-------|-------|
+| `admin:*` | Everything (default) |
+| `runner:*` | Runner protocol (claim/release/renew/logs, registry, dispatch acks) + reads |
+| `read:*` | Content and status reads |
+| `write:*` | `read:*` plus content writes: entries (create/update/metadata/move/delete, bulk), attachments, links, bulk jobs, entry sync, reminders, and task/feature run, dispatch, trigger, resume and cancel (not project erasure). Never tokens, config, webhooks, event ingest, goals, monitors, supervision writes, runner/dispatch control, placement, assignment, checkout, assistant, backfills, calendars or `control:*` |
+| `control:*` | Remote control of runner OpenCode instances only |
+
+The hosted MCP server forwards the caller's token, so these scopes also decide
+which MCP tools succeed. `write:*` is a **temporary bridge** (decision
+`nezg1ru5`) so runner task agents can write Brain content without `admin:*`;
+its write set is the P6.6 OAuth content-write route class and it is pinned by
+`TestWriteBridgeRouteInventory`. It folds into the P6.6 route classes when the
+multi-tenant line merges.
+
 ## Embedding-Based Semantic Search
 
 Brain API supports optional embedding-based semantic search for more intelligent knowledge retrieval. When enabled, you can search by meaning rather than just keywords.

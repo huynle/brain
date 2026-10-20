@@ -602,19 +602,23 @@ USAGE:
 FLAGS:
   --name <name>                  Token name
   --scope <scope>                Token scope (default: admin:*)
-                                 Values: admin:*, runner:*, read:*, control:*
+                                 Values: admin:*, runner:*, read:*, write:*, control:*
   -h, --help                     Show this help
 
 SCOPES:
   admin:*                        Full access to all endpoints
   runner:*                       Runner operations (claim/release/heartbeat) + read
   read:*                         Read-only access to entries and tasks
+  write:*                        Content reads + writes (entries, attachments,
+                                 reminders, task runs); no admin or control.
+                                 Temporary bridge until P6.6 route classes merge.
   control:*                      Remote control: attach to / spawn OpenCode instances
 
 EXAMPLES:
   brain token create --name dev
   brain token create --name runner-1 --scope runner:*
   brain token create --name monitoring --scope read:*
+  brain token create --name task-agent --scope write:*
   brain token create ci-bot
 `
 

@@ -49,7 +49,7 @@ func (s identityStore) createToken(ctx context.Context, name, token, scope strin
 type Token struct {
 	Name      string
 	Token     string // Full value on create/validate; prefix (8 chars) on list
-	Scope     string // Token scope: "admin:*", "runner:*", or "read:*"
+	Scope     string // Token scope: "admin:*", "runner:*", "read:*", "write:*" or "control:*"
 	CreatedAt string
 	LastUsed  string
 	RevokedAt string
